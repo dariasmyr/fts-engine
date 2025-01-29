@@ -1,14 +1,14 @@
 .PHONY: build run clean tidy execute test
 
-APP_NAME ?= sso
+APP_NAME ?= fts
 BUILD_DIR ?= build
 OUTPUT := $(BUILD_DIR)/$(APP_NAME)
-MAIN_FILE := ./cmd/sso
+MAIN_FILE := ./cmd/fts
 CONFIG_FILE := ./config/config_local.yaml
 
 STORAGE_PATH := ./storage/fts-test.db
 
-TEST_PKG := sso/tests
+TEST_PKG := fts/tests
 
 build:
 	mkdir -p $(BUILD_DIR)
