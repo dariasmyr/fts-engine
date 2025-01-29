@@ -26,7 +26,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Error("Failed to close database", "error", err)
+		}
+	}()
 
 	log.Info("Database initialised", db)
 
@@ -38,7 +42,6 @@ func main() {
 	<-stop
 
 	// initiate graceful shutdown
-	db.Close()
 	log.Info("Gracefully stopped")
 }
 
