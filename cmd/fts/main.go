@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"fts-hw/config"
+	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
@@ -28,11 +30,22 @@ func main() {
 	}
 	defer func() {
 		if err := db.Close(); err != nil {
-			log.Error("Failed to close database", "error", err)
+			log.Error("Failed to close database", "error", sl.Err(err))
 		}
 	}()
 
-	log.Info("Database initialised", db)
+	log.Info("Database initialised")
+
+	id1, _ := db.AddDocument("hello world")
+	id2, _ := db.AddDocument("hello go")
+	fmt.Println("New document ", id2)
+
+	results, _ := db.Search("hello")
+	fmt.Println("Результаты поиска:", results)
+
+	db.DeleteDocument(id1)
+	results, _ = db.Search("hello")
+	fmt.Println("После удаления:", results)
 
 	// Graceful shutdown
 	stop := make(chan os.Signal, 1)
