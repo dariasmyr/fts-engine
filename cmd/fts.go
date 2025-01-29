@@ -1,4 +1,4 @@
-package fts
+package main
 
 import (
 	"fts-hw/config"
