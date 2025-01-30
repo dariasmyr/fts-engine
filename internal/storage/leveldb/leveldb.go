@@ -30,6 +30,7 @@ func New(path string) (*Storage, error) {
 func (s *Storage) AddDocument(content string) (int, error) {
 	batch := new(leveldb.Batch)
 
+	// Retrieve the last document ID
 	lastIDBytes, err := s.db.Get([]byte("doc_counter"), nil)
 	var lastID int
 	if err == nil {
@@ -39,13 +40,13 @@ func (s *Storage) AddDocument(content string) (int, error) {
 	newID := lastID + 1
 	newIDStr := strconv.Itoa(newID)
 
-	//Update counter
+	// Update document counter
 	batch.Put([]byte("doc_counter"), []byte(newIDStr))
 
-	//Save document
-	batch.Put([]byte("doc"+newIDStr), []byte(content))
+	// Save the document content
+	batch.Put([]byte("doc:"+newIDStr), []byte(content))
 
-	//Word indexing
+	// Word indexing
 	wordsCount := make(map[string]int)
 	words := tokenizeWords(content)
 	for _, word := range words {
@@ -57,15 +58,17 @@ func (s *Storage) AddDocument(content string) (int, error) {
 		existing, err := s.db.Get([]byte(wordKey), nil)
 
 		var indexData string
-
-		if err == nil {
-			indexData = string(existing) + ", "
+		if err == nil && len(existing) > 0 {
+			indexData = string(existing) + ","
 		}
 
-		indexData += fmt.Sprintf("%d:%d", newID, count)
+		indexData += fmt.Sprintf("%d:%d", newID, count) // append the new index
+
+		// Save the updated index data for the word
 		batch.Put([]byte(wordKey), []byte(indexData))
 	}
 
+	// Apply all batch operations
 	err = s.db.Write(batch, nil)
 	if err != nil {
 		return 0, err
@@ -81,15 +84,19 @@ func (s *Storage) Search(word string) ([]string, error) {
 		return nil, fmt.Errorf("word %s not found", word)
 	}
 
-	results := []struct {
+	// Parse the stored index data (word = docID:count pairs)
+	var results []struct {
 		docID int
 		count int
-	}{}
+	}
 
-	pairs := strings.Split(string(data), " ,")
-
+	// Split entries by comma and parse each "docID:count" pair
+	pairs := strings.Split(string(data), ",")
 	for _, pair := range pairs {
 		parts := strings.Split(pair, ":")
+		if len(parts) != 2 {
+			continue // Skip invalid entries
+		}
 		docID, _ := strconv.Atoi(parts[0])
 		count, _ := strconv.Atoi(parts[1])
 		results = append(results, struct {
@@ -98,10 +105,12 @@ func (s *Storage) Search(word string) ([]string, error) {
 		}{docID, count})
 	}
 
+	// Sort results by count (descending)
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].count > results[j].count
 	})
 
+	// Fetch document data for each result
 	var docs []string
 	for _, r := range results {
 		docKey := "doc:" + strconv.Itoa(r.docID)
@@ -120,14 +129,14 @@ func (s *Storage) DeleteDocument(docId int) error {
 	docKey := "doc:" + strconv.Itoa(docId)
 	batch.Delete([]byte(docKey))
 
-	//Run over all indexes and delete references to document
+	// Run over all indexes and delete references to document
 	iter := s.db.NewIterator(nil, nil)
 	for iter.Next() {
 		key := string(iter.Key())
 
 		if strings.HasPrefix(key, "word:") {
 			value := string(iter.Value())
-			entries := strings.Split(value, ":")
+			entries := strings.Split(value, ",")
 			var newEntries []string
 			for _, entry := range entries {
 				parts := strings.Split(entry, ":")
@@ -139,7 +148,7 @@ func (s *Storage) DeleteDocument(docId int) error {
 
 			// If word is in other documents - update, otherwise delete
 			if len(newEntries) > 0 {
-				batch.Put([]byte(key), []byte(strings.Join(newEntries, ", ")))
+				batch.Put([]byte(key), []byte(strings.Join(newEntries, ",")))
 			} else {
 				batch.Delete([]byte(key))
 			}
