@@ -37,15 +37,16 @@ func main() {
 	log.Info("Database initialised")
 
 	id1, _ := db.AddDocument("hello world")
+	fmt.Println("New document ", id1)
 	id2, _ := db.AddDocument("hello go")
 	fmt.Println("New document ", id2)
 
 	results, _ := db.Search("hello")
-	fmt.Println("Результаты поиска:", results)
+	fmt.Printf("Search Results: %v \n", results)
 
 	db.DeleteDocument(id1)
 	results, _ = db.Search("hello")
-	fmt.Println("После удаления:", results)
+	fmt.Printf("Search Resultf after delete: %v \n", results)
 
 	// Graceful shutdown
 	stop := make(chan os.Signal, 1)
