@@ -1,6 +1,7 @@
 package leveldb
 
 import (
+	"context"
 	"fmt"
 	"github.com/syndtr/goleveldb/leveldb"
 	"sort"
@@ -16,7 +17,7 @@ func (s *Storage) Close() error {
 	return s.db.Close()
 }
 
-func New(path string) (*Storage, error) {
+func NewStorage(path string) (*Storage, error) {
 	const op = "storage.leveldb.New"
 
 	db, err := leveldb.OpenFile(path, nil)
@@ -27,7 +28,7 @@ func New(path string) (*Storage, error) {
 	return &Storage{db: db}, nil
 }
 
-func (s *Storage) AddDocument(content string) (int, error) {
+func (s *Storage) AddDocument(context context.Context, content string) (int, error) {
 	batch := new(leveldb.Batch)
 
 	// Retrieve the last document ID
@@ -64,11 +65,15 @@ func (s *Storage) AddDocument(content string) (int, error) {
 
 		indexData += fmt.Sprintf("%d:%d", newID, count) // append the new index
 
+		fmt.Printf("Saving new data for word %s, %d:%d\n", wordKey, newID, count)
+
 		// Save the updated index data for the word
 		batch.Put([]byte(wordKey), []byte(indexData))
 	}
 
 	// Apply all batch operations
+	fmt.Printf("Saving new document batch (document_count:%s; document_id:%s; document_value:%s\n", newIDStr, "doc:"+newIDStr, content)
+
 	err = s.db.Write(batch, nil)
 	if err != nil {
 		return 0, err
@@ -77,7 +82,7 @@ func (s *Storage) AddDocument(content string) (int, error) {
 	return newID, nil
 }
 
-func (s *Storage) Search(word string) ([]string, error) {
+func (s *Storage) Search(context context.Context, word string) ([]string, error) {
 	wordKey := "word:" + word
 	data, err := s.db.Get([]byte(wordKey), nil)
 	if err != nil {
@@ -123,7 +128,7 @@ func (s *Storage) Search(word string) ([]string, error) {
 	return docs, nil
 }
 
-func (s *Storage) DeleteDocument(docId int) error {
+func (s *Storage) DeleteDocument(context context.Context, docId int) error {
 	batch := new(leveldb.Batch)
 
 	docKey := "doc:" + strconv.Itoa(docId)
