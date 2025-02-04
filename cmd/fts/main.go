@@ -1,10 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"fts-hw/config"
+	"fts-hw/internal/app"
 	"fts-hw/internal/lib/logger/sl"
-	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -24,29 +23,9 @@ func main() {
 
 	log.Info("fts", "env", cfg.Env)
 
-	db, err := leveldb.New(cfg.StoragePath)
-	if err != nil {
-		panic(err)
-	}
-	defer func() {
-		if err := db.Close(); err != nil {
-			log.Error("Failed to close database", "error", sl.Err(err))
-		}
-	}()
+	application := app.New(log, cfg.StoragePath)
 
 	log.Info("Database initialised")
-
-	id1, _ := db.AddDocument("hello world")
-	fmt.Println("New document ", id1)
-	id2, _ := db.AddDocument("hello go")
-	fmt.Println("New document ", id2)
-
-	results, _ := db.Search("hello")
-	fmt.Printf("Search Results: %v \n", results)
-
-	db.DeleteDocument(id1)
-	results, _ = db.Search("hello")
-	fmt.Printf("Search Resultf after delete: %v \n", results)
 
 	// Graceful shutdown
 	stop := make(chan os.Signal, 1)
@@ -54,6 +33,9 @@ func main() {
 
 	// Waiting for SIGINT (pkill -2) or SIGTERM
 	<-stop
+	if err := application.StorageApp.Stop(); err != nil {
+		log.Error("Failed to close database", "error", sl.Err(err))
+	}
 
 	// initiate graceful shutdown
 	log.Info("Gracefully stopped")
