@@ -3,10 +3,11 @@ package leveldb
 import (
 	"context"
 	"fmt"
-	"github.com/syndtr/goleveldb/leveldb"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 type Storage struct {
@@ -56,19 +57,21 @@ func (s *Storage) AddDocument(context context.Context, content string) (int, err
 
 	for word, count := range wordsCount {
 		wordKey := "word:" + word
+		var indexDataBuilder strings.Builder
+
 		existing, err := s.db.Get([]byte(wordKey), nil)
 
-		var indexData string
 		if err == nil && len(existing) > 0 {
-			indexData = string(existing) + ","
+			indexDataBuilder.Write(existing)
+			indexDataBuilder.WriteByte(',')
 		}
 
-		indexData += fmt.Sprintf("%d:%d", newID, count) // append the new index
+		indexDataBuilder.WriteString(fmt.Sprintf("%d:%d", newID, count)) // append the new index
 
 		fmt.Printf("Saving new data for word %s, %d:%d\n", wordKey, newID, count)
 
 		// Save the updated index data for the word
-		batch.Put([]byte(wordKey), []byte(indexData))
+		batch.Put([]byte(wordKey), []byte(indexDataBuilder.String()))
 	}
 
 	// Apply all batch operations
