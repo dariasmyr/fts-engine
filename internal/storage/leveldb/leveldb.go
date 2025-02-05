@@ -28,7 +28,7 @@ func NewStorage(path string) (*Storage, error) {
 	return &Storage{db: db}, nil
 }
 
-func (s *Storage) AddDocument(context context.Context, content string) (int, error) {
+func (s *Storage) AddDocument(context context.Context, content string, words []string) (int, error) {
 	batch := new(leveldb.Batch)
 
 	// Retrieve the last document ID
@@ -49,7 +49,6 @@ func (s *Storage) AddDocument(context context.Context, content string) (int, err
 
 	// Word indexing
 	wordsCount := make(map[string]int)
-	words := tokenizeWords(content)
 	for _, word := range words {
 		wordsCount[word]++
 	}
@@ -163,9 +162,4 @@ func (s *Storage) DeleteDocument(context context.Context, docId int) error {
 	iter.Release()
 
 	return s.db.Write(batch, nil)
-}
-
-func tokenizeWords(content string) []string {
-	//TODO Add logic for tokenizing words
-	return strings.Fields(content)
 }

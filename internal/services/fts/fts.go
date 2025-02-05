@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 )
 
 type FTS struct {
@@ -17,7 +18,7 @@ var (
 )
 
 type DocumentSaver interface {
-	AddDocument(ctx context.Context, content string) (int, error)
+	AddDocument(ctx context.Context, content string, words []string) (int, error)
 	DeleteDocument(ctx context.Context, docId int) error
 }
 
@@ -35,4 +36,17 @@ func New(
 		documentSaver:    documentSaver,
 		documentProvider: documentProvider,
 	}
+}
+
+func (fts *FTS) PreprocessText(content string) []string {
+	// TODO: Add tokenization and stemming
+
+	words := strings.Fields(content)
+
+	return words
+}
+
+func (fts *FTS) AddDocument(ctx context.Context, content string) (int, error) {
+	words := fts.PreprocessText(content)
+	return fts.documentSaver.AddDocument(ctx, content, words)
 }
