@@ -109,7 +109,7 @@ func (fts *FTS) tokenize(content string) []string {
 	})
 }
 
-func (ftx *FTS) filterStopWords(tokens []string) []string {
+func (fts *FTS) filterStopWords(tokens []string) []string {
 	filteredWords := make([]string, 0, len(tokens))
 	for _, token := range tokens {
 		if _, ok := stopWords[token]; !ok {
