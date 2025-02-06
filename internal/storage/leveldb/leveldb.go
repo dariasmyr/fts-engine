@@ -60,7 +60,7 @@ func (s *Storage) AddDocument(context context.Context, content string, words []s
 
 		existing, err := s.db.Get([]byte(wordKey), nil)
 
-		if err == nil && len(existing) > 0 {
+		if err == nil && len(existing) > 0 && strings.Contains(string(existing), fmt.Sprintf("%d:", newID)) {
 			indexDataBuilder.Write(existing)
 			indexDataBuilder.WriteByte(',')
 		}
