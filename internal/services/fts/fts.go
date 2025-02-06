@@ -3,6 +3,7 @@ package fts
 import (
 	"context"
 	"errors"
+	snowballeng "github.com/kljensen/snowball/english"
 	"log/slog"
 	"strings"
 	"unicode"
@@ -96,17 +97,27 @@ var stopWords = map[string]struct{}{
 }
 
 func (fts *FTS) PreprocessText(content string) []string {
-	// TODO: Add tokenization and stemming
-
-	words := strings.Fields(content)
-
-	return words
+	tokens := fts.tokenize(content)
+	tokens = fts.toLowercase(tokens)
+	tokens = fts.filterStopWords(tokens)
+	tokens = fts.stemWords(tokens)
+	return tokens
 }
 
 func (fts *FTS) tokenize(content string) []string {
 	return strings.FieldsFunc(content, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
 	})
+}
+
+func (fts *FTS) toLowercase(tokens []string) []string {
+	lowercaseTokens := make([]string, len(tokens))
+
+	for i, token := range tokens {
+		lowercaseTokens[i] = strings.ToLower(token)
+	}
+
+	return lowercaseTokens
 }
 
 func (fts *FTS) filterStopWords(tokens []string) []string {
@@ -118,6 +129,16 @@ func (fts *FTS) filterStopWords(tokens []string) []string {
 	}
 
 	return filteredWords
+}
+
+func (fts *FTS) stemWords(tokens []string) []string {
+	stemmedWords := make([]string, len(tokens))
+
+	for i, token := range tokens {
+		stemmedWords[i] = snowballeng.Stem(token, false)
+	}
+
+	return stemmedWords
 }
 
 func (fts *FTS) AddDocument(ctx context.Context, content string) (int, error) {
