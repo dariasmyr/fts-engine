@@ -59,22 +59,18 @@ func (s *Storage) AddDocument(context context.Context, content string, words []s
 
 		existing, err := s.db.Get([]byte(wordKey), nil)
 
-		if err == nil && len(existing) > 0 && strings.Contains(string(existing), fmt.Sprintf("%d:", newID)) {
+		if err == nil && len(existing) > 0 {
 			indexDataBuilder.Write(existing)
 			indexDataBuilder.WriteByte(',')
 		}
 
 		indexDataBuilder.WriteString(fmt.Sprintf("%d:%d", newID, count)) // append the new index
 
-		fmt.Printf("Saving new data for word %s, %d:%d\n", wordKey, newID, count)
-
 		// Save the updated index data for the word
 		batch.Put([]byte(wordKey), []byte(indexDataBuilder.String()))
 	}
 
 	// Apply all batch operations
-	fmt.Printf("Saving new document batch (document_count:%s; document_id:%s; document_value:%s\n", newIDStr, "doc:"+newIDStr, content)
-
 	err = s.db.Write(batch, nil)
 	if err != nil {
 		return 0, err
