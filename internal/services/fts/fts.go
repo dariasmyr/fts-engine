@@ -3,10 +3,11 @@ package fts
 import (
 	"context"
 	"errors"
-	snowballeng "github.com/kljensen/snowball/english"
 	"log/slog"
 	"strings"
 	"unicode"
+
+	snowballeng "github.com/kljensen/snowball/english"
 )
 
 type FTS struct {
@@ -96,7 +97,7 @@ var stopWords = map[string]struct{}{
 	"herself": {},
 }
 
-func (fts *FTS) PreprocessText(content string) []string {
+func (fts *FTS) preprocessText(content string) []string {
 	tokens := fts.tokenize(content)
 	tokens = fts.toLowercase(tokens)
 	tokens = fts.filterStopWords(tokens)
@@ -142,6 +143,6 @@ func (fts *FTS) stemWords(tokens []string) []string {
 }
 
 func (fts *FTS) AddDocument(ctx context.Context, content string) (int, error) {
-	words := fts.PreprocessText(content)
+	words := fts.preprocessText(content)
 	return fts.documentSaver.AddDocument(ctx, content, words)
 }
