@@ -3,7 +3,6 @@ package leveldb
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -84,56 +83,31 @@ func (s *Storage) AddDocument(context context.Context, content string, words []s
 	return newID, nil
 }
 
-func (s *Storage) Search(context context.Context, word string) ([]string, error) {
+func (s *Storage) SearchWord(cxt context.Context, word string) ([]string, error) {
 	wordKey := "word:" + word
 	data, err := s.db.Get([]byte(wordKey), nil)
 	if err != nil {
 		return nil, fmt.Errorf("word %s not found", word)
 	}
 
-	// Parse the stored index data (word = docID:count pairs)
-	var results []struct {
-		docID int
-		count int
-	}
-
-	// Split entries by comma and parse each "docID:count" pair
-	pairs := strings.Split(string(data), ",")
-	for _, pair := range pairs {
-		parts := strings.Split(pair, ":")
-		if len(parts) != 2 {
-			continue // Skip invalid entries
-		}
-		docID, _ := strconv.Atoi(parts[0])
-		count, _ := strconv.Atoi(parts[1])
-		results = append(results, struct {
-			docID int
-			count int
-		}{docID, count})
-	}
-
-	// Sort results by count (descending)
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].count > results[j].count
-	})
-
-	// Fetch document data for each result
-	var docs []string
-	for _, r := range results {
-		docKey := "doc:" + strconv.Itoa(r.docID)
-		docData, err := s.db.Get([]byte(docKey), nil)
-		if err == nil {
-			docs = append(docs, fmt.Sprintf("Doc %d (x%d): %s", r.docID, r.count, docData))
-		}
-	}
-
-	return docs, nil
+	return strings.Split(string(data), ","), nil
 }
 
-func (s *Storage) DeleteDocument(context context.Context, docId int) error {
+func (s *Storage) SearchDocument(cxt context.Context, docID int) (string, error) {
+	docKey := "doc:" + strconv.Itoa(docID)
+
+	docData, err := s.db.Get([]byte(docKey), nil)
+	if err != nil {
+		return "", fmt.Errorf("document ID %d not found", docID)
+	}
+
+	return string(docData), nil
+}
+
+func (s *Storage) DeleteDocument(context context.Context, docID int) error {
 	batch := new(leveldb.Batch)
 
-	docKey := "doc:" + strconv.Itoa(docId)
+	docKey := "doc:" + strconv.Itoa(docID)
 	batch.Delete([]byte(docKey))
 
 	// Run over all indexes and delete references to document
@@ -148,7 +122,7 @@ func (s *Storage) DeleteDocument(context context.Context, docId int) error {
 			for _, entry := range entries {
 				parts := strings.Split(entry, ":")
 				id, _ := strconv.Atoi(parts[0])
-				if id != docId {
+				if id != docID {
 					newEntries = append(newEntries, entry)
 				}
 			}
