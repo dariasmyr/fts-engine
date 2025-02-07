@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	snowballeng "github.com/kljensen/snowball/english"
@@ -154,35 +155,50 @@ func (fts *FTS) AddDocument(ctx context.Context, content string) (int, error) {
 func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 	// Split content by tokens
 	tokens := fts.preprocessText(content)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
 	docFrequency := make(map[int]int)
 
 	// Find docIDs for every token
 	for _, token := range tokens {
-		docEntries, err := fts.documentProvider.SearchWord(ctx, token)
-		if err != nil {
-			fts.log.Debug("No doc entries found for word, continue", "word", token)
-			continue
-		}
+		wg.Add(1)
+		go func(token string) {
+			defer wg.Done()
+			docEntries, err := fts.documentProvider.SearchWord(ctx, token)
+			if err != nil {
+				fts.log.Debug("No doc entries found for word, continue", "word", token)
+				return
+			}
 
-		for _, docEntry := range docEntries {
-			// Split entries by comma and parse each "docID:count" pair
-			pairs := strings.Split(string(docEntry), ",")
+			localMap := make(map[int]int)
+			for _, docEntry := range docEntries {
+				// Split entries by comma and parse each "docID:count" pair
+				pairs := strings.Split(string(docEntry), ",")
 
-			// Parse the stored index data (word = docID:count pairs)
-			for _, pair := range pairs {
-				parts := strings.Split(pair, ":")
-				if len(parts) != 2 {
-					continue // Skip invalid entries
+				// Parse the stored index data (word = docID:count pairs)
+				for _, pair := range pairs {
+					parts := strings.Split(pair, ":")
+					if len(parts) != 2 {
+						continue // Skip invalid entries
+					}
+					docID, _ := strconv.Atoi(parts[0])
+					count, _ := strconv.Atoi(parts[1])
+
+					//Increase docFrequency by word match count for doc
+					localMap[docID] += count
 				}
-				docID, _ := strconv.Atoi(parts[0])
-				count, _ := strconv.Atoi(parts[1])
+			}
 
-				//Increase docFrequency by word match count for doc
+			mu.Lock()
+			for docID, count := range localMap {
 				docFrequency[docID] += count
 			}
-		}
+			mu.Unlock()
+		}(token)
 	}
+
+	wg.Wait()
 
 	var docMatches []struct {
 		docID   int
