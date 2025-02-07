@@ -38,7 +38,7 @@ func main() {
 	flag.StringVar(&query, "q", "Small wild cat", "search query")
 	flag.Parse()
 
-	fmt.Println("Starting simplefts")
+	fmt.Println("Starting simple fts")
 
 	start := time.Now()
 	docs, err := loadDocuments(dumpPath)
@@ -51,11 +51,13 @@ func main() {
 	start = time.Now()
 	fmt.Printf("Start indexing %d documents\n", len(docs))
 	for _, doc := range docs {
-		for _, token := range doc.Text {
-			application.App.AddDocument(ctx, string(token))
+		_, err := application.App.AddDocument(ctx, doc.Text)
+		if err != nil {
+			fmt.Println("Error:", err)
+			os.Exit(1)
 		}
-	}
 
+	}
 	fmt.Printf("Indexed %d documents in %v\n", len(docs), time.Since(start))
 
 	start = time.Now()
