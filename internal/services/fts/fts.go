@@ -30,7 +30,7 @@ type DocumentSaver interface {
 
 type DocumentProvider interface {
 	SearchWord(ctx context.Context, word string) ([]string, error)
-	SearchDocument(ctx context.Context, docID int) ([]string, error)
+	SearchDocument(ctx context.Context, docID int) (string, error)
 }
 
 func New(
@@ -151,7 +151,7 @@ func (fts *FTS) AddDocument(ctx context.Context, content string) (int, error) {
 	return fts.documentSaver.AddDocument(ctx, content, words)
 }
 
-func (fts *FTS) SearchDocument(ctx context.Context, content string) ([]string, error) {
+func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 	// Split content by tokens
 	tokens := fts.preprocessText(content)
 
