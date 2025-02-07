@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	snowballeng "github.com/kljensen/snowball/english"
 	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"unicode"
-
-	snowballeng "github.com/kljensen/snowball/english"
 )
 
 type FTS struct {
@@ -103,58 +102,32 @@ var stopWords = map[string]struct{}{
 }
 
 func (fts *FTS) preprocessText(content string) []string {
-	tokens := fts.tokenize(content)
-	tokens = fts.toLowercase(tokens)
-	tokens = fts.filterStopWords(tokens)
-	tokens = fts.stemWords(tokens)
-	return tokens
-}
+	var processedTokens []string
 
-func (fts *FTS) tokenize(content string) []string {
-	return strings.FieldsFunc(content, func(r rune) bool {
+	tokens := strings.FieldsFunc(content, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
 	})
-}
 
-func (fts *FTS) toLowercase(tokens []string) []string {
-	lowercaseTokens := make([]string, len(tokens))
-
-	for i, token := range tokens {
-		lowercaseTokens[i] = strings.ToLower(token)
-	}
-
-	return lowercaseTokens
-}
-
-func (fts *FTS) filterStopWords(tokens []string) []string {
-	filteredWords := make([]string, 0, len(tokens))
 	for _, token := range tokens {
+		token = strings.ToLower(token)
 		if _, ok := stopWords[token]; !ok {
-			filteredWords = append(filteredWords, token)
+			processedTokens = append(processedTokens, snowballeng.Stem(token, false))
 		}
 	}
 
-	return filteredWords
-}
-
-func (fts *FTS) stemWords(tokens []string) []string {
-	stemmedWords := make([]string, len(tokens))
-
-	for i, token := range tokens {
-		stemmedWords[i] = snowballeng.Stem(token, false)
-	}
-
-	return stemmedWords
+	return processedTokens
 }
 
 func (fts *FTS) AddDocument(ctx context.Context, content string) (int, error) {
 	words := fts.preprocessText(content)
+
 	return fts.documentSaver.AddDocument(ctx, content, words)
 }
 
 func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 	// Split content by tokens
 	tokens := fts.preprocessText(content)
+	fts.log.Debug("Tokens", "tokens", tokens)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
@@ -166,6 +139,7 @@ func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 		go func(token string) {
 			defer wg.Done()
 			docEntries, err := fts.documentProvider.SearchWord(ctx, token)
+			fts.log.Debug("Doc entries", "docEntries count", len(docEntries), "token", token)
 			if err != nil {
 				fts.log.Debug("No doc entries found for word, continue", "word", token)
 				return
