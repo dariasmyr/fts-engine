@@ -132,6 +132,7 @@ func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 	var wg sync.WaitGroup
 
 	docFrequency := make(map[int]int)
+	wordMatchCount := make(map[int]int)
 
 	// Find docIDs for every token
 	for _, token := range tokens {
@@ -161,6 +162,10 @@ func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 
 					//Increase docFrequency by word match count for doc
 					localMap[docID] += count
+					//Increase wordMatchCount for doc (how many unique words in doc)
+					mu.Lock()
+					wordMatchCount[docID]++
+					mu.Unlock()
 				}
 			}
 
@@ -175,21 +180,26 @@ func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 	wg.Wait()
 
 	var docMatches []struct {
-		docID   int
-		matches int
+		docID         int
+		uniqueMatches int
+		totalMatches  int
 	}
 
 	// Collect all docs from docFrequency to slice
-	for docID, matched := range docFrequency {
+	for docID := range docFrequency {
 		docMatches = append(docMatches, struct {
-			docID   int
-			matches int
-		}{docID, matched})
+			docID         int
+			uniqueMatches int
+			totalMatches  int
+		}{docID, wordMatchCount[docID], docFrequency[docID]})
 	}
 
-	// Sort my matches count
+	// Sort by unique matches and (if equal) total matches
 	sort.Slice(docMatches, func(i, j int) bool {
-		return docMatches[i].matches > docMatches[j].matches
+		if docMatches[i].uniqueMatches == docMatches[j].uniqueMatches {
+			return docMatches[i].totalMatches > docMatches[j].totalMatches
+		}
+		return docMatches[i].uniqueMatches > docMatches[j].uniqueMatches
 	})
 
 	maxResultCount := 20
@@ -198,7 +208,13 @@ func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 	for i := 0; i < len(docMatches) && i < maxResultCount; i++ {
 		docData, err := fts.documentProvider.SearchDocument(ctx, docMatches[i].docID)
 		if err == nil {
-			resultDocs = append(resultDocs, fmt.Sprintf("Doc %d (x%d): %s", docMatches[i].docID, docMatches[i].matches, docData))
+			resultDocs = append(resultDocs, fmt.Sprintf(
+				"Doc %d (words:%d, total:%d): %s",
+				docMatches[i].docID,
+				docMatches[i].uniqueMatches,
+				docMatches[i].totalMatches,
+				docData,
+			))
 		}
 	}
 
