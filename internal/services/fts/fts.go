@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	snowballeng "github.com/kljensen/snowball/english"
+	"iter"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -101,22 +102,79 @@ var stopWords = map[string]struct{}{
 	"herself": {},
 }
 
-func (fts *FTS) preprocessText(content string) []string {
-	var processedTokens []string
-
-	tokens := strings.FieldsFunc(content, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
-	})
-
-	for _, token := range tokens {
-		token = strings.ToLower(token)
-		if _, ok := stopWords[token]; !ok {
-			processedTokens = append(processedTokens, snowballeng.Stem(token, false))
+func Tokenize(content string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for _, token := range strings.FieldsFunc(content, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+		}) {
+			if !yield(token) {
+				return
+			}
 		}
 	}
-
-	return processedTokens
 }
+
+func ToLower(seq iter.Seq[string]) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for token := range seq {
+			if !yield(strings.ToLower(token)) {
+				return
+			}
+		}
+	}
+}
+
+func FilterStopWords(seq iter.Seq[string]) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for token := range seq {
+			if _, ok := stopWords[token]; !ok {
+				if !yield(token) {
+					return
+				}
+			}
+		}
+	}
+}
+
+func Stem(seq iter.Seq[string]) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for token := range seq {
+			if !yield(snowballeng.Stem(token, false)) {
+				return
+			}
+		}
+	}
+}
+
+func (fts *FTS) preprocessText(content string) []string {
+	tokens := Tokenize(content)
+	tokens = ToLower(tokens)
+	tokens = FilterStopWords(tokens)
+	tokens = Stem(tokens)
+
+	var words []string
+	for token := range tokens {
+		words = append(words, token)
+	}
+	return words
+}
+
+//func (fts *FTS) preprocessText(content string) []string {
+//	var processedTokens []string
+//
+//	tokens := strings.FieldsFunc(content, func(r rune) bool {
+//		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+//	})
+//
+//	for _, token := range tokens {
+//		token = strings.ToLower(token)
+//		if _, ok := stopWords[token]; !ok {
+//			processedTokens = append(processedTokens, snowballeng.Stem(token, false))
+//		}
+//	}
+//
+//	return processedTokens
+//}
 
 func (fts *FTS) AddDocument(ctx context.Context, content string) (int, error) {
 	words := fts.preprocessText(content)
