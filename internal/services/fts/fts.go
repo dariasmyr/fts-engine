@@ -146,17 +146,44 @@ func Stem(seq iter.Seq[string]) iter.Seq[string] {
 	}
 }
 
+func GenerateNGrams(seq iter.Seq[string]) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for token := range seq {
+			for _, ngram := range generateNGrams(token, 3) {
+				if !yield(ngram) {
+					return
+				}
+			}
+		}
+	}
+}
+
 func (fts *FTS) preprocessText(content string) []string {
 	tokens := Tokenize(content)
 	tokens = ToLower(tokens)
 	tokens = FilterStopWords(tokens)
 	tokens = Stem(tokens)
+	tokens = GenerateNGrams(tokens)
 
-	var words []string
+	var ngrams []string
 	for token := range tokens {
-		words = append(words, token)
+		ngrams = append(ngrams, token)
 	}
-	return words
+	return ngrams
+}
+
+func generateNGrams(token string, n int) []string {
+	var ngrams []string
+
+	if len(token) < n {
+		return []string{token}
+	}
+
+	for i := 0; i <= len(token)-n; i++ {
+		ngrams = append(ngrams, token[i:i+n])
+	}
+
+	return ngrams
 }
 
 //func (fts *FTS) preprocessText(content string) []string {
