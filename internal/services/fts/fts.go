@@ -163,13 +163,12 @@ func (fts *FTS) preprocessText(content string) []string {
 	tokens = ToLower(tokens)
 	tokens = FilterStopWords(tokens)
 	tokens = Stem(tokens)
-	tokens = GenerateNGrams(tokens)
 
-	var ngrams []string
+	var words []string
 	for token := range tokens {
-		ngrams = append(ngrams, token)
+		words = append(words, token)
 	}
-	return ngrams
+	return words
 }
 
 func generateNGrams(token string, n int) []string {
