@@ -1,3 +1,5 @@
 env: "prod"
 storage_path: "./storage/leveldb.db"
-migrations_path: "./migrations"
+dump:
+  link: "https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-abstract1.xml.gz"
+  storage: "./data/enwiki-latest-abstract1.xml.gz"

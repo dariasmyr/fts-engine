@@ -3,18 +3,25 @@ package config
 import (
 	"flag"
 	"fmt"
-	"github.com/ilyakaznacheev/cleanenv"
 	"os"
+
+	"github.com/ilyakaznacheev/cleanenv"
 )
 
 type Config struct {
-	Env         string `yaml:"env" env-default:"local"`
-	StoragePath string `yaml:"storage_path" env-required:"true"`
+	Env         string       `yaml:"env" env-default:"local"`
+	StoragePath string       `yaml:"storage_path" env-required:"true"`
+	Loader      LoaderConfig `yaml:"dump"`
+}
+
+type LoaderConfig struct {
+	FilePath string `yaml:"storage" env-default:"./data/enwiki-latest-abstract10.xml.gz"`
 }
 
 func MustLoad() *Config {
 	configPathFlag := flag.String("config", "", "Path to the config file")
 	storagePathFlag := flag.String("storage-path", "", "Path to the storage file")
+	dumpPathFlag := flag.String("dump-path", "", "Wiki abstract dump path")
 	flag.Parse()
 
 	configPath := *configPathFlag
@@ -33,6 +40,10 @@ func MustLoad() *Config {
 
 	if *storagePathFlag != "" {
 		cfg.StoragePath = *storagePathFlag
+	}
+
+	if *dumpPathFlag != "" {
+		cfg.Loader.FilePath = *dumpPathFlag
 	}
 
 	return &cfg
