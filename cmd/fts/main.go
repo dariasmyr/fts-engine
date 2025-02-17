@@ -34,7 +34,7 @@ func main() {
 
 	log.Info("Database initialised")
 
-	loader := loader.NewLoader(log, cfg.Loader.FilePath)
+	loaderApp := loader.NewLoader(log, cfg.Loader.FilePath)
 
 	log.Info("Loader initialised")
 
@@ -45,7 +45,7 @@ func main() {
 	fmt.Println("Starting simple fts")
 
 	start := time.Now()
-	docs, err := loader.LoadDocuments()
+	docs, err := loaderApp.LoadDocuments()
 	if err != nil {
 		fmt.Println("Error:", err)
 		os.Exit(1)
