@@ -2,8 +2,8 @@ package tests
 
 import (
 	"context"
-	"fts-hw/internal/lib/leveldb"
 	"fts-hw/internal/services/fts"
+	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
 	"testing"
