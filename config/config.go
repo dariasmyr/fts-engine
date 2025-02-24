@@ -15,7 +15,7 @@ type Config struct {
 }
 
 type LoaderConfig struct {
-	FilePath string `yaml:"storage" env-default:"./data/enwiki-latest-abstract10.xml.gz"`
+	FilePath string `yaml:"dump_path" env-default:"./data/enwiki-latest-abstract10.xml.gz"`
 }
 
 func MustLoad() *Config {

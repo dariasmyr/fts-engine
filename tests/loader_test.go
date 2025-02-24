@@ -9,9 +9,9 @@ import (
 
 func TestLoader(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	loader := loader.NewLoader(log, "./data/enwiki-latest-abstract1.xml.gz")
+	l := loader.NewLoader(log, "./data/enwiki-latest-abstract1.xml.gz")
 
-	docs, err := loader.LoadDocuments()
+	docs, err := l.LoadDocuments()
 	if err != nil {
 		t.Fatalf("Failed to load documents: %v", err)
 	}
