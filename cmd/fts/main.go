@@ -24,6 +24,10 @@ const (
 var searchQuery string
 var results []string
 
+const resultsPerPage = 10
+
+var currentPage int
+
 func main() {
 	cfg := config.MustLoad()
 
@@ -101,6 +105,8 @@ func layout(g *gocui.Gui) error {
 			return err
 		}
 		v.Title = "Results"
+		v.Autoscroll = true
+		v.Wrap = true
 	}
 
 	return nil
@@ -116,25 +122,21 @@ func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.A
 	}
 	outputView.Clear()
 
-	fmt.Fprintln(outputView, "Search Results:")
-	for i, result := range results {
-		docID := fmt.Sprintf("Doc %d", i+1)
-		words := strings.Count(result, " ") + 1
-		totalResults := len(results)
-
-		truncatedResult := truncateText(result, 100)
-		fmt.Fprintf(outputView, "%s (Words: %d, Total Results: %d) | %s\n", docID, words, totalResults, truncatedResult)
+	startIdx := currentPage * resultsPerPage
+	endIdx := startIdx + resultsPerPage
+	if endIdx > len(results) {
+		endIdx = len(results)
 	}
+
+	for _, result := range results[startIdx:endIdx] {
+		fmt.Fprintf(outputView, "%s\n\n", result)
+	}
+
+	fmt.Fprintf(outputView, "\nPage %d of %d\n", currentPage+1, (len(results)/resultsPerPage)+1)
+
 	return nil
 }
 
-// Function to truncate result text if it's too long
-func truncateText(text string, maxLength int) string {
-	if len(text) > maxLength {
-		return text[:maxLength] + "..."
-	}
-	return text
-}
 func performSearch(query string, ctx context.Context, application *app.App) []string {
 	matchedDocs, err := application.App.Search(ctx, query)
 	if err != nil {

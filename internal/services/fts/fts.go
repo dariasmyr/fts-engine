@@ -211,7 +211,7 @@ func (fts *FTS) AddDocument(ctx context.Context, content string) (int, error) {
 func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 	// Split content by tokens
 	tokens := fts.preprocessText(content)
-	fts.log.Debug("Tokens", "tokens", tokens)
+	//fts.log.Debug("Tokens", "tokens", tokens)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
@@ -224,9 +224,9 @@ func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 		go func(token string) {
 			defer wg.Done()
 			docEntries, err := fts.documentProvider.SearchWord(ctx, token)
-			fts.log.Debug("Doc entries", "docEntries count", len(docEntries), "token", token)
+			//fts.log.Debug("Doc entries", "docEntries count", len(docEntries), "token", token)
 			if err != nil {
-				fts.log.Debug("No doc entries found for word, continue", "word", token)
+				//fts.log.Debug("No doc entries found for word, continue", "word", token)
 				return
 			}
 
