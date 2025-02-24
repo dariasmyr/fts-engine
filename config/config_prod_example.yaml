@@ -1,4 +1,4 @@
 env: "prod"
 storage_path: "./storage/leveldb.db"
 dump:
-  storage: "./data/enwiki-latest-abstract1.xml.gz"
+  dump_path: "./data/enwiki-latest-abstract1.xml.gz"
