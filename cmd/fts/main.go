@@ -66,22 +66,21 @@ func main() {
 		log.Error("Failed to set keybinding:", err)
 	}
 
-	if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
-		log.Error("Failed to run GUI:", err)
-	}
-
-	// Graceful shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 
-	// Waiting for SIGINT (pkill -2) or SIGTERM
-	<-stop
-	if err := application.StorageApp.Stop(); err != nil {
-		log.Error("Failed to close database", "error", sl.Err(err))
-	}
+	go func() {
+		<-stop
+		log.Info("Gracefully stopped")
+		if err := application.StorageApp.Stop(); err != nil {
+			log.Error("Failed to close database", "error", sl.Err(err))
+		}
+		g.Close()
+	}()
 
-	// initiate graceful shutdown
-	log.Info("Gracefully stopped")
+	if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
+		log.Error("Failed to run GUI:", err)
+	}
 }
 
 func layout(g *gocui.Gui) error {
