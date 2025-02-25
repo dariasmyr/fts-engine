@@ -96,6 +96,7 @@ func layout(g *gocui.Gui) error {
 		}
 		v.Editable = true
 		v.Title = "Search"
+		v.Wrap = true
 		_, _ = g.SetCurrentView("input")
 	}
 
@@ -106,6 +107,9 @@ func layout(g *gocui.Gui) error {
 		v.Title = "Results"
 		v.Autoscroll = true
 		v.Wrap = true
+		// Border settings, if desired
+		v.BgColor = gocui.ColorDefault
+		v.FgColor = gocui.ColorWhite
 	}
 
 	return nil
@@ -113,7 +117,7 @@ func layout(g *gocui.Gui) error {
 
 func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.App) error {
 	searchQuery = strings.TrimSpace(v.Buffer())
-	results = performSearch(searchQuery, ctx, application)
+	results := performSearch(searchQuery, ctx, application)
 
 	outputView, err := g.View("output")
 	if err != nil {
@@ -128,12 +132,31 @@ func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.A
 	}
 
 	for _, result := range results[startIdx:endIdx] {
-		fmt.Fprintf(outputView, "%s\n\n", result)
+		highlightedResult := highlightQueryInResult(result, searchQuery)
+
+		source := getResultDatabaseSource(result)
+
+		fmt.Fprintf(outputView, "%s\nFrom: %s\n\n", highlightedResult, source)
 	}
 
 	fmt.Fprintf(outputView, "\nPage %d of %d\n", currentPage+1, (len(results)/resultsPerPage)+1)
 
 	return nil
+}
+
+func highlightQueryInResult(result, query string) string {
+	highlighted := strings.ReplaceAll(result, query, "\033[31m"+query+"\033[0m")
+	return highlighted
+}
+
+func getResultDatabaseSource(result string) string {
+	if strings.Contains(result, "local") {
+		return "Local DB"
+	} else if strings.Contains(result, "dev") {
+		return "Development DB"
+	} else {
+		return "Production DB"
+	}
 }
 
 func performSearch(query string, ctx context.Context, application *app.App) []string {
