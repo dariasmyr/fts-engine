@@ -145,8 +145,13 @@ func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.A
 }
 
 func highlightQueryInResult(result, query string) string {
-	highlighted := strings.ReplaceAll(result, query, "\033[31m"+query+"\033[0m")
-	return highlighted
+	words := strings.Fields(query)
+
+	for _, word := range words {
+		result = strings.ReplaceAll(result, word, "\033[31m"+word+"\033[0m")
+	}
+
+	return result
 }
 
 func getResultDatabaseSource(result string) string {
