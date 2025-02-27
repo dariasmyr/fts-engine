@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"fts-hw/config"
@@ -27,6 +28,8 @@ var results []string
 const resultsPerPage = 10
 
 var currentPage int
+var databases = []string{"local", "dev", "prod"}
+var selectDbIndex int
 
 func main() {
 	cfg := config.MustLoad()
@@ -66,6 +69,13 @@ func main() {
 		log.Error("Failed to set keybinding:", err)
 	}
 
+	if err := g.SetKeybinding("sidebar", gocui.KeyArrowUp, gocui.ModNone, prevDatabase); err != nil {
+		log.Error("Failed to set keybinding:", err)
+	}
+	if err := g.SetKeybinding("sidebar", gocui.KeyArrowDown, gocui.ModNone, nextDatabase); err != nil {
+		log.Error("Failed to set keybinding:", err)
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 
@@ -90,8 +100,18 @@ func layout(g *gocui.Gui) error {
 		return fmt.Errorf("terminal window is too small")
 	}
 
-	if v, err := g.SetView("input", 2, 2, maxX-2, 4); err != nil {
-		if err != gocui.ErrUnknownView {
+	if v, err := g.SetView("sidebar", 0, 0, 20, maxY-1); err != nil {
+		if !errors.Is(err, gocui.ErrUnknownView) {
+			return err
+		}
+		v.Title = "Databases"
+		v.Highlight = true
+		v.SelFgColor = gocui.ColorGreen
+		updateDatabaseView(v)
+	}
+
+	if v, err := g.SetView("input", 22, 2, maxX-2, 4); err != nil {
+		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
 		v.Editable = true
@@ -100,18 +120,44 @@ func layout(g *gocui.Gui) error {
 		_, _ = g.SetCurrentView("input")
 	}
 
-	if v, err := g.SetView("output", 2, 5, maxX-2, maxY-2); err != nil {
-		if err != gocui.ErrUnknownView {
+	if v, err := g.SetView("output", 22, 5, maxX-2, maxY-2); err != nil {
+		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
-		v.Title = "Results"
+		v.Title = " Results "
 		v.Autoscroll = true
 		v.Wrap = true
-		// Border settings, if desired
-		v.BgColor = gocui.ColorDefault
-		v.FgColor = gocui.ColorWhite
 	}
 
+	return nil
+}
+
+func updateDatabaseView(v *gocui.View) {
+	v.Clear()
+	fmt.Fprintln(v, "Databases:")
+
+	for i, db := range databases {
+		if i == selectDbIndex {
+			fmt.Fprintf(v, "[%s]\n", db)
+		} else {
+			fmt.Fprintf(v, "%s\n", db)
+		}
+	}
+}
+
+func prevDatabase(g *gocui.Gui, v *gocui.View) error {
+	if selectDbIndex > 0 {
+		selectDbIndex--
+	}
+	updateDatabaseView(v)
+	return nil
+}
+
+func nextDatabase(g *gocui.Gui, v *gocui.View) error {
+	if selectDbIndex < len(databases)-1 {
+		selectDbIndex++
+	}
+	updateDatabaseView(v)
 	return nil
 }
 
