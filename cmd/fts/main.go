@@ -8,12 +8,13 @@ import (
 	"fts-hw/config"
 	"fts-hw/internal/app"
 	"fts-hw/internal/lib/logger/sl"
-	"github.com/jroimartin/gocui"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"github.com/jroimartin/gocui"
 )
 
 const (
@@ -54,26 +55,26 @@ func main() {
 
 	g, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
-		log.Error("Failed to create GUI:", err)
+		log.Error("Failed to create GUI:", "error", sl.Err(err))
 	}
 	defer g.Close()
 
 	g.SetManagerFunc(layout)
 
 	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
-		log.Error("Failed to set keybinding:", err)
+		log.Error("Failed to set keybinding:", "error", sl.Err(err))
 	}
 	if err := g.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
 		return search(g, v, ctx, application)
 	}); err != nil {
-		log.Error("Failed to set keybinding:", err)
+		log.Error("Failed to set keybinding:", "error", sl.Err(err))
 	}
 
 	if err := g.SetKeybinding("sidebar", gocui.KeyArrowUp, gocui.ModNone, prevDatabase); err != nil {
-		log.Error("Failed to set keybinding:", err)
+		log.Error("Failed to set keybinding:", "error", sl.Err(err))
 	}
 	if err := g.SetKeybinding("sidebar", gocui.KeyArrowDown, gocui.ModNone, nextDatabase); err != nil {
-		log.Error("Failed to set keybinding:", err)
+		log.Error("Failed to set keybinding:", "error", sl.Err(err))
 	}
 
 	stop := make(chan os.Signal, 1)
@@ -89,7 +90,7 @@ func main() {
 	}()
 
 	if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
-		log.Error("Failed to run GUI:", err)
+		log.Error("Failed to run GUI:", "error", sl.Err(err))
 	}
 }
 
