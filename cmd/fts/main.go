@@ -59,6 +59,8 @@ func main() {
 	}
 	defer g.Close()
 
+	g.Cursor = true
+
 	g.SetManagerFunc(layout)
 
 	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
