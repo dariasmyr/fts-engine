@@ -24,10 +24,6 @@ const (
 
 var searchQuery string
 
-const resultsPerPage = 10
-
-var currentPage int
-
 func main() {
 	cfg := config.MustLoad()
 
@@ -92,7 +88,7 @@ func layout(g *gocui.Gui) error {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
-		v.Title = "Databases"
+		v.Title = " Search Sidebar"
 		v.Highlight = true
 		v.SelFgColor = gocui.ColorGreen
 	}
@@ -129,21 +125,11 @@ func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.A
 	}
 	outputView.Clear()
 
-	startIdx := currentPage * resultsPerPage
-	endIdx := startIdx + resultsPerPage
-	if endIdx > len(results) {
-		endIdx = len(results)
-	}
-
-	for _, result := range results[startIdx:endIdx] {
+	for _, result := range results {
 		highlightedResult := highlightQueryInResult(result, searchQuery)
 
-		source := getResultDatabaseSource(result)
-
-		fmt.Fprintf(outputView, "%s\nFrom: %s\n\n", highlightedResult, source)
+		fmt.Fprintf(outputView, "%s\n\n", highlightedResult)
 	}
-
-	fmt.Fprintf(outputView, "\nPage %d of %d\n", currentPage+1, (len(results)/resultsPerPage)+1)
 
 	return nil
 }
@@ -156,16 +142,6 @@ func highlightQueryInResult(result, query string) string {
 	}
 
 	return result
-}
-
-func getResultDatabaseSource(result string) string {
-	if strings.Contains(result, "local") {
-		return "Local DB"
-	} else if strings.Contains(result, "dev") {
-		return "Development DB"
-	} else {
-		return "Production DB"
-	}
 }
 
 func performSearch(query string, ctx context.Context, application *app.App) []string {
