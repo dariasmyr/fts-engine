@@ -44,6 +44,7 @@ func main() {
 	g, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
 		log.Error("Failed to create GUI:", "error", sl.Err(err))
+		os.Exit(1)
 	}
 	defer g.Close()
 
@@ -56,6 +57,25 @@ func main() {
 	}
 	if err := g.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
 		return search(g, v, ctx, application)
+	}); err != nil {
+		log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	}
+
+	if err := g.SetKeybinding("output", gocui.KeyArrowDown, gocui.ModNone, scrollDown); err != nil {
+		log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	}
+	if err := g.SetKeybinding("output", gocui.KeyArrowUp, gocui.ModNone, scrollUp); err != nil {
+		log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	}
+	if err := g.SetKeybinding("", gocui.KeyTab, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+		// Переключение фокуса между input и output
+		currentView := g.CurrentView().Name()
+		if currentView == "input" {
+			_, _ = g.SetCurrentView("output")
+		} else {
+			_, _ = g.SetCurrentView("input")
+		}
+		return nil
 	}); err != nil {
 		log.Error("Failed to set keybinding:", "error", sl.Err(err))
 	}
@@ -75,6 +95,26 @@ func main() {
 	if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
 		log.Error("Failed to run GUI:", "error", sl.Err(err))
 	}
+}
+
+func scrollDown(g *gocui.Gui, v *gocui.View) error {
+	_, oy := v.Origin()
+	_, sy := v.Size()
+
+	lines := len(v.BufferLines())
+
+	if oy+sy < lines {
+		v.SetOrigin(0, oy+1)
+	}
+	return nil
+}
+
+func scrollUp(g *gocui.Gui, v *gocui.View) error {
+	_, oy := v.Origin()
+	if oy > 0 {
+		v.SetOrigin(0, oy-1)
+	}
+	return nil
 }
 
 func layout(g *gocui.Gui) error {
@@ -108,8 +148,9 @@ func layout(g *gocui.Gui) error {
 			return err
 		}
 		v.Title = " Results "
-		v.Autoscroll = true
+		v.Autoscroll = false
 		v.Wrap = true
+		v.Clear()
 	}
 
 	return nil
@@ -127,9 +168,10 @@ func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.A
 
 	for _, result := range results {
 		highlightedResult := highlightQueryInResult(result, searchQuery)
-
 		fmt.Fprintf(outputView, "%s\n\n", highlightedResult)
 	}
+
+	_, _ = g.SetCurrentView("input")
 
 	return nil
 }
