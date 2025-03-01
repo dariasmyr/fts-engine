@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"fts-hw/config"
 	"fts-hw/internal/app"
@@ -24,13 +23,10 @@ const (
 )
 
 var searchQuery string
-var results []string
 
 const resultsPerPage = 10
 
 var currentPage int
-var databases = []string{"local", "dev", "prod"}
-var selectDbIndex int
 
 func main() {
 	cfg := config.MustLoad()
@@ -46,10 +42,6 @@ func main() {
 	log.Info("Database initialised")
 
 	log.Info("Loader initialised")
-
-	var query string
-	flag.StringVar(&query, "q", "Small wild cat", "search query")
-	flag.Parse()
 
 	fmt.Println("Starting simple fts")
 
@@ -69,13 +61,6 @@ func main() {
 	if err := g.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
 		return search(g, v, ctx, application)
 	}); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
-
-	if err := g.SetKeybinding("sidebar", gocui.KeyArrowUp, gocui.ModNone, prevDatabase); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
-	if err := g.SetKeybinding("sidebar", gocui.KeyArrowDown, gocui.ModNone, nextDatabase); err != nil {
 		log.Error("Failed to set keybinding:", "error", sl.Err(err))
 	}
 
@@ -110,7 +95,6 @@ func layout(g *gocui.Gui) error {
 		v.Title = "Databases"
 		v.Highlight = true
 		v.SelFgColor = gocui.ColorGreen
-		updateDatabaseView(v)
 	}
 
 	if v, err := g.SetView("input", 22, 2, maxX-2, 4); err != nil {
@@ -132,35 +116,6 @@ func layout(g *gocui.Gui) error {
 		v.Wrap = true
 	}
 
-	return nil
-}
-
-func updateDatabaseView(v *gocui.View) {
-	v.Clear()
-	fmt.Fprintln(v, "Databases:")
-
-	for i, db := range databases {
-		if i == selectDbIndex {
-			fmt.Fprintf(v, "[%s]\n", db)
-		} else {
-			fmt.Fprintf(v, "%s\n", db)
-		}
-	}
-}
-
-func prevDatabase(g *gocui.Gui, v *gocui.View) error {
-	if selectDbIndex > 0 {
-		selectDbIndex--
-	}
-	updateDatabaseView(v)
-	return nil
-}
-
-func nextDatabase(g *gocui.Gui, v *gocui.View) error {
-	if selectDbIndex < len(databases)-1 {
-		selectDbIndex++
-	}
-	updateDatabaseView(v)
 	return nil
 }
 
