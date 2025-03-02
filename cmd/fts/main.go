@@ -35,7 +35,27 @@ func main() {
 
 	application := app.New(log, cfg.StoragePath)
 	log.Info("Database initialised")
-	log.Info("Loader initialised")
+
+	// TODO Uncomment this part to load documents and index them in the database
+	//loaderApp := loader.NewLoader(log, cfg.Loader.FilePath)
+	//log.Info("Loader initialised")
+	//docs, err := loaderApp.LoadDocuments()
+	//if err != nil {
+	//	fmt.Println("Error:", err)
+	//	os.Exit(1)
+	//}
+	//fmt.Printf("Loaded %d documents in %v\n", len(docs), time.Since(start))
+	//
+	//fmt.Printf("Start indexing %d documents\n", len(docs))
+	//for _, doc := range docs {
+	//	_, err := application.App.AddDocument(ctx, doc.Text)
+	//	if err != nil {
+	//		fmt.Println("Error:", err)
+	//		os.Exit(1)
+	//	}
+	//
+	//}
+	//fmt.Printf("Indexed %d documents in %v\n", len(docs), time.Since(start))
 
 	fmt.Println("Starting simple fts")
 
