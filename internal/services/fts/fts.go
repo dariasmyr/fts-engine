@@ -53,6 +53,11 @@ type ResultDoc struct {
 	Doc           string
 }
 
+type SearchResult struct {
+	ResultDocs []ResultDoc
+	Timings    map[string]time.Duration
+}
+
 var stopWords = map[string]struct{}{
 	"a":       {},
 	"an":      {},
@@ -215,17 +220,21 @@ func (fts *FTS) AddDocument(ctx context.Context, content string) (int, error) {
 	return fts.documentSaver.AddDocument(ctx, content, words)
 }
 
-func (fts *FTS) Search(ctx context.Context, content string, maxResults int) ([]ResultDoc, time.Duration, error) {
+func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (SearchResult, error) {
 	startTime := time.Now()
+	timings := make(map[string]time.Duration)
 
+	preprocessStart := time.Now()
 	tokens := fts.preprocessText(content)
+	timings["preprocess"] = time.Since(preprocessStart)
+
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
 	docFrequency := make(map[int]int)
 	wordMatchCount := make(map[int]int)
 
-	// Find docIDs for every token
+	searchStart := time.Now()
 	for _, token := range tokens {
 		wg.Add(1)
 		go func(token string) {
@@ -267,14 +276,15 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) ([]R
 	}
 
 	wg.Wait()
+	timings["search_words"] = time.Since(searchStart)
 
+	sortStart := time.Now()
 	var docMatches []struct {
 		docID         int
 		uniqueMatches int
 		totalMatches  int
 	}
 
-	// Collect all docs from docFrequency to slice
 	for docID := range docFrequency {
 		docMatches = append(docMatches, struct {
 			docID         int
@@ -290,7 +300,9 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) ([]R
 		}
 		return docMatches[i].uniqueMatches > docMatches[j].uniqueMatches
 	})
+	timings["sort_results"] = time.Since(sortStart)
 
+	fetchStart := time.Now()
 	resultDocs := make([]ResultDoc, 0, maxResults)
 
 	for i := 0; i < len(docMatches) && i < maxResults; i++ {
@@ -304,7 +316,12 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) ([]R
 			})
 		}
 	}
+	timings["fetch_documents"] = time.Since(fetchStart)
 
-	elapsedTime := time.Since(startTime)
-	return resultDocs, elapsedTime, nil
+	timings["total"] = time.Since(startTime)
+
+	return SearchResult{
+		ResultDocs: resultDocs,
+		Timings:    timings,
+	}, nil
 }
