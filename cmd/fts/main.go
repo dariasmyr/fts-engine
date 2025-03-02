@@ -8,6 +8,7 @@ import (
 	"fts-hw/internal/app"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/fts"
+	"github.com/jroimartin/gocui"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -15,8 +16,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/jroimartin/gocui"
 )
 
 const (
@@ -136,7 +135,18 @@ func layout(g *gocui.Gui) error {
 		return fmt.Errorf("terminal window is too small")
 	}
 
-	if v, err := g.SetView("input", 2, 2, maxX-2, 4); err != nil {
+	// Left Sidebar for Time Measurement
+	if v, err := g.SetView("time", 0, 0, maxX/4, maxY-2); err != nil {
+		if !errors.Is(err, gocui.ErrUnknownView) {
+			return err
+		}
+		v.Title = "Time Measurements"
+		v.Wrap = true
+		v.Frame = true
+	}
+
+	// Search Input - Right side, top
+	if v, err := g.SetView("input", maxX/4+1, 2, maxX-2, 4); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
@@ -146,7 +156,8 @@ func layout(g *gocui.Gui) error {
 		_, _ = g.SetCurrentView("input")
 	}
 
-	if v, err := g.SetView("maxResults", 2, 5, maxX/4, 7); err != nil {
+	// Max Results Input - Right side, below search input
+	if v, err := g.SetView("maxResults", maxX/4+1, 5, maxX/2, 7); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
@@ -155,11 +166,12 @@ func layout(g *gocui.Gui) error {
 		v.Wrap = true
 	}
 
-	if v, err := g.SetView("output", 2, 8, maxX-2, maxY-2); err != nil {
+	// Output View - Right side, below max results
+	if v, err := g.SetView("output", maxX/4+1, 8, maxX-2, maxY-2); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
-		v.Title = " Results "
+		v.Title = "Results"
 		v.Wrap = true
 		v.Clear()
 	}
@@ -170,7 +182,20 @@ func layout(g *gocui.Gui) error {
 func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.App) error {
 	searchQuery = strings.TrimSpace(v.Buffer())
 
-	results, elapsedTime := performSearch(searchQuery, ctx, application)
+	results, elapsedTime, err := performSearch(searchQuery, ctx, application)
+
+	timeView, err := g.View("time")
+	if err != nil {
+		return err
+	}
+	timeView.Clear()
+
+	fmt.Fprintln(timeView, "\033[33mSearch Time:\033[0m")
+
+	for phase, duration := range elapsedTime {
+		formattedDuration := formatDuration(duration)
+		fmt.Fprintf(timeView, "\033[32m%s: %s\033[0m\n", phase, formattedDuration)
+	}
 
 	outputView, err := g.View("output")
 	if err != nil {
@@ -178,7 +203,6 @@ func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.A
 	}
 	outputView.Clear()
 
-	fmt.Fprintf(outputView, "\033[33mSearch Time: %s\033[0m\n\n", elapsedTime)
 	for i, result := range results {
 		if i >= maxResults {
 			break
@@ -196,6 +220,18 @@ func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.A
 	return nil
 }
 
+// Format the duration into a human-readable string
+func formatDuration(d time.Duration) string {
+	if d < time.Microsecond {
+		return fmt.Sprintf("%.3fns", float64(d)/float64(time.Nanosecond))
+	} else if d < time.Millisecond {
+		return fmt.Sprintf("%.3fµs", float64(d)/float64(time.Microsecond))
+	} else if d < time.Second {
+		return fmt.Sprintf("%.3fms", float64(d)/float64(time.Millisecond))
+	}
+	return fmt.Sprintf("%.3fs", float64(d)/float64(time.Second))
+}
+
 func highlightQueryInResult(result, query string) string {
 	words := strings.Fields(query)
 	for _, word := range words {
@@ -204,13 +240,12 @@ func highlightQueryInResult(result, query string) string {
 	return result
 }
 
-func performSearch(query string, ctx context.Context, application *app.App) ([]fts.ResultDoc, time.Duration) {
-	matchedDocs, elapsedTime, err := application.App.Search(ctx, query, maxResults)
+func performSearch(query string, ctx context.Context, application *app.App) ([]fts.ResultDoc, map[string]time.Duration, error) {
+	searchResult, err := application.App.Search(ctx, query, maxResults)
 	if err != nil {
-		fmt.Println("Error:", err)
-		os.Exit(1)
+		return nil, nil, err
 	}
-	return matchedDocs, elapsedTime
+	return searchResult.ResultDocs, searchResult.Timings, nil
 }
 
 func quit(g *gocui.Gui, v *gocui.View) error {
