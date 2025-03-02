@@ -1,6 +1,6 @@
 # Full-Text Search Test Engine 
 
-This is a simple custom-built full-text search engine in Go. It supports loading documents, indexing them, and performing searches on the indexed content using tokenization, stemming, stop-word removal.
+This is a simple custom-built full-text search engine in Go with LevelDB key-value storage. It supports loading documents, indexing them, and performing searches on the indexed content using tokenization, stemming, stop-word removal.
 
 ![Demo](docs/demo.gif)
 
