@@ -184,7 +184,7 @@ func layout(g *gocui.Gui) error {
 func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.App) error {
 	searchQuery = strings.TrimSpace(v.Buffer())
 
-	results, elapsedTime, err := performSearch(searchQuery, ctx, application)
+	results, elapsedTime, totalResultsCount, err := performSearch(searchQuery, ctx, application)
 
 	timeView, err := g.View("time")
 	if err != nil {
@@ -209,6 +209,8 @@ func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.A
 		if i >= maxResults {
 			break
 		}
+
+		fmt.Fprintf(outputView, "\033[33mTotal Results Count: %d\033[0m\n", totalResultsCount)
 
 		highlightedHeader := fmt.Sprintf("\033[32mDoc ID: %d | Unique Matches: %d | Total Matches: %d\033[0m\n",
 			result.DocID, result.UniqueMatches, result.TotalMatches)
@@ -242,12 +244,12 @@ func highlightQueryInResult(result, query string) string {
 	return result
 }
 
-func performSearch(query string, ctx context.Context, application *app.App) ([]fts.ResultDoc, map[string]time.Duration, error) {
+func performSearch(query string, ctx context.Context, application *app.App) ([]fts.ResultDoc, map[string]time.Duration, int, error) {
 	searchResult, err := application.App.Search(ctx, query, maxResults)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
-	return searchResult.ResultDocs, searchResult.Timings, nil
+	return searchResult.ResultDocs, searchResult.Timings, searchResult.TotalResultsCount, nil
 }
 
 func quit(g *gocui.Gui, v *gocui.View) error {
