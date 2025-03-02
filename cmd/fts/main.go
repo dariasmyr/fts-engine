@@ -225,12 +225,12 @@ func search(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.A
 	}
 	outputView.Clear()
 
+	fmt.Fprintf(outputView, "\033[33mTotal Results Count: %d\033[0m\n", totalResultsCount)
+
 	for i, result := range results {
 		if i >= maxResults {
 			break
 		}
-
-		fmt.Fprintf(outputView, "\033[33mTotal Results Count: %d\033[0m\n", totalResultsCount)
 
 		highlightedHeader := fmt.Sprintf("\033[32mDoc ID: %d | Unique Matches: %d | Total Matches: %d\033[0m\n",
 			result.DocID, result.UniqueMatches, result.TotalMatches)
