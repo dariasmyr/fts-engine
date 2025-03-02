@@ -3,7 +3,6 @@ package fts
 import (
 	"context"
 	"errors"
-	"fmt"
 	snowballeng "github.com/kljensen/snowball/english"
 	"iter"
 	"log/slog"
@@ -11,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 )
 
@@ -44,6 +44,13 @@ func New(
 		documentSaver:    documentSaver,
 		documentProvider: documentProvider,
 	}
+}
+
+type ResultDoc struct {
+	DocID         int
+	UniqueMatches int
+	TotalMatches  int
+	Doc           string
 }
 
 var stopWords = map[string]struct{}{
@@ -208,10 +215,10 @@ func (fts *FTS) AddDocument(ctx context.Context, content string) (int, error) {
 	return fts.documentSaver.AddDocument(ctx, content, words)
 }
 
-func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
-	// Split content by tokens
+func (fts *FTS) Search(ctx context.Context, content string, maxResults int) ([]ResultDoc, time.Duration, error) {
+	startTime := time.Now()
+
 	tokens := fts.preprocessText(content)
-	//fts.log.Debug("Tokens", "tokens", tokens)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
@@ -224,9 +231,7 @@ func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 		go func(token string) {
 			defer wg.Done()
 			docEntries, err := fts.documentProvider.SearchWord(ctx, token)
-			//fts.log.Debug("Doc entries", "docEntries count", len(docEntries), "token", token)
 			if err != nil {
-				//fts.log.Debug("No doc entries found for word, continue", "word", token)
 				return
 			}
 
@@ -286,21 +291,20 @@ func (fts *FTS) Search(ctx context.Context, content string) ([]string, error) {
 		return docMatches[i].uniqueMatches > docMatches[j].uniqueMatches
 	})
 
-	maxResultCount := 20
-	resultDocs := make([]string, 0, maxResultCount)
+	resultDocs := make([]ResultDoc, 0, maxResults)
 
-	for i := 0; i < len(docMatches) && i < maxResultCount; i++ {
+	for i := 0; i < len(docMatches) && i < maxResults; i++ {
 		docData, err := fts.documentProvider.SearchDocument(ctx, docMatches[i].docID)
 		if err == nil {
-			resultDocs = append(resultDocs, fmt.Sprintf(
-				"Doc %d (words:%d, total:%d): %s",
-				docMatches[i].docID,
-				docMatches[i].uniqueMatches,
-				docMatches[i].totalMatches,
-				docData,
-			))
+			resultDocs = append(resultDocs, ResultDoc{
+				DocID:         docMatches[i].docID,
+				UniqueMatches: docMatches[i].uniqueMatches,
+				TotalMatches:  docMatches[i].totalMatches,
+				Doc:           docData,
+			})
 		}
 	}
 
-	return resultDocs, nil
+	elapsedTime := time.Since(startTime)
+	return resultDocs, elapsedTime, nil
 }
