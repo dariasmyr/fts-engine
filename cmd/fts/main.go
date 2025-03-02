@@ -164,6 +164,8 @@ func layout(g *gocui.Gui) error {
 		v.Editable = true
 		v.Title = "Max Results"
 		v.Wrap = true
+
+		fmt.Fprintf(v, "%d", maxResults)
 	}
 
 	// Output View - Right side, below max results
