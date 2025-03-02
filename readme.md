@@ -2,7 +2,8 @@
 
 This is a simple custom-built full-text search engine in Go. It supports loading documents, indexing them, and performing searches on the indexed content using tokenization, stemming, stop-word removal.
 
-[![asciicast](https://asciinema.org/a/v2axrqrtCKrJp2TrZaBPz7ZZ3.svg)](https://asciinema.org/a/v2axrqrtCKrJp2TrZaBPz7ZZ3)
+![Demo](docs/demo.gif)
+
 ## Configuration
 Configuration files are located in `./config/`. Use `config_prod_example.yaml` as a template. 
 
