@@ -247,7 +247,7 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (Sea
 			localMap := make(map[int]int)
 			for _, docEntry := range docEntries {
 				// Split entries by comma and parse each "docID:count" pair
-				pairs := strings.Split(string(docEntry), ",")
+				pairs := strings.Split(docEntry, ",")
 
 				// Parse the stored index data (word = docID:count pairs)
 				for _, pair := range pairs {
