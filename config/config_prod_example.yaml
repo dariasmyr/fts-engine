@@ -1,4 +1,4 @@
 env: "prod"
-storage_path: "./storage_example/fts-test.db"
+storage_path: "./storage/fts-test.db"
 dump:
   dump_path: "./data/enwiki-latest-abstract1.xml.gz"
