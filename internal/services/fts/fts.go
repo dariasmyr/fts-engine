@@ -54,8 +54,9 @@ type ResultDoc struct {
 }
 
 type SearchResult struct {
-	ResultDocs []ResultDoc
-	Timings    map[string]time.Duration
+	ResultDocs        []ResultDoc
+	TotalResultsCount int
+	Timings           map[string]time.Duration
 }
 
 var stopWords = map[string]struct{}{
@@ -303,6 +304,7 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (Sea
 	timings["sort_results"] = time.Since(sortStart)
 
 	fetchStart := time.Now()
+	totalResultsCount := len(docMatches)
 	resultDocs := make([]ResultDoc, 0, maxResults)
 
 	for i := 0; i < len(docMatches) && i < maxResults; i++ {
@@ -321,7 +323,8 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (Sea
 	timings["total"] = time.Since(startTime)
 
 	return SearchResult{
-		ResultDocs: resultDocs,
-		Timings:    timings,
+		ResultDocs:        resultDocs,
+		Timings:           timings,
+		TotalResultsCount: totalResultsCount,
 	}, nil
 }
