@@ -3,7 +3,6 @@ package fts
 import (
 	"context"
 	"errors"
-	snowballeng "github.com/kljensen/snowball/english"
 	"iter"
 	"log/slog"
 	"sort"
@@ -12,6 +11,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	snowballeng "github.com/kljensen/snowball/english"
 )
 
 type FTS struct {
@@ -184,6 +185,7 @@ func (fts *FTS) preprocessText(content string) []string {
 	return words
 }
 
+// Temporary not used in code as it makes indexinx process extremely slow
 func generateNGrams(token string, n int) []string {
 	var ngrams []string
 
