@@ -1,18 +1,21 @@
 package workers
 
-import "context"
+import (
+	"context"
+	"fts-hw/internal/domain/models"
+)
 
 type Job struct {
 	Description JobDescriptor
 	ExecFn      ExecutionFn
-	Args        interface{}
+	Args        *models.Event
 }
 
-type ExecutionFn func(ctx context.Context, args interface{}) (interface{}, error)
+type ExecutionFn func(ctx context.Context, args models.Event) (string, error)
 
 type JobID string
 type jobType string
-type jobMetadata map[string]interface{}
+type jobMetadata map[string]models.Meta
 
 type JobDescriptor struct {
 	ID       JobID
@@ -27,7 +30,7 @@ type Result struct {
 }
 
 func (j Job) execute(ctx context.Context) Result {
-	value, err := j.ExecFn(ctx, j.Args)
+	value, err := j.ExecFn(ctx, *j.Args)
 	if err != nil {
 		return Result{
 			Err:         err,

@@ -2,13 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"fts-hw/config"
 	"fts-hw/internal/app"
+	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/fts"
+	"fts-hw/internal/workers"
+	"github.com/r3labs/sse/v2"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -30,33 +36,72 @@ var maxResults = 10
 
 func main() {
 	cfg := config.MustLoad()
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	log := setupLogger(cfg.Env)
 	log.Info("fts", "env", cfg.Env)
 
 	application := app.New(log, cfg.StoragePath)
-	log.Info("Database initialised")
+	log.Info("App initialised")
 
-	// TODO Uncomment this part to load documents and index them in the database
-	//loaderApp := loader.NewLoader(log, cfg.Loader.FilePath)
-	//log.Info("Loader initialised")
-	//docs, err := loaderApp.LoadDocuments()
-	//if err != nil {
-	//	fmt.Println("Error:", err)
-	//	os.Exit(1)
-	//}
-	//fmt.Printf("Loaded %d documents in %v\n", len(docs), time.Since(start))
-	//
-	//fmt.Printf("Start indexing %d documents\n", len(docs))
-	//for _, doc := range docs {
-	//	_, err := application.App.AddDocument(ctx, doc.Text, nil)
-	//	if err != nil {
-	//		fmt.Println("Error:", err)
-	//		os.Exit(1)
-	//	}
-	//
-	//}
-	//fmt.Printf("Indexed %d documents in %v\n", len(docs), time.Since(start))
+	client := sse.NewClient("https://stream.wikimedia.org/v2/stream/recentchange")
+	jobs := make(chan *workers.Job, 100)
+	pool := workers.New(100)
+
+	go func() {
+		err := client.SubscribeRaw(func(msg *sse.Event) {
+			var event models.Event
+			if err := json.Unmarshal(msg.Data, &event); err != nil {
+				log.Error("Failed to unmarshal event", "error", sl.Err(err))
+				return
+			}
+
+			log.Debug("Received event", "event", event)
+
+			// Ignore events from the "canary" domain
+			if event.Meta.Domain == "canary" {
+				return
+			}
+
+			job := workers.Job{
+				Description: workers.JobDescriptor{
+					ID:      workers.JobID(event.Meta.ID),
+					JobType: "fetch_and_store",
+				},
+				ExecFn: func(ctx context.Context, args models.Event) (string, error) {
+					apiURL := fmt.Sprintf("https://ru.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s", args.Title)
+
+					resp, err := http.Get(apiURL)
+					if err != nil {
+						return "", err
+					}
+					defer resp.Body.Close()
+
+					body, err := io.ReadAll(resp.Body)
+					if err != nil {
+						return "", err
+					}
+
+					var doc models.Article
+					if err := json.Unmarshal(body, &doc); err != nil {
+						return "", err
+					}
+
+					return application.App.AddDocument(ctx, doc.Extract, body, nil)
+				},
+				Args: &event,
+			}
+			jobs <- &job
+		})
+		if err != nil {
+			log.Error("Failed to subscribe to events", "error", sl.Err(err))
+		}
+	}()
+
+	go func() {
+		pool.Run(ctx)
+	}()
 
 	fmt.Println("Starting simple fts")
 
@@ -113,12 +158,14 @@ func main() {
 		if err := application.StorageApp.Stop(); err != nil {
 			log.Error("Failed to close database", "error", sl.Err(err))
 		}
+		cancel()
 		g.Close()
 	}()
 
 	if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
 		log.Error("Failed to run GUI:", "error", sl.Err(err))
 	}
+
 }
 
 func setMaxResults(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.App) error {
