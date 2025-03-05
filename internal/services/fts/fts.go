@@ -26,7 +26,7 @@ var (
 )
 
 type DocumentSaver interface {
-	AddDocument(ctx context.Context, content string, words []string) (int, error)
+	AddDocument(ctx context.Context, content string, words []string, docID *string) (int, error)
 	DeleteDocument(ctx context.Context, docId int) error
 }
 
@@ -224,10 +224,10 @@ func generateNGrams(token string, n int) []string {
 //	return processedTokens
 //}
 
-func (fts *FTS) AddDocument(ctx context.Context, content string) (int, error) {
+func (fts *FTS) AddDocument(ctx context.Context, content string, docId *string) (int, error) {
 	words := fts.preprocessText(content)
 
-	return fts.documentSaver.AddDocument(ctx, content, words)
+	return fts.documentSaver.AddDocument(ctx, content, words, docID)
 }
 
 func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (SearchResult, error) {
