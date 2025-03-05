@@ -15,6 +15,9 @@ require (
 	github.com/jroimartin/gocui v0.5.0 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/nsf/termbox-go v1.1.1 // indirect
+	github.com/r3labs/sse/v2 v2.10.0 // indirect
+	golang.org/x/net v0.0.0-20191116160921-f9c825593386 // indirect
+	gopkg.in/cenkalti/backoff.v1 v1.1.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	olympos.io/encoding/edn v0.0.0-20201019073823-d3554ca0b0a3 // indirect
 )
