@@ -28,7 +28,7 @@ func NewStorage(path string) (*Storage, error) {
 	return &Storage{db: db}, nil
 }
 
-func (s *Storage) AddDocument(context context.Context, content string, words []string, docID *string) (int, error) {
+func (s *Storage) AddDocument(context context.Context, content string, words []string, docID *string) (string, error) {
 	batch := new(leveldb.Batch)
 
 	var newID string
@@ -43,7 +43,7 @@ func (s *Storage) AddDocument(context context.Context, content string, words []s
 		}
 
 		newIDInt := lastID + 1
-		newID = strconv.Atoi(newIDInt)
+		newID = strconv.Itoa(newIDInt)
 
 		// Update document counter
 		batch.Put([]byte("doc_counter"), []byte(newID))
@@ -78,7 +78,7 @@ func (s *Storage) AddDocument(context context.Context, content string, words []s
 	}
 
 	// Apply all batch operations
-	err = s.db.Write(batch, nil)
+	err := s.db.Write(batch, nil)
 	if err != nil {
 		return "", err
 	}

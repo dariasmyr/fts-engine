@@ -20,22 +20,22 @@ func TestSearch(t *testing.T) {
 	searchEngine := fts.New(log, storage, storage)
 
 	content := "Search engine test document."
-	_, err = searchEngine.AddDocument(context.Background(), content)
+	_, err = searchEngine.AddDocument(context.Background(), content, nil)
 	if err != nil {
 		t.Fatalf("Failed to add document: %v", err)
 	}
 
-	results, err := searchEngine.Search(context.Background(), "test")
+	searchResults, err := searchEngine.Search(context.Background(), "test", 10)
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}
 
-	if len(results) == 0 {
+	if len(searchResults.ResultDocs) == 0 {
 		t.Fatalf("Expected search results, but got 0")
 	}
 
-	t.Logf("Search returned %d results", len(results))
-	for _, result := range results {
+	t.Logf("Search returned %d results", len(searchResults.ResultDocs))
+	for _, result := range searchResults.ResultDocs {
 		t.Log(result)
 	}
 }
