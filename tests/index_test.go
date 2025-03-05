@@ -16,12 +16,12 @@ func TestIndex(t *testing.T) {
 	content := "This is a test document for indexing."
 	words := []string{"test", "document", "indexing"}
 
-	docID, err := storage.AddDocument(context.Background(), content, words)
+	docID, err := storage.AddDocument(context.Background(), []byte(content), words, nil)
 	if err != nil {
 		t.Fatalf("Failed to add document: %v", err)
 	}
 
-	if docID == 0 {
+	if docID == "" {
 		t.Fatalf("Invalid document ID returned")
 	}
 
