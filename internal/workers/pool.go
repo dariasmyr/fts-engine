@@ -7,10 +7,11 @@ import (
 )
 
 type WorkerPool struct {
-	workersCount int
-	jobs         chan Job
-	results      chan Result
-	Done         chan struct{}
+	workersCount        int
+	jobs                chan Job
+	results             chan Result
+	Done                chan struct{}
+	ProcessedTasksCount int
 }
 
 func (wp WorkerPool) GenerateFrom(jobsBulk []Job) {
@@ -26,7 +27,7 @@ func (wp WorkerPool) Run(ctx context.Context) {
 
 	for i := 0; i < wp.workersCount; i++ {
 		wg.Add(1)
-		go worker(ctx, &wg, wp.jobs, wp.results)
+		go worker(ctx, &wg, wp.jobs, wp.results, &wp.ProcessedTasksCount)
 	}
 
 	wg.Wait()
@@ -34,7 +35,7 @@ func (wp WorkerPool) Run(ctx context.Context) {
 	close(wp.results)
 }
 
-func worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan Job, results chan<- Result) {
+func worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan Job, results chan<- Result, processedTasksCount *int) {
 	defer wg.Done()
 
 	for {
@@ -43,12 +44,17 @@ func worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan Job, results ch
 			if !ok {
 				return
 			}
-			results <- job.execute(ctx)
+			result := job.execute(ctx)
+			results <- result
+			if result.Err == nil {
+				*processedTasksCount++
+			}
 		case <-ctx.Done():
 			fmt.Printf("cancelled worker. Error detail: %v/n", ctx.Err())
 			results <- Result{
 				Err: ctx.Err(),
 			}
+			processedTasksCount = nil
 			return
 		}
 
