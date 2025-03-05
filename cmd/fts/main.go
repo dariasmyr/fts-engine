@@ -8,7 +8,6 @@ import (
 	"fts-hw/internal/app"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/fts"
-	"github.com/jroimartin/gocui"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/jroimartin/gocui"
 )
 
 const (
@@ -48,7 +49,7 @@ func main() {
 	//
 	//fmt.Printf("Start indexing %d documents\n", len(docs))
 	//for _, doc := range docs {
-	//	_, err := application.App.AddDocument(ctx, doc.Text)
+	//	_, err := application.App.AddDocument(ctx, doc.Text, nil)
 	//	if err != nil {
 	//		fmt.Println("Error:", err)
 	//		os.Exit(1)

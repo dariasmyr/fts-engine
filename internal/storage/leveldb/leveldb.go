@@ -28,24 +28,31 @@ func NewStorage(path string) (*Storage, error) {
 	return &Storage{db: db}, nil
 }
 
-func (s *Storage) AddDocument(context context.Context, content string, words []string) (int, error) {
+func (s *Storage) AddDocument(context context.Context, content string, words []string, docID *string) (int, error) {
 	batch := new(leveldb.Batch)
 
-	// Retrieve the last document ID
-	lastIDBytes, err := s.db.Get([]byte("doc_counter"), nil)
-	var lastID int
-	if err == nil {
-		lastID, _ = strconv.Atoi(string(lastIDBytes))
+	var newID string
+
+	// If docId (ID of a document from socket) is empty, we create it in db
+	if docID == nil {
+		// Retrieve the last document ID
+		lastIDBytes, err := s.db.Get([]byte("doc_counter"), nil)
+		var lastID int
+		if err == nil {
+			lastID, _ = strconv.Atoi(string(lastIDBytes))
+		}
+
+		newIDInt := lastID + 1
+		newID = strconv.Atoi(newIDInt)
+
+		// Update document counter
+		batch.Put([]byte("doc_counter"), []byte(newID))
+	} else {
+		newID = *docID
 	}
 
-	newID := lastID + 1
-	newIDStr := strconv.Itoa(newID)
-
-	// Update document counter
-	batch.Put([]byte("doc_counter"), []byte(newIDStr))
-
 	// Save the document content
-	batch.Put([]byte("doc:"+newIDStr), []byte(content))
+	batch.Put([]byte("doc:"+newID), []byte(content))
 
 	// Word indexing
 	wordsCount := make(map[string]int)
@@ -64,7 +71,7 @@ func (s *Storage) AddDocument(context context.Context, content string, words []s
 			indexDataBuilder.WriteByte(',')
 		}
 
-		indexDataBuilder.WriteString(fmt.Sprintf("%d:%d", newID, count)) // append the new index
+		indexDataBuilder.WriteString(fmt.Sprintf("%s:%d", newID, count)) // append the new index
 
 		// Save the updated index data for the word
 		batch.Put([]byte(wordKey), []byte(indexDataBuilder.String()))
@@ -73,7 +80,7 @@ func (s *Storage) AddDocument(context context.Context, content string, words []s
 	// Apply all batch operations
 	err = s.db.Write(batch, nil)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 
 	return newID, nil
