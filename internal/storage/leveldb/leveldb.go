@@ -28,7 +28,16 @@ func NewStorage(path string) (*Storage, error) {
 	return &Storage{db: db}, nil
 }
 
-func (s *Storage) AddDocument(context context.Context, content string, words []string, docID *string) (string, error) {
+func (s *Storage) GetDatabaseStats(context context.Context) (string, error) {
+	stats, err := s.db.GetProperty("leveldb.stats")
+	if err != nil {
+		return "", err
+	}
+
+	return stats, nil
+}
+
+func (s *Storage) AddDocument(context context.Context, content []byte, words []string, docID *string) (string, error) {
 	batch := new(leveldb.Batch)
 
 	var newID string
@@ -52,7 +61,7 @@ func (s *Storage) AddDocument(context context.Context, content string, words []s
 	}
 
 	// Save the document content
-	batch.Put([]byte("doc:"+newID), []byte(content))
+	batch.Put([]byte("doc:"+newID), content)
 
 	// Word indexing
 	wordsCount := make(map[string]int)
