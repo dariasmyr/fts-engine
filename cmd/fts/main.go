@@ -57,8 +57,6 @@ func main() {
 				return
 			}
 
-			log.Debug("Received event", "event", event)
-
 			// Ignore events from the "canary" domain
 			if event.Meta.Domain == "canary" {
 				return
@@ -114,6 +112,15 @@ func main() {
 
 	g.Cursor = true
 	g.SetManagerFunc(layout)
+
+	go func() {
+		for {
+			if err := updateDBInfo(g, application, &pool); err != nil {
+				log.Error("Failed to update DB info", "error", sl.Err(err))
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}()
 
 	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
 		log.Error("Failed to set keybinding:", "error", sl.Err(err))
@@ -203,8 +210,7 @@ func layout(g *gocui.Gui) error {
 		return fmt.Errorf("terminal window is too small")
 	}
 
-	// Left Sidebar for Time Measurement
-	if v, err := g.SetView("time", 0, 0, maxX/4, maxY-2); err != nil {
+	if v, err := g.SetView("time", 0, 0, maxX/2, maxY/4); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
@@ -213,8 +219,7 @@ func layout(g *gocui.Gui) error {
 		v.Frame = true
 	}
 
-	// Search Input - Right side, top
-	if v, err := g.SetView("input", maxX/4+1, 2, maxX-2, 4); err != nil {
+	if v, err := g.SetView("input", maxX/2+1, 0, maxX-2, maxY/4); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
@@ -224,20 +229,17 @@ func layout(g *gocui.Gui) error {
 		_, _ = g.SetCurrentView("input")
 	}
 
-	// Max Results Input - Right side, below search input
-	if v, err := g.SetView("maxResults", maxX/4+1, 5, maxX/2, 7); err != nil {
+	if v, err := g.SetView("maxResults", 0, maxY/4+1, maxX/2, maxY/4+2); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
 		v.Editable = true
 		v.Title = "Max Results"
 		v.Wrap = true
-
 		fmt.Fprintf(v, "%d", maxResults)
 	}
 
-	// Output View - Right side, below max results
-	if v, err := g.SetView("output", maxX/4+1, 8, maxX-2, maxY-2); err != nil {
+	if v, err := g.SetView("output", maxX/2+1, maxY/4+1, maxX-2, maxY/2); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
@@ -245,6 +247,46 @@ func layout(g *gocui.Gui) error {
 		v.Wrap = true
 		v.Clear()
 	}
+
+	if v, err := g.SetView("dbInfo", 0, maxY/2+1, maxX-2, maxY-1); err != nil {
+		if !errors.Is(err, gocui.ErrUnknownView) {
+			return err
+		}
+		v.Title = "DB Info"
+		v.Wrap = false
+		v.Frame = true
+	}
+
+	return nil
+}
+
+func getDatabaseStats(ctx context.Context, application *app.App) (string, error) {
+	size, err := application.StorageApp.Storage().GetDatabaseStats(ctx)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Database stats: %s", size), nil
+}
+
+func updateDBInfo(g *gocui.Gui, application *app.App, workerPool *workers.WorkerPool) error {
+	dbInfoView, err := g.View("dbInfo")
+	if err != nil {
+		return err
+	}
+
+	dbStats, err := getDatabaseStats(context.Background(), application)
+	if err != nil {
+		return err
+	}
+
+	processedDocsCount := workerPool.ProcessedTasksCount
+	if err != nil {
+		return err
+	}
+
+	dbInfoView.Clear()
+	fmt.Fprintf(dbInfoView, "\033[33mDatabase Stats:\033[0m %s\n", dbStats)
+	fmt.Fprintf(dbInfoView, "\033[33mProcessed Documents:\033[0m %d\n", processedDocsCount)
 
 	return nil
 }
