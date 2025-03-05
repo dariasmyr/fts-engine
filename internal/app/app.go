@@ -19,10 +19,10 @@ func New(
 		panic(err)
 	}
 
-	authService := fts.New(log, storageApp.Storage(), storageApp.Storage())
+	ftsService := fts.New(log, storageApp.Storage(), storageApp.Storage())
 
 	return &App{
-		App:        authService,
+		App:        ftsService,
 		StorageApp: storageApp,
 	}
 }
