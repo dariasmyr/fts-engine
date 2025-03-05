@@ -2,13 +2,13 @@ package workers
 
 import "context"
 
-type Job[T interface{}] struct {
+type Job struct {
 	Description JobDescriptor
-	ExecFn      ExecutionFn[T]
-	Args        T
+	ExecFn      ExecutionFn
+	Args        interface{}
 }
 
-type ExecutionFn[T interface{}] func(ctx context.Context, args T) (T, error)
+type ExecutionFn func(ctx context.Context, args interface{}) (interface{}, error)
 
 type JobID string
 type jobType string
@@ -20,13 +20,13 @@ type JobDescriptor struct {
 	Metadata jobMetadata
 }
 
-type Result[T interface{}] struct {
-	Value       T
+type Result struct {
+	Value       interface{}
 	Err         error
 	Description JobDescriptor
 }
 
-func (j Job[T]) execute(ctx context.Context) Result[T] {
+func (j Job) execute(ctx context.Context) Result {
 	value, err := j.ExecFn(ctx, j.Args)
 	if err != nil {
 		return Result{
@@ -35,7 +35,7 @@ func (j Job[T]) execute(ctx context.Context) Result[T] {
 		}
 	}
 
-	return Result[T]{
+	return Result{
 		Value:       value,
 		Description: j.Description,
 	}
