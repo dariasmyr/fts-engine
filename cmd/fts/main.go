@@ -232,7 +232,7 @@ func layout(g *gocui.Gui) error {
 		return fmt.Errorf("terminal window is too small")
 	}
 
-	if v, err := g.SetView("time", 0, 0, maxX/2, maxY/4); err != nil {
+	if v, err := g.SetView("time", 0, 0, maxX/4, maxY-2); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
@@ -241,7 +241,16 @@ func layout(g *gocui.Gui) error {
 		v.Frame = true
 	}
 
-	if v, err := g.SetView("input", maxX/2+1, 0, maxX-2, maxY/4); err != nil {
+	if v, err := g.SetView("dbInfo", 0, 2, maxX/4, 2); err != nil {
+		if !errors.Is(err, gocui.ErrUnknownView) {
+			return err
+		}
+		v.Title = "DB Info"
+		v.Wrap = false
+		v.Frame = true
+	}
+
+	if v, err := g.SetView("input", maxX/4+1, 2, maxX-2, 4); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
@@ -251,32 +260,24 @@ func layout(g *gocui.Gui) error {
 		_, _ = g.SetCurrentView("input")
 	}
 
-	if v, err := g.SetView("maxResults", 0, maxY/4+1, maxX/2, maxY/4+2); err != nil {
+	if v, err := g.SetView("maxResults", maxX/4+1, 5, maxX/2, 7); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
 		v.Editable = true
 		v.Title = "Max Results"
 		v.Wrap = true
+
 		fmt.Fprintf(v, "%d", maxResults)
 	}
 
-	if v, err := g.SetView("output", maxX/2+1, maxY/4+1, maxX-2, maxY/2); err != nil {
+	if v, err := g.SetView("output", 0, 5, maxX-1, maxY-1); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
 		v.Title = "Results"
 		v.Wrap = true
 		v.Clear()
-	}
-
-	if v, err := g.SetView("dbInfo", 0, maxY/2+1, maxX-2, maxY-1); err != nil {
-		if !errors.Is(err, gocui.ErrUnknownView) {
-			return err
-		}
-		v.Title = "DB Info"
-		v.Wrap = false
-		v.Frame = true
 	}
 
 	return nil
