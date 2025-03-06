@@ -51,12 +51,12 @@ func main() {
 	pool := workers.New(100)
 
 	allowedServers := map[string]struct{}{
-		"https://www.mediawiki.org":     {},
-		"https://meta.wikimedia.org":    {},
-		"https://en.wikipedia.org":      {},
-		"https://nl.wikipedia.org":      {},
-		"https://commons.wikimedia.org": {},
-		"https://test.wikipedia.org":    {},
+		// "https://www.mediawiki.org":     {},
+		// "https://meta.wikimedia.org":    {},
+		"https://en.wikipedia.org": {},
+		// "https://nl.wikipedia.org":      {},
+		// "https://commons.wikimedia.org": {},
+		// "https://test.wikipedia.org":    {},
 	}
 
 	go func() {
@@ -73,7 +73,7 @@ func main() {
 			}
 
 			if _, ok := allowedServers[event.ServerURL]; !ok {
-				log.Info("Ignored event from non-allowed server", "serverURL", event.ServerURL)
+				// log.Info("Ignored event from non-allowed server", "serverURL", event.ServerURL)
 				return
 			}
 
@@ -102,6 +102,8 @@ func main() {
 					if err := json.Unmarshal(body, &doc); err != nil {
 						return "", err
 					}
+
+					log.Debug("Article extract", "exctart", doc.Extract)
 
 					return application.App.AddDocument(ctx, doc.Extract, body, nil)
 				},
