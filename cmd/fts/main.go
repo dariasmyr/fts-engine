@@ -61,6 +61,9 @@ func main() {
 
 	go func() {
 		err := client.SubscribeRaw(func(msg *sse.Event) {
+
+			log.Debug("MESSAGE:", "message", msg.Data)
+
 			var event models.Event
 			if err := json.Unmarshal(msg.Data, &event); err != nil {
 				log.Error("Failed to unmarshal event", "error", sl.Err(err))
@@ -77,7 +80,7 @@ func main() {
 				return
 			}
 
-			log.Debug("Received event:", "event", event)
+			log.Debug("Filtered event:", "event", event)
 
 			job := workers.Job{
 				Description: workers.JobDescriptor{
