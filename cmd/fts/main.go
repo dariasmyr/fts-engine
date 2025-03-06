@@ -51,12 +51,12 @@ func main() {
 	pool := workers.New(100)
 
 	allowedServers := map[string]struct{}{
-		// "https://www.mediawiki.org":     {},
-		// "https://meta.wikimedia.org":    {},
-		"https://en.wikipedia.org": {},
-		// "https://nl.wikipedia.org":      {},
-		// "https://commons.wikimedia.org": {},
-		// "https://test.wikipedia.org":    {},
+		"https://www.mediawiki.org":     {},
+		"https://meta.wikimedia.org":    {},
+		"https://en.wikipedia.org":      {},
+		"https://nl.wikipedia.org":      {},
+		"https://commons.wikimedia.org": {},
+		"https://test.wikipedia.org":    {},
 	}
 
 	go func() {
