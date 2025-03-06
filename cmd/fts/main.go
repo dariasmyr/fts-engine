@@ -51,12 +51,12 @@ func main() {
 	pool := workers.New(100)
 
 	allowedServers := map[string]struct{}{
-		"https://www.mediawiki.org/w/api.php":     {},
-		"https://meta.wikimedia.org/w/api.php":    {},
-		"https://en.wikipedia.org/w/api.php":      {},
-		"https://nl.wikipedia.org/w/api.php":      {},
-		"https://commons.wikimedia.org/w/api.php": {},
-		"https://test.wikipedia.org/w/api.php":    {},
+		"https://www.mediawiki.org":     {},
+		"https://meta.wikimedia.org":    {},
+		"https://en.wikipedia.org":      {},
+		"https://nl.wikipedia.org":      {},
+		"https://commons.wikimedia.org": {},
+		"https://test.wikipedia.org":    {},
 	}
 
 	go func() {
@@ -120,59 +120,59 @@ func main() {
 
 	fmt.Println("Starting simple fts")
 
-	g, err := gocui.NewGui(gocui.OutputNormal)
-	if err != nil {
-		log.Error("Failed to create GUI:", "error", sl.Err(err))
-		os.Exit(1)
-	}
-	defer g.Close()
+	// g, err := gocui.NewGui(gocui.OutputNormal)
+	// if err != nil {
+	// 	log.Error("Failed to create GUI:", "error", sl.Err(err))
+	// 	os.Exit(1)
+	// }
+	// defer g.Close()
 
-	g.Cursor = true
-	g.SetManagerFunc(layout)
+	// g.Cursor = true
+	// g.SetManagerFunc(layout)
 
-	go func() {
-		for {
-			if err := updateDBInfo(g, application, &pool); err != nil {
-				log.Error("Failed to update DB info", "error", sl.Err(err))
-			}
-			time.Sleep(2 * time.Second)
-		}
-	}()
+	// go func() {
+	// 	for {
+	// 		if err := updateDBInfo(g, application, &pool); err != nil {
+	// 			log.Error("Failed to update DB info", "error", sl.Err(err))
+	// 		}
+	// 		time.Sleep(2 * time.Second)
+	// 	}
+	// }()
 
-	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
-	if err := g.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
-		return search(g, v, ctx, application)
-	}); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
+	// if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
+	// 	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	// }
+	// if err := g.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+	// 	return search(g, v, ctx, application)
+	// }); err != nil {
+	// 	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	// }
 
-	if err := g.SetKeybinding("output", gocui.KeyArrowDown, gocui.ModNone, scrollDown); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
-	if err := g.SetKeybinding("output", gocui.KeyArrowUp, gocui.ModNone, scrollUp); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
-	if err := g.SetKeybinding("maxResults", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
-		return setMaxResults(g, v, ctx, application)
-	}); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
+	// if err := g.SetKeybinding("output", gocui.KeyArrowDown, gocui.ModNone, scrollDown); err != nil {
+	// 	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	// }
+	// if err := g.SetKeybinding("output", gocui.KeyArrowUp, gocui.ModNone, scrollUp); err != nil {
+	// 	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	// }
+	// if err := g.SetKeybinding("maxResults", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+	// 	return setMaxResults(g, v, ctx, application)
+	// }); err != nil {
+	// 	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	// }
 
-	if err := g.SetKeybinding("", gocui.KeyTab, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
-		currentView := g.CurrentView().Name()
-		if currentView == "input" {
-			_, _ = g.SetCurrentView("maxResults")
-		} else if currentView == "maxResults" {
-			_, _ = g.SetCurrentView("output")
-		} else {
-			_, _ = g.SetCurrentView("input")
-		}
-		return nil
-	}); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
+	// if err := g.SetKeybinding("", gocui.KeyTab, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+	// 	currentView := g.CurrentView().Name()
+	// 	if currentView == "input" {
+	// 		_, _ = g.SetCurrentView("maxResults")
+	// 	} else if currentView == "maxResults" {
+	// 		_, _ = g.SetCurrentView("output")
+	// 	} else {
+	// 		_, _ = g.SetCurrentView("input")
+	// 	}
+	// 	return nil
+	// }); err != nil {
+	// 	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	// }
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
@@ -183,12 +183,12 @@ func main() {
 			log.Error("Failed to close database", "error", sl.Err(err))
 		}
 		cancel()
-		g.Close()
+		// g.Close()
 	}()
 
-	if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
-		log.Error("Failed to run GUI:", "error", sl.Err(err))
-	}
+	// if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
+	// 	log.Error("Failed to run GUI:", "error", sl.Err(err))
+	// }
 
 }
 
