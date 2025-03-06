@@ -11,7 +11,6 @@ import (
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/fts"
 	"fts-hw/internal/workers"
-	"github.com/r3labs/sse/v2"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,6 +20,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/r3labs/sse/v2"
 
 	"github.com/jroimartin/gocui"
 )
@@ -49,6 +50,15 @@ func main() {
 	jobs := make(chan *workers.Job, 100)
 	pool := workers.New(100)
 
+	allowedServers := map[string]struct{}{
+		"https://www.mediawiki.org/w/api.php":     {},
+		"https://meta.wikimedia.org/w/api.php":    {},
+		"https://en.wikipedia.org/w/api.php":      {},
+		"https://nl.wikipedia.org/w/api.php":      {},
+		"https://commons.wikimedia.org/w/api.php": {},
+		"https://test.wikipedia.org/w/api.php":    {},
+	}
+
 	go func() {
 		err := client.SubscribeRaw(func(msg *sse.Event) {
 			var event models.Event
@@ -62,13 +72,20 @@ func main() {
 				return
 			}
 
+			if _, ok := allowedServers[event.ServerURL]; !ok {
+				log.Info("Ignored event from non-allowed server", "serverURL", event.ServerURL)
+				return
+			}
+
+			log.Debug("Received event:", "event", event)
+
 			job := workers.Job{
 				Description: workers.JobDescriptor{
 					ID:      workers.JobID(event.Meta.ID),
 					JobType: "fetch_and_store",
 				},
 				ExecFn: func(ctx context.Context, args models.Event) (string, error) {
-					apiURL := fmt.Sprintf("https://ru.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s", args.Title)
+					apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s", args.ServerURL, args.Title)
 
 					resp, err := http.Get(apiURL)
 					if err != nil {
