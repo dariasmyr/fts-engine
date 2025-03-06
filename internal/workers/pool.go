@@ -22,6 +22,10 @@ func (wp WorkerPool) GenerateFrom(jobsBulk []Job) {
 	close(wp.jobs)
 }
 
+func (wp WorkerPool) AddJob(job *Job) {
+	wp.jobs <- *job
+}
+
 func (wp WorkerPool) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 
@@ -38,12 +42,15 @@ func (wp WorkerPool) Run(ctx context.Context) {
 func worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan Job, results chan<- Result, processedTasksCount *int) {
 	defer wg.Done()
 
+	fmt.Println("worker is started")
+
 	for {
 		select {
 		case job, ok := <-jobs:
 			if !ok {
 				return
 			}
+			fmt.Println("worker is processing job")
 			result := job.execute(ctx)
 			results <- result
 			if result.Err == nil {
@@ -61,10 +68,10 @@ func worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan Job, results ch
 	}
 }
 
-func New(wcount int) WorkerPool {
+func New(wcount int, jobcount int) WorkerPool {
 	return WorkerPool{
 		workersCount: wcount,
-		jobs:         make(chan Job, wcount),
+		jobs:         make(chan Job, jobcount),
 		results:      make(chan Result, wcount),
 		Done:         make(chan struct{}),
 	}
