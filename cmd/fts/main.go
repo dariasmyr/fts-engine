@@ -10,10 +10,13 @@ import (
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/fts"
+	"fts-hw/internal/utils/frequency"
+	"fts-hw/internal/utils/metrics"
 	"fts-hw/internal/workers"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -47,8 +50,7 @@ func main() {
 	log.Info("App initialised")
 
 	client := sse.NewClient("https://stream.wikimedia.org/v2/stream/recentchange")
-	jobs := make(chan *workers.Job, 100)
-	pool := workers.New(100)
+	pool := workers.New(1000, 1000000)
 
 	allowedServers := map[string]struct{}{
 		"https://www.mediawiki.org":     {},
@@ -60,68 +62,90 @@ func main() {
 	}
 
 	go func() {
-		err := client.SubscribeRaw(func(msg *sse.Event) {
-
-			log.Debug("MESSAGE:", "message", msg.Data)
-
-			var event models.Event
-			if err := json.Unmarshal(msg.Data, &event); err != nil {
-				log.Error("Failed to unmarshal event", "error", sl.Err(err))
-				return
-			}
-
-			// Ignore events from the "canary" domain
-			if event.Meta.Domain == "canary" {
-				return
-			}
-
-			if _, ok := allowedServers[event.ServerURL]; !ok {
-				// log.Info("Ignored event from non-allowed server", "serverURL", event.ServerURL)
-				return
-			}
-
-			log.Debug("Filtered event:", "event", event)
-
-			job := workers.Job{
-				Description: workers.JobDescriptor{
-					ID:      workers.JobID(event.Meta.ID),
-					JobType: "fetch_and_store",
-				},
-				ExecFn: func(ctx context.Context, args models.Event) (string, error) {
-					apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s", args.ServerURL, args.Title)
-
-					resp, err := http.Get(apiURL)
-					if err != nil {
-						return "", err
-					}
-					defer resp.Body.Close()
-
-					body, err := io.ReadAll(resp.Body)
-					if err != nil {
-						return "", err
-					}
-
-					var doc models.Article
-					if err := json.Unmarshal(body, &doc); err != nil {
-						return "", err
-					}
-
-					log.Debug("Article extract", "exctart", doc.Extract)
-
-					return application.App.AddDocument(ctx, doc.Extract, body, nil)
-				},
-				Args: &event,
-			}
-			jobs <- &job
-		})
-		if err != nil {
-			log.Error("Failed to subscribe to events", "error", sl.Err(err))
-		}
-	}()
-
-	go func() {
 		pool.Run(ctx)
 	}()
+
+	freq := &frequency.Frequency{Interval: 10 * time.Second, LastTime: time.Now()}
+
+	//go func() {
+	err := client.SubscribeRaw(func(msg *sse.Event) {
+		freq.Add(1)
+		freq.Check(log)
+
+		var event models.Event
+
+		if err := json.Unmarshal(msg.Data, &event); err != nil {
+			log.Error("Failed to unmarshal event", "error", sl.Err(err))
+			return
+		}
+
+		// Ignore events from the "canary" domain
+		if event.Meta.Domain == "canary" {
+			return
+		}
+
+		if _, ok := allowedServers[event.ServerURL]; !ok {
+			return
+		}
+
+		freq.Add(1)
+		freq.Check(log)
+
+		jobMetrics := &metrics.Metrics{}
+
+		job := workers.Job{
+			Description: workers.JobDescriptor{
+				ID:      workers.JobID(event.Meta.ID),
+				JobType: "fetch_and_store",
+			},
+			ExecFn: func(ctx context.Context, args models.Event) (string, error) {
+				startTime := time.Now()
+
+				apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s", args.ServerURL, url.QueryEscape(args.Title))
+				resp, err := http.Get(apiURL)
+				if err != nil {
+					jobMetrics.RecordFailure(time.Since(startTime))
+					return "", err
+				}
+				defer resp.Body.Close()
+
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					jobMetrics.RecordFailure(time.Since(startTime))
+					return "", err
+				}
+
+				var apiResponse models.ArticleResponse
+				if err := json.Unmarshal(body, &apiResponse); err != nil {
+					jobMetrics.RecordFailure(time.Since(startTime))
+					return "", err
+				}
+
+				for _, page := range apiResponse.Query.Pages {
+					if page.Extract == "" {
+						jobMetrics.RecordFailure(time.Since(startTime))
+						return "", errors.New("empty extract in response")
+					}
+					result, err := application.App.AddDocument(ctx, page.Extract, body, nil)
+					if err != nil {
+						jobMetrics.RecordFailure(time.Since(startTime))
+						return "", err
+					}
+					jobMetrics.RecordSuccess(time.Since(startTime))
+					return result, nil
+				}
+
+				jobMetrics.RecordFailure(time.Since(startTime))
+				return "", errors.New("no valid pages found in response")
+			},
+			Args: &event,
+		}
+		pool.AddJob(&job)
+	})
+	if err != nil {
+		log.Error("Failed to subscribe to events", "error", sl.Err(err))
+	}
+	//}()
 
 	fmt.Println("Starting simple fts")
 
