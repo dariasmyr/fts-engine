@@ -42,15 +42,12 @@ func (wp WorkerPool) Run(ctx context.Context) {
 func worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan Job, results chan<- Result, processedTasksCount *int) {
 	defer wg.Done()
 
-	fmt.Println("worker is started")
-
 	for {
 		select {
 		case job, ok := <-jobs:
 			if !ok {
 				return
 			}
-			fmt.Println("worker is processing job")
 			result := job.execute(ctx)
 			results <- result
 			if result.Err == nil {
