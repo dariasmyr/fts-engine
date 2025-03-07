@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"log/slog"
 	"sync"
 	"time"
 )
@@ -13,6 +12,13 @@ type Metrics struct {
 	failedJobs         int
 	totalExecutionTime time.Duration
 	executionCount     int
+}
+
+type Stats struct {
+	TotalJobs      int
+	SuccessfulJobs int
+	FailedJobs     int
+	AvgExecTime    time.Duration
 }
 
 func (m *Metrics) RecordSuccess(duration time.Duration) {
@@ -33,7 +39,7 @@ func (m *Metrics) RecordFailure(duration time.Duration) {
 	m.executionCount++
 }
 
-func (m *Metrics) PrintMetrics(log *slog.Logger) {
+func (m *Metrics) PrintMetrics() *Stats {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -42,10 +48,10 @@ func (m *Metrics) PrintMetrics(log *slog.Logger) {
 		avgExecTime = m.totalExecutionTime / time.Duration(m.executionCount)
 	}
 
-	log.Info("Metrics",
-		"Total Jobs", m.totalJobs,
-		"Successful Jobs", m.successfulJobs,
-		"Failed Jobs", m.failedJobs,
-		"Avg Execution Time", avgExecTime,
-	)
+	return &Stats{
+		TotalJobs:      m.totalJobs,
+		SuccessfulJobs: m.successfulJobs,
+		FailedJobs:     m.failedJobs,
+		AvgExecTime:    avgExecTime,
+	}
 }
