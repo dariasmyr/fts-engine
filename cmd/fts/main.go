@@ -38,6 +38,11 @@ const (
 var searchQuery string
 var maxResults = 10
 
+var totalEvents int
+var totalFilteredEvents int
+var eventsWithExtract int
+var eventsWithoutExtract int
+
 func main() {
 	cfg := config.MustLoad()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -52,25 +57,42 @@ func main() {
 	client := sse.NewClient("https://stream.wikimedia.org/v2/stream/recentchange")
 	pool := workers.New(1000, 1000000)
 
-	allowedServers := map[string]struct{}{
-		"https://www.mediawiki.org":     {},
-		"https://meta.wikimedia.org":    {},
-		"https://en.wikipedia.org":      {},
-		"https://nl.wikipedia.org":      {},
-		"https://commons.wikimedia.org": {},
-		"https://test.wikipedia.org":    {},
-	}
+	jobMetrics := &metrics.Metrics{}
+	freq := &frequency.Frequency{Interval: 10 * time.Second, LastTime: time.Now()}
+
+	// Only allow events from en.wikipedia.org
+	allowedServer := "https://en.wikipedia.org"
 
 	go func() {
 		pool.Run(ctx)
 	}()
 
-	freq := &frequency.Frequency{Interval: 10 * time.Second, LastTime: time.Now()}
+	go func() {
+		for {
+			metricsStats := jobMetrics.PrintMetrics()
+			log.Info("Job Metrics",
+				"Total Jobs", metricsStats.TotalJobs,
+				"Successful Jobs", metricsStats.SuccessfulJobs,
+				"Failed Jobs", metricsStats.FailedJobs,
+				"Avg Exec Time", metricsStats.AvgExecTime)
+			log.Info("Events Stats",
+				"Total Events", totalEvents,
+				"Total Filtered Events", totalFilteredEvents,
+				"Events With Extract", eventsWithExtract,
+				"Events Without Extract", eventsWithoutExtract)
+			freqStats := freq.PrintFreq()
+			log.Info("Frequency Stats",
+				"Total", freqStats.Total,
+				"Count", freqStats.Count,
+				"Average", freqStats.Average)
+			time.Sleep(10 * time.Second)
+		}
+	}()
 
 	//go func() {
 	err := client.SubscribeRaw(func(msg *sse.Event) {
+		totalEvents++
 		freq.Add(1)
-		freq.Check(log)
 
 		var event models.Event
 
@@ -84,14 +106,12 @@ func main() {
 			return
 		}
 
-		if _, ok := allowedServers[event.ServerURL]; !ok {
+		// Ignore events from non-allowed servers
+		if event.ServerURL != allowedServer {
 			return
 		}
 
-		freq.Add(1)
-		freq.Check(log)
-
-		jobMetrics := &metrics.Metrics{}
+		totalFilteredEvents++
 
 		job := workers.Job{
 			Description: workers.JobDescriptor{
@@ -101,7 +121,9 @@ func main() {
 			ExecFn: func(ctx context.Context, args models.Event) (string, error) {
 				startTime := time.Now()
 
-				apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s", args.ServerURL, url.QueryEscape(args.Title))
+				apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s",
+					args.ServerURL, url.QueryEscape(args.Title))
+
 				resp, err := http.Get(apiURL)
 				if err != nil {
 					jobMetrics.RecordFailure(time.Since(startTime))
@@ -123,9 +145,12 @@ func main() {
 
 				for _, page := range apiResponse.Query.Pages {
 					if page.Extract == "" {
+						eventsWithoutExtract++
 						jobMetrics.RecordFailure(time.Since(startTime))
 						return "", errors.New("empty extract in response")
 					}
+
+					eventsWithExtract++
 					result, err := application.App.AddDocument(ctx, page.Extract, body, nil)
 					if err != nil {
 						jobMetrics.RecordFailure(time.Since(startTime))
