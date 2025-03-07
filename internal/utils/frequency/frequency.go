@@ -1,7 +1,6 @@
 package frequency
 
 import (
-	"log/slog"
 	"time"
 )
 
@@ -12,17 +11,30 @@ type Frequency struct {
 	LastTime time.Time
 }
 
+type Stats struct {
+	Total   int
+	Count   int
+	Average float64
+}
+
 func (f *Frequency) Add(count int) {
 	f.count += count
 	f.total += count
 }
 
-func (f *Frequency) Check(log *slog.Logger) {
+func (f *Frequency) Check() *Stats {
 	now := time.Now()
 	elapsed := now.Sub(f.LastTime)
 	if elapsed >= f.Interval {
-		average := float64(f.total) / elapsed.Seconds()
-		log.Info("Event Rate", "count", f.count, "average", average)
+		average := float64(f.count) / elapsed.Seconds()
+		frequencyStats := &Stats{
+			Total:   f.total,
+			Count:   f.count,
+			Average: average,
+		}
 		f.LastTime = now
+		f.count = 0
+		return frequencyStats
 	}
+	return nil
 }
