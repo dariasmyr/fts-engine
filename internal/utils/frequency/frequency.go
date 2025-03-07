@@ -22,7 +22,7 @@ func (f *Frequency) Add(count int) {
 	f.total += count
 }
 
-func (f *Frequency) Check() *Stats {
+func (f *Frequency) PrintFreq() *Stats {
 	now := time.Now()
 	elapsed := now.Sub(f.LastTime)
 	if elapsed >= f.Interval {
