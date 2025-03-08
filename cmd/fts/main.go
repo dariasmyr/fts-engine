@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -54,8 +55,19 @@ func main() {
 	application := app.New(log, cfg.StoragePath)
 	log.Info("App initialised")
 
+	// Determine the number of workers and the size of the job queue based on the number of CPUs
+	numCPU := runtime.NumCPU()
+	var workerCount, jobQueueSize int
+
+	// Determine the number of workers and the size of the job queue based on the number of CPUs.
+	// By multiplying the number of CPUs by a factor of 10 for the workers and by 20 for the job queue size,
+	// we ensure that the system adapts to the available hardware resources dynamically.
+	workerCount = numCPU * 10
+	jobQueueSize = workerCount * 20
+
+	pool := workers.New(workerCount, jobQueueSize)
+
 	client := sse.NewClient("https://stream.wikimedia.org/v2/stream/recentchange")
-	pool := workers.New(1000, 1000000)
 
 	jobMetrics := &metrics.Metrics{}
 	freq := &frequency.Frequency{Interval: 10 * time.Second, LastTime: time.Now()}
