@@ -14,7 +14,7 @@ type WorkerPool struct {
 	activeWorkers chan int
 }
 
-func (wp WorkerPool) GenerateFrom(jobsBulk []Job) {
+func (wp *WorkerPool) GenerateFrom(jobsBulk []Job) {
 	for i := range jobsBulk {
 		wp.jobs <- jobsBulk[i]
 	}
@@ -22,19 +22,19 @@ func (wp WorkerPool) GenerateFrom(jobsBulk []Job) {
 	close(wp.jobs)
 }
 
-func (wp WorkerPool) AddJob(job *Job) {
+func (wp *WorkerPool) AddJob(job *Job) {
 	wp.jobs <- *job
 }
 
-func (wp WorkerPool) ActiveWorkersCount() int {
+func (wp *WorkerPool) ActiveWorkersCount() int {
 	return len(wp.activeWorkers)
 }
 
-func (wp WorkerPool) JobChannelCount() int {
+func (wp *WorkerPool) JobChannelCount() int {
 	return len(wp.jobs)
 }
 
-func (wp WorkerPool) Run(ctx context.Context) {
+func (wp *WorkerPool) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < wp.workersCount; i++ {
