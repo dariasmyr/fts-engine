@@ -362,14 +362,8 @@ func updateDBInfo(g *gocui.Gui, application *app.App, workerPool *workers.Worker
 		return err
 	}
 
-	processedDocsCount := workerPool.ProcessedTasksCount
-	if err != nil {
-		return err
-	}
-
 	dbInfoView.Clear()
 	fmt.Fprintf(dbInfoView, "\033[33mDatabase Stats:\033[0m %s\n", dbStats)
-	fmt.Fprintf(dbInfoView, "\033[33mProcessed Documents:\033[0m %d\n", processedDocsCount)
 
 	return nil
 }
