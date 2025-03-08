@@ -70,7 +70,7 @@ func main() {
 	client := sse.NewClient("https://stream.wikimedia.org/v2/stream/recentchange")
 
 	jobMetrics := &metrics.Metrics{}
-	freq := &frequency.Frequency{Interval: 10 * time.Second, LastTime: time.Now()}
+	freq := frequency.New(1 * time.Second)
 
 	// Only allow events from en.wikipedia.org
 	allowedServer := "https://en.wikipedia.org"
@@ -81,6 +81,11 @@ func main() {
 
 	go func() {
 		for {
+			log.Info("Num CPUs", "count", numCPU)
+			log.Info("Max workers count", "count", workerCount)
+			log.Info("Active Workers", "count", pool.ActiveWorkersCount())
+			log.Info("Max job channel size", "count", jobQueueSize)
+			log.Info("Job from job channel waitinf to be taked into work", "count", pool.JobChannelCount())
 			metricsStats := jobMetrics.PrintMetrics()
 			log.Info("Job Metrics",
 				"Total Jobs", metricsStats.TotalJobs,
@@ -92,11 +97,11 @@ func main() {
 				"Total Filtered Events", totalFilteredEvents,
 				"Events With Extract", eventsWithExtract,
 				"Events Without Extract", eventsWithoutExtract)
-			freqStats := freq.PrintFreq()
+			freq.PrintFreq()
 			log.Info("Frequency Stats",
-				"Total", freqStats.Total,
-				"Count", freqStats.Count,
-				"Average", freqStats.Average)
+				"Total", freq.Stats.Total,
+				"Count", freq.Stats.Count,
+				"Average", freq.Stats.Average)
 			time.Sleep(10 * time.Second)
 		}
 	}()
