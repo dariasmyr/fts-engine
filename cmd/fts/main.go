@@ -60,25 +60,22 @@ func main() {
 	application := app.New(log, cfg.StoragePath)
 	log.Info("App initialised")
 
-	// Determine the number of workers and the size of the job queue based on the number of CPUs
-	numCPU := runtime.NumCPU()
-	var workerCount, jobQueueSize int
-
-	// Determine the number of workers and the size of the job queue based on the number of CPUs.
-	// By multiplying the number of CPUs by a factor of 10 for the workers and by 20 for the job queue size,
-	// we ensure that the system adapts to the available hardware resources dynamically.
-	workerCount = 1600
-	jobQueueSize = 1600
-
-	pool := workers.New(workerCount, jobQueueSize)
+	pool := workers.New()
 
 	client := sse.NewClient("https://stream.wikimedia.org/v2/stream/recentchange")
 
 	jobMetrics := &metrics.Metrics{}
 	freq := frequency.New(1 * time.Second)
 
-	// Only allow events from en.wikipedia.org
-	allowedServer := "https://en.wikipedia.org"
+	// Only allow events from allowed servers, other events are ignored. For now we allow only en.wikipedia.org and commons.wikimedia.org
+	allowedServers := map[string]struct{}{
+		//"https://www.mediawiki.org":     {},
+		//"https://meta.wikimedia.org": {},
+		"https://en.wikipedia.org": {},
+		//"https://nl.wikipedia.org": {},
+		"https://commons.wikimedia.org": {},
+		//"https://test.wikipedia.org":    {},
+	}
 
 	go func() {
 		wg.Add(1)
@@ -99,11 +96,11 @@ func main() {
 			default:
 				log.Info("==============================================================")
 				log.Info("Retry count", "count", retry, "max retries", maxRetries)
-				log.Info("Num CPUs", "count", numCPU)
-				log.Info("Max workers count", "count", workerCount)
-				log.Info("Active Workers", "count", pool.ActiveWorkersCount())
-				log.Info("Max job channel size", "count", jobQueueSize)
-				log.Info("Job from job channel waiting to be taken into work", "count", pool.JobChannelCount())
+				log.Info("Num CPUs", "count", runtime.NumCPU())
+				log.Info("Num Goroutines", "count", runtime.NumGoroutine())
+				log.Info("Memory usage", "bytes", pool.MemoryUsage())
+				log.Info("Workers", "count", pool.ActiveWorkersCount())
+				log.Info("Jobs", "count", pool.JobChannelCount())
 
 				metricsStats := jobMetrics.PrintMetrics()
 				log.Info("Job Metrics",
@@ -135,7 +132,6 @@ func main() {
 		for retry < maxRetries {
 			err := client.SubscribeRaw(func(msg *sse.Event) {
 				totalEvents++
-				freq.Add(1)
 
 				var event models.Event
 
@@ -150,11 +146,11 @@ func main() {
 				}
 
 				// Ignore events from non-allowed servers
-				if event.ServerURL != allowedServer {
+				if _, ok := allowedServers[event.ServerURL]; !ok {
 					return
 				}
-
 				totalFilteredEvents++
+				freq.Add(1)
 
 				job := workers.Job{
 					Description: workers.JobDescriptor{
@@ -214,9 +210,14 @@ func main() {
 				log.Error("Failed to subscribe to events", "error", sl.Err(err))
 			}
 		}
+		err := pool.CloseLogFile()
+		if err != nil {
+			log.Error("Failed to close log file", "error", sl.Err(err))
+		}
 	}()
 
 	fmt.Println("Indexing started")
+	time.Sleep(5 * time.Second)
 	wg.Wait()
 	fmt.Println("Indexing complete")
 
