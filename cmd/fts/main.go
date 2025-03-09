@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -44,10 +45,14 @@ var totalFilteredEvents int
 var eventsWithExtract int
 var eventsWithoutExtract int
 
+const maxRetries = 20
+
 func main() {
 	cfg := config.MustLoad()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	var wg sync.WaitGroup
 
 	log := setupLogger(cfg.Env)
 	log.Info("fts", "env", cfg.Env)
@@ -62,8 +67,8 @@ func main() {
 	// Determine the number of workers and the size of the job queue based on the number of CPUs.
 	// By multiplying the number of CPUs by a factor of 10 for the workers and by 20 for the job queue size,
 	// we ensure that the system adapts to the available hardware resources dynamically.
-	workerCount = numCPU * 10
-	jobQueueSize = workerCount * 20
+	workerCount = 1600
+	jobQueueSize = 1600
 
 	pool := workers.New(workerCount, jobQueueSize)
 
@@ -76,174 +81,198 @@ func main() {
 	allowedServer := "https://en.wikipedia.org"
 
 	go func() {
+		wg.Add(1)
+		defer wg.Done()
 		pool.Run(ctx)
 	}()
 
-	go func() {
-		for {
-			log.Info("Num CPUs", "count", numCPU)
-			log.Info("Max workers count", "count", workerCount)
-			log.Info("Active Workers", "count", pool.ActiveWorkersCount())
-			log.Info("Max job channel size", "count", jobQueueSize)
-			log.Info("Job from job channel waitinf to be taked into work", "count", pool.JobChannelCount())
-			metricsStats := jobMetrics.PrintMetrics()
-			log.Info("Job Metrics",
-				"Total Jobs", metricsStats.TotalJobs,
-				"Successful Jobs", metricsStats.SuccessfulJobs,
-				"Failed Jobs", metricsStats.FailedJobs,
-				"Avg Exec Time", metricsStats.AvgExecTime)
-			log.Info("Events Stats",
-				"Total Events", totalEvents,
-				"Total Filtered Events", totalFilteredEvents,
-				"Events With Extract", eventsWithExtract,
-				"Events Without Extract", eventsWithoutExtract)
-			freq.PrintFreq()
-			log.Info("Frequency Stats",
-				"Total", freq.Stats.Total,
-				"Count", freq.Stats.Count,
-				"Average", freq.Stats.Average)
-			time.Sleep(10 * time.Second)
-		}
-	}()
-
-	//go func() {
-	err := client.SubscribeRaw(func(msg *sse.Event) {
-		totalEvents++
-		freq.Add(1)
-
-		var event models.Event
-
-		if err := json.Unmarshal(msg.Data, &event); err != nil {
-			log.Error("Failed to unmarshal event", "error", sl.Err(err))
-			return
-		}
-
-		// Ignore events from the "canary" domain
-		if event.Meta.Domain == "canary" {
-			return
-		}
-
-		// Ignore events from non-allowed servers
-		if event.ServerURL != allowedServer {
-			return
-		}
-
-		totalFilteredEvents++
-
-		job := workers.Job{
-			Description: workers.JobDescriptor{
-				ID:      workers.JobID(event.Meta.ID),
-				JobType: "fetch_and_store",
-			},
-			ExecFn: func(ctx context.Context, args models.Event) (string, error) {
-				startTime := time.Now()
-
-				apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s",
-					args.ServerURL, url.QueryEscape(args.Title))
-
-				resp, err := http.Get(apiURL)
-				if err != nil {
-					jobMetrics.RecordFailure(time.Since(startTime))
-					return "", err
-				}
-				defer resp.Body.Close()
-
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					jobMetrics.RecordFailure(time.Since(startTime))
-					return "", err
-				}
-
-				var apiResponse models.ArticleResponse
-				if err := json.Unmarshal(body, &apiResponse); err != nil {
-					jobMetrics.RecordFailure(time.Since(startTime))
-					return "", err
-				}
-
-				for _, page := range apiResponse.Query.Pages {
-					if page.Extract == "" {
-						eventsWithoutExtract++
-						jobMetrics.RecordFailure(time.Since(startTime))
-						return "", errors.New("empty extract in response")
-					}
-
-					eventsWithExtract++
-					result, err := application.App.AddDocument(ctx, page.Extract, body, nil)
-					if err != nil {
-						jobMetrics.RecordFailure(time.Since(startTime))
-						return "", err
-					}
-					jobMetrics.RecordSuccess(time.Since(startTime))
-					return result, nil
-				}
-
-				jobMetrics.RecordFailure(time.Since(startTime))
-				return "", errors.New("no valid pages found in response")
-			},
-			Args: &event,
-		}
-		pool.AddJob(&job)
-	})
-	if err != nil {
-		log.Error("Failed to subscribe to events", "error", sl.Err(err))
-	}
-	//}()
-
-	fmt.Println("Starting simple fts")
-
-	g, err := gocui.NewGui(gocui.OutputNormal)
-	if err != nil {
-		log.Error("Failed to create GUI:", "error", sl.Err(err))
-		os.Exit(1)
-	}
-	defer g.Close()
-
-	g.Cursor = true
-	g.SetManagerFunc(layout)
+	retry := 0
 
 	go func() {
+		wg.Add(1)
+		defer wg.Done()
 		for {
-			if err := updateDBInfo(g, application, &pool); err != nil {
-				log.Error("Failed to update DB info", "error", sl.Err(err))
+			select {
+			case <-pool.Done:
+				log.Info("Channel Done closed, exiting the loop.")
+				return
+			default:
+				log.Info("==============================================================")
+				log.Info("Retry count", "count", retry, "max retries", maxRetries)
+				log.Info("Num CPUs", "count", numCPU)
+				log.Info("Max workers count", "count", workerCount)
+				log.Info("Active Workers", "count", pool.ActiveWorkersCount())
+				log.Info("Max job channel size", "count", jobQueueSize)
+				log.Info("Job from job channel waiting to be taken into work", "count", pool.JobChannelCount())
+
+				metricsStats := jobMetrics.PrintMetrics()
+				log.Info("Job Metrics",
+					"Total Jobs", metricsStats.TotalJobs,
+					"Successful Jobs", metricsStats.SuccessfulJobs,
+					"Failed Jobs", metricsStats.FailedJobs,
+					"Avg Exec Time", metricsStats.AvgExecTime)
+
+				log.Info("Events Stats",
+					"Events", totalEvents,
+					"Filtered Events", totalFilteredEvents,
+					"Events - Extract", eventsWithExtract,
+					"Events - No Extract", eventsWithoutExtract)
+
+				freq.PrintFreq()
+				log.Info("Frequency Stats",
+					"Total", freq.Stats.Total,
+					"Count", freq.Stats.Count,
+					"Average", freq.Stats.Average)
+
+				time.Sleep(10 * time.Second)
 			}
-			time.Sleep(2 * time.Second)
 		}
 	}()
 
-	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
-	if err := g.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
-		return search(g, v, ctx, application)
-	}); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
+	go func() {
+		wg.Add(1)
+		defer wg.Done()
+		for retry < maxRetries {
+			err := client.SubscribeRaw(func(msg *sse.Event) {
+				totalEvents++
+				freq.Add(1)
 
-	if err := g.SetKeybinding("output", gocui.KeyArrowDown, gocui.ModNone, scrollDown); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
-	if err := g.SetKeybinding("output", gocui.KeyArrowUp, gocui.ModNone, scrollUp); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
-	if err := g.SetKeybinding("maxResults", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
-		return setMaxResults(g, v, ctx, application)
-	}); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
+				var event models.Event
 
-	if err := g.SetKeybinding("", gocui.KeyTab, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
-		currentView := g.CurrentView().Name()
-		if currentView == "input" {
-			_, _ = g.SetCurrentView("maxResults")
-		} else if currentView == "maxResults" {
-			_, _ = g.SetCurrentView("output")
-		} else {
-			_, _ = g.SetCurrentView("input")
+				if err := json.Unmarshal(msg.Data, &event); err != nil {
+					log.Error("Failed to unmarshal event", "error", sl.Err(err))
+					return
+				}
+
+				// Ignore events from the "canary" domain
+				if event.Meta.Domain == "canary" {
+					return
+				}
+
+				// Ignore events from non-allowed servers
+				if event.ServerURL != allowedServer {
+					return
+				}
+
+				totalFilteredEvents++
+
+				job := workers.Job{
+					Description: workers.JobDescriptor{
+						ID:      workers.JobID(event.Meta.ID),
+						JobType: "fetch_and_store",
+					},
+					ExecFn: func(ctx context.Context, args models.Event) (string, error) {
+						startTime := time.Now()
+
+						apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s",
+							args.ServerURL, url.QueryEscape(args.Title))
+
+						resp, err := http.Get(apiURL)
+						if err != nil {
+							jobMetrics.RecordFailure(time.Since(startTime))
+							return "", err
+						}
+						defer resp.Body.Close()
+
+						body, err := io.ReadAll(resp.Body)
+						if err != nil {
+							jobMetrics.RecordFailure(time.Since(startTime))
+							return "", err
+						}
+
+						var apiResponse models.ArticleResponse
+						if err := json.Unmarshal(body, &apiResponse); err != nil {
+							jobMetrics.RecordFailure(time.Since(startTime))
+							return "", err
+						}
+
+						for _, page := range apiResponse.Query.Pages {
+							if page.Extract == "" {
+								eventsWithoutExtract++
+								jobMetrics.RecordFailure(time.Since(startTime))
+								return "", errors.New("empty extract in response")
+							}
+
+							eventsWithExtract++
+							result, err := application.App.AddDocument(ctx, page.Extract, body, nil)
+							if err != nil {
+								jobMetrics.RecordFailure(time.Since(startTime))
+								return "", err
+							}
+							jobMetrics.RecordSuccess(time.Since(startTime))
+							return result, nil
+						}
+
+						jobMetrics.RecordFailure(time.Since(startTime))
+						return "", errors.New("no valid pages found in response")
+					},
+					Args: &event,
+				}
+				pool.AddJob(&job)
+			})
+			if err != nil {
+				log.Error("Failed to subscribe to events", "error", sl.Err(err))
+			}
 		}
-		return nil
-	}); err != nil {
-		log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	}
+	}()
+
+	fmt.Println("Indexing started")
+	wg.Wait()
+	fmt.Println("Indexing complete")
+
+	//g, err := gocui.NewGui(gocui.OutputNormal)
+	//if err != nil {
+	//	log.Error("Failed to create GUI:", "error", sl.Err(err))
+	//	os.Exit(1)
+	//}
+	//defer g.Close()
+	//
+	//g.Cursor = true
+	//g.SetManagerFunc(layout)
+	//
+	//go func() {
+	//	for {
+	//		if err := updateDBInfo(g, application, &pool); err != nil {
+	//			log.Error("Failed to update DB info", "error", sl.Err(err))
+	//		}
+	//		time.Sleep(2 * time.Second)
+	//	}
+	//}()
+	//
+	//if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
+	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	//}
+	//if err := g.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+	//	return search(g, v, ctx, application)
+	//}); err != nil {
+	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	//}
+	//
+	//if err := g.SetKeybinding("output", gocui.KeyArrowDown, gocui.ModNone, scrollDown); err != nil {
+	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	//}
+	//if err := g.SetKeybinding("output", gocui.KeyArrowUp, gocui.ModNone, scrollUp); err != nil {
+	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	//}
+	//if err := g.SetKeybinding("maxResults", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+	//	return setMaxResults(g, v, ctx, application)
+	//}); err != nil {
+	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	//}
+	//
+	//if err := g.SetKeybinding("", gocui.KeyTab, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+	//	currentView := g.CurrentView().Name()
+	//	if currentView == "input" {
+	//		_, _ = g.SetCurrentView("maxResults")
+	//	} else if currentView == "maxResults" {
+	//		_, _ = g.SetCurrentView("output")
+	//	} else {
+	//		_, _ = g.SetCurrentView("input")
+	//	}
+	//	return nil
+	//}); err != nil {
+	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	//}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
@@ -254,12 +283,12 @@ func main() {
 			log.Error("Failed to close database", "error", sl.Err(err))
 		}
 		cancel()
-		g.Close()
+		//g.Close()
 	}()
 
-	if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
-		log.Error("Failed to run GUI:", "error", sl.Err(err))
-	}
+	//if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
+	//	log.Error("Failed to run GUI:", "error", sl.Err(err))
+	//}
 
 }
 
