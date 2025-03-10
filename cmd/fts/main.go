@@ -10,6 +10,7 @@ import (
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/fts"
+	utils "fts-hw/internal/utils/clean"
 	"fts-hw/internal/utils/frequency"
 	"fts-hw/internal/utils/metrics"
 	"fts-hw/internal/workers"
@@ -64,7 +65,7 @@ func main() {
 
 	client := sse.NewClient("https://stream.wikimedia.org/v2/stream/recentchange")
 
-	jobMetrics := &metrics.Metrics{}
+	jobMetrics := metrics.New()
 	freq := frequency.New(1 * time.Second)
 
 	// Only allow events from allowed servers, other events are ignored. For now we allow only en.wikipedia.org and commons.wikimedia.org
@@ -73,7 +74,7 @@ func main() {
 		//"https://meta.wikimedia.org": {},
 		"https://en.wikipedia.org": {},
 		//"https://nl.wikipedia.org": {},
-		"https://commons.wikimedia.org": {},
+		// "https://commons.wikimedia.org": {},
 		//"https://test.wikipedia.org":    {},
 	}
 
@@ -88,19 +89,28 @@ func main() {
 	go func() {
 		wg.Add(1)
 		defer wg.Done()
+
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-pool.Done:
 				log.Info("Channel Done closed, exiting the loop.")
 				return
-			default:
+			case <-ticker.C:
 				log.Info("==============================================================")
 				log.Info("Retry count", "count", retry, "max retries", maxRetries)
 				log.Info("Num CPUs", "count", runtime.NumCPU())
 				log.Info("Num Goroutines", "count", runtime.NumGoroutine())
 				log.Info("Memory usage", "bytes", pool.MemoryUsage())
 				log.Info("Workers", "count", pool.ActiveWorkersCount())
-				log.Info("Jobs", "count", pool.JobChannelCount())
+
+				log.Info("Events Stats",
+					"Events", totalEvents,
+					"Filtered Events", totalFilteredEvents,
+					"Events - Extract", eventsWithExtract,
+					"Events - No Extract", eventsWithoutExtract)
 
 				metricsStats := jobMetrics.PrintMetrics()
 				log.Info("Job Metrics",
@@ -109,19 +119,11 @@ func main() {
 					"Failed Jobs", metricsStats.FailedJobs,
 					"Avg Exec Time", metricsStats.AvgExecTime)
 
-				log.Info("Events Stats",
-					"Events", totalEvents,
-					"Filtered Events", totalFilteredEvents,
-					"Events - Extract", eventsWithExtract,
-					"Events - No Extract", eventsWithoutExtract)
-
-				freq.PrintFreq()
-				log.Info("Frequency Stats",
-					"Total", freq.Stats.Total,
-					"Count", freq.Stats.Count,
-					"Average", freq.Stats.Average)
-
-				time.Sleep(10 * time.Second)
+				freqStats := freq.PrintFreq()
+				log.Info("Frequency Stats for 10 sec",
+					"Total", freqStats.Total,
+					"Count", freqStats.Count,
+					"Average", freqStats.Average)
 			}
 		}
 	}()
@@ -190,7 +192,21 @@ func main() {
 							}
 
 							eventsWithExtract++
-							result, err := application.App.AddDocument(ctx, page.Extract, body, nil)
+
+							cleanExtract := utils.Clean(page.Extract)
+
+							document := models.NewDocument(event.Meta.ID, page.Title, cleanExtract)
+
+							documentBytes, err := json.Marshal(document)
+							if err != nil {
+								jobMetrics.RecordFailure(time.Since(startTime))
+								return "", err
+							}
+
+							fmt.Printf("Saving extract: %s, Document Length: %d bytes\n", cleanExtract, len(documentBytes))
+
+							result, err := application.App.ProcessDocument(ctx, cleanExtract, documentBytes, nil)
+
 							if err != nil {
 								jobMetrics.RecordFailure(time.Since(startTime))
 								return "", err
@@ -217,7 +233,6 @@ func main() {
 	}()
 
 	fmt.Println("Indexing started")
-	time.Sleep(5 * time.Second)
 	wg.Wait()
 	fmt.Println("Indexing complete")
 

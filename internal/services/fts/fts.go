@@ -31,8 +31,8 @@ type DocumentSaver interface {
 }
 
 type DocumentProvider interface {
-	SearchWord(ctx context.Context, word string) ([]string, error)
-	SearchDocument(ctx context.Context, docID int) (string, error)
+	GetWord(ctx context.Context, word string) ([]string, error)
+	GetDocument(ctx context.Context, docID int) (string, error)
 }
 
 func New(
@@ -167,18 +167,6 @@ func Stem(seq iter.Seq[string]) iter.Seq[string] {
 	}
 }
 
-func GenerateNGrams(seq iter.Seq[string]) iter.Seq[string] {
-	return func(yield func(string) bool) {
-		for token := range seq {
-			for _, ngram := range generateNGrams(token, 3) {
-				if !yield(ngram) {
-					return
-				}
-			}
-		}
-	}
-}
-
 func (fts *FTS) preprocessText(content string) []string {
 	tokens := Tokenize(content)
 	tokens = ToLower(tokens)
@@ -192,42 +180,10 @@ func (fts *FTS) preprocessText(content string) []string {
 	return words
 }
 
-// Temporary not used in code as it makes indexinx process extremely slow
-func generateNGrams(token string, n int) []string {
-	var ngrams []string
-
-	if len(token) < n {
-		return []string{token}
-	}
-
-	for i := 0; i <= len(token)-n; i++ {
-		ngrams = append(ngrams, token[i:i+n])
-	}
-
-	return ngrams
-}
-
-//func (fts *FTS) preprocessText(content string) []string {
-//	var processedTokens []string
-//
-//	tokens := strings.FieldsFunc(content, func(r rune) bool {
-//		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
-//	})
-//
-//	for _, token := range tokens {
-//		token = strings.ToLower(token)
-//		if _, ok := stopWords[token]; !ok {
-//			processedTokens = append(processedTokens, snowballeng.Stem(token, false))
-//		}
-//	}
-//
-//	return processedTokens
-//}
-
-func (fts *FTS) AddDocument(ctx context.Context, extract string, content []byte, docID *string) (string, error) {
+func (fts *FTS) ProcessDocument(ctx context.Context, extract string, document []byte, docID *string) (string, error) {
 	words := fts.preprocessText(extract)
 
-	return fts.documentSaver.AddDocument(ctx, content, words, docID)
+	return fts.documentSaver.AddDocument(ctx, document, words, docID)
 }
 
 func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (SearchResult, error) {
@@ -249,7 +205,7 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (Sea
 		wg.Add(1)
 		go func(token string) {
 			defer wg.Done()
-			docEntries, err := fts.documentProvider.SearchWord(ctx, token)
+			docEntries, err := fts.documentProvider.GetWord(ctx, token)
 			if err != nil {
 				return
 			}
@@ -317,7 +273,7 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (Sea
 	resultDocs := make([]ResultDoc, 0, maxResults)
 
 	for i := 0; i < len(docMatches) && i < maxResults; i++ {
-		docData, err := fts.documentProvider.SearchDocument(ctx, docMatches[i].docID)
+		docData, err := fts.documentProvider.GetDocument(ctx, docMatches[i].docID)
 		if err == nil {
 			resultDocs = append(resultDocs, ResultDoc{
 				DocID:         docMatches[i].docID,

@@ -31,15 +31,19 @@ func (f *Frequency) Add(count int) {
 	f.total += count
 }
 
-func (f *Frequency) PrintFreq() {
+func (f *Frequency) PrintFreq() *Stats {
 	now := time.Now()
 	elapsed := now.Sub(f.LastTime)
+	var average float64
 	if elapsed >= f.Interval {
-		average := float64(f.count) / elapsed.Seconds()
-		f.Stats.Total = f.total
-		f.Stats.Count = f.count
-		f.Stats.Average = average
+		average = float64(f.count) / elapsed.Seconds()
 		f.LastTime = now
 		f.count = 0
+	}
+
+	return &Stats{
+		Total:   f.total,
+		Count:   f.count,
+		Average: average,
 	}
 }

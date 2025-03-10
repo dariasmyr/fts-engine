@@ -21,7 +21,7 @@ func TestSearch(t *testing.T) {
 
 	extract := "Search engine test document."
 	content := []byte("Search engine test document.")
-	_, err = searchEngine.AddDocument(context.Background(), extract, content, nil)
+	_, err = searchEngine.ProcessDocument(context.Background(), extract, content, nil)
 	if err != nil {
 		t.Fatalf("Failed to add document: %v", err)
 	}

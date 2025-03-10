@@ -31,10 +31,6 @@ func (wp *WorkerPool) ActiveWorkersCount() int32 {
 	return atomic.LoadInt32(&wp.activeWorkers)
 }
 
-func (wp *WorkerPool) JobChannelCount() int {
-	return len(wp.jobs)
-}
-
 func (wp *WorkerPool) MemoryUsage() uint64 {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)

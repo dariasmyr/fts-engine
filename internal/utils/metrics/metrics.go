@@ -21,6 +21,10 @@ type Stats struct {
 	AvgExecTime    time.Duration
 }
 
+func New() *Metrics {
+	return &Metrics{}
+}
+
 func (m *Metrics) RecordSuccess(duration time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

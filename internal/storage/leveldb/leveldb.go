@@ -95,7 +95,7 @@ func (s *Storage) AddDocument(context context.Context, content []byte, words []s
 	return newID, nil
 }
 
-func (s *Storage) SearchWord(cxt context.Context, word string) ([]string, error) {
+func (s *Storage) GetWord(cxt context.Context, word string) ([]string, error) {
 	wordKey := "word:" + word
 	data, err := s.db.Get([]byte(wordKey), nil)
 	if err != nil {
@@ -105,7 +105,7 @@ func (s *Storage) SearchWord(cxt context.Context, word string) ([]string, error)
 	return strings.Split(string(data), ","), nil
 }
 
-func (s *Storage) SearchDocument(cxt context.Context, docID int) (string, error) {
+func (s *Storage) GetDocument(cxt context.Context, docID int) (string, error) {
 	docKey := "doc:" + strconv.Itoa(docID)
 
 	docData, err := s.db.Get([]byte(docKey), nil)
