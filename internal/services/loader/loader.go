@@ -32,6 +32,7 @@ type Document struct {
 func (l *Loader) LoadDocuments() ([]Document, error) {
 	f, err := os.Open(l.dumpPath)
 	if err != nil {
+		l.log.Error("Failed to open file", "error", err)
 		return nil, err
 	}
 	defer f.Close()
@@ -52,4 +53,20 @@ func (l *Loader) LoadDocuments() ([]Document, error) {
 		docs[i].ID = i
 	}
 	return docs, nil
+}
+
+func (l *Loader) ChunkDocuments(documents []Document, chunkSize int) [][]Document {
+	numChunks := (len(documents) + chunkSize - 1) / chunkSize
+	chunks := make([][]Document, 0, numChunks)
+
+	for i := 0; i < numChunks; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(documents) {
+			end = len(documents)
+		}
+		chunks[i] = documents[i:end]
+	}
+
+	return chunks
 }
