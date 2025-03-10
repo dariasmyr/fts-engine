@@ -2,7 +2,11 @@ package loader
 
 import (
 	"compress/gzip"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/xml"
+	"fts-hw/internal/domain/models"
+	"io"
 	"log/slog"
 	"os"
 )
@@ -19,17 +23,9 @@ func NewLoader(log *slog.Logger, dumpPath string) *Loader {
 	}
 }
 
-// Document represents a Wikipedia abstract dump document.
-type Document struct {
-	Title string `xml:"title"`
-	URL   string `xml:"url"`
-	Text  string `xml:"abstract"`
-	ID    int
-}
-
 // LoadDocuments loads a Wikipedia abstract dump and returns a slice of documents.
 // Dump example: https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-abstract1.xml.gz
-func (l *Loader) LoadDocuments() ([]Document, error) {
+func (l *Loader) LoadDocuments() ([]models.Document, error) {
 	f, err := os.Open(l.dumpPath)
 	if err != nil {
 		l.log.Error("Failed to open file", "error", err)
@@ -43,21 +39,23 @@ func (l *Loader) LoadDocuments() ([]Document, error) {
 	defer gz.Close()
 	dec := xml.NewDecoder(gz)
 	dump := struct {
-		Documents []Document `xml:"doc"`
+		Documents []models.Document `xml:"doc"`
 	}{}
+
 	if err := dec.Decode(&dump); err != nil {
 		return nil, err
 	}
-	docs := dump.Documents
-	for i := range docs {
-		docs[i].ID = i
+
+	for i := range dump.Documents {
+		dump.Documents[i].ID = generateID(dump.Documents[i])
 	}
-	return docs, nil
+
+	return dump.Documents, nil
 }
 
-func (l *Loader) ChunkDocuments(documents []Document, chunkSize int) [][]Document {
+func (l *Loader) ChunkDocuments(documents []models.Document, chunkSize int) [][]models.Document {
 	numChunks := (len(documents) + chunkSize - 1) / chunkSize
-	chunks := make([][]Document, 0, numChunks)
+	chunks := make([][]models.Document, 0, numChunks)
 
 	for i := 0; i < numChunks; i++ {
 		start := i * chunkSize
@@ -69,4 +67,10 @@ func (l *Loader) ChunkDocuments(documents []Document, chunkSize int) [][]Documen
 	}
 
 	return chunks
+}
+
+func (l *Loader) generateID(document models.Document) string {
+	hasher := md5.New()
+	io.WriteString(hasher, document.Title+"|"+document.URL+"|"+document.Text)
+	return hex.EncodeToString(hasher.Sum(nil))
 }

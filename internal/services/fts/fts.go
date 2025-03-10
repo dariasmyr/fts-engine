@@ -2,7 +2,10 @@ package fts
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"fts-hw/internal/domain/models"
 	"iter"
 	"log/slog"
 	"sort"
@@ -180,10 +183,15 @@ func (fts *FTS) preprocessText(content string) []string {
 	return words
 }
 
-func (fts *FTS) ProcessDocument(ctx context.Context, extract string, document []byte, docID *string) (string, error) {
-	words := fts.preprocessText(extract)
+func (fts *FTS) ProcessDocument(ctx context.Context, document models.Document, docID *string) (string, error) {
+	words := fts.preprocessText(document.Extract)
 
-	return fts.documentSaver.AddDocument(ctx, document, words, docID)
+	documentBytes, err := json.Marshal(document)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal document to bytes")
+	}
+
+	return fts.documentSaver.AddDocument(ctx, documentBytes, words, docID)
 }
 
 func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (SearchResult, error) {

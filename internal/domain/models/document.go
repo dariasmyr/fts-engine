@@ -1,15 +1,13 @@
 package models
 
-type Document struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	Extract string `json:"extract"`
+type DocumentBase struct {
+	Title string `xml:"title" json:"title"`
+	URL   string `xml:"url" json:"url"`
+	Text  string `xml:"abstract" json:"abstract"`
 }
 
-func NewDocument(id string, title string, extract string) *Document {
-	return &Document{
-		ID:      id,
-		Title:   title,
-		Extract: extract,
-	}
+type Document struct {
+	DocumentBase
+	ID      string `json:"id"`
+	Extract string `json:"extract"`
 }

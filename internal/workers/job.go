@@ -8,7 +8,7 @@ import (
 type Job struct {
 	Description JobDescriptor
 	ExecFn      ExecutionFn
-	Args        *models.Event
+	Args        *models.Document
 }
 
 type ExecutionFn func(ctx context.Context, args models.Event) (string, error)

@@ -10,8 +10,8 @@ import (
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/fts"
+	"fts-hw/internal/services/loader"
 	utils "fts-hw/internal/utils/clean"
-	"fts-hw/internal/utils/frequency"
 	"fts-hw/internal/utils/metrics"
 	"fts-hw/internal/workers"
 	"io"
@@ -26,8 +26,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/r3labs/sse/v2"
 
 	"github.com/jroimartin/gocui"
 )
@@ -46,7 +44,7 @@ var totalFilteredEvents int
 var eventsWithExtract int
 var eventsWithoutExtract int
 
-const maxRetries = 20
+const chunkSize = 1000
 
 func main() {
 	cfg := config.MustLoad()
@@ -61,22 +59,12 @@ func main() {
 	application := app.New(log, cfg.StoragePath)
 	log.Info("App initialised")
 
+	dumpLoader := loader.NewLoader(log, cfg.Loader.FilePath)
+	log.Info("Loader initialised")
+
 	pool := workers.New()
 
-	client := sse.NewClient("https://stream.wikimedia.org/v2/stream/recentchange")
-
 	jobMetrics := metrics.New()
-	freq := frequency.New(1 * time.Second)
-
-	// Only allow events from allowed servers, other events are ignored. For now we allow only en.wikipedia.org and commons.wikimedia.org
-	allowedServers := map[string]struct{}{
-		//"https://www.mediawiki.org":     {},
-		//"https://meta.wikimedia.org": {},
-		"https://en.wikipedia.org": {},
-		//"https://nl.wikipedia.org": {},
-		// "https://commons.wikimedia.org": {},
-		//"https://test.wikipedia.org":    {},
-	}
 
 	go func() {
 		wg.Add(1)
@@ -100,7 +88,6 @@ func main() {
 				return
 			case <-ticker.C:
 				log.Info("==============================================================")
-				log.Info("Retry count", "count", retry, "max retries", maxRetries)
 				log.Info("Num CPUs", "count", runtime.NumCPU())
 				log.Info("Num Goroutines", "count", runtime.NumGoroutine())
 				log.Info("Memory usage", "bytes", pool.MemoryUsage())
@@ -118,122 +105,109 @@ func main() {
 					"Successful Jobs", metricsStats.SuccessfulJobs,
 					"Failed Jobs", metricsStats.FailedJobs,
 					"Avg Exec Time", metricsStats.AvgExecTime)
-
-				freqStats := freq.PrintFreq()
-				log.Info("Frequency Stats for 10 sec",
-					"Total", freqStats.Total,
-					"Count", freqStats.Count,
-					"Average", freqStats.Average)
 			}
 		}
 	}()
 
-	go func() {
-		wg.Add(1)
-		defer wg.Done()
-		for retry < maxRetries {
-			err := client.SubscribeRaw(func(msg *sse.Event) {
-				totalEvents++
+	startTime := time.Now()
+	documents, err := dumpLoader.LoadDocuments()
+	if err != nil {
+		log.Error("Failed to load documents", "error", sl.Err(err))
+		return
+	}
 
-				var event models.Event
+	duration := time.Since(startTime)
+	log.Info(fmt.Sprintf("Loaded %d documents in %v", len(documents), duration))
 
-				if err := json.Unmarshal(msg.Data, &event); err != nil {
-					log.Error("Failed to unmarshal event", "error", sl.Err(err))
-					return
-				}
+	startTime = time.Now()
+	chunks := dumpLoader.ChunkDocuments(documents, chunkSize)
+	duration = time.Since(startTime)
+	log.Info(fmt.Sprintf("Split %d documents in %d chunks in %v. Chunk size: %d", len(documents), len(chunks), duration, chunkSize))
 
-				// Ignore events from the "canary" domain
-				if event.Meta.Domain == "canary" {
-					return
-				}
+	for i, chunk := range chunks {
+		startTime := time.Now()
 
-				// Ignore events from non-allowed servers
-				if _, ok := allowedServers[event.ServerURL]; !ok {
-					return
-				}
-				totalFilteredEvents++
-				freq.Add(1)
+		for _, doc := range chunk {
+			job := workers.Job{
+				Description: workers.JobDescriptor{
+					ID:      workers.JobID(doc.ID),
+					JobType: "fetch_and_store",
+				},
+				ExecFn: func(ctx context.Context, args models.Event) (string, error) {
+					startTime := time.Now()
 
-				job := workers.Job{
-					Description: workers.JobDescriptor{
-						ID:      workers.JobID(event.Meta.ID),
-						JobType: "fetch_and_store",
-					},
-					ExecFn: func(ctx context.Context, args models.Event) (string, error) {
-						startTime := time.Now()
-
-						apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s",
-							args.ServerURL, url.QueryEscape(args.Title))
-
-						resp, err := http.Get(apiURL)
-						if err != nil {
-							jobMetrics.RecordFailure(time.Since(startTime))
-							return "", err
-						}
-						defer resp.Body.Close()
-
-						body, err := io.ReadAll(resp.Body)
-						if err != nil {
-							jobMetrics.RecordFailure(time.Since(startTime))
-							return "", err
-						}
-
-						var apiResponse models.ArticleResponse
-						if err := json.Unmarshal(body, &apiResponse); err != nil {
-							jobMetrics.RecordFailure(time.Since(startTime))
-							return "", err
-						}
-
-						for _, page := range apiResponse.Query.Pages {
-							if page.Extract == "" {
-								eventsWithoutExtract++
-								jobMetrics.RecordFailure(time.Since(startTime))
-								return "", errors.New("empty extract in response")
-							}
-
-							eventsWithExtract++
-
-							cleanExtract := utils.Clean(page.Extract)
-
-							document := models.NewDocument(event.Meta.ID, page.Title, cleanExtract)
-
-							documentBytes, err := json.Marshal(document)
-							if err != nil {
-								jobMetrics.RecordFailure(time.Since(startTime))
-								return "", err
-							}
-
-							fmt.Printf("Saving extract: %s, Document Length: %d bytes\n", cleanExtract, len(documentBytes))
-
-							result, err := application.App.ProcessDocument(ctx, cleanExtract, documentBytes, nil)
-
-							if err != nil {
-								jobMetrics.RecordFailure(time.Since(startTime))
-								return "", err
-							}
-							jobMetrics.RecordSuccess(time.Since(startTime))
-							return result, nil
-						}
-
+					host, title, err := parseUrl(doc)
+					if err != nil {
 						jobMetrics.RecordFailure(time.Since(startTime))
-						return "", errors.New("no valid pages found in response")
-					},
-					Args: &event,
-				}
-				pool.AddJob(&job)
-			})
-			if err != nil {
-				log.Error("Failed to subscribe to events", "error", sl.Err(err))
+						return "", err
+					}
+
+					apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s",
+						host, title)
+
+					resp, err := http.Get(apiURL)
+					if err != nil {
+						jobMetrics.RecordFailure(time.Since(startTime))
+						return "", err
+					}
+					defer resp.Body.Close()
+
+					body, err := io.ReadAll(resp.Body)
+					if err != nil {
+						jobMetrics.RecordFailure(time.Since(startTime))
+						return "", err
+					}
+
+					var apiResponse models.ArticleResponse
+					if err := json.Unmarshal(body, &apiResponse); err != nil {
+						jobMetrics.RecordFailure(time.Since(startTime))
+						return "", err
+					}
+
+					for _, page := range apiResponse.Query.Pages {
+						if page.Extract == "" {
+							eventsWithoutExtract++
+							jobMetrics.RecordFailure(time.Since(startTime))
+							return "", errors.New("empty extract in response")
+						}
+
+						eventsWithExtract++
+
+						cleanExtract := utils.Clean(page.Extract)
+
+						doc.Extract = cleanExtract
+
+						fmt.Printf("Saving doc ID: %s, Document Length: %d bytes\n", doc.ID, len(cleanExtract))
+
+						result, err := application.App.ProcessDocument(ctx, doc, nil)
+
+						if err != nil {
+							jobMetrics.RecordFailure(time.Since(startTime))
+							return "", err
+						}
+						jobMetrics.RecordSuccess(time.Since(startTime))
+						return result, nil
+					}
+
+					jobMetrics.RecordFailure(time.Since(startTime))
+					return "", errors.New("no valid pages found in response")
+				},
+				Args: &doc,
 			}
+			pool.AddJob(&job)
 		}
+
+		wg.Wait()
+
 		err := pool.CloseLogFile()
 		if err != nil {
 			log.Error("Failed to close log file", "error", sl.Err(err))
 		}
-	}()
 
-	fmt.Println("Indexing started")
-	wg.Wait()
+		duration = time.Since(startTime)
+		log.Info(fmt.Sprintf("Processed chunk %d of %d in %v", i+1, len(chunks), duration))
+	}
+
 	fmt.Println("Indexing complete")
 
 	//g, err := gocui.NewGui(gocui.OutputNormal)
@@ -306,6 +280,25 @@ func main() {
 	//	log.Error("Failed to run GUI:", "error", sl.Err(err))
 	//}
 
+}
+
+func parseUrl(doc models.Document) (host string, title string, err error) {
+	parsedURL, err := url.Parse(doc.URL)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse URL: %v", err)
+	}
+
+	var hostBuilder strings.Builder
+
+	hostBuilder.WriteString(parsedURL.Scheme)
+	hostBuilder.WriteString("://")
+	hostBuilder.WriteString(parsedURL.Host)
+
+	host = hostBuilder.String()
+
+	title = strings.TrimPrefix(parsedURL.Path, "/wiki/")
+
+	return host, title, nil
 }
 
 func setMaxResults(g *gocui.Gui, v *gocui.View, ctx context.Context, application *app.App) error {
