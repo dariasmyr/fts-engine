@@ -118,12 +118,19 @@ var stopWords = map[string]struct{}{
 
 func Tokenize(content string) iter.Seq[string] {
 	return func(yield func(string) bool) {
-		for _, token := range strings.FieldsFunc(content, func(r rune) bool {
-			return !unicode.IsLetter(r) && !unicode.IsNumber(r)
-		}) {
-			if !yield(token) {
-				return
+		lastSplit := 0
+		for i, char := range content {
+			if unicode.IsLetter(char) || unicode.IsNumber(char) {
+				if i-lastSplit != 0 && !yield(content[lastSplit:i]) {
+					return
+				}
+
+				lastSplit = i + 1
 			}
+		}
+
+		if len(content)-lastSplit != 0 {
+			yield(content[lastSplit:])
 		}
 	}
 }

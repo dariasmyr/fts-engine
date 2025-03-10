@@ -25,5 +25,5 @@ func TestIndex(t *testing.T) {
 		t.Fatalf("Invalid document ID returned")
 	}
 
-	t.Logf("Successfully added document with ID %d", docID)
+	t.Logf("Successfully added document with ID %s", docID)
 }
