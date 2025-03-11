@@ -53,7 +53,7 @@ func main() {
 	application := app.New(log, cfg.StoragePath)
 	log.Info("App initialised")
 
-	dumpLoader := loader.NewLoader(log, cfg.Loader.FilePath)
+	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
 	log.Info("Loader initialised")
 
 	pool := workers.New(5)

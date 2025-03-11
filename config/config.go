@@ -43,6 +43,10 @@ func MustLoad() *Config {
 		cfg.ChunkSize = 5 //To prevent negative value
 	}
 
+	if _, err := os.Stat(cfg.DumpPath); os.IsNotExist(err) {
+		fmt.Printf("Error: DumpPath does not exist: %s", cfg.DumpPath)
+	}
+
 	return &cfg
 }
 
