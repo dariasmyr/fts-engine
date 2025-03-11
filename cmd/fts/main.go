@@ -136,7 +136,8 @@ func main() {
 					host, title, err := parseUrl(doc)
 					if err != nil {
 						jobMetrics.RecordFailure(time.Since(startTime))
-						return "", err
+						log.Error("Error parsing url", "error", sl.Err(err))
+						return []string{""}, err
 					}
 
 					apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s",
@@ -145,27 +146,31 @@ func main() {
 					resp, err := http.Get(apiURL)
 					if err != nil {
 						jobMetrics.RecordFailure(time.Since(startTime))
-						return "", err
+						log.Error("Error getting url", "error", sl.Err(err))
+						return []string{""}, err
 					}
 					defer resp.Body.Close()
 
 					body, err := io.ReadAll(resp.Body)
 					if err != nil {
+						log.Error("Error reading body", "error", sl.Err(err))
 						jobMetrics.RecordFailure(time.Since(startTime))
-						return "", err
+						return []string{""}, err
 					}
 
 					var apiResponse models.ArticleResponse
 					if err := json.Unmarshal(body, &apiResponse); err != nil {
+						log.Error("Error unmarshalling body", "error", sl.Err(err))
 						jobMetrics.RecordFailure(time.Since(startTime))
-						return "", err
+						return []string{""}, err
 					}
 
 					for _, page := range apiResponse.Query.Pages {
 						if page.Extract == "" {
 							eventsWithoutExtract++
 							jobMetrics.RecordFailure(time.Since(startTime))
-							return "", errors.New("empty extract in response")
+							log.Error("Empty extract")
+							return []string{""}, errors.New("empty extract in response")
 						}
 
 						eventsWithExtract++
@@ -415,20 +420,29 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 }
 
 func setupLogger(env string) *slog.Logger {
+	logFile, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		fmt.Println("Failed to open log file:", err)
+		os.Exit(1)
+	}
+
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
+
 	var log *slog.Logger
 	switch env {
 	case envLocal:
 		log = slog.New(
-			slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
+			slog.NewTextHandler(multiWriter, &slog.HandlerOptions{Level: slog.LevelDebug}),
 		)
 	case envDev:
 		log = slog.New(
-			slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
+			slog.NewJSONHandler(multiWriter, &slog.HandlerOptions{Level: slog.LevelDebug}),
 		)
 	case envProd:
 		log = slog.New(
-			slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}),
+			slog.NewJSONHandler(multiWriter, &slog.HandlerOptions{Level: slog.LevelInfo}),
 		)
 	}
+
 	return log
 }
