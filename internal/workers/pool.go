@@ -11,6 +11,7 @@ import (
 )
 
 type WorkerPool struct {
+	workersCount  int
 	jobs          chan Job
 	Done          chan struct{}
 	activeWorkers int32
@@ -47,23 +48,13 @@ func (wp *WorkerPool) Run(ctx context.Context) {
 		return
 	}
 
-	go func() {
-		for {
-			select {
-			case job, ok := <-wp.jobs:
-				if !ok {
-					fmt.Println("No more jobs to process, closing worker pool")
-					close(wp.Done)
-					return
-				}
-
-				wg.Add(1)
-				go worker(ctx, &wg, job, wp)
-			}
-		}
-	}()
+	for i := 0; i < wp.workersCount; i++ {
+		wg.Add(1)
+		go worker(ctx, &wg, wp)
+	}
 
 	wg.Wait()
+	close(wp.Done)
 }
 
 func (wp *WorkerPool) CloseLogFile() error {
@@ -74,36 +65,46 @@ func (wp *WorkerPool) CloseLogFile() error {
 	return nil
 }
 
-func worker(ctx context.Context, wg *sync.WaitGroup, job Job, wp *WorkerPool) {
+func worker(ctx context.Context, wg *sync.WaitGroup, wp *WorkerPool) {
 	defer wg.Done()
 
 	atomic.AddInt32(&wp.activeWorkers, 1)
 	defer atomic.AddInt32(&wp.activeWorkers, -1)
 
-	select {
-	case <-ctx.Done():
-		fmt.Printf("Worker cancelled: %v\n", ctx.Err())
-		return
-	default:
-		result := job.execute(ctx)
-		if result.Err != nil {
-			jobErr := JobError{
-				JobDescription: job.Description,
-				Error:          result.Err.Error(),
+	for {
+		select {
+		case job, ok := <-wp.jobs:
+			if !ok {
+				return
 			}
-			wp.logMutex.Lock()
-			defer wp.logMutex.Unlock()
-			encoder := json.NewEncoder(wp.logFile)
-			if err := encoder.Encode(jobErr); err != nil {
-				fmt.Printf("Failed to write JSON log: %v\n", err)
+			result := job.execute(ctx)
+			if result.Err != nil {
+				jobErr := JobError{
+					JobDescription: job.Description,
+					Error:          result.Err.Error(),
+				}
+				wp.logMutex.Lock()
+				encoder := json.NewEncoder(wp.logFile)
+				if err := encoder.Encode(jobErr); err != nil {
+					fmt.Printf("Failed to write JSON log: %v\n", err)
+				}
+				wp.logMutex.Unlock()
 			}
+		case <-ctx.Done():
+			fmt.Printf("Worker cancelled: %v\n", ctx.Err())
+			return
 		}
 	}
 }
 
-func New() WorkerPool {
+func (wp *WorkerPool) JobChannelCount() int {
+	return len(wp.jobs)
+}
+
+func New(numWorkers int) WorkerPool {
 	return WorkerPool{
-		jobs: make(chan Job),
-		Done: make(chan struct{}),
+		workersCount: numWorkers,
+		jobs:         make(chan Job),
+		Done:         make(chan struct{}),
 	}
 }
