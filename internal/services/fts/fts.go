@@ -189,9 +189,7 @@ func (fts *FTS) preprocessText(content string) []string {
 }
 
 func (fts *FTS) ProcessDocument(ctx context.Context, document models.Document) (string, error) {
-	fmt.Printf("Document Abstract: %s\n", document.Abstract)
 	words := fts.preprocessText(document.Abstract)
-	fmt.Printf("Words: %v\n", words)
 
 	documentBytes, err := json.Marshal(document)
 	if err != nil {
