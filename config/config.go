@@ -11,7 +11,6 @@ import (
 type Config struct {
 	Env         string `yaml:"env" env-default:"local"`
 	StoragePath string `yaml:"storage_path" env-required:"true"`
-	ChunkSize   int    `yaml:"chunk_size" env-default:"5"`
 	DumpPath    string `yaml:"dump_path" env-default:"./data/enwiki-latest-abstract10.xml.gz"`
 }
 
@@ -36,11 +35,6 @@ func MustLoad() *Config {
 
 	if *storagePathFlag != "" {
 		cfg.StoragePath = *storagePathFlag
-	}
-
-	if cfg.ChunkSize <= 0 {
-		fmt.Println("Warning: invalid ChunkSize, setting to default (5)")
-		cfg.ChunkSize = 5 //To prevent negative value
 	}
 
 	if _, err := os.Stat(cfg.DumpPath); os.IsNotExist(err) {
