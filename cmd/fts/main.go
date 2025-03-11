@@ -62,17 +62,30 @@ func main() {
 	dumpLoader := loader.NewLoader(log, cfg.Loader.FilePath)
 	log.Info("Loader initialised")
 
-	pool := workers.New()
+	pool := workers.New(5)
 
 	jobMetrics := metrics.New()
+
+	startTime := time.Now()
+	documents, err := dumpLoader.LoadDocuments()
+	if err != nil {
+		log.Error("Failed to load documents", "error", sl.Err(err))
+		return
+	}
+
+	duration := time.Since(startTime)
+	log.Info(fmt.Sprintf("Loaded %d documents in %v", len(documents), duration))
+
+	startTime = time.Now()
+	chunks := dumpLoader.ChunkDocuments(documents, chunkSize)
+	duration = time.Since(startTime)
+	log.Info(fmt.Sprintf("Split %d documents in %d chunks in %v. Chunk size: %d", len(documents), len(chunks), duration, chunkSize))
 
 	go func() {
 		wg.Add(1)
 		defer wg.Done()
 		pool.Run(ctx)
 	}()
-
-	retry := 0
 
 	go func() {
 		wg.Add(1)
@@ -109,31 +122,15 @@ func main() {
 		}
 	}()
 
-	startTime := time.Now()
-	documents, err := dumpLoader.LoadDocuments()
-	if err != nil {
-		log.Error("Failed to load documents", "error", sl.Err(err))
-		return
-	}
-
-	duration := time.Since(startTime)
-	log.Info(fmt.Sprintf("Loaded %d documents in %v", len(documents), duration))
-
-	startTime = time.Now()
-	chunks := dumpLoader.ChunkDocuments(documents, chunkSize)
-	duration = time.Since(startTime)
-	log.Info(fmt.Sprintf("Split %d documents in %d chunks in %v. Chunk size: %d", len(documents), len(chunks), duration, chunkSize))
-
-	for i, chunk := range chunks {
-		startTime := time.Now()
-
-		for _, doc := range chunk {
-			job := workers.Job{
-				Description: workers.JobDescriptor{
-					ID:      workers.JobID(doc.ID),
-					JobType: "fetch_and_store",
-				},
-				ExecFn: func(ctx context.Context, args models.Event) (string, error) {
+	for _, chunk := range chunks {
+		job := workers.Job{
+			Description: workers.JobDescriptor{
+				ID:      workers.JobID(chunk[0].ID + "-" + chunk[len(chunk)-1].ID),
+				JobType: "fetch_and_store",
+			},
+			ExecFn: func(ctx context.Context, chunk []models.Document) ([]string, error) {
+				articleIDs := []string{}
+				for _, doc := range chunk {
 					startTime := time.Now()
 
 					host, title, err := parseUrl(doc)
@@ -177,92 +174,28 @@ func main() {
 
 						doc.Extract = cleanExtract
 
-						fmt.Printf("Saving doc ID: %s, Document Length: %d bytes\n", doc.ID, len(cleanExtract))
+						articleID, err := application.App.ProcessDocument(ctx, doc, nil)
 
-						result, err := application.App.ProcessDocument(ctx, doc, nil)
+						articleIDs = append(articleIDs, articleID)
 
 						if err != nil {
+							log.Error("Error processing document", "error", sl.Err(err))
 							jobMetrics.RecordFailure(time.Since(startTime))
-							return "", err
+							return []string{}, err
 						}
 						jobMetrics.RecordSuccess(time.Since(startTime))
-						return result, nil
 					}
+				}
 
-					jobMetrics.RecordFailure(time.Since(startTime))
-					return "", errors.New("no valid pages found in response")
-				},
-				Args: &doc,
-			}
-			pool.AddJob(&job)
+				return articleIDs, nil
+			},
+			Args: &chunk,
 		}
+		pool.AddJob(&job)
 
-		wg.Wait()
-
-		err := pool.CloseLogFile()
-		if err != nil {
-			log.Error("Failed to close log file", "error", sl.Err(err))
-		}
-
-		duration = time.Since(startTime)
-		log.Info(fmt.Sprintf("Processed chunk %d of %d in %v", i+1, len(chunks), duration))
 	}
 
 	fmt.Println("Indexing complete")
-
-	//g, err := gocui.NewGui(gocui.OutputNormal)
-	//if err != nil {
-	//	log.Error("Failed to create GUI:", "error", sl.Err(err))
-	//	os.Exit(1)
-	//}
-	//defer g.Close()
-	//
-	//g.Cursor = true
-	//g.SetManagerFunc(layout)
-	//
-	//go func() {
-	//	for {
-	//		if err := updateDBInfo(g, application, &pool); err != nil {
-	//			log.Error("Failed to update DB info", "error", sl.Err(err))
-	//		}
-	//		time.Sleep(2 * time.Second)
-	//	}
-	//}()
-	//
-	//if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
-	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	//}
-	//if err := g.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
-	//	return search(g, v, ctx, application)
-	//}); err != nil {
-	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	//}
-	//
-	//if err := g.SetKeybinding("output", gocui.KeyArrowDown, gocui.ModNone, scrollDown); err != nil {
-	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	//}
-	//if err := g.SetKeybinding("output", gocui.KeyArrowUp, gocui.ModNone, scrollUp); err != nil {
-	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	//}
-	//if err := g.SetKeybinding("maxResults", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
-	//	return setMaxResults(g, v, ctx, application)
-	//}); err != nil {
-	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	//}
-	//
-	//if err := g.SetKeybinding("", gocui.KeyTab, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
-	//	currentView := g.CurrentView().Name()
-	//	if currentView == "input" {
-	//		_, _ = g.SetCurrentView("maxResults")
-	//	} else if currentView == "maxResults" {
-	//		_, _ = g.SetCurrentView("output")
-	//	} else {
-	//		_, _ = g.SetCurrentView("input")
-	//	}
-	//	return nil
-	//}); err != nil {
-	//	log.Error("Failed to set keybinding:", "error", sl.Err(err))
-	//}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
@@ -273,13 +206,7 @@ func main() {
 			log.Error("Failed to close database", "error", sl.Err(err))
 		}
 		cancel()
-		//g.Close()
 	}()
-
-	//if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
-	//	log.Error("Failed to run GUI:", "error", sl.Err(err))
-	//}
-
 }
 
 func parseUrl(doc models.Document) (host string, title string, err error) {
