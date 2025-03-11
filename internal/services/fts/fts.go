@@ -122,18 +122,22 @@ var stopWords = map[string]struct{}{
 
 func Tokenize(content string) iter.Seq[string] {
 	return func(yield func(string) bool) {
-		lastSplit := 0
-		for i, char := range content {
-			if unicode.IsLetter(char) || unicode.IsNumber(char) {
-				if i-lastSplit != 0 && !yield(content[lastSplit:i]) {
-					return
-				}
+		lastSplit := -1 // Index of last split
 
-				lastSplit = i + 1
+		for i, char := range content {
+			if !(unicode.IsLetter(char) || unicode.IsNumber(char)) {
+				if lastSplit != -1 { // Prevent empty start
+					if !yield(content[lastSplit:i]) {
+						return
+					}
+				}
+				lastSplit = -1 // Reset lastSplit if a delimiter is found
+			} else if lastSplit == -1 { // New word start
+				lastSplit = i
 			}
 		}
 
-		if len(content)-lastSplit != 0 {
+		if lastSplit != -1 {
 			yield(content[lastSplit:])
 		}
 	}
@@ -185,7 +189,9 @@ func (fts *FTS) preprocessText(content string) []string {
 }
 
 func (fts *FTS) ProcessDocument(ctx context.Context, document models.Document) (string, error) {
+	fmt.Printf("Document Abstract: %s\n", document.Abstract)
 	words := fts.preprocessText(document.Abstract)
+	fmt.Printf("Words: %v\n", words)
 
 	documentBytes, err := json.Marshal(document)
 	if err != nil {
