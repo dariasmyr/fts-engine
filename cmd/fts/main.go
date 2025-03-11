@@ -182,7 +182,7 @@ func main() {
 
 	fmt.Println("Indexing complete")
 
-	cui := cui.New(&ctx, log, application, pool, 10)
+	appCUI := cui.New(&ctx, log, application, pool, 10)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
@@ -192,11 +192,11 @@ func main() {
 		if err := application.StorageApp.Stop(); err != nil {
 			log.Error("Failed to close database", "error", sl.Err(err))
 		}
-		cui.Close()
+		appCUI.Close()
 		cancel()
 	}()
 
-	cui.Start()
+	appCUI.Start()
 }
 
 func parseUrl(doc models.Document) (host string, title string, err error) {
