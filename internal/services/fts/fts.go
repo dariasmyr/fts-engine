@@ -184,15 +184,15 @@ func (fts *FTS) preprocessText(content string) []string {
 	return words
 }
 
-func (fts *FTS) ProcessDocument(ctx context.Context, document models.Document, docID string) (string, error) {
-	words := fts.preprocessText(document.Extract)
+func (fts *FTS) ProcessDocument(ctx context.Context, document models.Document) (string, error) {
+	words := fts.preprocessText(document.Abstract)
 
 	documentBytes, err := json.Marshal(document)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal document to bytes")
 	}
 
-	return fts.documentSaver.SaveDocumentWithIndexing(ctx, documentBytes, words, docID)
+	return fts.documentSaver.SaveDocumentWithIndexing(ctx, documentBytes, words, document.ID)
 }
 
 func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (SearchResult, error) {
