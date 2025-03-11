@@ -29,7 +29,8 @@ var (
 )
 
 type DocumentSaver interface {
-	AddDocument(ctx context.Context, content []byte, words []string, docID *string) (string, error)
+	SaveDocumentWithIndexing(ctx context.Context, content []byte, words []string, docID string) (string, error)
+	SaveDocument(ctx context.Context, content []byte, docID string) (string, error)
 	DeleteDocument(ctx context.Context, docId int) error
 }
 
@@ -183,7 +184,7 @@ func (fts *FTS) preprocessText(content string) []string {
 	return words
 }
 
-func (fts *FTS) ProcessDocument(ctx context.Context, document models.Document, docID *string) (string, error) {
+func (fts *FTS) ProcessDocument(ctx context.Context, document models.Document, docID string) (string, error) {
 	words := fts.preprocessText(document.Extract)
 
 	documentBytes, err := json.Marshal(document)
@@ -191,7 +192,7 @@ func (fts *FTS) ProcessDocument(ctx context.Context, document models.Document, d
 		return "", fmt.Errorf("failed to marshal document to bytes")
 	}
 
-	return fts.documentSaver.AddDocument(ctx, documentBytes, words, docID)
+	return fts.documentSaver.SaveDocumentWithIndexing(ctx, documentBytes, words, docID)
 }
 
 func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (SearchResult, error) {

@@ -37,31 +37,11 @@ func (s *Storage) GetDatabaseStats(context context.Context) (string, error) {
 	return stats, nil
 }
 
-func (s *Storage) AddDocument(context context.Context, content []byte, words []string, docID *string) (string, error) {
+func (s *Storage) SaveDocumentWithIndexing(context context.Context, content []byte, words []string, docID string) (string, error) {
 	batch := new(leveldb.Batch)
 
-	var newID string
-
-	// If docId (ID of a document from socket) is empty, we create it in db
-	if docID == nil {
-		// Retrieve the last document ID
-		lastIDBytes, err := s.db.Get([]byte("doc_counter"), nil)
-		var lastID int
-		if err == nil {
-			lastID, _ = strconv.Atoi(string(lastIDBytes))
-		}
-
-		newIDInt := lastID + 1
-		newID = strconv.Itoa(newIDInt)
-
-		// Update document counter
-		batch.Put([]byte("doc_counter"), []byte(newID))
-	} else {
-		newID = *docID
-	}
-
 	// Save the document content
-	batch.Put([]byte("doc:"+newID), content)
+	batch.Put([]byte("doc:"+docID), content)
 
 	// Word indexing
 	wordsCount := make(map[string]int)
@@ -80,7 +60,7 @@ func (s *Storage) AddDocument(context context.Context, content []byte, words []s
 			indexDataBuilder.WriteByte(',')
 		}
 
-		indexDataBuilder.WriteString(fmt.Sprintf("%s:%d", newID, count)) // append the new index
+		indexDataBuilder.WriteString(fmt.Sprintf("%s:%d", docID, count)) // append the new index
 
 		// Save the updated index data for the word
 		batch.Put([]byte(wordKey), []byte(indexDataBuilder.String()))
@@ -92,7 +72,22 @@ func (s *Storage) AddDocument(context context.Context, content []byte, words []s
 		return "", err
 	}
 
-	return newID, nil
+	return docID, nil
+}
+
+func (s *Storage) SaveDocument(context context.Context, content []byte, docID string) (string, error) {
+	batch := new(leveldb.Batch)
+
+	// Save the document content
+	batch.Put([]byte("doc:"+docID), content)
+
+	// Apply all batch operations
+	err := s.db.Write(batch, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return docID, nil
 }
 
 func (s *Storage) GetWord(cxt context.Context, word string) ([]string, error) {
