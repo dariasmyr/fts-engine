@@ -7,7 +7,6 @@ import (
 	"fts-hw/internal/app"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/fts"
-	"fts-hw/internal/workers"
 	"log/slog"
 	"os"
 	"strconv"
@@ -21,12 +20,11 @@ type CUI struct {
 	ctx         *context.Context
 	cui         *gocui.Gui
 	application *app.App
-	pool        *workers.WorkerPool
 	log         *slog.Logger
 	maxResults  int
 }
 
-func New(ctx *context.Context, log *slog.Logger, application *app.App, pool *workers.WorkerPool, maxResults int) *CUI {
+func New(ctx *context.Context, log *slog.Logger, application *app.App, maxResults int) *CUI {
 	g, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
 		log.Error("Failed to create GUI:", "error", sl.Err(err))
@@ -36,7 +34,6 @@ func New(ctx *context.Context, log *slog.Logger, application *app.App, pool *wor
 		ctx:         ctx,
 		cui:         g,
 		application: application,
-		pool:        pool,
 		log:         log,
 		maxResults:  maxResults,
 	}
