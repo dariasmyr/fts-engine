@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"fts-hw/internal/domain/models"
 	"fts-hw/internal/services/fts"
 	"fts-hw/internal/storage/leveldb"
 	"log/slog"
@@ -11,7 +12,7 @@ import (
 
 func TestSearch(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	storage, err := leveldb.NewStorage("./storage/leveldb.db")
+	storage, err := leveldb.NewStorage(".././storage/fts-test-queue-dump.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
@@ -19,9 +20,16 @@ func TestSearch(t *testing.T) {
 
 	searchEngine := fts.New(log, storage, storage)
 
-	extract := "Search engine test document."
-	content := []byte("Search engine test document.")
-	_, err = searchEngine.ProcessDocument(context.Background(), extract, content, nil)
+	document := models.Document{
+		DocumentBase: models.DocumentBase{
+			Title: "Test Document",
+			URL:   "https://example.com",
+			Text:  "This is a test document.",
+		},
+		Extract: "This is a test document.",
+		ID:      "1",
+	}
+	_, err = searchEngine.ProcessDocument(context.Background(), document, nil)
 	if err != nil {
 		t.Fatalf("Failed to add document: %v", err)
 	}
