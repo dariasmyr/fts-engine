@@ -47,7 +47,7 @@ func (l *Loader) LoadDocuments() ([]models.Document, error) {
 	}
 
 	for i := range dump.Documents {
-		dump.Documents[i].ID = generateID(dump.Documents[i])
+		dump.Documents[i].ID = l.generateID(dump.Documents[i])
 	}
 
 	return dump.Documents, nil
@@ -55,7 +55,7 @@ func (l *Loader) LoadDocuments() ([]models.Document, error) {
 
 func (l *Loader) ChunkDocuments(documents []models.Document, chunkSize int) [][]models.Document {
 	numChunks := (len(documents) + chunkSize - 1) / chunkSize
-	chunks := make([][]models.Document, 0, numChunks)
+	chunks := make([][]models.Document, numChunks)
 
 	for i := 0; i < numChunks; i++ {
 		start := i * chunkSize
