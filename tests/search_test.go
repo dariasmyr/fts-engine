@@ -22,9 +22,9 @@ func TestSearch(t *testing.T) {
 
 	document := models.Document{
 		DocumentBase: models.DocumentBase{
-			Title: "Test Document",
-			URL:   "https://example.com",
-			Text:  "This is a test document.",
+			Title:    "Test Document",
+			URL:      "https://example.com",
+			Abstract: "This is a test document.",
 		},
 		Extract: "This is a test document.",
 		ID:      "1",

@@ -71,6 +71,6 @@ func (l *Loader) ChunkDocuments(documents []models.Document, chunkSize int) [][]
 
 func (l *Loader) generateID(document models.Document) string {
 	hasher := md5.New()
-	io.WriteString(hasher, document.Title+"|"+document.URL+"|"+document.Text)
+	io.WriteString(hasher, document.Title+"|"+document.URL+"|"+document.Abstract)
 	return hex.EncodeToString(hasher.Sum(nil))
 }

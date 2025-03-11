@@ -1,9 +1,9 @@
 package models
 
 type DocumentBase struct {
-	Title string `xml:"title" json:"title"`
-	URL   string `xml:"url" json:"url"`
-	Text  string `xml:"abstract" json:"abstract"`
+	Title    string `xml:"title" json:"title"`
+	URL      string `xml:"url" json:"url"`
+	Abstract string `xml:"abstract" json:"abstract"`
 }
 
 type Document struct {
