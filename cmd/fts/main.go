@@ -159,7 +159,7 @@ func main() {
 
 						doc.Extract = cleanExtract
 
-						articleID, err := application.App.ProcessDocument(ctx, doc, nil)
+						articleID, err := application.App.ProcessDocument(ctx, doc)
 
 						articleIDs = append(articleIDs, articleID)
 
