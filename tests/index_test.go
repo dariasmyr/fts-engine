@@ -16,7 +16,7 @@ func TestIndex(t *testing.T) {
 	content := "This is a test document for indexing."
 	words := []string{"test", "document", "indexing"}
 
-	docID, err := storage.AddDocument(context.Background(), []byte(content), words, nil)
+	docID, err := storage.SaveDocumentWithIndexing(context.Background(), []byte(content), words, "123")
 	if err != nil {
 		t.Fatalf("Failed to add document: %v", err)
 	}

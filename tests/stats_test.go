@@ -7,7 +7,7 @@ import (
 )
 
 func TestStats(t *testing.T) {
-	storage, err := leveldb.NewStorage("./storage/leveldb.db")
+	storage, err := leveldb.NewStorage(".././storage/fts-test-2.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}

@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-func TestSearch(t *testing.T) {
+func TestSearchFTS(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	storage, err := leveldb.NewStorage(".././storage/fts-test-queue-dump.db")
+	storage, err := leveldb.NewStorage("./storage/leveldb.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
@@ -29,12 +29,12 @@ func TestSearch(t *testing.T) {
 		Extract: "This is a test document.",
 		ID:      "1",
 	}
-	_, err = searchEngine.ProcessDocument(context.Background(), document, nil)
+	_, err = searchEngine.ProcessDocument(context.Background(), document)
 	if err != nil {
 		t.Fatalf("Failed to add document: %v", err)
 	}
 
-	searchResults, err := searchEngine.Search(context.Background(), "test", 10)
+	searchResults, err := searchEngine.Search(context.Background(), "small wild cat", 10)
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}
