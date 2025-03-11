@@ -35,11 +35,6 @@ const (
 
 var searchQuery string
 
-var totalEvents int
-var totalFilteredEvents int
-var eventsWithExtract int
-var eventsWithoutExtract int
-
 func main() {
 	cfg := config.MustLoad()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -73,7 +68,7 @@ func main() {
 	startTime = time.Now()
 	chunks := dumpLoader.ChunkDocuments(documents, cfg.ChunkSize)
 	duration = time.Since(startTime)
-	log.Info(fmt.Sprintf("Split %d documents in %d chunks in %v. Chunk size: %d", len(documents), len(chunks), duration, chunkSize))
+	log.Info(fmt.Sprintf("Split %d documents in %d chunks in %v. Chunk size: %d", len(documents), len(chunks), duration, cfg.ChunkSize))
 
 	go func() {
 		wg.Add(1)
@@ -99,12 +94,6 @@ func main() {
 				log.Info("Num Goroutines", "count", runtime.NumGoroutine())
 				log.Info("Memory usage", "bytes", pool.MemoryUsage())
 				log.Info("Workers", "count", pool.ActiveWorkersCount())
-
-				log.Info("Events Stats",
-					"Events", totalEvents,
-					"Filtered Events", totalFilteredEvents,
-					"Events - Extract", eventsWithExtract,
-					"Events - No Extract", eventsWithoutExtract)
 
 				metricsStats := jobMetrics.PrintMetrics()
 				log.Info("Job Metrics",
@@ -161,13 +150,10 @@ func main() {
 
 					for _, page := range apiResponse.Query.Pages {
 						if page.Extract == "" {
-							eventsWithoutExtract++
 							jobMetrics.RecordFailure(time.Since(startTime))
 							log.Error("Empty extract")
 							return []string{""}, errors.New("empty extract in response")
 						}
-
-						eventsWithExtract++
 
 						cleanExtract := utils.Clean(page.Extract)
 
