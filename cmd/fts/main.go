@@ -34,14 +34,11 @@ const (
 )
 
 var searchQuery string
-var maxResults = 10
 
 var totalEvents int
 var totalFilteredEvents int
 var eventsWithExtract int
 var eventsWithoutExtract int
-
-const chunkSize = 1000
 
 func main() {
 	cfg := config.MustLoad()
@@ -74,7 +71,7 @@ func main() {
 	log.Info(fmt.Sprintf("Loaded %d documents in %v", len(documents), duration))
 
 	startTime = time.Now()
-	chunks := dumpLoader.ChunkDocuments(documents, chunkSize)
+	chunks := dumpLoader.ChunkDocuments(documents, cfg.ChunkSize)
 	duration = time.Since(startTime)
 	log.Info(fmt.Sprintf("Split %d documents in %d chunks in %v. Chunk size: %d", len(documents), len(chunks), duration, chunkSize))
 

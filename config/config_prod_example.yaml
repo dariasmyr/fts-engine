@@ -1,4 +1,4 @@
 env: "prod"
-storage_path: "./storage/fts-test.db"
-dump:
-  dump_path: "./data/enwiki-latest-abstract1.xml.gz"
+storage_path: "./storage/fts-queue.db"
+chunk_size: 5
+dump_path: "./data/enwiki-latest-abstract1.xml.gz"
