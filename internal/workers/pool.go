@@ -97,12 +97,8 @@ func worker(ctx context.Context, wg *sync.WaitGroup, wp *WorkerPool) {
 	}
 }
 
-func (wp *WorkerPool) JobChannelCount() int {
-	return len(wp.jobs)
-}
-
-func New(numWorkers int) WorkerPool {
-	return WorkerPool{
+func New(numWorkers int) *WorkerPool {
+	return &WorkerPool{
 		workersCount: numWorkers,
 		jobs:         make(chan Job),
 		Done:         make(chan struct{}),
