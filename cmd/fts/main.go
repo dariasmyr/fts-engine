@@ -9,7 +9,7 @@ import (
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/cui"
 	"fts-hw/internal/services/loader"
-	workers2 "fts-hw/internal/services/workers"
+	workers "fts-hw/internal/services/workers"
 	"io"
 	"log/slog"
 	"os"
@@ -69,9 +69,9 @@ func main() {
 
 	for i, doc := range documents {
 		log.Info("Starting job", "doc", i)
-		job := workers2.Job{
-			Description: workers2.JobDescriptor{
-				ID:      workers2.JobID(strconv.Itoa(i)),
+		job := workers.Job{
+			Description: workers.JobDescriptor{
+				ID:      workers.JobID(strconv.Itoa(i)),
 				JobType: "fetch_and_store",
 			},
 			ExecFn: func(ctx context.Context, doc models.Document) (string, error) {
