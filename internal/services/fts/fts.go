@@ -122,27 +122,22 @@ var stopWords = map[string]struct{}{
 
 func Tokenize(content string) iter.Seq[string] {
 	return func(yield func(string) bool) {
-		lastSplit := -1 // Index of last split
+		lastSplit := 0
 
 		for i, char := range content {
-			if !(unicode.IsLetter(char) || unicode.IsNumber(char)) {
-				if lastSplit != -1 { // Prevent empty start
-					if !yield(content[lastSplit:i]) {
-						return
-					}
+			if !unicode.IsLetter(char) && !unicode.IsNumber(char) {
+				if i-lastSplit != 0 && !yield(content[lastSplit:i]) {
+					return
 				}
-				lastSplit = -1 // Reset lastSplit if a delimiter is found
-			} else if lastSplit == -1 { // New word start
-				lastSplit = i
+				lastSplit = i + 1
 			}
 		}
 
-		if lastSplit != -1 {
+		if len(content)-lastSplit != 0 {
 			yield(content[lastSplit:])
 		}
 	}
 }
-
 func ToLower(seq iter.Seq[string]) iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for token := range seq {
