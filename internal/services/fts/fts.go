@@ -31,12 +31,12 @@ var (
 type DocumentSaver interface {
 	SaveDocumentWithIndexing(ctx context.Context, content []byte, words []string, docID string) (string, error)
 	SaveDocument(ctx context.Context, content []byte, docID string) (string, error)
-	DeleteDocument(ctx context.Context, docId int) error
+	DeleteDocument(ctx context.Context, docId string) error
 }
 
 type DocumentProvider interface {
 	GetWord(ctx context.Context, word string) ([]string, error)
-	GetDocument(ctx context.Context, docID int) (string, error)
+	GetDocument(ctx context.Context, docID string) (string, error)
 }
 
 func New(
@@ -52,7 +52,7 @@ func New(
 }
 
 type ResultDoc struct {
-	DocID         int
+	DocID         string
 	UniqueMatches int
 	TotalMatches  int
 	Doc           string
@@ -205,8 +205,8 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (Sea
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	docFrequency := make(map[int]int)
-	wordMatchCount := make(map[int]int)
+	docFrequency := make(map[string]int)
+	wordMatchCount := make(map[string]int)
 
 	searchStart := time.Now()
 	for _, token := range tokens {
@@ -218,7 +218,7 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (Sea
 				return
 			}
 
-			localMap := make(map[int]int)
+			localMap := make(map[string]int)
 			for _, docEntry := range docEntries {
 				// Split entries by comma and parse each "docID:count" pair
 				pairs := strings.Split(docEntry, ",")
@@ -229,7 +229,7 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (Sea
 					if len(parts) != 2 {
 						continue // Skip invalid entries
 					}
-					docID, _ := strconv.Atoi(parts[0])
+					docID := parts[0]
 					count, _ := strconv.Atoi(parts[1])
 
 					//Increase docFrequency by word match count for doc
@@ -254,14 +254,14 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (Sea
 
 	sortStart := time.Now()
 	var docMatches []struct {
-		docID         int
+		docID         string
 		uniqueMatches int
 		totalMatches  int
 	}
 
 	for docID := range docFrequency {
 		docMatches = append(docMatches, struct {
-			docID         int
+			docID         string
 			uniqueMatches int
 			totalMatches  int
 		}{docID, wordMatchCount[docID], docFrequency[docID]})
