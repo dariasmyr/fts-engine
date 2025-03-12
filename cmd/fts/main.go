@@ -9,7 +9,6 @@ import (
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/loader"
-	"fts-hw/internal/utils/metrics"
 	"fts-hw/internal/workers"
 	"io"
 	"log/slog"
@@ -49,8 +48,6 @@ func main() {
 
 	pool := workers.New(80)
 
-	jobMetrics := metrics.New()
-
 	startTime := time.Now()
 	documents, err := dumpLoader.LoadDocuments()
 	if err != nil {
@@ -71,35 +68,6 @@ func main() {
 		pool.Run(ctx)
 	}()
 
-	//go func() {
-	//	wg.Add(1)
-	//	defer wg.Done()
-	//
-	//	ticker := time.NewTicker(10 * time.Second)
-	//	defer ticker.Stop()
-
-	//	for {
-	//		select {
-	//		case <-pool.Done:
-	//			log.Info("Channel Done closed, exiting the loop.")
-	//			return
-	//		case <-ticker.C:
-	//			log.Info("==============================================================")
-	//			log.Info("Num CPUs", "count", runtime.NumCPU())
-	//			log.Info("Num Goroutines", "count", runtime.NumGoroutine())
-	//			log.Info("Memory usage", "bytes", pool.MemoryUsage())
-	//			log.Info("Workers", "count", pool.ActiveWorkersCount())
-	//
-	//			metricsStats := jobMetrics.PrintMetrics()
-	//			log.Info("Document Metrics",
-	//				"Total Document", metricsStats.TotalJobs,
-	//				"Successful Documents", metricsStats.SuccessfulJobs,
-	//				"Failed Documents", metricsStats.FailedJobs,
-	//				"Avg Exec Time", metricsStats.AvgExecTime)
-	//		}
-	//	}
-	//}()
-
 	for i, doc := range documents {
 		log.Info("Starting job", "doc", i)
 		job := workers.Job{
@@ -108,12 +76,8 @@ func main() {
 				JobType: "fetch_and_store",
 			},
 			ExecFn: func(ctx context.Context, doc models.Document) (string, error) {
-
-				startTime := time.Now()
-
 				//host, title, err := parseUrl(doc)
 				if err != nil {
-					jobMetrics.RecordFailure(time.Since(startTime))
 					log.Error("Error parsing url", "error", sl.Err(err))
 					return "", err
 				}
@@ -123,7 +87,6 @@ func main() {
 				//
 				//resp, err := http.Get(apiURL)
 				//if err != nil {
-				//	jobMetrics.RecordFailure(time.Since(startTime))
 				//	log.Error("Error getting url", "error", sl.Err(err))
 				//	return []string{""}, err
 				//}
@@ -132,20 +95,17 @@ func main() {
 				//body, err := io.ReadAll(resp.Body)
 				//if err != nil {
 				//	log.Error("Error reading body", "error", sl.Err(err))
-				//	jobMetrics.RecordFailure(time.Since(startTime))
 				//	return []string{""}, err
 				//}
 				//
 				//var apiResponse models.ArticleResponse
 				//if err := json.Unmarshal(body, &apiResponse); err != nil {
 				//	log.Error("Error unmarshalling body", "error", sl.Err(err))
-				//	jobMetrics.RecordFailure(time.Since(startTime))
 				//	return []string{""}, err
 				//}
 				//
 				//for _, page := range apiResponse.Query.Pages {
 				//	if page.Extract == "" {
-				//		jobMetrics.RecordFailure(time.Since(startTime))
 				//		log.Error("Empty extract")
 				//		return []string{""}, errors.New("empty extract in response")
 				//	}
@@ -160,10 +120,8 @@ func main() {
 
 				if err != nil {
 					log.Error("Error processing document", "error", sl.Err(err))
-					jobMetrics.RecordFailure(time.Since(startTime))
 					return "", err
 				}
-				jobMetrics.RecordSuccess(time.Since(startTime))
 
 				return articleID, nil
 			},
