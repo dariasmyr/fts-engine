@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,7 +47,7 @@ func main() {
 	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
 	log.Info("Loader initialised")
 
-	pool := workers.New(80)
+	pool := workers.New(runtime.NumCPU() * 2)
 
 	startTime := time.Now()
 	documents, err := dumpLoader.LoadDocuments()
