@@ -8,10 +8,10 @@ import (
 type Job struct {
 	Description JobDescriptor
 	ExecFn      ExecutionFn
-	Args        *[]models.Document
+	Args        *models.Document
 }
 
-type ExecutionFn func(ctx context.Context, args []models.Document) ([]string, error)
+type ExecutionFn func(ctx context.Context, args models.Document) (string, error)
 
 type JobID string
 type jobType string

@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"fts-hw/config"
 	"fts-hw/internal/app"
@@ -11,16 +9,14 @@ import (
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/loader"
-	utils "fts-hw/internal/utils/clean"
 	"fts-hw/internal/utils/metrics"
 	"fts-hw/internal/workers"
 	"io"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -51,7 +47,7 @@ func main() {
 	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
 	log.Info("Loader initialised")
 
-	pool := workers.New(5)
+	pool := workers.New(80)
 
 	jobMetrics := metrics.New()
 
@@ -66,9 +62,8 @@ func main() {
 	log.Info(fmt.Sprintf("Loaded %d documents in %v", len(documents), duration))
 
 	startTime = time.Now()
-	chunks := dumpLoader.ChunkDocuments(documents, cfg.ChunkSize)
 	duration = time.Since(startTime)
-	log.Info(fmt.Sprintf("Split %d documents in %d chunks in %v. Chunk size: %d", len(documents), len(chunks), duration, cfg.ChunkSize))
+	log.Info(fmt.Sprintf("Split %d documents. in %v", len(documents), duration))
 
 	go func() {
 		wg.Add(1)
@@ -76,113 +71,110 @@ func main() {
 		pool.Run(ctx)
 	}()
 
-	go func() {
-		wg.Add(1)
-		defer wg.Done()
+	//go func() {
+	//	wg.Add(1)
+	//	defer wg.Done()
+	//
+	//	ticker := time.NewTicker(10 * time.Second)
+	//	defer ticker.Stop()
 
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
+	//	for {
+	//		select {
+	//		case <-pool.Done:
+	//			log.Info("Channel Done closed, exiting the loop.")
+	//			return
+	//		case <-ticker.C:
+	//			log.Info("==============================================================")
+	//			log.Info("Num CPUs", "count", runtime.NumCPU())
+	//			log.Info("Num Goroutines", "count", runtime.NumGoroutine())
+	//			log.Info("Memory usage", "bytes", pool.MemoryUsage())
+	//			log.Info("Workers", "count", pool.ActiveWorkersCount())
+	//
+	//			metricsStats := jobMetrics.PrintMetrics()
+	//			log.Info("Document Metrics",
+	//				"Total Document", metricsStats.TotalJobs,
+	//				"Successful Documents", metricsStats.SuccessfulJobs,
+	//				"Failed Documents", metricsStats.FailedJobs,
+	//				"Avg Exec Time", metricsStats.AvgExecTime)
+	//		}
+	//	}
+	//}()
 
-		for {
-			select {
-			case <-pool.Done:
-				log.Info("Channel Done closed, exiting the loop.")
-				return
-			case <-ticker.C:
-				log.Info("==============================================================")
-				log.Info("Num CPUs", "count", runtime.NumCPU())
-				log.Info("Num Goroutines", "count", runtime.NumGoroutine())
-				log.Info("Memory usage", "bytes", pool.MemoryUsage())
-				log.Info("Workers", "count", pool.ActiveWorkersCount())
-
-				metricsStats := jobMetrics.PrintMetrics()
-				log.Info("Job Metrics",
-					"Total Jobs", metricsStats.TotalJobs,
-					"Successful Jobs", metricsStats.SuccessfulJobs,
-					"Failed Jobs", metricsStats.FailedJobs,
-					"Avg Exec Time", metricsStats.AvgExecTime)
-			}
-		}
-	}()
-
-	for _, chunk := range chunks {
+	for i, doc := range documents {
+		log.Info("Starting job", "doc", i)
 		job := workers.Job{
 			Description: workers.JobDescriptor{
-				ID:      workers.JobID(chunk[0].ID + "-" + chunk[len(chunk)-1].ID),
+				ID:      workers.JobID(strconv.Itoa(i)),
 				JobType: "fetch_and_store",
 			},
-			ExecFn: func(ctx context.Context, chunk []models.Document) ([]string, error) {
-				articleIDs := []string{}
-				for _, doc := range chunk {
-					startTime := time.Now()
+			ExecFn: func(ctx context.Context, doc models.Document) (string, error) {
 
-					host, title, err := parseUrl(doc)
-					if err != nil {
-						jobMetrics.RecordFailure(time.Since(startTime))
-						log.Error("Error parsing url", "error", sl.Err(err))
-						return []string{""}, err
-					}
+				startTime := time.Now()
 
-					apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s",
-						host, title)
-
-					resp, err := http.Get(apiURL)
-					if err != nil {
-						jobMetrics.RecordFailure(time.Since(startTime))
-						log.Error("Error getting url", "error", sl.Err(err))
-						return []string{""}, err
-					}
-					defer resp.Body.Close()
-
-					body, err := io.ReadAll(resp.Body)
-					if err != nil {
-						log.Error("Error reading body", "error", sl.Err(err))
-						jobMetrics.RecordFailure(time.Since(startTime))
-						return []string{""}, err
-					}
-
-					var apiResponse models.ArticleResponse
-					if err := json.Unmarshal(body, &apiResponse); err != nil {
-						log.Error("Error unmarshalling body", "error", sl.Err(err))
-						jobMetrics.RecordFailure(time.Since(startTime))
-						return []string{""}, err
-					}
-
-					for _, page := range apiResponse.Query.Pages {
-						if page.Extract == "" {
-							jobMetrics.RecordFailure(time.Since(startTime))
-							log.Error("Empty extract")
-							return []string{""}, errors.New("empty extract in response")
-						}
-
-						cleanExtract := utils.Clean(page.Extract)
-
-						doc.Extract = cleanExtract
-
-						articleID, err := application.App.ProcessDocument(ctx, doc)
-
-						articleIDs = append(articleIDs, articleID)
-
-						if err != nil {
-							log.Error("Error processing document", "error", sl.Err(err))
-							jobMetrics.RecordFailure(time.Since(startTime))
-							return []string{}, err
-						}
-						jobMetrics.RecordSuccess(time.Since(startTime))
-					}
+				//host, title, err := parseUrl(doc)
+				if err != nil {
+					jobMetrics.RecordFailure(time.Since(startTime))
+					log.Error("Error parsing url", "error", sl.Err(err))
+					return "", err
 				}
 
-				return articleIDs, nil
+				//apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s",
+				//	host, title)
+				//
+				//resp, err := http.Get(apiURL)
+				//if err != nil {
+				//	jobMetrics.RecordFailure(time.Since(startTime))
+				//	log.Error("Error getting url", "error", sl.Err(err))
+				//	return []string{""}, err
+				//}
+				//defer resp.Body.Close()
+				//
+				//body, err := io.ReadAll(resp.Body)
+				//if err != nil {
+				//	log.Error("Error reading body", "error", sl.Err(err))
+				//	jobMetrics.RecordFailure(time.Since(startTime))
+				//	return []string{""}, err
+				//}
+				//
+				//var apiResponse models.ArticleResponse
+				//if err := json.Unmarshal(body, &apiResponse); err != nil {
+				//	log.Error("Error unmarshalling body", "error", sl.Err(err))
+				//	jobMetrics.RecordFailure(time.Since(startTime))
+				//	return []string{""}, err
+				//}
+				//
+				//for _, page := range apiResponse.Query.Pages {
+				//	if page.Extract == "" {
+				//		jobMetrics.RecordFailure(time.Since(startTime))
+				//		log.Error("Empty extract")
+				//		return []string{""}, errors.New("empty extract in response")
+				//	}
+				//
+				//	cleanExtract := utils.Clean(page.Extract)
+				//
+				//	doc.Extract = cleanExtract
+				//
+				//}
+
+				articleID, err := application.App.ProcessDocument(ctx, doc)
+
+				if err != nil {
+					log.Error("Error processing document", "error", sl.Err(err))
+					jobMetrics.RecordFailure(time.Since(startTime))
+					return "", err
+				}
+				jobMetrics.RecordSuccess(time.Since(startTime))
+
+				return articleID, nil
 			},
-			Args: &chunk,
+			Args: &doc,
 		}
 		pool.AddJob(&job)
-
 	}
 
 	fmt.Println("Indexing complete")
 
-	appCUI := cui.New(&ctx, log, application, pool, 10)
+	appCUI := cui.New(&ctx, log, application, 10)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)

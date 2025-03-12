@@ -10,7 +10,6 @@ import (
 type WorkerPool struct {
 	workersCount int
 	jobs         chan Job
-	result       chan Result
 	Done         chan struct{}
 	logFile      *os.File
 	logMutex     sync.Mutex
@@ -54,7 +53,7 @@ func worker(ctx context.Context, wg *sync.WaitGroup, wp *WorkerPool) {
 			}
 			result := job.execute(ctx)
 			if result.Err != nil {
-				wp.result <- result
+				fmt.Printf("Job %s failed: %v\n", job.Description, result.Err)
 			}
 			fmt.Printf("Job %s completed\n", job.Description)
 		case <-ctx.Done():
@@ -64,11 +63,10 @@ func worker(ctx context.Context, wg *sync.WaitGroup, wp *WorkerPool) {
 	}
 }
 
-func New(numWorkers int, numJobs int) *WorkerPool {
+func New(numWorkers int) *WorkerPool {
 	return &WorkerPool{
 		workersCount: numWorkers,
-		jobs:         make(chan Job, numJobs),
-		result:       make(chan Result, numJobs),
+		jobs:         make(chan Job),
 		Done:         make(chan struct{}),
 	}
 }
