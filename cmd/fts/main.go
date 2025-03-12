@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"fts-hw/config"
 	"fts-hw/internal/app"
-	"fts-hw/internal/cui"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
+	"fts-hw/internal/services/cui"
 	"fts-hw/internal/services/loader"
-	"fts-hw/internal/workers"
+	workers2 "fts-hw/internal/services/workers"
 	"io"
 	"log/slog"
 	"net/url"
@@ -47,7 +47,7 @@ func main() {
 	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
 	log.Info("Loader initialised")
 
-	pool := workers.New(runtime.NumCPU() * 2)
+	pool := workers2.New(runtime.NumCPU() * 2)
 
 	startTime := time.Now()
 	documents, err := dumpLoader.LoadDocuments()
@@ -71,9 +71,9 @@ func main() {
 
 	for i, doc := range documents {
 		log.Info("Starting job", "doc", i)
-		job := workers.Job{
-			Description: workers.JobDescriptor{
-				ID:      workers.JobID(strconv.Itoa(i)),
+		job := workers2.Job{
+			Description: workers2.JobDescriptor{
+				ID:      workers2.JobID(strconv.Itoa(i)),
 				JobType: "fetch_and_store",
 			},
 			ExecFn: func(ctx context.Context, doc models.Document) (string, error) {
