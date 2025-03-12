@@ -75,16 +75,12 @@ func main() {
 				JobType: "fetch_and_store",
 			},
 			ExecFn: func(ctx context.Context, doc models.Document) (string, error) {
-				if err != nil {
-					log.Error("Error parsing url", "error", sl.Err(err))
-					return "", err
-				}
 
 				//Uncomment this if you want fetch Extract (extended article text) from Wikimedia API
-				doc, err = dumpLoader.FetchAndProcessDocument(ctx, doc)
-				if err != nil {
-					return "", err
-				}
+				//doc, err = dumpLoader.FetchAndProcessDocument(ctx, doc)
+				//if err != nil {
+				//	return "", err
+				//}
 
 				articleID, err := application.App.ProcessDocument(ctx, doc)
 
