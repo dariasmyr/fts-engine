@@ -1,8 +1,12 @@
 package fts_trie
 
 import (
+	"errors"
+	"fmt"
 	"sort"
 	"unicode"
+
+	snowballeng "github.com/kljensen/snowball/english"
 )
 
 type Node struct {
@@ -16,20 +20,26 @@ type ResultDoc struct {
 	TotalMatches  int
 }
 
+var ErrInvalidCharacter = errors.New("invalid character in trigram")
+var ErrInvalidTrigramSize = errors.New("trigram must have exactly 3 characters")
+
 func NewNode() *Node {
 	return &Node{
 		Docs: make(map[string]int),
 	}
 }
 
-func (n *Node) Insert(trigram string, docID string) {
+func (n *Node) Insert(trigram string, docID string) error {
 	if len(trigram) != 3 {
-		return
+		return ErrInvalidTrigramSize
 	}
 
 	node := n
 	for i := 0; i < 3; i++ {
 		index := trigram[i] - 'a'
+		if index < 0 || index >= 26 {
+			return ErrInvalidCharacter
+		}
 		if node.Continuations[index] == nil {
 			node.Continuations[index] = NewNode()
 		}
@@ -37,56 +47,76 @@ func (n *Node) Insert(trigram string, docID string) {
 	}
 	// Increase doc entry count
 	node.Docs[docID]++
+	return nil
 }
 
-func (n *Node) Search(trigram string) map[string]int {
+func (n *Node) Search(trigram string) (map[string]int, error) {
 	if len(trigram) != 3 {
-		return nil
+		return nil, ErrInvalidTrigramSize
 	}
 
 	node := n
 	for i := 0; i < 3; i++ {
 		index := trigram[i] - 'a'
+		if index < 0 || index >= 26 {
+			return nil, ErrInvalidCharacter
+		}
 		if node.Continuations[index] == nil {
-			return nil
+			fmt.Printf("Trigram not found")
+			return nil, nil
 		}
 		node = node.Continuations[index]
 	}
 	// Return trigram doc entries
-	return node.Docs
+	return node.Docs, nil
 }
 
 func getTrigrams(token string) []string {
 	if len(token) < 3 {
 		return nil
 	}
-	trigrams := make([]string, 3)
-	for i := 0; i < len(token)-3; i++ {
+	trigrams := make([]string, 0, 3)
+	for i := 0; i < len(token)-2; i++ {
 		trigrams = append(trigrams, token[i:i+3])
 	}
+	fmt.Printf("Trigrams: %v \n", trigrams)
 	return trigrams
 }
 
 func tokenize(content string) []string {
-	lastIndex := 0
+	lastSplit := 0
 	tokens := make([]string, 0)
 	for i, char := range content {
 		if unicode.IsLetter(char) || unicode.IsNumber(char) {
-			if i-lastIndex != 0 {
-				tokens = append(tokens, content[lastIndex:i])
-			}
-			lastIndex = i + 1
+			continue
 		}
+
+		if i-lastSplit != 0 {
+			tokens = append(tokens, content[lastSplit:i])
+		}
+
+		lastSplit = i + 1
 	}
-	if lastIndex < len(content) {
-		tokens = append(tokens, content[lastIndex:])
+
+	if len(content) > lastSplit {
+		tokens = append(tokens, content[lastSplit:])
 	}
+
 	return tokens
 }
 
 func IndexDocument(node *Node, docID string, content string) {
+	fmt.Printf("Content to index: %s \n", content)
 	tokens := tokenize(content)
+	fmt.Printf("Tokens to index: %v \n", tokens)
 	for _, token := range tokens {
+		// skip stop words
+		if snowballeng.IsStopWord(token) {
+			continue
+		}
+		//lowercase and stemmimg (eng only)
+		token = snowballeng.Stem(token, false)
+		fmt.Printf("Processed word: %s\n", token)
 		trigrams := getTrigrams(token)
 		for _, trigram := range trigrams {
 			node.Insert(trigram, docID)
@@ -94,22 +124,31 @@ func IndexDocument(node *Node, docID string, content string) {
 	}
 }
 
-func (n *Node) SearchDocuments(query string, maxResults int) []ResultDoc {
+func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error) {
 	results := make([]ResultDoc, 0, maxResults)
 	currentIndex := 0
 
 	tokens := tokenize(query)
 	for _, token := range tokens {
+		// skip stop words
+		if snowballeng.IsStopWord(token) {
+			continue
+		}
+		//lowercase and stemmimg (eng only)
+		token = snowballeng.Stem(token, false)
 		trigrams := getTrigrams(token)
 		if len(trigrams) == 0 {
-			return nil
+			return nil, ErrInvalidTrigramSize
 		}
 
 		docUniqueMatches := make(map[string]int)
 		docTotalMatches := make(map[string]int)
 
 		for _, trigram := range trigrams {
-			docEntries := n.Search(trigram)
+			docEntries, err := n.Search(trigram)
+			if err != nil {
+				return nil, err
+			}
 			if docEntries == nil {
 				continue
 			}
@@ -139,5 +178,5 @@ func (n *Node) SearchDocuments(query string, maxResults int) []ResultDoc {
 		})
 	}
 
-	return results
+	return results, nil
 }
