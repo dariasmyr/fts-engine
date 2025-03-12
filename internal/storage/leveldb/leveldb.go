@@ -3,7 +3,6 @@ package leveldb
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/syndtr/goleveldb/leveldb"
@@ -100,21 +99,21 @@ func (s *Storage) GetWord(cxt context.Context, word string) ([]string, error) {
 	return strings.Split(string(data), ","), nil
 }
 
-func (s *Storage) GetDocument(cxt context.Context, docID int) (string, error) {
-	docKey := "doc:" + strconv.Itoa(docID)
+func (s *Storage) GetDocument(cxt context.Context, docID string) (string, error) {
+	docKey := "doc:" + docID
 
 	docData, err := s.db.Get([]byte(docKey), nil)
 	if err != nil {
-		return "", fmt.Errorf("document ID %d not found", docID)
+		return "", fmt.Errorf("document ID %s not found", docID)
 	}
 
 	return string(docData), nil
 }
 
-func (s *Storage) DeleteDocument(context context.Context, docID int) error {
+func (s *Storage) DeleteDocument(context context.Context, docID string) error {
 	batch := new(leveldb.Batch)
 
-	docKey := "doc:" + strconv.Itoa(docID)
+	docKey := "doc:" + docID
 	batch.Delete([]byte(docKey))
 
 	// Run over all indexes and delete references to document
@@ -128,7 +127,7 @@ func (s *Storage) DeleteDocument(context context.Context, docID int) error {
 			var newEntries []string
 			for _, entry := range entries {
 				parts := strings.Split(entry, ":")
-				id, _ := strconv.Atoi(parts[0])
+				id := parts[0]
 				if id != docID {
 					newEntries = append(newEntries, entry)
 				}

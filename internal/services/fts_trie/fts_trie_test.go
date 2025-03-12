@@ -93,7 +93,7 @@ func TestInsertAndSearch(t *testing.T) {
 		t.Run(tt.trigram, func(t *testing.T) {
 			docs, err := trie.Search(tt.trigram)
 			if err != nil {
-				t.Errorf("Search error: %v", err)
+				t.Errorf("Search error:", err)
 			}
 			if !reflect.DeepEqual(docs, tt.expectedDocs) {
 				t.Errorf("Expected %v, but got %v", tt.expectedDocs, docs)
