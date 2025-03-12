@@ -87,7 +87,7 @@ func tokenize(content string) []string {
 	lastSplit := 0
 	tokens := make([]string, 0)
 	for i, char := range content {
-		if unicode.IsLetter(char) || unicode.IsNumber(char) {
+		if unicode.IsLetter(char) {
 			continue
 		}
 
