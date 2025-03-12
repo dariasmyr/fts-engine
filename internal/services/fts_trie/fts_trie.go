@@ -170,7 +170,7 @@ func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error
 			currentIndex++
 		}
 
-		sort.Slice(results, func(i, j int) bool {
+		sort.Slice(results[:currentIndex], func(i, j int) bool {
 			if results[i].UniqueMatches == results[j].UniqueMatches {
 				return results[i].TotalMatches > results[j].TotalMatches
 			}
@@ -178,5 +178,5 @@ func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error
 		})
 	}
 
-	return results, nil
+	return results[:currentIndex], nil
 }
