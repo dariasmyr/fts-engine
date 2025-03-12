@@ -12,12 +12,10 @@ import (
 	workers2 "fts-hw/internal/services/workers"
 	"io"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -77,45 +75,16 @@ func main() {
 				JobType: "fetch_and_store",
 			},
 			ExecFn: func(ctx context.Context, doc models.Document) (string, error) {
-				//host, title, err := parseUrl(doc)
 				if err != nil {
 					log.Error("Error parsing url", "error", sl.Err(err))
 					return "", err
 				}
 
-				//apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s",
-				//	host, title)
-				//
-				//resp, err := http.Get(apiURL)
-				//if err != nil {
-				//	log.Error("Error getting url", "error", sl.Err(err))
-				//	return []string{""}, err
-				//}
-				//defer resp.Body.Close()
-				//
-				//body, err := io.ReadAll(resp.Body)
-				//if err != nil {
-				//	log.Error("Error reading body", "error", sl.Err(err))
-				//	return []string{""}, err
-				//}
-				//
-				//var apiResponse models.ArticleResponse
-				//if err := json.Unmarshal(body, &apiResponse); err != nil {
-				//	log.Error("Error unmarshalling body", "error", sl.Err(err))
-				//	return []string{""}, err
-				//}
-				//
-				//for _, page := range apiResponse.Query.Pages {
-				//	if page.Extract == "" {
-				//		log.Error("Empty extract")
-				//		return []string{""}, errors.New("empty extract in response")
-				//	}
-				//
-				//	cleanExtract := utils.Clean(page.Extract)
-				//
-				//	doc.Extract = cleanExtract
-				//
-				//}
+				//Uncomment this if you want fetch Extract (extended article text) from Wikimedia API
+				doc, err = dumpLoader.FetchAndProcessDocument(ctx, doc)
+				if err != nil {
+					return "", err
+				}
 
 				articleID, err := application.App.ProcessDocument(ctx, doc)
 
@@ -148,25 +117,6 @@ func main() {
 	}()
 
 	appCUI.Start()
-}
-
-func parseUrl(doc models.Document) (host string, title string, err error) {
-	parsedURL, err := url.Parse(doc.URL)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to parse URL: %v", err)
-	}
-
-	var hostBuilder strings.Builder
-
-	hostBuilder.WriteString(parsedURL.Scheme)
-	hostBuilder.WriteString("://")
-	hostBuilder.WriteString(parsedURL.Host)
-
-	host = hostBuilder.String()
-
-	title = strings.TrimPrefix(parsedURL.Path, "/wiki/")
-
-	return host, title, nil
 }
 
 func setupLogger(env string) *slog.Logger {
