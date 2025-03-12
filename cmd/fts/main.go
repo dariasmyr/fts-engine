@@ -45,7 +45,7 @@ func main() {
 	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
 	log.Info("Loader initialised")
 
-	pool := workers2.New(runtime.NumCPU() * 2)
+	pool := workers.New(runtime.NumCPU() * 2)
 
 	startTime := time.Now()
 	documents, err := dumpLoader.LoadDocuments()
