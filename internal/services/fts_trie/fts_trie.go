@@ -125,7 +125,8 @@ func IndexDocument(node *Node, docID string, content string) {
 }
 
 func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error) {
-	results := make([]ResultDoc, 0, maxResults)
+	fmt.Printf("Query to search: %s \n", query)
+	results := make([]ResultDoc, maxResults)
 	currentIndex := 0
 
 	tokens := tokenize(query)
@@ -145,6 +146,7 @@ func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error
 		docTotalMatches := make(map[string]int)
 
 		for _, trigram := range trigrams {
+			fmt.Printf("Trigram to search: %s \n", trigram)
 			docEntries, err := n.Search(trigram)
 			if err != nil {
 				return nil, err
@@ -162,11 +164,14 @@ func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error
 			if currentIndex >= maxResults {
 				break
 			}
+			fmt.Printf("Current index %d, maxResult: %d\n", currentIndex, maxResults)
+			fmt.Printf("DocID: %s \n", docID)
 			results[currentIndex] = ResultDoc{
 				DocID:         docID,
 				UniqueMatches: uniqueMatches,
 				TotalMatches:  docTotalMatches[docID],
 			}
+			fmt.Printf("Results: %v \n", results[currentIndex])
 			currentIndex++
 		}
 
