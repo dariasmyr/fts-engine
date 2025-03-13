@@ -8,20 +8,19 @@ import (
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/cui"
 	ftsKV "fts-hw/internal/services/fts_kv"
-
-	// ftsTrie "fts-hw/internal/services/fts_trie"
 	"fts-hw/internal/services/loader"
-	workers "fts-hw/internal/services/workers"
+	"fts-hw/internal/services/workers"
+	"runtime"
+	"strconv"
+	"sync"
+	"time"
+
 	"fts-hw/internal/storage/leveldb"
 	"io"
 	"log/slog"
 	"os"
 	"os/signal"
-	"runtime"
-	"strconv"
-	"sync"
 	"syscall"
-	"time"
 )
 
 const (
@@ -42,7 +41,7 @@ func main() {
 	log := setupLogger(cfg.Env)
 	log.Info("fts", "env", cfg.Env)
 
-	storage, err := leveldb.NewStorage(cfg.StoragePath)
+	storage, err := leveldb.NewStorage(log, cfg.StoragePath)
 	if err != nil {
 		panic(err)
 	}
@@ -52,7 +51,7 @@ func main() {
 	log.Info("Key Value FTS initialised")
 
 	// trieFTS := ftsTrie.NewNode()
-	log.Info("Key Value FTS initialised")
+	log.Info("Trie FTS initialised")
 
 	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
 	log.Info("Loader initialised")

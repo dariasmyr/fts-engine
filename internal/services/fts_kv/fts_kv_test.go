@@ -16,7 +16,7 @@ func TestInsertAndSearchDocument(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	storage, err := leveldb.NewStorage("../../../storage/fts-kv.db")
+	storage, err := leveldb.NewStorage(log, "../../../storage/fts-kv.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}

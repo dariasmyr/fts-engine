@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fts-hw/internal/domain/models"
+	"fts-hw/internal/lib/logger/sl"
 	utils "fts-hw/internal/utils/format"
 	"iter"
 	"log/slog"
@@ -28,8 +29,9 @@ var (
 )
 
 type DocumentSaver interface {
-	SaveDocumentWithIndexing(ctx context.Context, doc *models.Document, words []string) (string, error)
+	SaveWordsWithIndexing(ctx context.Context, doc *models.Document, words []string) (int, error)
 	SaveDocument(ctx context.Context, doc *models.Document) (string, error)
+	BatchDocument(ctx context.Context, doc *models.Document) (string, error)
 	DeleteDocument(ctx context.Context, docId string) error
 }
 
@@ -172,7 +174,18 @@ func (fts *KeyValueFTS) preprocessText(content string) []string {
 func (fts *KeyValueFTS) ProcessDocument(ctx context.Context, document *models.Document) (string, error) {
 	words := fts.preprocessText(document.Abstract)
 
-	return fts.documentSaver.SaveDocumentWithIndexing(ctx, document, words)
+	_, err := fts.documentSaver.SaveWordsWithIndexing(ctx, document, words)
+	if err != nil {
+		fts.log.Error("Failed to save document", "error", sl.Err(err))
+		return "", err
+	}
+
+	id, err := fts.documentSaver.BatchDocument(ctx, document)
+	if err != nil {
+		fts.log.Error("Failed to document to batch", "error", sl.Err(err))
+		return "", err
+	}
+	return id, nil
 }
 
 func (fts *KeyValueFTS) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {

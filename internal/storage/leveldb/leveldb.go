@@ -5,20 +5,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"fts-hw/internal/domain/models"
+	"fts-hw/internal/lib/logger/sl"
+	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
 type Storage struct {
-	db *leveldb.DB
+	log       *slog.Logger
+	db        *leveldb.DB
+	writeChan chan *models.Document
+	wg        sync.WaitGroup
 }
 
-func (s *Storage) Close() error {
-	return s.db.Close()
-}
+const (
+	bufferSize   = 1000
+	flushTimeout = 2 * time.Second
+)
 
-func NewStorage(path string) (*Storage, error) {
+func NewStorage(log *slog.Logger, path string) (*Storage, error) {
 	const op = "storage.leveldb.New"
 
 	db, err := leveldb.OpenFile(path, nil)
@@ -26,7 +34,60 @@ func NewStorage(path string) (*Storage, error) {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	return &Storage{db: db}, nil
+	storage := &Storage{
+		log:       log,
+		db:        db,
+		writeChan: make(chan *models.Document, bufferSize*2),
+	}
+
+	storage.wg.Add(1)
+	go storage.writeWorker()
+
+	return storage, nil
+}
+
+func (s *Storage) writeWorker() {
+	defer s.wg.Done()
+
+	batch := new(leveldb.Batch)
+	ticker := time.NewTicker(flushTimeout)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case doc, ok := <-s.writeChan:
+			if !ok {
+				fmt.Println("Channel closed, flushing batch", batch.Len())
+				err := s.db.Write(batch, nil)
+				if err != nil {
+					s.log.Error("Failed to write batch", "error", sl.Err(err))
+				}
+				return
+			}
+
+			data, _ := json.Marshal(doc)
+			batch.Put([]byte("doc:"+doc.ID), data)
+
+			if batch.Len() >= bufferSize {
+				fmt.Printf("Flushing batch, len: %d\n", batch.Len())
+				err := s.db.Write(batch, nil)
+				if err != nil {
+					s.log.Error("Failed to write batch", "error", sl.Err(err))
+				}
+				batch = new(leveldb.Batch)
+			}
+
+		case <-ticker.C:
+			if batch.Len() > 0 {
+				fmt.Println("Timeout, flushing batch, len: ", batch.Len())
+				err := s.db.Write(batch, nil)
+				if err != nil {
+					s.log.Error("Failed to write batch", "error", sl.Err(err))
+				}
+				batch = new(leveldb.Batch)
+			}
+		}
+	}
 }
 
 func (s *Storage) GetDatabaseStats(context context.Context) (string, error) {
@@ -38,16 +99,8 @@ func (s *Storage) GetDatabaseStats(context context.Context) (string, error) {
 	return stats, nil
 }
 
-func (s *Storage) SaveDocumentWithIndexing(context context.Context, document *models.Document, words []string) (string, error) {
+func (s *Storage) SaveWordsWithIndexing(context context.Context, document *models.Document, words []string) (int, error) {
 	batch := new(leveldb.Batch)
-
-	data, err := json.Marshal(document)
-	if err != nil {
-		return "", err
-	}
-
-	// Save the document content
-	batch.Put([]byte("doc:"+document.ID), data)
 
 	// Word indexing
 	wordsCount := make(map[string]int)
@@ -55,6 +108,7 @@ func (s *Storage) SaveDocumentWithIndexing(context context.Context, document *mo
 		wordsCount[word]++
 	}
 
+	successfulCount := 0
 	for word, count := range wordsCount {
 		wordKey := "word:" + word
 		var indexDataBuilder strings.Builder
@@ -64,6 +118,7 @@ func (s *Storage) SaveDocumentWithIndexing(context context.Context, document *mo
 		if err == nil && len(existing) > 0 {
 			indexDataBuilder.Write(existing)
 			indexDataBuilder.WriteByte(',')
+			successfulCount++
 		}
 
 		indexDataBuilder.WriteString(fmt.Sprintf("%s:%d", document.ID, count)) // append the new index
@@ -73,12 +128,12 @@ func (s *Storage) SaveDocumentWithIndexing(context context.Context, document *mo
 	}
 
 	// Apply all batch operations
-	err = s.db.Write(batch, nil)
+	err := s.db.Write(batch, nil)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 
-	return document.ID, nil
+	return successfulCount, nil
 }
 
 func (s *Storage) SaveDocument(context context.Context, document *models.Document) (string, error) {
@@ -99,6 +154,15 @@ func (s *Storage) SaveDocument(context context.Context, document *models.Documen
 	}
 
 	return document.ID, nil
+}
+
+func (s *Storage) BatchDocument(context context.Context, document *models.Document) (string, error) {
+	select {
+	case s.writeChan <- document:
+		return document.ID, nil
+	case <-context.Done():
+		return "", context.Err()
+	}
 }
 
 func (s *Storage) GetWord(cxt context.Context, word string) ([]string, error) {
@@ -163,4 +227,10 @@ func (s *Storage) DeleteDocument(context context.Context, docID string) error {
 	iter.Release()
 
 	return s.db.Write(batch, nil)
+}
+
+func (s *Storage) Close() error {
+	close(s.writeChan)
+	s.wg.Wait()
+	return s.db.Close()
 }

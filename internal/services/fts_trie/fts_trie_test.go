@@ -6,13 +6,18 @@ import (
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/storage/leveldb"
+	"log/slog"
+	"os"
 	"reflect"
 	"testing"
 )
 
 func TestInsertAndSearch(t *testing.T) {
+	log := slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
+	)
 	trie := NewNode()
-	storage, err := leveldb.NewStorage("../../../storage/fts-trie.db")
+	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
@@ -55,7 +60,7 @@ func TestInsertAndSearch(t *testing.T) {
 	for _, document := range documents {
 		trie.IndexDocument(document.ID, document.Abstract)
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
-		id, err := storage.SaveDocument(context.Background(), &document)
+		id, err := storage.BatchDocument(context.Background(), &document)
 		if err != nil {
 			t.Fatalf("Failed to add document: %v", err)
 		}
@@ -104,8 +109,11 @@ func TestInsertAndSearch(t *testing.T) {
 }
 
 func TestInsertAndSearchDocument(t *testing.T) {
+	log := slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
+	)
 	trie := NewNode()
-	storage, err := leveldb.NewStorage("../../../storage/fts-trie.db")
+	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
@@ -148,7 +156,7 @@ func TestInsertAndSearchDocument(t *testing.T) {
 	for _, document := range documents {
 		trie.IndexDocument(document.ID, document.Abstract)
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
-		id, err := storage.SaveDocument(context.Background(), &document)
+		id, err := storage.BatchDocument(context.Background(), &document)
 		if err != nil {
 			t.Fatalf("Failed to add document: %v", err)
 		}
