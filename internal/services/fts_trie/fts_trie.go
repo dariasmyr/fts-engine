@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"fts-hw/internal/domain/models"
+	utils "fts-hw/internal/utils/format"
 	"sort"
 	"time"
 	"unicode"
@@ -132,11 +133,11 @@ func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int
 	currentIndex := 0
 
 	startTime := time.Now()
-	timings := make(map[string]time.Duration)
+	timings := make(map[string]string)
 
 	preprocessStart := time.Now()
 	tokens := tokenize(query)
-	timings["preprocess"] = time.Since(preprocessStart)
+	timings["preprocess"] = utils.FormatDuration(time.Since(preprocessStart))
 
 	searchStart := time.Now()
 	for _, token := range tokens {
@@ -188,11 +189,11 @@ func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int
 			return results[i].UniqueMatches > results[j].UniqueMatches
 		})
 	}
-	timings["search_tokens"] = time.Since(searchStart)
+	timings["search_tokens"] = utils.FormatDuration(time.Since(searchStart))
 
 	totalResultsCount := len(results[:currentIndex])
 
-	timings["total"] = time.Since(startTime)
+	timings["total"] = utils.FormatDuration(time.Since(startTime))
 
 	return &models.SearchResult{
 		ResultData:        results[:currentIndex],

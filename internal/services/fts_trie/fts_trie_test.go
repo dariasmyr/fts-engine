@@ -2,6 +2,7 @@ package fts_trie
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/storage/leveldb"
@@ -178,6 +179,13 @@ func TestInsertAndSearchDocument(t *testing.T) {
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}
+			resultJSON, err := json.MarshalIndent(docResults, "", "  ")
+			if err != nil {
+				fmt.Println("Error marshalling:", err)
+				return
+			}
+
+			fmt.Println(string(resultJSON))
 			docs := make([]string, 0, len(docResults.ResultData))
 			for _, doc := range docResults.ResultData {
 				docResult, err := storage.GetDocument(context.Background(), doc.ID)

@@ -1,9 +1,10 @@
-package fts
+package fts_kv
 
 import (
 	"context"
 	"errors"
 	"fts-hw/internal/domain/models"
+	utils "fts-hw/internal/utils/format"
 	"iter"
 	"log/slog"
 	"sort"
@@ -176,11 +177,11 @@ func (fts *KeyValueFTS) ProcessDocument(ctx context.Context, document *models.Do
 
 func (fts *KeyValueFTS) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
 	startTime := time.Now()
-	timings := make(map[string]time.Duration)
+	timings := make(map[string]string)
 
 	preprocessStart := time.Now()
 	tokens := fts.preprocessText(query)
-	timings["preprocess"] = time.Since(preprocessStart)
+	timings["preprocess"] = utils.FormatDuration(time.Since(preprocessStart))
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -252,10 +253,10 @@ func (fts *KeyValueFTS) SearchDocuments(ctx context.Context, query string, maxRe
 		}
 		return docMatches[i].uniqueMatches > docMatches[j].uniqueMatches
 	})
-	timings["search_tokens"] = time.Since(searchStart)
+	timings["search_tokens"] = utils.FormatDuration(time.Since(searchStart))
 
 	totalResultsCount := len(docMatches)
-	resultDocs := make([]models.ResultData, 0, maxResults)
+	resultDocs := make([]models.ResultData, maxResults)
 	for i := 0; i < len(docMatches) && i < maxResults; i++ {
 		resultDocs[i] = models.ResultData{
 			ID:            docMatches[i].docID,
@@ -264,10 +265,10 @@ func (fts *KeyValueFTS) SearchDocuments(ctx context.Context, query string, maxRe
 			Document:      models.Document{},
 		}
 	}
-	timings["total"] = time.Since(startTime)
+	timings["total"] = utils.FormatDuration(time.Since(startTime))
 
 	return &models.SearchResult{
-		ResultData:        resultDocs,
+		ResultData:        resultDocs[:len(docMatches)],
 		Timings:           timings,
 		TotalResultsCount: totalResultsCount,
 	}, nil

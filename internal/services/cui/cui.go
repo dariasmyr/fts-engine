@@ -12,7 +12,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/jroimartin/gocui"
 )
@@ -187,8 +186,7 @@ func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQue
 	fmt.Fprintln(timeView, "\033[33mSearch Time:\033[0m")
 
 	for phase, duration := range elapsedTime {
-		formattedDuration := formatDuration(duration)
-		fmt.Fprintf(timeView, "\033[32m%s: %s\033[0m\n", phase, formattedDuration)
+		fmt.Fprintf(timeView, "\033[32m%s: %s\033[0m\n", phase, duration)
 	}
 
 	outputView, err := g.View("output")
@@ -221,18 +219,6 @@ func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQue
 	return nil
 }
 
-// Format the duration into a human-readable string
-func formatDuration(d time.Duration) string {
-	if d < time.Microsecond {
-		return fmt.Sprintf("%.3fns", float64(d)/float64(time.Nanosecond))
-	} else if d < time.Millisecond {
-		return fmt.Sprintf("%.3fµs", float64(d)/float64(time.Microsecond))
-	} else if d < time.Second {
-		return fmt.Sprintf("%.3fms", float64(d)/float64(time.Millisecond))
-	}
-	return fmt.Sprintf("%.3fs", float64(d)/float64(time.Second))
-}
-
 func highlightQueryInResult(document *models.Document, query string) {
 	words := strings.Fields(query)
 	for _, word := range words {
@@ -240,7 +226,7 @@ func highlightQueryInResult(document *models.Document, query string) {
 	}
 }
 
-func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, map[string]time.Duration, int, error) {
+func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, map[string]string, int, error) {
 	searchResult, err := c.ftsSerivce.SearchDocuments(ctx, query, c.maxResults)
 	if err != nil {
 		return nil, nil, 0, err

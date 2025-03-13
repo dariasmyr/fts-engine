@@ -1,7 +1,5 @@
 package models
 
-import "time"
-
 type DocumentBase struct {
 	Title    string `xml:"title" json:"title"`
 	URL      string `xml:"url" json:"url"`
@@ -24,5 +22,5 @@ type ResultData struct {
 type SearchResult struct {
 	ResultData        []ResultData
 	TotalResultsCount int
-	Timings           map[string]time.Duration
+	Timings           map[string]string
 }

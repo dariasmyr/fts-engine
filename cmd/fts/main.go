@@ -49,10 +49,10 @@ func main() {
 	log.Info("Storage initialised")
 
 	keyValueFTS := ftsKV.New(log, storage, storage)
-	log.Info("FTS initialised")
+	log.Info("Key Value FTS initialised")
 
 	// trieFTS := ftsTrie.NewNode()
-	log.Info("FTS initialised")
+	log.Info("Key Value FTS initialised")
 
 	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
 	log.Info("Loader initialised")
