@@ -5,17 +5,12 @@ import (
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/storage/leveldb"
-	"log/slog"
-	"os"
 	"reflect"
 	"testing"
 )
 
 func TestInsertAndSearch(t *testing.T) {
-	logger := slog.New(
-		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
-	)
-	trie := NewNode(logger)
+	trie := NewNode()
 	storage, err := leveldb.NewStorage("../../../storage/fts-trie.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
@@ -108,10 +103,7 @@ func TestInsertAndSearch(t *testing.T) {
 }
 
 func TestInsertAndSearchDocument(t *testing.T) {
-	logger := slog.New(
-		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
-	)
-	trie := NewNode(logger)
+	trie := NewNode()
 	storage, err := leveldb.NewStorage("../../../storage/fts-trie.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)

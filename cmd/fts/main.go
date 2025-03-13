@@ -51,7 +51,7 @@ func main() {
 	keyValueFTS := ftsKV.New(log, storage, storage)
 	log.Info("FTS initialised")
 
-	// trieFTS := ftsTrie.NewNode(log)
+	// trieFTS := ftsTrie.NewNode()
 	log.Info("FTS initialised")
 
 	dumpLoader := loader.NewLoader(log, cfg.DumpPath)

@@ -3,8 +3,8 @@ package fts_trie
 import (
 	"context"
 	"errors"
+	"fmt"
 	"fts-hw/internal/domain/models"
-	"log/slog"
 	"sort"
 	"time"
 	"unicode"
@@ -14,7 +14,6 @@ import (
 )
 
 type Node struct {
-	log           *slog.Logger
 	Docs          map[string]int
 	Continuations [26]*Node
 }
@@ -28,7 +27,7 @@ type ResultDocIDs struct {
 var ErrInvalidCharacter = errors.New("invalid character in trigram")
 var ErrInvalidTrigramSize = errors.New("trigram must have exactly 3 characters")
 
-func NewNode(log *slog.Logger) *Node {
+func NewNode() *Node {
 	return &Node{
 		Docs: make(map[string]int),
 	}
@@ -67,7 +66,7 @@ func (n *Node) Search(trigram string) (map[string]int, error) {
 			return nil, ErrInvalidCharacter
 		}
 		if node.Continuations[index] == nil {
-			n.log.Info("Trigram not found")
+			fmt.Println("Trigram not found")
 			return nil, nil
 		}
 		node = node.Continuations[index]
