@@ -20,18 +20,12 @@ type JobError struct {
 	Error          string        `json:"error"`
 }
 
-func (wp *WorkerPool) AddJob(job *Job) {
-	wp.jobs <- *job
+func (wp *WorkerPool) AddJob(job Job) {
+	wp.jobs <- job
 }
 
 func (wp *WorkerPool) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-
-	var err error
-	if err != nil {
-		fmt.Printf("Error opening log file: %v\n", err)
-		return
-	}
 
 	for i := 0; i < wp.workersCount; i++ {
 		wg.Add(1)
@@ -39,6 +33,7 @@ func (wp *WorkerPool) Run(ctx context.Context) {
 	}
 
 	wg.Wait()
+	close(wp.jobs)
 	close(wp.Done)
 }
 
@@ -53,9 +48,9 @@ func worker(ctx context.Context, wg *sync.WaitGroup, wp *WorkerPool) {
 			}
 			result := job.execute(ctx)
 			if result.Err != nil {
-				fmt.Printf("Job %s failed: %v\n", job.Description, result.Err)
+				fmt.Printf("Job %+v failed: %v\n", job.Description, result.Err)
 			}
-			fmt.Printf("Job %s completed\n", job.Description)
+			fmt.Printf("Job %+v completed\n", job.Description)
 		case <-ctx.Done():
 			fmt.Printf("Worker cancelled: %v\n", ctx.Err())
 			return

@@ -61,8 +61,8 @@ func main() {
 	duration = time.Since(startTime)
 	log.Info(fmt.Sprintf("Split %d documents. in %v", len(documents), duration))
 
+	wg.Add(1)
 	go func() {
-		wg.Add(1)
 		defer wg.Done()
 		pool.Run(ctx)
 	}()
@@ -91,9 +91,9 @@ func main() {
 
 				return articleID, nil
 			},
-			Args: &doc,
+			Args: doc,
 		}
-		pool.AddJob(&job)
+		pool.AddJob(job)
 	}
 
 	fmt.Println("Indexing complete")

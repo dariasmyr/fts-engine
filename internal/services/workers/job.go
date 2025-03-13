@@ -8,7 +8,7 @@ import (
 type Job struct {
 	Description JobDescriptor
 	ExecFn      ExecutionFn
-	Args        *models.Document
+	Args        models.Document
 }
 
 type ExecutionFn func(ctx context.Context, args models.Document) (string, error)
@@ -30,7 +30,7 @@ type Result struct {
 }
 
 func (j Job) execute(ctx context.Context) Result {
-	value, err := j.ExecFn(ctx, *j.Args)
+	value, err := j.ExecFn(ctx, j.Args)
 	if err != nil {
 		return Result{
 			Err:         err,
