@@ -256,19 +256,27 @@ func (fts *KeyValueFTS) SearchDocuments(ctx context.Context, query string, maxRe
 	timings["search_tokens"] = utils.FormatDuration(time.Since(searchStart))
 
 	totalResultsCount := len(docMatches)
-	resultDocs := make([]models.ResultData, maxResults)
+	resultDocs := make([]models.ResultData, 0, maxResults)
 	for i := 0; i < len(docMatches) && i < maxResults; i++ {
-		resultDocs[i] = models.ResultData{
+		resultDocs = append(resultDocs, models.ResultData{
 			ID:            docMatches[i].docID,
 			UniqueMatches: docMatches[i].uniqueMatches,
 			TotalMatches:  docMatches[i].totalMatches,
 			Document:      models.Document{},
-		}
+		})
 	}
 	timings["total"] = utils.FormatDuration(time.Since(startTime))
 
+	for i := 0; i < len(resultDocs); i++ {
+		doc, err := fts.documentProvider.GetDocument(ctx, resultDocs[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		resultDocs[i].Document = *doc
+	}
+
 	return &models.SearchResult{
-		ResultData:        resultDocs[:len(docMatches)],
+		ResultData:        resultDocs,
 		Timings:           timings,
 		TotalResultsCount: totalResultsCount,
 	}, nil

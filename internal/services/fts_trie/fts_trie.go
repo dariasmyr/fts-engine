@@ -129,7 +129,7 @@ func (n *Node) IndexDocument(docID string, content string) {
 }
 
 func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
-	results := make([]models.ResultData, maxResults)
+	results := make([]models.ResultData, 0, maxResults)
 	currentIndex := 0
 
 	startTime := time.Now()
@@ -173,12 +173,12 @@ func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int
 			if currentIndex >= maxResults {
 				break
 			}
-			results[currentIndex] = models.ResultData{
+			results = append(results, models.ResultData{
 				ID:            docID,
 				UniqueMatches: uniqueMatches,
 				TotalMatches:  docTotalMatches[docID],
 				Document:      models.Document{},
-			}
+			})
 			currentIndex++
 		}
 
