@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"unicode"
+	"unicode/utf8"
 
 	snowballeng "github.com/kljensen/snowball/english"
 )
@@ -95,7 +96,10 @@ func tokenize(content string) []string {
 			tokens = append(tokens, content[lastSplit:i])
 		}
 
-		lastSplit = i + 1
+		charBytes := utf8.RuneLen(char)
+		// Update lastSplit considering the byte length of the character
+		// We don't use `i + 1` because characters can occupy more than one byte in UTF-8.
+		lastSplit = i + charBytes // account for the character's byte length
 	}
 
 	if len(content) > lastSplit {
@@ -160,6 +164,7 @@ func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error
 			}
 		}
 
+		fmt.Printf("docUniqueMatches %v", docUniqueMatches)
 		for docID, uniqueMatches := range docUniqueMatches {
 			if currentIndex >= maxResults {
 				break
@@ -171,7 +176,7 @@ func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error
 				UniqueMatches: uniqueMatches,
 				TotalMatches:  docTotalMatches[docID],
 			}
-			fmt.Printf("Results: %v \n", results[currentIndex])
+			fmt.Printf("Results: %+v \n", results[currentIndex])
 			currentIndex++
 		}
 
