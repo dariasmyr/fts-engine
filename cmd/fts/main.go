@@ -4,15 +4,10 @@ import (
 	"context"
 	"fmt"
 	"fts-hw/config"
-	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/cui"
-	ftsKV "fts-hw/internal/services/fts_kv"
+	ftsTrie "fts-hw/internal/services/fts_trie"
 	"fts-hw/internal/services/loader"
-	"fts-hw/internal/services/workers"
-	"runtime"
-	"strconv"
-	"sync"
 	"time"
 
 	"fts-hw/internal/storage/leveldb"
@@ -29,14 +24,10 @@ const (
 	envProd  = "prod"
 )
 
-var searchQuery string
-
 func main() {
 	cfg := config.MustLoad()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	var wg sync.WaitGroup
 
 	log := setupLogger(cfg.Env)
 	log.Info("fts", "env", cfg.Env)
@@ -47,16 +38,14 @@ func main() {
 	}
 	log.Info("Storage initialised")
 
-	keyValueFTS := ftsKV.New(log, storage, storage)
+	//keyValueFTS := ftsKV.New(log, storage, storage)
 	log.Info("Key Value FTS initialised")
 
-	// trieFTS := ftsTrie.NewNode()
+	trieFTS := ftsTrie.NewNode()
 	log.Info("Trie FTS initialised")
 
 	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
 	log.Info("Loader initialised")
-
-	pool := workers.New(runtime.NumCPU() * 2)
 
 	startTime := time.Now()
 	documents, err := dumpLoader.LoadDocuments()
@@ -72,51 +61,61 @@ func main() {
 	duration = time.Since(startTime)
 	log.Info(fmt.Sprintf("Split %d documents. in %v", len(documents), duration))
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		pool.Run(ctx)
-	}()
-
-	for i, doc := range documents {
-		log.Info("Starting job", "doc", i)
-		job := workers.Job{
-			Description: workers.JobDescriptor{
-				ID:      workers.JobID(strconv.Itoa(i)),
-				JobType: "fetch_and_store",
-			},
-			ExecFn: func(ctx context.Context, doc models.Document) (string, error) {
-
-				//Uncomment this if you want fetch Extract (extended article text) from Wikimedia API
-				//doc, err = dumpLoader.FetchAndProcessDocument(ctx, doc)
-				//if err != nil {
-				//	return "", err
-				//}
-
-				var articleID string
-
-				//Process document with simple fts
-				articleID, err = keyValueFTS.ProcessDocument(ctx, &doc)
-
-				// Uncomment this to process document with trie fts
-				// trieFTS.IndexDocument(doc.ID, doc.Abstract)
-				// articleID, err = storage.SaveDocument(context.Background(), &doc)
-
-				if err != nil {
-					log.Error("Error processing document", "error", sl.Err(err))
-					return "", err
-				}
-
-				return articleID, nil
-			},
-			Args: doc,
+	for _, doc := range documents {
+		trieFTS.IndexDocument(doc.ID, doc.Abstract)
+		//articleID, err := storage.BatchDocument(context.Background(), &doc)
+		if err != nil {
+			log.Error("Error processing document", "error", sl.Err(err))
+			continue
 		}
-		pool.AddJob(job)
+
 	}
+
+	//var wg sync.WaitGroup
+
+	//pool := workers.New(runtime.NumCPU() * 2)
+	//
+	//wg.Add(1)
+	//go func() {
+	//	defer wg.Done()
+	//	pool.Run(ctx)
+	//}()
+
+	// Uncomment this to process document with key value fts
+	//for i, doc := range documents {
+	//	log.Info("Starting job", "doc", i)
+	//	job := workers.Job{
+	//		Description: workers.JobDescriptor{
+	//			ID:      workers.JobID(strconv.Itoa(i)),
+	//			JobType: "fetch_and_store",
+	//		},
+	//		ExecFn: func(ctx context.Context, doc models.Document) (string, error) {
+	//
+	//			//Uncomment this if you want fetch Extract (extended article text) from Wikimedia API
+	//			//doc, err = dumpLoader.FetchAndProcessDocument(ctx, doc)
+	//			//if err != nil {
+	//			//	return "", err
+	//			//}
+	//
+	//			var articleID string
+	//
+	//			articleID, err = keyValueFTS.ProcessDocument(ctx, &doc)
+	//
+	//			if err != nil {
+	//				log.Error("Error processing document", "error", sl.Err(err))
+	//				return "", err
+	//			}
+	//
+	//			return articleID, nil
+	//		},
+	//		Args: doc,
+	//	}
+	//	pool.AddJob(job)
+	//}
 
 	fmt.Println("Indexing complete")
 
-	appCUI := cui.New(&ctx, log, keyValueFTS, 10)
+	appCUI := cui.New(&ctx, log, trieFTS, storage, 10)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)

@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
-	fts "fts-hw/internal/services/fts_kv"
+	fts "fts-hw/internal/services/fts_trie"
+	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
 	"strconv"
@@ -19,12 +20,13 @@ import (
 type CUI struct {
 	ctx        *context.Context
 	cui        *gocui.Gui
-	ftsSerivce *fts.KeyValueFTS
+	ftsSerivce *fts.Node
+	storage    *leveldb.Storage
 	log        *slog.Logger
 	maxResults int
 }
 
-func New(ctx *context.Context, log *slog.Logger, ftsSerivce *fts.KeyValueFTS, maxResults int) *CUI {
+func New(ctx *context.Context, log *slog.Logger, ftsSerivce *fts.Node, storage *leveldb.Storage, maxResults int) *CUI {
 	g, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
 		log.Error("Failed to create GUI:", "error", sl.Err(err))
@@ -34,6 +36,7 @@ func New(ctx *context.Context, log *slog.Logger, ftsSerivce *fts.KeyValueFTS, ma
 		ctx:        ctx,
 		cui:        g,
 		ftsSerivce: ftsSerivce,
+		storage:    storage,
 		log:        log,
 		maxResults: maxResults,
 	}
@@ -228,6 +231,16 @@ func highlightQueryInResult(document *models.Document, query string) {
 
 func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, map[string]string, int, error) {
 	searchResult, err := c.ftsSerivce.SearchDocuments(ctx, query, c.maxResults)
+
+	for i, result := range searchResult.ResultData {
+		doc, err := c.storage.GetDocument(ctx, result.ID)
+		if err != nil {
+			c.log.Error("Failed to get document from storage:", "error", sl.Err(err))
+			continue
+		}
+		searchResult.ResultData[i].Document = *doc
+	}
+
 	if err != nil {
 		return nil, nil, 0, err
 	}
