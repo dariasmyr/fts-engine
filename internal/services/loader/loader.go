@@ -84,8 +84,8 @@ func (l *Loader) generateID(document models.Document) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-func (l *Loader) parseUrl(doc models.Document) (host string, title string, err error) {
-	parsedURL, err := url.Parse(doc.URL)
+func (l *Loader) parseUrl(docURL string) (host string, title string, err error) {
+	parsedURL, err := url.Parse(docURL)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to parse URL: %v", err)
 	}
@@ -104,7 +104,7 @@ func (l *Loader) parseUrl(doc models.Document) (host string, title string, err e
 }
 
 func (l *Loader) FetchAndProcessDocument(ctx context.Context, doc models.Document) (models.Document, error) {
-	host, title, err := l.parseUrl(doc)
+	host, title, err := l.parseUrl(doc.URL)
 	if err != nil {
 		l.log.Error("Error parsing url", "error", sl.Err(err))
 		return doc, err
