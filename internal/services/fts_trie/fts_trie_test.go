@@ -180,7 +180,6 @@ func TestInsertAndSearchDocument(t *testing.T) {
 			}
 			docs := make([]string, 0, len(docResults))
 			for _, doc := range docResults {
-				fmt.Println("doc: ", doc)
 				abstract, err := storage.GetDocument(context.Background(), doc.DocID)
 				if err != nil {
 					t.Errorf("Failed to get document abstract: %v", err)

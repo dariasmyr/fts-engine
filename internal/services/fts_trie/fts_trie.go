@@ -112,7 +112,6 @@ func tokenize(content string) []string {
 func IndexDocument(node *Node, docID string, content string) {
 	fmt.Printf("Content to index: %s \n", content)
 	tokens := tokenize(content)
-	fmt.Printf("Tokens to index: %v \n", tokens)
 	for _, token := range tokens {
 		// skip stop words
 		if snowballeng.IsStopWord(token) {
@@ -120,7 +119,6 @@ func IndexDocument(node *Node, docID string, content string) {
 		}
 		//lowercase and stemmimg (eng only)
 		token = snowballeng.Stem(token, false)
-		fmt.Printf("Processed word: %s\n", token)
 		trigrams := getTrigrams(token)
 		for _, trigram := range trigrams {
 			node.Insert(trigram, docID)
@@ -150,7 +148,6 @@ func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error
 		docTotalMatches := make(map[string]int)
 
 		for _, trigram := range trigrams {
-			fmt.Printf("Trigram to search: %s \n", trigram)
 			docEntries, err := n.Search(trigram)
 			if err != nil {
 				return nil, err
@@ -164,13 +161,10 @@ func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error
 			}
 		}
 
-		fmt.Printf("docUniqueMatches %v", docUniqueMatches)
 		for docID, uniqueMatches := range docUniqueMatches {
 			if currentIndex >= maxResults {
 				break
 			}
-			fmt.Printf("Current index %d, maxResult: %d\n", currentIndex, maxResults)
-			fmt.Printf("DocID: %s \n", docID)
 			results[currentIndex] = ResultDoc{
 				DocID:         docID,
 				UniqueMatches: uniqueMatches,
