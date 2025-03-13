@@ -6,7 +6,6 @@ require (
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/jroimartin/gocui v0.5.0
 	github.com/kljensen/snowball v0.10.0
-	github.com/r3labs/sse/v2 v2.10.0
 	github.com/syndtr/goleveldb v1.0.0
 )
 

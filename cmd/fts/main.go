@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"fts-hw/config"
-	"fts-hw/internal/app"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/cui"
+	ftsKV "fts-hw/internal/services/fts_kv"
+
+	// ftsTrie "fts-hw/internal/services/fts_trie"
 	"fts-hw/internal/services/loader"
 	workers "fts-hw/internal/services/workers"
+	"fts-hw/internal/storage/leveldb"
 	"io"
 	"log/slog"
 	"os"
@@ -39,8 +42,17 @@ func main() {
 	log := setupLogger(cfg.Env)
 	log.Info("fts", "env", cfg.Env)
 
-	application := app.New(log, cfg.StoragePath)
-	log.Info("App initialised")
+	storage, err := leveldb.NewStorage(cfg.StoragePath)
+	if err != nil {
+		panic(err)
+	}
+	log.Info("Storage initialised")
+
+	keyValueFTS := ftsKV.New(log, storage, storage)
+	log.Info("FTS initialised")
+
+	// trieFTS := ftsTrie.NewNode(log)
+	log.Info("FTS initialised")
 
 	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
 	log.Info("Loader initialised")
@@ -82,7 +94,14 @@ func main() {
 				//	return "", err
 				//}
 
-				articleID, err := application.App.ProcessDocument(ctx, doc)
+				var articleID string
+
+				//Process document with simple fts
+				articleID, err = keyValueFTS.ProcessDocument(ctx, &doc)
+
+				// Uncomment this to process document with trie fts
+				// trieFTS.IndexDocument(doc.ID, doc.Abstract)
+				// articleID, err = storage.SaveDocument(context.Background(), &doc)
 
 				if err != nil {
 					log.Error("Error processing document", "error", sl.Err(err))
@@ -98,14 +117,15 @@ func main() {
 
 	fmt.Println("Indexing complete")
 
-	appCUI := cui.New(&ctx, log, application, 10)
+	appCUI := cui.New(&ctx, log, keyValueFTS, 10)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+
 	go func() {
 		<-stop
 		log.Info("Gracefully stopped")
-		if err := application.StorageApp.Stop(); err != nil {
+		if err := storage.Close(); err != nil {
 			log.Error("Failed to close database", "error", sl.Err(err))
 		}
 		appCUI.Close()

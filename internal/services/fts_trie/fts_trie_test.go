@@ -5,12 +5,17 @@ import (
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/storage/leveldb"
+	"log/slog"
+	"os"
 	"reflect"
 	"testing"
 )
 
 func TestInsertAndSearch(t *testing.T) {
-	trie := NewNode()
+	logger := slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
+	)
+	trie := NewNode(logger)
 	storage, err := leveldb.NewStorage("../../../storage/fts-trie.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
@@ -52,9 +57,9 @@ func TestInsertAndSearch(t *testing.T) {
 	documents = append(documents, document1, document2, document3)
 
 	for _, document := range documents {
-		IndexDocument(trie, document.ID, document.Abstract)
+		trie.IndexDocument(document.ID, document.Abstract)
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
-		id, err := storage.SaveDocument(context.Background(), []byte(document.Abstract), document.ID)
+		id, err := storage.SaveDocument(context.Background(), &document)
 		if err != nil {
 			t.Fatalf("Failed to add document: %v", err)
 		}
@@ -103,7 +108,10 @@ func TestInsertAndSearch(t *testing.T) {
 }
 
 func TestInsertAndSearchDocument(t *testing.T) {
-	trie := NewNode()
+	logger := slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
+	)
+	trie := NewNode(logger)
 	storage, err := leveldb.NewStorage("../../../storage/fts-trie.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
@@ -145,9 +153,9 @@ func TestInsertAndSearchDocument(t *testing.T) {
 	documents = append(documents, document1, document2, document3)
 
 	for _, document := range documents {
-		IndexDocument(trie, document.ID, document.Abstract)
+		trie.IndexDocument(document.ID, document.Abstract)
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
-		id, err := storage.SaveDocument(context.Background(), []byte(document.Abstract), document.ID)
+		id, err := storage.SaveDocument(context.Background(), &document)
 		if err != nil {
 			t.Fatalf("Failed to add document: %v", err)
 		}
@@ -174,17 +182,17 @@ func TestInsertAndSearchDocument(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
-			docResults, err := trie.SearchDocuments(tt.query, 10)
+			docResults, err := trie.SearchDocuments(context.Background(), tt.query, 10)
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}
-			docs := make([]string, 0, len(docResults))
-			for _, doc := range docResults {
-				abstract, err := storage.GetDocument(context.Background(), doc.DocID)
+			docs := make([]string, 0, len(docResults.ResultData))
+			for _, doc := range docResults.ResultData {
+				docResult, err := storage.GetDocument(context.Background(), doc.ID)
 				if err != nil {
 					t.Errorf("Failed to get document abstract: %v", err)
 				}
-				docs = append(docs, abstract)
+				docs = append(docs, docResult.Abstract)
 			}
 			if !reflect.DeepEqual(docs, tt.expectedDocAbstract) {
 				t.Errorf("Expected %v, but got %v", tt.expectedDocAbstract, docs)

@@ -2,11 +2,12 @@ package cui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"fts-hw/internal/app"
+	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
-	"fts-hw/internal/services/fts"
+	fts "fts-hw/internal/services/fts_kv"
 	"log/slog"
 	"os"
 	"strconv"
@@ -17,25 +18,25 @@ import (
 )
 
 type CUI struct {
-	ctx         *context.Context
-	cui         *gocui.Gui
-	application *app.App
-	log         *slog.Logger
-	maxResults  int
+	ctx        *context.Context
+	cui        *gocui.Gui
+	ftsSerivce *fts.KeyValueFTS
+	log        *slog.Logger
+	maxResults int
 }
 
-func New(ctx *context.Context, log *slog.Logger, application *app.App, maxResults int) *CUI {
+func New(ctx *context.Context, log *slog.Logger, ftsSerivce *fts.KeyValueFTS, maxResults int) *CUI {
 	g, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
 		log.Error("Failed to create GUI:", "error", sl.Err(err))
 		os.Exit(1)
 	}
 	return &CUI{
-		ctx:         ctx,
-		cui:         g,
-		application: application,
-		log:         log,
-		maxResults:  maxResults,
+		ctx:        ctx,
+		cui:        g,
+		ftsSerivce: ftsSerivce,
+		log:        log,
+		maxResults: maxResults,
 	}
 }
 
@@ -203,12 +204,17 @@ func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQue
 			break
 		}
 
-		highlightedHeader := fmt.Sprintf("\033[32mDoc ID: %d | Unique Matches: %d | Total Matches: %d\033[0m\n",
-			result.DocID, result.UniqueMatches, result.TotalMatches)
+		highlightedHeader := fmt.Sprintf("\033[32mDoc ID: %s | Unique Matches: %d | Total Matches: %d\033[0m\n",
+			result.ID, result.UniqueMatches, result.TotalMatches)
 		fmt.Fprintf(outputView, "%s\n", highlightedHeader)
 
-		highlightedResult := highlightQueryInResult(result.Doc, searchQuery)
-		fmt.Fprintf(outputView, "%s\n\n", highlightedResult)
+		highlightQueryInResult(&result.Document, searchQuery)
+		resultJson, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			fmt.Println("Error marshalling to JSON:", err)
+			return err
+		}
+		fmt.Fprintf(outputView, "%s\n\n", resultJson)
 	}
 
 	_, _ = g.SetCurrentView("input")
@@ -227,20 +233,19 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%.3fs", float64(d)/float64(time.Second))
 }
 
-func highlightQueryInResult(result, query string) string {
+func highlightQueryInResult(document *models.Document, query string) {
 	words := strings.Fields(query)
 	for _, word := range words {
-		result = strings.ReplaceAll(result, word, "\033[31m"+word+"\033[0m")
+		document.Abstract = strings.ReplaceAll(document.Abstract, word, "\033[31m"+word+"\033[0m")
 	}
-	return result
 }
 
-func (c *CUI) performSearch(query string, ctx context.Context) ([]fts.ResultDoc, map[string]time.Duration, int, error) {
-	searchResult, err := c.application.App.Search(ctx, query, c.maxResults)
+func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, map[string]time.Duration, int, error) {
+	searchResult, err := c.ftsSerivce.SearchDocuments(ctx, query, c.maxResults)
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	return searchResult.ResultDocs, searchResult.Timings, searchResult.TotalResultsCount, nil
+	return searchResult.ResultData, searchResult.Timings, searchResult.TotalResultsCount, nil
 }
 
 func quit(g *gocui.Gui, v *gocui.View) error {

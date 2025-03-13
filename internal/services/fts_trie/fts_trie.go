@@ -1,9 +1,12 @@
 package fts_trie
 
 import (
+	"context"
 	"errors"
-	"fmt"
+	"fts-hw/internal/domain/models"
+	"log/slog"
 	"sort"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -11,11 +14,12 @@ import (
 )
 
 type Node struct {
+	log           *slog.Logger
 	Docs          map[string]int
 	Continuations [26]*Node
 }
 
-type ResultDoc struct {
+type ResultDocIDs struct {
 	DocID         string
 	UniqueMatches int
 	TotalMatches  int
@@ -24,7 +28,7 @@ type ResultDoc struct {
 var ErrInvalidCharacter = errors.New("invalid character in trigram")
 var ErrInvalidTrigramSize = errors.New("trigram must have exactly 3 characters")
 
-func NewNode() *Node {
+func NewNode(log *slog.Logger) *Node {
 	return &Node{
 		Docs: make(map[string]int),
 	}
@@ -63,7 +67,7 @@ func (n *Node) Search(trigram string) (map[string]int, error) {
 			return nil, ErrInvalidCharacter
 		}
 		if node.Continuations[index] == nil {
-			fmt.Printf("Trigram not found")
+			n.log.Info("Trigram not found")
 			return nil, nil
 		}
 		node = node.Continuations[index]
@@ -80,7 +84,6 @@ func getTrigrams(token string) []string {
 	for i := 0; i < len(token)-2; i++ {
 		trigrams = append(trigrams, token[i:i+3])
 	}
-	fmt.Printf("Trigrams: %v \n", trigrams)
 	return trigrams
 }
 
@@ -109,8 +112,7 @@ func tokenize(content string) []string {
 	return tokens
 }
 
-func IndexDocument(node *Node, docID string, content string) {
-	fmt.Printf("Content to index: %s \n", content)
+func (n *Node) IndexDocument(docID string, content string) {
 	tokens := tokenize(content)
 	for _, token := range tokens {
 		// skip stop words
@@ -121,17 +123,23 @@ func IndexDocument(node *Node, docID string, content string) {
 		token = snowballeng.Stem(token, false)
 		trigrams := getTrigrams(token)
 		for _, trigram := range trigrams {
-			node.Insert(trigram, docID)
+			n.Insert(trigram, docID)
 		}
 	}
 }
 
-func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error) {
-	fmt.Printf("Query to search: %s \n", query)
-	results := make([]ResultDoc, maxResults)
+func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
+	results := make([]models.ResultData, maxResults)
 	currentIndex := 0
 
+	startTime := time.Now()
+	timings := make(map[string]time.Duration)
+
+	preprocessStart := time.Now()
 	tokens := tokenize(query)
+	timings["preprocess"] = time.Since(preprocessStart)
+
+	searchStart := time.Now()
 	for _, token := range tokens {
 		// skip stop words
 		if snowballeng.IsStopWord(token) {
@@ -165,12 +173,12 @@ func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error
 			if currentIndex >= maxResults {
 				break
 			}
-			results[currentIndex] = ResultDoc{
-				DocID:         docID,
+			results[currentIndex] = models.ResultData{
+				ID:            docID,
 				UniqueMatches: uniqueMatches,
 				TotalMatches:  docTotalMatches[docID],
+				Document:      models.Document{},
 			}
-			fmt.Printf("Results: %+v \n", results[currentIndex])
 			currentIndex++
 		}
 
@@ -181,6 +189,15 @@ func (n *Node) SearchDocuments(query string, maxResults int) ([]ResultDoc, error
 			return results[i].UniqueMatches > results[j].UniqueMatches
 		})
 	}
+	timings["search_tokens"] = time.Since(searchStart)
 
-	return results[:currentIndex], nil
+	totalResultsCount := len(results[:currentIndex])
+
+	timings["total"] = time.Since(startTime)
+
+	return &models.SearchResult{
+		ResultData:        results[:currentIndex],
+		Timings:           timings,
+		TotalResultsCount: totalResultsCount,
+	}, nil
 }

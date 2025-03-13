@@ -2,9 +2,7 @@ package fts
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"fts-hw/internal/domain/models"
 	"iter"
 	"log/slog"
@@ -18,7 +16,7 @@ import (
 	snowballeng "github.com/kljensen/snowball/english"
 )
 
-type FTS struct {
+type KeyValueFTS struct {
 	log              *slog.Logger
 	documentSaver    DocumentSaver
 	documentProvider DocumentProvider
@@ -29,39 +27,26 @@ var (
 )
 
 type DocumentSaver interface {
-	SaveDocumentWithIndexing(ctx context.Context, content []byte, words []string, docID string) (string, error)
-	SaveDocument(ctx context.Context, content []byte, docID string) (string, error)
+	SaveDocumentWithIndexing(ctx context.Context, doc *models.Document, words []string) (string, error)
+	SaveDocument(ctx context.Context, doc *models.Document) (string, error)
 	DeleteDocument(ctx context.Context, docId string) error
 }
 
 type DocumentProvider interface {
 	GetWord(ctx context.Context, word string) ([]string, error)
-	GetDocument(ctx context.Context, docID string) (string, error)
+	GetDocument(ctx context.Context, docID string) (*models.Document, error)
 }
 
 func New(
 	log *slog.Logger,
 	documentSaver DocumentSaver,
 	documentProvider DocumentProvider,
-) *FTS {
-	return &FTS{
+) *KeyValueFTS {
+	return &KeyValueFTS{
 		log:              log,
 		documentSaver:    documentSaver,
 		documentProvider: documentProvider,
 	}
-}
-
-type ResultDoc struct {
-	DocID         string
-	UniqueMatches int
-	TotalMatches  int
-	Doc           string
-}
-
-type SearchResult struct {
-	ResultDocs        []ResultDoc
-	TotalResultsCount int
-	Timings           map[string]time.Duration
 }
 
 var stopWords = map[string]struct{}{
@@ -170,7 +155,7 @@ func Stem(seq iter.Seq[string]) iter.Seq[string] {
 	}
 }
 
-func (fts *FTS) preprocessText(content string) []string {
+func (fts *KeyValueFTS) preprocessText(content string) []string {
 	tokens := Tokenize(content)
 	tokens = ToLower(tokens)
 	tokens = FilterStopWords(tokens)
@@ -183,23 +168,18 @@ func (fts *FTS) preprocessText(content string) []string {
 	return words
 }
 
-func (fts *FTS) ProcessDocument(ctx context.Context, document models.Document) (string, error) {
+func (fts *KeyValueFTS) ProcessDocument(ctx context.Context, document *models.Document) (string, error) {
 	words := fts.preprocessText(document.Abstract)
 
-	documentBytes, err := json.Marshal(document)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal document to bytes")
-	}
-
-	return fts.documentSaver.SaveDocumentWithIndexing(ctx, documentBytes, words, document.ID)
+	return fts.documentSaver.SaveDocumentWithIndexing(ctx, document, words)
 }
 
-func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (SearchResult, error) {
+func (fts *KeyValueFTS) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
 	startTime := time.Now()
 	timings := make(map[string]time.Duration)
 
 	preprocessStart := time.Now()
-	tokens := fts.preprocessText(content)
+	tokens := fts.preprocessText(query)
 	timings["preprocess"] = time.Since(preprocessStart)
 
 	var mu sync.Mutex
@@ -250,9 +230,7 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (Sea
 	}
 
 	wg.Wait()
-	timings["search_words"] = time.Since(searchStart)
 
-	sortStart := time.Now()
 	var docMatches []struct {
 		docID         string
 		uniqueMatches int
@@ -274,29 +252,22 @@ func (fts *FTS) Search(ctx context.Context, content string, maxResults int) (Sea
 		}
 		return docMatches[i].uniqueMatches > docMatches[j].uniqueMatches
 	})
-	timings["sort_results"] = time.Since(sortStart)
+	timings["search_tokens"] = time.Since(searchStart)
 
-	fetchStart := time.Now()
 	totalResultsCount := len(docMatches)
-	resultDocs := make([]ResultDoc, 0, maxResults)
-
+	resultDocs := make([]models.ResultData, 0, maxResults)
 	for i := 0; i < len(docMatches) && i < maxResults; i++ {
-		docData, err := fts.documentProvider.GetDocument(ctx, docMatches[i].docID)
-		if err == nil {
-			resultDocs = append(resultDocs, ResultDoc{
-				DocID:         docMatches[i].docID,
-				UniqueMatches: docMatches[i].uniqueMatches,
-				TotalMatches:  docMatches[i].totalMatches,
-				Doc:           docData,
-			})
+		resultDocs[i] = models.ResultData{
+			ID:            docMatches[i].docID,
+			UniqueMatches: docMatches[i].uniqueMatches,
+			TotalMatches:  docMatches[i].totalMatches,
+			Document:      models.Document{},
 		}
 	}
-	timings["fetch_documents"] = time.Since(fetchStart)
-
 	timings["total"] = time.Since(startTime)
 
-	return SearchResult{
-		ResultDocs:        resultDocs,
+	return &models.SearchResult{
+		ResultData:        resultDocs,
 		Timings:           timings,
 		TotalResultsCount: totalResultsCount,
 	}, nil

@@ -2,7 +2,9 @@ package leveldb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"fts-hw/internal/domain/models"
 	"strings"
 
 	"github.com/syndtr/goleveldb/leveldb"
@@ -36,11 +38,16 @@ func (s *Storage) GetDatabaseStats(context context.Context) (string, error) {
 	return stats, nil
 }
 
-func (s *Storage) SaveDocumentWithIndexing(context context.Context, content []byte, words []string, docID string) (string, error) {
+func (s *Storage) SaveDocumentWithIndexing(context context.Context, document *models.Document, words []string) (string, error) {
 	batch := new(leveldb.Batch)
 
+	data, err := json.Marshal(document)
+	if err != nil {
+		return "", err
+	}
+
 	// Save the document content
-	batch.Put([]byte("doc:"+docID), content)
+	batch.Put([]byte("doc:"+document.ID), data)
 
 	// Word indexing
 	wordsCount := make(map[string]int)
@@ -59,34 +66,39 @@ func (s *Storage) SaveDocumentWithIndexing(context context.Context, content []by
 			indexDataBuilder.WriteByte(',')
 		}
 
-		indexDataBuilder.WriteString(fmt.Sprintf("%s:%d", docID, count)) // append the new index
+		indexDataBuilder.WriteString(fmt.Sprintf("%s:%d", document.ID, count)) // append the new index
 
 		// Save the updated index data for the word
 		batch.Put([]byte(wordKey), []byte(indexDataBuilder.String()))
 	}
 
 	// Apply all batch operations
-	err := s.db.Write(batch, nil)
+	err = s.db.Write(batch, nil)
 	if err != nil {
 		return "", err
 	}
 
-	return docID, nil
+	return document.ID, nil
 }
 
-func (s *Storage) SaveDocument(context context.Context, content []byte, docID string) (string, error) {
+func (s *Storage) SaveDocument(context context.Context, document *models.Document) (string, error) {
 	batch := new(leveldb.Batch)
 
-	// Save the document content
-	batch.Put([]byte("doc:"+docID), content)
-
-	// Apply all batch operations
-	err := s.db.Write(batch, nil)
+	data, err := json.Marshal(document)
 	if err != nil {
 		return "", err
 	}
 
-	return docID, nil
+	// Save the document content
+	batch.Put([]byte("doc:"+document.ID), data)
+
+	// Apply all batch operations
+	err = s.db.Write(batch, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return document.ID, nil
 }
 
 func (s *Storage) GetWord(cxt context.Context, word string) ([]string, error) {
@@ -99,15 +111,21 @@ func (s *Storage) GetWord(cxt context.Context, word string) ([]string, error) {
 	return strings.Split(string(data), ","), nil
 }
 
-func (s *Storage) GetDocument(cxt context.Context, docID string) (string, error) {
-	docKey := "doc:" + docID
-
-	docData, err := s.db.Get([]byte(docKey), nil)
+func (s *Storage) GetDocument(cxt context.Context, docID string) (*models.Document, error) {
+	data, err := s.db.Get([]byte("doc:"+docID), nil)
 	if err != nil {
-		return "", fmt.Errorf("document ID %s not found", docID)
+		if err == leveldb.ErrNotFound {
+			return nil, nil
+		}
+		return nil, err
 	}
 
-	return string(docData), nil
+	var doc models.Document
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+
+	return &doc, nil
 }
 
 func (s *Storage) DeleteDocument(context context.Context, docID string) error {
