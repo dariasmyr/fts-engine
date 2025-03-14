@@ -180,12 +180,7 @@ func (fts *KeyValueFTS) ProcessDocument(ctx context.Context, document *models.Do
 		return "", err
 	}
 
-	id, err := fts.documentSaver.BatchDocument(ctx, document)
-	if err != nil {
-		fts.log.Error("Failed to document to batch", "error", sl.Err(err))
-		return "", err
-	}
-	return id, nil
+	return document.ID, nil
 }
 
 func (fts *KeyValueFTS) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
