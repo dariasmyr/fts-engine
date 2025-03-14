@@ -63,6 +63,9 @@ func main() {
 
 	for i, doc := range documents {
 		trieFTS.IndexDocument(doc.ID, doc.Abstract)
+
+		//_, err = keyValueFTS.ProcessDocument(ctx, &doc)
+
 		log.Info("Document indexed, adding to batch", "doc", i)
 		_, err := storage.BatchDocument(context.Background(), &doc)
 		if err != nil {
@@ -73,48 +76,6 @@ func main() {
 
 	storage.StopWorkers()
 	log.Info("All write workers stopped")
-
-	//var wg sync.WaitGroup
-
-	//pool := workers.New(runtime.NumCPU() * 2)
-	//
-	//wg.Add(1)
-	//go func() {
-	//	defer wg.Done()
-	//	pool.Run(ctx)
-	//}()
-
-	// Uncomment this to process document with key value fts
-	//for i, doc := range documents {
-	//	log.Info("Starting job", "doc", i)
-	//	job := workers.Job{
-	//		Description: workers.JobDescriptor{
-	//			ID:      workers.JobID(strconv.Itoa(i)),
-	//			JobType: "fetch_and_store",
-	//		},
-	//		ExecFn: func(ctx context.Context, doc models.Document) (string, error) {
-	//
-	//			//Uncomment this if you want fetch Extract (extended article text) from Wikimedia API
-	//			//doc, err = dumpLoader.FetchAndProcessDocument(ctx, doc)
-	//			//if err != nil {
-	//			//	return "", err
-	//			//}
-	//
-	//			var articleID string
-	//
-	//			articleID, err = keyValueFTS.ProcessDocument(ctx, &doc)
-	//
-	//			if err != nil {
-	//				log.Error("Error processing document", "error", sl.Err(err))
-	//				return "", err
-	//			}
-	//
-	//			return articleID, nil
-	//		},
-	//		Args: doc,
-	//	}
-	//	pool.AddJob(job)
-	//}
 
 	fmt.Println("Indexing complete")
 
