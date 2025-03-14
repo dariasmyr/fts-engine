@@ -169,27 +169,28 @@ func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int
 				docTotalMatches[docID] += count
 			}
 		}
-
-		for docID, uniqueMatches := range docUniqueMatches {
-			if currentIndex >= maxResults {
-				break
-			}
-			results = append(results, models.ResultData{
-				ID:            docID,
-				UniqueMatches: uniqueMatches,
-				TotalMatches:  docTotalMatches[docID],
-				Document:      models.Document{},
-			})
-			currentIndex++
-		}
-
-		sort.Slice(results[:currentIndex], func(i, j int) bool {
-			if results[i].UniqueMatches == results[j].UniqueMatches {
-				return results[i].TotalMatches > results[j].TotalMatches
-			}
-			return results[i].UniqueMatches > results[j].UniqueMatches
-		})
 	}
+
+	for docID, uniqueMatches := range docUniqueMatches {
+		if currentIndex >= maxResults {
+			break
+		}
+		results = append(results, models.ResultData{
+			ID:            docID,
+			UniqueMatches: uniqueMatches,
+			TotalMatches:  docTotalMatches[docID],
+			Document:      models.Document{},
+		})
+		currentIndex++
+	}
+
+	sort.Slice(results[:currentIndex], func(i, j int) bool {
+		if results[i].UniqueMatches == results[j].UniqueMatches {
+			return results[i].TotalMatches > results[j].TotalMatches
+		}
+		return results[i].UniqueMatches > results[j].UniqueMatches
+	})
+
 	timings["search_tokens"] = utils.FormatDuration(time.Since(searchStart))
 
 	totalResultsCount := len(results[:currentIndex])

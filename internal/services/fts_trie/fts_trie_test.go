@@ -174,7 +174,7 @@ func TestInsertAndSearchDocument(t *testing.T) {
 		},
 		{
 			query:               "Wikipedia Hotellet",
-			expectedDocAbstract: []string{document2.Abstract, document1.Abstract, document3.Abstract},
+			expectedDocAbstract: []string{document2.Abstract, document3.Abstract, document1.Abstract},
 		},
 		{
 			query:               "Rosa",
