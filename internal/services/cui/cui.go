@@ -220,7 +220,7 @@ func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQue
 func highlightQueryInResult(document *models.Document, query string) {
 	words := strings.Fields(query)
 	for _, word := range words {
-		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(word) + `\b`)
+		re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(word) + `\b`)
 		document.Abstract = re.ReplaceAllString(document.Abstract, "\033[31m$0\033[0m")
 	}
 }
