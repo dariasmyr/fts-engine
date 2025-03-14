@@ -2,7 +2,6 @@ package cui
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"fts-hw/internal/domain/models"
@@ -11,6 +10,7 @@ import (
 	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -210,12 +210,7 @@ func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQue
 		fmt.Fprintf(outputView, "%s\n", highlightedHeader)
 
 		highlightQueryInResult(&result.Document, searchQuery)
-		resultJson, err := json.MarshalIndent(result, "", "  ")
-		if err != nil {
-			fmt.Println("Error marshalling to JSON:", err)
-			return err
-		}
-		fmt.Fprintf(outputView, "%s\n\n", resultJson)
+		fmt.Fprintf(outputView, "%s\n%s\n\n", result.Document.URL, result.Document.Abstract)
 	}
 
 	_, _ = g.SetCurrentView("input")
@@ -225,7 +220,8 @@ func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQue
 func highlightQueryInResult(document *models.Document, query string) {
 	words := strings.Fields(query)
 	for _, word := range words {
-		document.Abstract = strings.ReplaceAll(document.Abstract, word, "\033[31m"+word+"\033[0m")
+		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(word) + `\b`)
+		document.Abstract = re.ReplaceAllString(document.Abstract, "\033[31m$0\033[0m")
 	}
 }
 
