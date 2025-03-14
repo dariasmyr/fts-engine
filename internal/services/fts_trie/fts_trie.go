@@ -129,9 +129,6 @@ func (n *Node) IndexDocument(docID string, content string) {
 }
 
 func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
-	results := make([]models.ResultData, 0, maxResults)
-	currentIndex := 0
-
 	startTime := time.Now()
 	timings := make(map[string]string)
 
@@ -171,20 +168,17 @@ func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int
 		}
 	}
 
+	results := make([]models.ResultData, 0, len(docUniqueMatches))
 	for docID, uniqueMatches := range docUniqueMatches {
-		if currentIndex >= maxResults {
-			break
-		}
 		results = append(results, models.ResultData{
 			ID:            docID,
 			UniqueMatches: uniqueMatches,
 			TotalMatches:  docTotalMatches[docID],
 			Document:      models.Document{},
 		})
-		currentIndex++
 	}
 
-	sort.Slice(results[:currentIndex], func(i, j int) bool {
+	sort.Slice(results, func(i, j int) bool {
 		if results[i].UniqueMatches == results[j].UniqueMatches {
 			return results[i].TotalMatches > results[j].TotalMatches
 		}
@@ -193,13 +187,18 @@ func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int
 
 	timings["search_tokens"] = utils.FormatDuration(time.Since(searchStart))
 
-	totalResultsCount := len(results[:currentIndex])
-
 	timings["total"] = utils.FormatDuration(time.Since(startTime))
 
+	var lastIndex int
+	if len(docUniqueMatches) > maxResults {
+		lastIndex = len(docUniqueMatches)
+	} else {
+		lastIndex = maxResults
+	}
+
 	return &models.SearchResult{
-		ResultData:        results[:currentIndex],
+		ResultData:        results[:lastIndex],
 		Timings:           timings,
-		TotalResultsCount: totalResultsCount,
+		TotalResultsCount: len(docUniqueMatches),
 	}, nil
 }
