@@ -3,6 +3,7 @@ package leveldb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
@@ -20,6 +21,8 @@ type Storage struct {
 	writeChan chan *models.Document
 	wg        sync.WaitGroup
 }
+
+var ErrNotFound = errors.New("doc not found")
 
 const (
 	bufferSize   = 1000
@@ -65,7 +68,6 @@ func (s *Storage) writeWorker() {
 				return
 			}
 
-			fmt.Printf("New documeent received from doc channel, stacr marshalling, doc ID: %s \n", doc.ID)
 			data, _ := json.Marshal(doc)
 			batch.Put([]byte("doc:"+doc.ID), data)
 
@@ -180,7 +182,7 @@ func (s *Storage) GetDocument(cxt context.Context, docID string) (*models.Docume
 	data, err := s.db.Get([]byte("doc:"+docID), nil)
 	if err != nil {
 		if err == leveldb.ErrNotFound {
-			return nil, nil
+			return nil, err
 		}
 		return nil, err
 	}

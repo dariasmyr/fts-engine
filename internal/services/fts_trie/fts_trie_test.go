@@ -2,7 +2,6 @@ package fts_trie
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/storage/leveldb"
@@ -163,6 +162,8 @@ func TestInsertAndSearchDocument(t *testing.T) {
 		fmt.Printf("Saved document with ID: %s\n", id)
 	}
 
+	storage.StopWorkers()
+
 	tests := []struct {
 		query               string
 		expectedDocAbstract []string
@@ -172,8 +173,8 @@ func TestInsertAndSearchDocument(t *testing.T) {
 			expectedDocAbstract: []string{document1.Abstract, document2.Abstract, document3.Abstract},
 		},
 		{
-			query:               "Wikipedia",
-			expectedDocAbstract: []string{document1.Abstract, document2.Abstract, document3.Abstract},
+			query:               "Wikipedia Hotellet",
+			expectedDocAbstract: []string{document2.Abstract, document1.Abstract, document3.Abstract},
 		},
 		{
 			query:               "Rosa",
@@ -182,18 +183,12 @@ func TestInsertAndSearchDocument(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		fmt.Println("Start searching:", tt.query)
 		t.Run(tt.query, func(t *testing.T) {
 			docResults, err := trie.SearchDocuments(context.Background(), tt.query, 10)
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}
-			resultJSON, err := json.MarshalIndent(docResults, "", "  ")
-			if err != nil {
-				fmt.Println("Error marshalling:", err)
-				return
-			}
-
-			fmt.Println(string(resultJSON))
 			docs := make([]string, 0, len(docResults.ResultData))
 			for _, doc := range docResults.ResultData {
 				docResult, err := storage.GetDocument(context.Background(), doc.ID)

@@ -140,6 +140,10 @@ func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int
 	timings["preprocess"] = utils.FormatDuration(time.Since(preprocessStart))
 
 	searchStart := time.Now()
+
+	docUniqueMatches := make(map[string]int)
+	docTotalMatches := make(map[string]int)
+
 	for _, token := range tokens {
 		// skip stop words
 		if snowballeng.IsStopWord(token) {
@@ -151,9 +155,6 @@ func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int
 		if len(trigrams) == 0 {
 			return nil, ErrInvalidTrigramSize
 		}
-
-		docUniqueMatches := make(map[string]int)
-		docTotalMatches := make(map[string]int)
 
 		for _, trigram := range trigrams {
 			docEntries, err := n.Search(trigram)

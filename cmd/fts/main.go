@@ -63,7 +63,7 @@ func main() {
 
 	for i, doc := range documents {
 		trieFTS.IndexDocument(doc.ID, doc.Abstract)
-		fmt.Printf("Document indexed, adding to batch, doc ID %d /n", i)
+		log.Info("Document indexed, adding to batch", "doc", i)
 		_, err := storage.BatchDocument(context.Background(), &doc)
 		if err != nil {
 			log.Error("Error processing document", "error", sl.Err(err))
