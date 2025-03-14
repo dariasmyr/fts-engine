@@ -39,7 +39,7 @@ func main() {
 	log.Info("Storage initialised")
 
 	//keyValueFTS := ftsKV.New(log, storage, storage)
-	log.Info("Key Value FTS initialised")
+	// log.Info("Key Value FTS initialised")
 
 	trieFTS := ftsTrie.NewNode()
 	log.Info("Trie FTS initialised")
@@ -61,15 +61,18 @@ func main() {
 	duration = time.Since(startTime)
 	log.Info(fmt.Sprintf("Split %d documents. in %v", len(documents), duration))
 
-	for _, doc := range documents {
+	for i, doc := range documents {
 		trieFTS.IndexDocument(doc.ID, doc.Abstract)
-		//articleID, err := storage.BatchDocument(context.Background(), &doc)
+		fmt.Printf("Document indexed, adding to batch, doc ID %d /n", i)
+		_, err := storage.BatchDocument(context.Background(), &doc)
 		if err != nil {
 			log.Error("Error processing document", "error", sl.Err(err))
 			continue
 		}
-
 	}
+
+	storage.StopWorkers()
+	log.Info("All write workers stopped")
 
 	//var wg sync.WaitGroup
 

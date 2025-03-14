@@ -231,6 +231,9 @@ func highlightQueryInResult(document *models.Document, query string) {
 
 func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, map[string]string, int, error) {
 	searchResult, err := c.ftsSerivce.SearchDocuments(ctx, query, c.maxResults)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to search documents: %v", err)
+	}
 
 	for i, result := range searchResult.ResultData {
 		doc, err := c.storage.GetDocument(ctx, result.ID)

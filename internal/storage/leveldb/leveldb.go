@@ -65,6 +65,7 @@ func (s *Storage) writeWorker() {
 				return
 			}
 
+			fmt.Printf("New documeent received from doc channel, stacr marshalling, doc ID: %s \n", doc.ID)
 			data, _ := json.Marshal(doc)
 			batch.Put([]byte("doc:"+doc.ID), data)
 
@@ -230,7 +231,10 @@ func (s *Storage) DeleteDocument(context context.Context, docID string) error {
 }
 
 func (s *Storage) Close() error {
+	return s.db.Close()
+}
+
+func (s *Storage) StopWorkers() {
 	close(s.writeChan)
 	s.wg.Wait()
-	return s.db.Close()
 }
