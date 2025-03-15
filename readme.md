@@ -1,6 +1,6 @@
 # Full-Text Search Test Engine 
 
-This is a simple custom-built full-text search engine in Go with LevelDB key-value storage. It supports loading documents, indexing them, and performing searches on the indexed content using tokenization, stemming, stop-word removal.
+A custom-built full-text search engine in Go, with inverted indexed based on prefix trees (tries) and n-grams, with concurrent processing document. The engine handles tokenization, stemming, stop-word removal, and now even supports fuzzy search (partial words and typos). 
 
 ![Demo](docs/demo.gif)
 
@@ -21,7 +21,7 @@ Build the service:
 ```bash
 make build
 # Or manually:
-go build -o build/sso ./cmd/sso
+go build -o build/fts ./cmd/fts
 ```
 
 Run the service (!Check the configuration file!):
@@ -29,13 +29,5 @@ Run the service (!Check the configuration file!):
 ```bash
 make execute
 # Or manually:
-./build/sso --config=./config/config_local.yaml
+./build/fts --config=./config/config_local.yaml
 ```
-
-## Test the service:
-```bash
-make test
-# Or manually:
-go test -v ./tests -count=1
-```
-
