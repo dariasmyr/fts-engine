@@ -15,6 +15,12 @@ make tidy
 go mod tidy
 ```
 
+## Download the wiki dump
+
+The Wikipedia abstract dump can be downloaded from Dump example: https://dumps.wikimedia.your.org/enwiki/latest/enwiki-latest-abstract1.xml.gz. Extract the file and place it in the `./data/` directory.
+
+```bash
+
 ## Build and Run
 Build the service:
 
@@ -30,4 +36,18 @@ Run the service (!Check the configuration file!):
 make execute
 # Or manually:
 ./build/fts --config=./config/config_local.yaml
+```
+
+## Test
+
+```bash
+#Test the trie implementation
+make test-trie
+# Or manually:
+go test -v ./internal/services/fts_trie -count=1
+
+#Test the key-value implementation
+make test-kv
+# Or manually:
+go test -v ./internal/services/fts_kv -count=1
 ```

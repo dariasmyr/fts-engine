@@ -6,8 +6,6 @@ OUTPUT := $(BUILD_DIR)/$(APP_NAME)
 MAIN_FILE := ./cmd/fts
 CONFIG_FILE := ./config/config_local.yaml
 
-TEST_DIR := ./tests
-
 build:
 	mkdir -p $(BUILD_DIR)
 	go build -ldflags="-s -w" -o $(OUTPUT) $(MAIN_FILE)
@@ -24,14 +22,8 @@ tidy:
 execute: build
 	./$(OUTPUT) --config=$(CONFIG_FILE)
 
-test:
-	go test -v $(TEST_DIR) -count=1
+test-kv:
+	go test -v ./internal/services/fts_kv -count=1
 
-test-loader:
-	go test -v $(TEST_DIR)/loader_test.go -count=1
-
-test-index:
-	go test -v $(TEST_DIR)/index_test.go -count=1
-
-test-search:
-	go test -v $(TEST_DIR)/search_test.go -count=1
+test-trie:
+	go test -v ./internal/services/fts_trie -count=1

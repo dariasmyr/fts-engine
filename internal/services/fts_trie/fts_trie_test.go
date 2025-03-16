@@ -16,7 +16,7 @@ func TestInsertAndSearch(t *testing.T) {
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
 	trie := NewNode()
-	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie.db")
+	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie-test.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}

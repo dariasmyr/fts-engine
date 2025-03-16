@@ -2,7 +2,6 @@ package fts_kv
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/storage/leveldb"
@@ -59,8 +58,17 @@ func TestInsertAndSearchDocument(t *testing.T) {
 	documents = append(documents, document1, document2, document3)
 
 	for _, document := range documents {
-		keyValueFTS.ProcessDocument(context.Background(), &document)
-		fmt.Printf("Processed document with id: %s\n", document.ID)
+		id, err := keyValueFTS.ProcessDocument(context.Background(), &document)
+		if err != nil {
+			t.Errorf("Failed to process document: %v", err)
+		}
+		fmt.Printf("Processed document with id: %s\n", id)
+
+		_, err = storage.SaveDocument(context.Background(), &document)
+		if err != nil {
+			t.Errorf("Failed to save document: %v", err)
+		}
+		fmt.Println("Saved document")
 	}
 
 	tests := []struct {
@@ -87,14 +95,6 @@ func TestInsertAndSearchDocument(t *testing.T) {
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}
-			resultJSON, err := json.MarshalIndent(docResults, "", "  ")
-			if err != nil {
-				fmt.Println("Error marshalling:", err)
-				return
-			}
-
-			fmt.Println(string(resultJSON))
-
 			docs := make([]string, 0, len(docResults.ResultData))
 			for _, resultInfo := range docResults.ResultData {
 				fmt.Printf("resultInfo %+v \n", resultInfo)

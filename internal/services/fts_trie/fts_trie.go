@@ -168,6 +168,10 @@ func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int
 		}
 	}
 
+	if len(docUniqueMatches) < maxResults {
+		maxResults = len(docUniqueMatches)
+	}
+
 	results := make([]models.ResultData, 0, len(docUniqueMatches))
 	for docID, uniqueMatches := range docUniqueMatches {
 		results = append(results, models.ResultData{

@@ -33,7 +33,7 @@ func NewLoader(log *slog.Logger, dumpPath string) *Loader {
 }
 
 // LoadDocuments loads a Wikipedia abstract dump and returns a slice of documents.
-// Dump example: https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-abstract1.xml.gz
+// Dump example: https://dumps.wikimedia.your.org/enwiki/latest/enwiki-latest-abstract1.xml.gz
 func (l *Loader) LoadDocuments() ([]models.Document, error) {
 	f, err := os.Open(l.dumpPath)
 	if err != nil {
