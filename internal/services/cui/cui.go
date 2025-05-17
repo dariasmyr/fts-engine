@@ -18,7 +18,7 @@ import (
 )
 
 type CUI struct {
-	ctx        *context.Context
+	ctx        context.Context
 	cui        *gocui.Gui
 	ftsSerivce *fts.Node
 	storage    *leveldb.Storage
@@ -26,7 +26,7 @@ type CUI struct {
 	maxResults int
 }
 
-func New(ctx *context.Context, log *slog.Logger, ftsSerivce *fts.Node, storage *leveldb.Storage, maxResults int) *CUI {
+func New(ctx context.Context, log *slog.Logger, ftsSerivce *fts.Node, storage *leveldb.Storage, maxResults int) *CUI {
 	g, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
 		log.Error("Failed to create GUI:", "error", sl.Err(err))
@@ -56,7 +56,7 @@ func (c *CUI) Start() error {
 	}
 	if err := c.cui.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
 		searchQuery := strings.TrimSpace(v.Buffer())
-		return c.search(g, v, *c.ctx, searchQuery)
+		return c.search(g, v, c.ctx, searchQuery)
 	}); err != nil {
 		c.log.Error("Failed to set keybinding:", "error", sl.Err(err))
 	}

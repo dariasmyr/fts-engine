@@ -27,7 +27,6 @@ const (
 func main() {
 	cfg := config.MustLoad()
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	log := setupLogger(cfg.Env)
 	log.Info("fts", "env", cfg.Env)
@@ -67,7 +66,7 @@ func main() {
 		//_, err = keyValueFTS.ProcessDocument(ctx, &doc)
 
 		log.Info("Document indexed, adding to batch", "doc", i)
-		_, err := storage.BatchDocument(context.Background(), &doc)
+		_, err := storage.BatchDocument(ctx, &doc)
 		if err != nil {
 			log.Error("Error processing document", "error", sl.Err(err))
 			continue
@@ -79,7 +78,7 @@ func main() {
 
 	fmt.Println("Indexing complete")
 
-	appCUI := cui.New(&ctx, log, trieFTS, storage, 10)
+	appCUI := cui.New(ctx, log, trieFTS, storage, 10)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
