@@ -26,11 +26,20 @@ const (
 	envDev   = "dev"
 	envProd  = "prod"
 )
+
 const workerCount = 5
+
+const (
+	_readinessDrainDelay = 5 * time.Second
+)
 
 func main() {
 	cfg := config.MustLoad()
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	log := setupLogger(cfg.Env)
 	log.Info("fts", "env", cfg.Env)
@@ -90,10 +99,17 @@ func main() {
 	appCUI := cui.New(ctx, log, trieFTS, storage, 10)
 
 	go func() {
-		<-stop
-		log.Info("Gracefully stopped")
-		if err := storage.Close(); err != nil {
-			log.Error("Failed to close database", "error", sl.Err(err))
+		<-rootCtx.Done()
+		stop()
+		log.Info("Received shutdown signal, shutting down...")
+
+		time.Sleep(_readinessDrainDelay)
+		log.Info("Readiness check propagated, now waiting for ongoing processes to finish.")
+
+		closeStorageErr := storage.Close()
+
+		if closeStorageErr != nil {
+			log.Error("Failed to close database", "error", sl.Err(closeStorageErr))
 		}
 		appCUI.Close()
 		cancel()
