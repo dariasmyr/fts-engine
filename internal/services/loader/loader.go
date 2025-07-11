@@ -34,25 +34,34 @@ func NewLoader(log *slog.Logger, dumpPath string) *Loader {
 
 // LoadDocuments loads a Wikipedia abstract dump and returns a slice of documents.
 // Dump example: https://dumps.wikimedia.your.org/enwiki/latest/enwiki-latest-abstract1.xml.gz
-func (l *Loader) LoadDocuments() ([]models.Document, error) {
+func (l *Loader) LoadDocuments() (documents []models.Document, err error) {
 	f, err := os.Open(l.dumpPath)
 	if err != nil {
 		l.log.Error("Failed to open file", "error", err)
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		err = f.Close()
+		if err != nil {
+		}
+	}()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, err
 	}
-	defer gz.Close()
+	defer func() {
+		err = gz.Close()
+		if err != nil {
+		}
+	}()
+
 	dec := xml.NewDecoder(gz)
 	dump := struct {
 		Documents []models.Document `xml:"doc"`
 	}{}
 
-	if err := dec.Decode(&dump); err != nil {
-		return nil, err
+	if decodeErr := dec.Decode(&dump); decodeErr != nil {
+		return nil, decodeErr
 	}
 
 	for i := range dump.Documents {
@@ -111,7 +120,11 @@ func (l *Loader) FetchAndProcessDocument(ctx context.Context, doc models.Documen
 	}
 
 	apiURL := fmt.Sprintf("%s/w/api.php?action=query&prop=extracts&explaintext=true&format=json&titles=%s", host, title)
-	resp, err := http.Get(apiURL)
+	req, reqErr := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if reqErr != nil {
+		return doc, reqErr
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		l.log.Error("Error getting url", "error", sl.Err(err))
 		return doc, err
