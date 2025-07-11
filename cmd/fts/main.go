@@ -99,7 +99,11 @@ func main() {
 		cancel()
 	}()
 
-	appCUI.Start()
+	cuiErr := appCUI.Start()
+	if cuiErr != nil {
+		log.Error("Failed to start appCUI", "error", sl.Err(cuiErr))
+		return
+	}
 }
 
 func setupLogger(env string) *slog.Logger {
