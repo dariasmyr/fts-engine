@@ -20,13 +20,13 @@ import (
 type CUI struct {
 	ctx        context.Context
 	cui        *gocui.Gui
-	ftsSerivce *fts.Node
+	ftsService *fts.Node
 	storage    *leveldb.Storage
 	log        *slog.Logger
 	maxResults int
 }
 
-func New(ctx context.Context, log *slog.Logger, ftsSerivce *fts.Node, storage *leveldb.Storage, maxResults int) *CUI {
+func New(ctx context.Context, log *slog.Logger, ftsService *fts.Node, storage *leveldb.Storage, maxResults int) *CUI {
 	g, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
 		log.Error("Failed to create GUI:", "error", sl.Err(err))
@@ -35,7 +35,7 @@ func New(ctx context.Context, log *slog.Logger, ftsSerivce *fts.Node, storage *l
 	return &CUI{
 		ctx:        ctx,
 		cui:        g,
-		ftsSerivce: ftsSerivce,
+		ftsService: ftsService,
 		storage:    storage,
 		log:        log,
 		maxResults: maxResults,
@@ -226,7 +226,7 @@ func highlightQueryInResult(document *models.Document, query string) {
 }
 
 func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, map[string]string, int, error) {
-	searchResult, err := c.ftsSerivce.SearchDocuments(ctx, query, c.maxResults)
+	searchResult, err := c.ftsService.SearchDocuments(ctx, query, c.maxResults)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("failed to search documents: %v", err)
 	}
