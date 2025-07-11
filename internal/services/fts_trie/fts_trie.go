@@ -194,10 +194,10 @@ func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int
 	timings["total"] = utils.FormatDuration(time.Since(startTime))
 
 	var lastIndex int
+	lastIndex = maxResults
+
 	if len(docUniqueMatches) > maxResults {
 		lastIndex = len(docUniqueMatches)
-	} else {
-		lastIndex = maxResults
 	}
 
 	return &models.SearchResult{
