@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"fts-hw/config"
+	"fts-hw/internal/domain/models"
+	"fts-hw/internal/services/loader"
+	"sync"
+	"time"
+
+	//"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/cui"
 	ftsTrie "fts-hw/internal/services/fts_trie"
-	"fts-hw/internal/services/loader"
-	"time"
-
 	"fts-hw/internal/storage/leveldb"
 	"io"
 	"log/slog"
@@ -23,6 +26,7 @@ const (
 	envDev   = "dev"
 	envProd  = "prod"
 )
+const workerCount = 5
 
 func main() {
 	cfg := config.MustLoad()
@@ -57,31 +61,33 @@ func main() {
 	log.Info(fmt.Sprintf("Loaded %d documents in %v", len(documents), duration))
 
 	startTime = time.Now()
-	duration = time.Since(startTime)
-	log.Info(fmt.Sprintf("Split %d documents. in %v", len(documents), duration))
 
-	for i, doc := range documents {
-		trieFTS.IndexDocument(doc.ID, doc.Abstract)
+	log.Info("Initialize worker pool")
+	jobCh := make(chan models.Document)
+	var wg sync.WaitGroup
+	for range workerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			storage.BatchDocuments(ctx, jobCh)
+		}()
+	}
+
+	for i := range documents {
+		trieFTS.IndexDocument(documents[i].ID, documents[i].Abstract)
 
 		//_, err = keyValueFTS.ProcessDocument(ctx, &doc)
 
-		log.Info("Document indexed, adding to batch", "doc", i)
-		_, err := storage.BatchDocument(ctx, &doc)
-		if err != nil {
-			log.Error("Error processing document", "error", sl.Err(err))
-			continue
-		}
+		log.Info("Document indexed, adding to job chan", "doc", i)
+		jobCh <- documents[i]
 	}
 
-	storage.StopWorkers()
+	close(jobCh)
+	wg.Wait()
+
 	log.Info("All write workers stopped")
 
-	fmt.Println("Indexing complete")
-
 	appCUI := cui.New(ctx, log, trieFTS, storage, 10)
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 
 	go func() {
 		<-stop
