@@ -87,7 +87,7 @@ func (c *CUI) Start() error {
 		c.log.Error("Failed to set keybinding:", "error", sl.Err(err))
 	}
 
-	if err := c.cui.MainLoop(); err != nil && err != gocui.ErrQuit {
+	if err := c.cui.MainLoop(); err != nil && !errors.Is(err, gocui.ErrQuit) {
 		c.log.Error("Failed to run GUI:", "error", sl.Err(err))
 	}
 
@@ -232,12 +232,12 @@ func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultD
 	}
 
 	for i, result := range searchResult.ResultData {
-		doc, err := c.storage.GetDocument(ctx, result.ID)
-		if err != nil {
-			c.log.Error("Failed to get document from storage:", "error", sl.Err(err))
+		doc, getDocErr := c.storage.GetDocument(ctx, result.ID)
+		if getDocErr != nil {
+			c.log.Error("Failed to get document from storage:", "error", sl.Err(getDocErr))
 			continue
 		}
-		searchResult.ResultData[i].Document = *doc
+		searchResult.ResultData[i].Document = doc
 	}
 
 	if err != nil {
