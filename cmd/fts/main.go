@@ -50,6 +50,22 @@ func main() {
 	}
 	log.Info("Storage initialised")
 
+	go func() {
+		<-rootCtx.Done()
+		stop()
+		log.Info("Received shutdown signal, shutting down...")
+
+		time.Sleep(_readinessDrainDelay)
+		log.Info("Readiness check propagated, now waiting for ongoing processes to finish.")
+
+		closeStorageErr := storage.Close()
+		if closeStorageErr != nil {
+			log.Error("Failed to close database", "error", sl.Err(closeStorageErr))
+		}
+
+		cancel()
+	}()
+
 	//keyValueFTS := ftsKV.New(log, storage, storage)
 	// log.Info("Key Value FTS initialised")
 
@@ -60,7 +76,7 @@ func main() {
 	log.Info("Loader initialised")
 
 	startTime := time.Now()
-	documents, err := dumpLoader.LoadDocuments()
+	documents, err := dumpLoader.LoadDocuments(ctx)
 	if err != nil {
 		log.Error("Failed to load documents", "error", sl.Err(err))
 		return
@@ -75,45 +91,38 @@ func main() {
 	jobCh := make(chan models.Document)
 	var wg sync.WaitGroup
 	for range workerCount {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			storage.BatchDocuments(ctx, jobCh)
-		}()
+		select {
+		case <-rootCtx.Done():
+			log.Info("Received shutdown signal, shutting down...")
+			return
+		default:
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				storage.BatchDocument(ctx, jobCh)
+			}()
+		}
 	}
 
 	for i := range documents {
-		trieFTS.IndexDocument(documents[i].ID, documents[i].Abstract)
+		select {
+		case <-rootCtx.Done():
+			log.Info("Received shutdown signal, shutting down...")
+			return
+		default:
+			trieFTS.IndexDocument(documents[i].ID, documents[i].Abstract)
 
-		//_, err = keyValueFTS.ProcessDocument(ctx, &doc)
+			//_, err = keyValueFTS.ProcessDocument(ctx, &doc)
 
-		log.Info("Document indexed, adding to job chan", "doc", i)
-		jobCh <- documents[i]
+			log.Info("Document indexed, adding to job chan", "doc", i)
+			jobCh <- documents[i]
+		}
 	}
 
 	close(jobCh)
 	wg.Wait()
 
-	log.Info("All write workers stopped")
-
 	appCUI := cui.New(ctx, log, trieFTS, storage, 10)
-
-	go func() {
-		<-rootCtx.Done()
-		stop()
-		log.Info("Received shutdown signal, shutting down...")
-
-		time.Sleep(_readinessDrainDelay)
-		log.Info("Readiness check propagated, now waiting for ongoing processes to finish.")
-
-		closeStorageErr := storage.Close()
-
-		if closeStorageErr != nil {
-			log.Error("Failed to close database", "error", sl.Err(closeStorageErr))
-		}
-		appCUI.Close()
-		cancel()
-	}()
 
 	cuiErr := appCUI.Start()
 	if cuiErr != nil {
