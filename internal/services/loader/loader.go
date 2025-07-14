@@ -34,7 +34,13 @@ func NewLoader(log *slog.Logger, dumpPath string) *Loader {
 
 // LoadDocuments loads a Wikipedia abstract dump and returns a slice of documents.
 // Dump example: https://dumps.wikimedia.your.org/enwiki/latest/enwiki-latest-abstract1.xml.gz
-func (l *Loader) LoadDocuments() (documents []models.Document, err error) {
+func (l *Loader) LoadDocuments(ctx context.Context) (documents []models.Document, err error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+
+	}
 	f, err := os.Open(l.dumpPath)
 	if err != nil {
 		l.log.Error("Failed to open file", "error", err)
@@ -60,12 +66,23 @@ func (l *Loader) LoadDocuments() (documents []models.Document, err error) {
 		Documents []models.Document `xml:"doc"`
 	}{}
 
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	if decodeErr := dec.Decode(&dump); decodeErr != nil {
 		return nil, decodeErr
 	}
 
 	for i := range dump.Documents {
-		dump.Documents[i].ID = l.generateID(dump.Documents[i])
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			dump.Documents[i].ID = l.generateID(dump.Documents[i])
+		}
 	}
 
 	return dump.Documents, nil
