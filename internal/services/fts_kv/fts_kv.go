@@ -29,15 +29,15 @@ var (
 )
 
 type DocumentSaver interface {
-	SaveWordsWithIndexing(ctx context.Context, doc *models.Document, words []string) (int, error)
-	SaveDocument(ctx context.Context, doc *models.Document) (string, error)
-	BatchDocument(ctx context.Context, doc *models.Document) (string, error)
+	SaveWordsWithIndexing(ctx context.Context, documentID string, words []string) error
+	SaveDocument(ctx context.Context, document models.Document) (string, error)
+	BatchDocument(ctx context.Context, job <-chan models.Document)
 	DeleteDocument(ctx context.Context, docId string) error
 }
 
 type DocumentProvider interface {
 	GetWord(ctx context.Context, word string) ([]string, error)
-	GetDocument(ctx context.Context, docID string) (*models.Document, error)
+	GetDocument(ctx context.Context, docID string) (models.Document, error)
 }
 
 func New(
@@ -171,10 +171,10 @@ func (fts *KeyValueFTS) preprocessText(content string) []string {
 	return words
 }
 
-func (fts *KeyValueFTS) ProcessDocument(ctx context.Context, document *models.Document) (string, error) {
+func (fts *KeyValueFTS) ProcessDocument(ctx context.Context, document models.Document) (string, error) {
 	words := fts.preprocessText(document.Abstract)
 
-	_, err := fts.documentSaver.SaveWordsWithIndexing(ctx, document, words)
+	err := fts.documentSaver.SaveWordsWithIndexing(ctx, document.ID, words)
 	if err != nil {
 		fts.log.Error("Failed to save document", "error", sl.Err(err))
 		return "", err
@@ -280,7 +280,7 @@ func (fts *KeyValueFTS) SearchDocuments(ctx context.Context, query string, maxRe
 		if err != nil {
 			return nil, err
 		}
-		resultDocs[i].Document = *doc
+		resultDocs[i].Document = doc
 	}
 
 	return &models.SearchResult{
