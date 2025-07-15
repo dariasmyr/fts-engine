@@ -7,6 +7,7 @@ import (
 	"fts-hw/internal/domain/models"
 	utils "fts-hw/internal/utils/format"
 	"sort"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -17,15 +18,9 @@ import (
 type Node struct {
 	Docs          map[string]int
 	Continuations [26]*Node
+	mu            sync.Mutex
 }
 
-type ResultDocIDs struct {
-	DocID         string
-	UniqueMatches int
-	TotalMatches  int
-}
-
-var ErrInvalidCharacter = errors.New("invalid character in trigram")
 var ErrInvalidTrigramSize = errors.New("trigram must have exactly 3 characters")
 
 func NewNode() *Node {
@@ -39,11 +34,13 @@ func (n *Node) Insert(trigram string, docID string) error {
 		return ErrInvalidTrigramSize
 	}
 
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	node := n
 	for i := 0; i < 3; i++ {
 		index := trigram[i] - 'a'
 		if index < 0 || index >= 26 {
-			return ErrInvalidCharacter
+			return fmt.Errorf("invalid character in trigram %v", trigram)
 		}
 		if node.Continuations[index] == nil {
 			node.Continuations[index] = NewNode()
@@ -60,11 +57,14 @@ func (n *Node) Search(trigram string) (map[string]int, error) {
 		return nil, ErrInvalidTrigramSize
 	}
 
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
 	node := n
 	for i := 0; i < 3; i++ {
 		index := trigram[i] - 'a'
 		if index < 0 || index >= 26 {
-			return nil, ErrInvalidCharacter
+			return nil, fmt.Errorf("invalid character in trigram %v", trigram)
 		}
 		if node.Continuations[index] == nil {
 			fmt.Println("Trigram not found")
@@ -123,7 +123,11 @@ func (n *Node) IndexDocument(docID string, content string) {
 		token = snowballeng.Stem(token, false)
 		trigrams := getTrigrams(token)
 		for _, trigram := range trigrams {
-			n.Insert(trigram, docID)
+			err := n.Insert(trigram, docID)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
 		}
 	}
 }
