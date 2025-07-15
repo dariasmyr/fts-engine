@@ -66,7 +66,7 @@ func (s *Storage) BatchDocument(ctx context.Context, job <-chan models.Document)
 			batch.Put([]byte("doc:"+doc.ID), data)
 
 			if batch.Len() >= bufferSize {
-				s.log.Info("Flushing batch, len: %d\n", batch.Len())
+				s.log.Info("Flushing batch, len: ", "len", batch.Len())
 				err := s.db.Write(batch, nil)
 				if err != nil {
 					s.log.Error("Failed to write batch", "error", sl.Err(err))
@@ -75,7 +75,7 @@ func (s *Storage) BatchDocument(ctx context.Context, job <-chan models.Document)
 			}
 		case <-ticker.C:
 			if batch.Len() > 0 {
-				s.log.Info("Timeout, flushing batch, len: ", batch.Len())
+				s.log.Info("Timeout, flushing batch, len: ", "len", batch.Len())
 				err := s.db.Write(batch, nil)
 				if err != nil {
 					s.log.Error("Failed to write batch", "error", sl.Err(err))
