@@ -6,6 +6,7 @@ import (
 	"fts-hw/config"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/services/loader"
+	"runtime"
 	"sync"
 	"time"
 
@@ -27,14 +28,15 @@ const (
 	envProd  = "prod"
 )
 
-const workerCount = 5
-
 const (
 	_readinessDrainDelay = 5 * time.Second
 )
 
 func main() {
 	cfg := config.MustLoad()
+
+	var workerCount = runtime.NumCPU()
+
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -99,6 +101,7 @@ func main() {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				fmt.Println("Starting worker")
 				storage.BatchDocument(ctx, jobCh)
 			}()
 		}
@@ -114,7 +117,7 @@ func main() {
 
 			//_, err = keyValueFTS.ProcessDocument(ctx, &doc)
 
-			log.Info("Document indexed, adding to job chan", "doc", i)
+			//log.Info("Document indexed, adding to job chan", "doc", i)
 			jobCh <- documents[i]
 		}
 	}
