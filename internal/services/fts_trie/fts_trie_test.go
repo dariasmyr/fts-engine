@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 )
 
@@ -16,7 +17,7 @@ func TestInsertAndSearch(t *testing.T) {
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
 	trie := NewNode()
-	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie-test.db")
+	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
@@ -55,16 +56,26 @@ func TestInsertAndSearch(t *testing.T) {
 	}
 
 	documents = append(documents, document1, document2, document3)
+	jobCh := make(chan models.Document)
+	var wg sync.WaitGroup
+
+	for range 3 {
+		wg.Add(1)
+		go func() {
+			wg.Done()
+			storage.BatchDocument(context.Background(), jobCh)
+		}()
+	}
 
 	for _, document := range documents {
 		trie.IndexDocument(document.ID, document.Abstract)
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
-		id, err := storage.BatchDocument(context.Background(), &document)
-		if err != nil {
-			t.Fatalf("Failed to add document: %v", err)
-		}
-		fmt.Printf("Saved document with ID: %s\n", id)
+		jobCh <- document
+		fmt.Printf("Added document with ID: %s to job channel\n", document.ID)
 	}
+
+	close(jobCh)
+	wg.Wait()
 
 	tests := []struct {
 		trigram      string
@@ -112,7 +123,7 @@ func TestInsertAndSearchDocument(t *testing.T) {
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
 	trie := NewNode()
-	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie.db")
+	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
@@ -152,17 +163,26 @@ func TestInsertAndSearchDocument(t *testing.T) {
 
 	documents = append(documents, document1, document2, document3)
 
+	jobCh := make(chan models.Document)
+	var wg sync.WaitGroup
+
+	for range 3 {
+		wg.Add(1)
+		go func() {
+			wg.Done()
+			storage.BatchDocument(context.Background(), jobCh)
+		}()
+	}
+
 	for _, document := range documents {
 		trie.IndexDocument(document.ID, document.Abstract)
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
-		id, err := storage.BatchDocument(context.Background(), &document)
-		if err != nil {
-			t.Fatalf("Failed to add document: %v", err)
-		}
-		fmt.Printf("Saved document with ID: %s\n", id)
+		jobCh <- document
+		fmt.Printf("Added document with ID: %s to job channel\n", document.ID)
 	}
 
-	storage.StopWorkers()
+	close(jobCh)
+	wg.Wait()
 
 	tests := []struct {
 		query               string
@@ -191,8 +211,8 @@ func TestInsertAndSearchDocument(t *testing.T) {
 			}
 			docs := make([]string, 0, len(docResults.ResultData))
 			for _, doc := range docResults.ResultData {
-				docResult, err := storage.GetDocument(context.Background(), doc.ID)
-				if err != nil {
+				docResult, getDocErr := storage.GetDocument(context.Background(), doc.ID)
+				if getDocErr != nil {
 					t.Errorf("Failed to get document abstract: %v", err)
 				}
 				docs = append(docs, docResult.Abstract)

@@ -58,13 +58,13 @@ func TestInsertAndSearchDocument(t *testing.T) {
 	documents = append(documents, document1, document2, document3)
 
 	for _, document := range documents {
-		id, err := keyValueFTS.ProcessDocument(context.Background(), &document)
+		id, err := keyValueFTS.ProcessDocument(context.Background(), document)
 		if err != nil {
 			t.Errorf("Failed to process document: %v", err)
 		}
 		fmt.Printf("Processed document with id: %s\n", id)
 
-		_, err = storage.SaveDocument(context.Background(), &document)
+		_, err = storage.SaveDocument(context.Background(), document)
 		if err != nil {
 			t.Errorf("Failed to save document: %v", err)
 		}
