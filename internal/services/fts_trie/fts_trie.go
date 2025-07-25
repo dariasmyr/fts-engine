@@ -9,7 +9,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	snowballeng "github.com/kljensen/snowball/english"
@@ -91,7 +90,7 @@ func tokenize(content string) []string {
 	lastSplit := 0
 	tokens := make([]string, 0)
 	for i, char := range content {
-		if unicode.IsLetter(char) {
+		if char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z' {
 			continue
 		}
 
