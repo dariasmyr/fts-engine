@@ -1,6 +1,6 @@
 module fts-hw
 
-go 1.24
+go 1.25
 
 require (
 	github.com/ilyakaznacheev/cleanenv v1.5.0
