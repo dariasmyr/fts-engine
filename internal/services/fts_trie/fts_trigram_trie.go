@@ -1,4 +1,4 @@
-package fts_trie
+package trigramtrie
 
 import (
 	"context"
@@ -15,64 +15,74 @@ import (
 )
 
 type Node struct {
-	Docs          map[string]int
-	Continuations [26]*Node
-	mu            sync.Mutex
+	docs          map[string]int
+	continuations [26]*Node
+}
+
+func newNode() *Node {
+	return &Node{
+		docs: make(map[string]int),
+	}
+}
+
+type Trie struct {
+	root *Node
+	mu   sync.RWMutex
+}
+
+func NewTrie() *Trie {
+	return &Trie{
+		root: newNode(),
+	}
 }
 
 var ErrInvalidTrigramSize = errors.New("trigram must have exactly 3 characters")
 
-func NewNode() *Node {
-	return &Node{
-		Docs: make(map[string]int),
-	}
-}
-
-func (n *Node) Insert(trigram string, docID string) error {
+func (t *Trie) Insert(trigram string, docID string) error {
 	if len(trigram) != 3 {
 		return ErrInvalidTrigramSize
 	}
 
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	node := n
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	node := t.root
 	for i := 0; i < 3; i++ {
 		index := trigram[i] - 'a'
 		if index < 0 || index >= 26 {
 			return fmt.Errorf("invalid character in trigram %v", trigram)
 		}
-		if node.Continuations[index] == nil {
-			node.Continuations[index] = NewNode()
+		if node.continuations[index] == nil {
+			node.continuations[index] = newNode()
 		}
-		node = node.Continuations[index]
+		node = node.continuations[index]
 	}
 	// Increase doc entry count
-	node.Docs[docID]++
+	node.docs[docID]++
 	return nil
 }
 
-func (n *Node) Search(trigram string) (map[string]int, error) {
+func (t *Trie) Search(trigram string) (map[string]int, error) {
 	if len(trigram) != 3 {
 		return nil, ErrInvalidTrigramSize
 	}
 
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 
-	node := n
+	node := t.root
 	for i := 0; i < 3; i++ {
 		index := trigram[i] - 'a'
 		if index < 0 || index >= 26 {
 			return nil, fmt.Errorf("invalid character in trigram %v", trigram)
 		}
-		if node.Continuations[index] == nil {
+		if node.continuations[index] == nil {
 			fmt.Println("Trigram not found")
 			return nil, nil
 		}
-		node = node.Continuations[index]
+		node = node.continuations[index]
 	}
 	// Return trigram doc entries
-	return node.Docs, nil
+	return node.docs, nil
 }
 
 func getTrigrams(token string) []string {
@@ -111,7 +121,7 @@ func tokenize(content string) []string {
 	return tokens
 }
 
-func (n *Node) IndexDocument(docID string, content string) {
+func (t *Trie) IndexDocument(docID string, content string) {
 	tokens := tokenize(content)
 	for _, token := range tokens {
 		// skip stop words
@@ -122,7 +132,7 @@ func (n *Node) IndexDocument(docID string, content string) {
 		token = snowballeng.Stem(token, false)
 		trigrams := getTrigrams(token)
 		for _, trigram := range trigrams {
-			err := n.Insert(trigram, docID)
+			err := t.Insert(trigram, docID)
 			if err != nil {
 				fmt.Println(err)
 				continue
@@ -131,7 +141,7 @@ func (n *Node) IndexDocument(docID string, content string) {
 	}
 }
 
-func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
+func (t *Trie) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
 	startTime := time.Now()
 	timings := make(map[string]string)
 
@@ -157,7 +167,7 @@ func (n *Node) SearchDocuments(ctx context.Context, query string, maxResults int
 		}
 
 		for _, trigram := range trigrams {
-			docEntries, err := n.Search(trigram)
+			docEntries, err := t.Search(trigram)
 			if err != nil {
 				return nil, err
 			}
