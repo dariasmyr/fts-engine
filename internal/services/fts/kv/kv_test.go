@@ -1,4 +1,4 @@
-package fts_kv
+package kv
 
 import (
 	"context"

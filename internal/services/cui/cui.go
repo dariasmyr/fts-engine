@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
-	fts "fts-hw/internal/services/fts_trie"
 	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
@@ -17,16 +16,29 @@ import (
 	"github.com/jroimartin/gocui"
 )
 
+type SearchEngine interface {
+	IndexDocument(
+		ctx context.Context,
+		docID string,
+		content string,
+	) error
+	SearchDocuments(
+		ctx context.Context,
+		query string,
+		maxResults int,
+	) (*models.SearchResult, error)
+}
+
 type CUI struct {
 	ctx        context.Context
 	cui        *gocui.Gui
-	ftsService *fts.Node
+	ftsService SearchEngine
 	storage    *leveldb.Storage
 	log        *slog.Logger
 	maxResults int
 }
 
-func New(ctx context.Context, log *slog.Logger, ftsService *fts.Node, storage *leveldb.Storage, maxResults int) *CUI {
+func New(ctx context.Context, log *slog.Logger, ftsService SearchEngine, storage *leveldb.Storage, maxResults int) *CUI {
 	g, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
 		log.Error("Failed to create GUI:", "error", sl.Err(err))
@@ -226,7 +238,11 @@ func highlightQueryInResult(document *models.Document, query string) {
 }
 
 func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, map[string]string, int, error) {
-	searchResult, err := c.ftsService.SearchDocuments(ctx, query, c.maxResults)
+	searchResult, err := c.ftsService.SearchDocuments(
+		ctx,
+		query,
+		c.maxResults,
+	)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("failed to search documents: %v", err)
 	}

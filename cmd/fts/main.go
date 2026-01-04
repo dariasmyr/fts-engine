@@ -3,23 +3,25 @@ package main
 import (
 	"context"
 	"fmt"
-	"fts-hw/config"
-	"fts-hw/internal/domain/models"
-	"fts-hw/internal/services/loader"
-	"runtime"
-	"sync"
-	"time"
-
-	//"fts-hw/internal/domain/models"
-	"fts-hw/internal/lib/logger/sl"
-	"fts-hw/internal/services/cui"
-	ftsTrie "fts-hw/internal/services/fts_trie"
-	"fts-hw/internal/storage/leveldb"
+	"fts-hw/internal/services/fts/kv"
+	trigramtrie "fts-hw/internal/services/fts/trigram_trie"
 	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
+	"sync"
 	"syscall"
+	"time"
+
+	"fts-hw/config"
+	"fts-hw/internal/domain/models"
+	"fts-hw/internal/lib/logger/sl"
+	"fts-hw/internal/services/cui"
+	ftsService "fts-hw/internal/services/fts"
+	"fts-hw/internal/services/fts/loader"
+	radixtrie "fts-hw/internal/services/fts/radix_trie"
+	"fts-hw/internal/storage/leveldb"
 )
 
 const (
@@ -32,8 +34,14 @@ const (
 	_readinessDrainDelay = 5 * time.Second
 )
 
+func ensureDir(p string) {
+	os.MkdirAll(p, 0755)
+}
+
 func main() {
 	cfg := config.MustLoad()
+
+	ensureDir("data")
 
 	var workerCount = runtime.NumCPU()
 
@@ -68,11 +76,32 @@ func main() {
 		cancel()
 	}()
 
-	//keyValueFTS := ftsKV.New(log, storage, storage)
-	// log.Info("Key Value FTS initialised")
+	var ftsEngine cui.SearchEngine
 
-	trieFTS := ftsTrie.NewNode()
-	log.Info("Trie FTS initialised")
+	switch cfg.FTS.Engine {
+
+	case "kv":
+		ftsEngine = kv.New(log, storage, storage)
+	case "trie":
+		switch cfg.FTS.Trie.Type {
+
+		case "radix":
+			trie := radixtrie.NewTrie()
+			ftsEngine = ftsService.NewSearchService(
+				trie,
+				radixtrie.WordKeys,
+			)
+
+		case "trigram":
+			trie := trigramtrie.NewTrie()
+			ftsEngine = ftsService.NewSearchService(
+				trie,
+				trigramtrie.TrigramKeys,
+			)
+		}
+	}
+
+	log.Info("FTS engine initialised")
 
 	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
 	log.Info("Loader initialised")
@@ -113,11 +142,13 @@ func main() {
 			log.Info("Received shutdown signal, shutting down...")
 			return
 		default:
-			trieFTS.IndexDocument(documents[i].ID, documents[i].Abstract)
+			indexErr := ftsEngine.IndexDocument(ctx, documents[i].ID, documents[i].Abstract)
+			if indexErr != nil {
+				log.Error("could not index document:", "error", indexErr)
+			}
 
-			//_, err = keyValueFTS.ProcessDocument(ctx, &doc)
+			log.Info("Document indexed, adding to job chan", "doc", i)
 
-			//log.Info("Document indexed, adding to job chan", "doc", i)
 			jobCh <- documents[i]
 		}
 	}
@@ -125,7 +156,7 @@ func main() {
 	close(jobCh)
 	wg.Wait()
 
-	appCUI := cui.New(ctx, log, trieFTS, storage, 10)
+	appCUI := cui.New(ctx, log, ftsEngine, storage, 10)
 
 	cuiErr := appCUI.Start()
 	if cuiErr != nil {

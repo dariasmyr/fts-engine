@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"fts-hw/internal/domain/models"
+	"fts-hw/internal/services/fts"
 	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
@@ -12,11 +13,17 @@ import (
 	"testing"
 )
 
-func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
+func TestRadixTrieInsertAndSearch(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	trie := NewTrie()
+	radixTrie := NewTrie()
+
+	ftsService := fts.NewSearchService(
+		radixTrie,
+		WordKeys,
+	)
+
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
@@ -61,7 +68,7 @@ func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 	}
 
 	for _, document := range documents {
-		trie.IndexDocument(document.ID, document.Abstract)
+		ftsService.IndexDocument(document.ID, document.Abstract)
 		fmt.Printf("Indexed document abstract with id: %s\n", document.ID)
 		jobCh <- document
 		fmt.Printf("Added document with ID: %s to job channel\n", document.ID)
@@ -100,7 +107,7 @@ func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.word, func(t *testing.T) {
-			docs, err := trie.Search(tt.word)
+			docs, err := radixTrie.Search(tt.word)
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}
@@ -111,11 +118,16 @@ func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 	}
 }
 
-func TestInsertAndSearchDocument(t *testing.T) {
+func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	trie := NewTrie()
+	radixTrie := NewTrie()
+
+	ftsService := fts.NewSearchService(
+		radixTrie,
+		WordKeys,
+	)
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
@@ -160,7 +172,7 @@ func TestInsertAndSearchDocument(t *testing.T) {
 	}
 
 	for _, document := range documents {
-		trie.IndexDocument(document.ID, document.Abstract)
+		ftsService.IndexDocument(document.ID, document.Abstract)
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
 		jobCh <- document
 		fmt.Printf("Added document with ID: %s to job channel\n", document.ID)
@@ -190,7 +202,11 @@ func TestInsertAndSearchDocument(t *testing.T) {
 	for _, tt := range tests {
 		fmt.Println("Start searching:", tt.query)
 		t.Run(tt.query, func(t *testing.T) {
-			docResults, err := trie.SearchDocuments(context.Background(), tt.query, 10)
+			docResults, err := ftsService.SearchDocuments(
+				context.Background(),
+				tt.query,
+				10,
+			)
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}

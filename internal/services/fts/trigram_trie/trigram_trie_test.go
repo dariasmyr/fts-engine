@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"fts-hw/internal/domain/models"
+	"fts-hw/internal/services/fts"
 	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
@@ -16,7 +17,12 @@ func TestTrigramTrieInsertAndSearch(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	trie := NewTrie()
+	trigramTrie := NewTrie()
+
+	ftsService := fts.NewSearchService(
+		trigramTrie,
+		TrigramKeys,
+	)
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
@@ -66,7 +72,7 @@ func TestTrigramTrieInsertAndSearch(t *testing.T) {
 	}
 
 	for _, document := range documents {
-		trie.IndexDocument(document.ID, document.Abstract)
+		ftsService.IndexDocument(document.ID, document.Abstract)
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
 		jobCh <- document
 		fmt.Printf("Added document with ID: %s to job channel\n", document.ID)
@@ -105,7 +111,7 @@ func TestTrigramTrieInsertAndSearch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.trigram, func(t *testing.T) {
-			docs, err := trie.Search(tt.trigram)
+			docs, err := trigramTrie.Search(tt.trigram)
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}
@@ -120,7 +126,12 @@ func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	trie := NewTrie()
+	trigramTrie := NewTrie()
+
+	ftsService := fts.NewSearchService(
+		trigramTrie,
+		TrigramKeys,
+	)
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
@@ -171,7 +182,7 @@ func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
 	}
 
 	for _, document := range documents {
-		trie.IndexDocument(document.ID, document.Abstract)
+		ftsService.IndexDocument(document.ID, document.Abstract)
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
 		jobCh <- document
 		fmt.Printf("Added document with ID: %s to job channel\n", document.ID)
@@ -201,9 +212,13 @@ func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
 	for _, tt := range tests {
 		fmt.Println("Start searching:", tt.query)
 		t.Run(tt.query, func(t *testing.T) {
-			docResults, err := trie.SearchDocuments(context.Background(), tt.query, 10)
-			if err != nil {
-				t.Errorf("Search error: %s", err)
+			docResults, searchErr :=
+				ftsService.SearchDocuments(
+					context.Background(),
+					tt.query,
+					10)
+			if searchErr != nil {
+				t.Errorf("Search error: %s", searchErr)
 			}
 			docs := make([]string, 0, len(docResults.ResultData))
 			for _, doc := range docResults.ResultData {

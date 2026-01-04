@@ -1,10 +1,10 @@
-package fts_kv
+package kv
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"fts-hw/internal/domain/models"
-	"fts-hw/internal/lib/logger/sl"
 	utils "fts-hw/internal/utils/format"
 	"iter"
 	"log/slog"
@@ -171,16 +171,19 @@ func (fts *KeyValueFTS) preprocessText(content string) []string {
 	return words
 }
 
-func (fts *KeyValueFTS) ProcessDocument(ctx context.Context, document models.Document) (string, error) {
-	words := fts.preprocessText(document.Abstract)
+func (fts *KeyValueFTS) IndexDocument(
+	ctx context.Context,
+	docID string,
+	content string,
+) error {
+	words := fts.preprocessText(content)
 
-	err := fts.documentSaver.SaveWordsWithIndexing(ctx, document.ID, words)
+	err := fts.documentSaver.SaveWordsWithIndexing(ctx, docID, words)
 	if err != nil {
-		fts.log.Error("Failed to save document", "error", sl.Err(err))
-		return "", err
+		return fmt.Errorf("kv: index document: %w", err)
 	}
 
-	return document.ID, nil
+	return nil
 }
 
 func (fts *KeyValueFTS) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
