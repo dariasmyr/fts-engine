@@ -59,12 +59,10 @@ func TestInsertAndSearch(t *testing.T) {
 	jobCh := make(chan models.Document)
 	var wg sync.WaitGroup
 
-	for range 3 {
-		wg.Add(1)
-		go func() {
-			wg.Done()
+	for range documents {
+		wg.Go(func() {
 			storage.BatchDocument(context.Background(), jobCh)
-		}()
+		})
 	}
 
 	for _, document := range documents {
@@ -166,12 +164,10 @@ func TestInsertAndSearchDocument(t *testing.T) {
 	jobCh := make(chan models.Document)
 	var wg sync.WaitGroup
 
-	for range 3 {
-		wg.Add(1)
-		go func() {
-			wg.Done()
+	for range documents {
+		wg.Go(func() {
 			storage.BatchDocument(context.Background(), jobCh)
-		}()
+		})
 	}
 
 	for _, document := range documents {
