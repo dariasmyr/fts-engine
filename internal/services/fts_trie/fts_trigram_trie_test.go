@@ -1,4 +1,4 @@
-package fts_trie
+package trigramtrie
 
 import (
 	"context"
@@ -12,11 +12,11 @@ import (
 	"testing"
 )
 
-func TestInsertAndSearch(t *testing.T) {
+func TestTrigramTrieInsertAndSearch(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	trie := NewNode()
+	trie := NewTrie()
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
@@ -116,11 +116,11 @@ func TestInsertAndSearch(t *testing.T) {
 	}
 }
 
-func TestInsertAndSearchDocument(t *testing.T) {
+func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	trie := NewNode()
+	trie := NewTrie()
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
