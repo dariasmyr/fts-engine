@@ -11,6 +11,25 @@ import (
 	"unicode/utf8"
 )
 
+type Index interface {
+	Search(key string) (map[string]int, error)
+	Insert(key string, docID string) error
+}
+
+type KeyGenerator func(token string) ([]string, error)
+
+type SearchService struct {
+	index  Index
+	keyGen KeyGenerator
+}
+
+func NewSearchService(index Index, keyGen KeyGenerator) *SearchService {
+	return &SearchService{
+		index:  index,
+		keyGen: keyGen,
+	}
+}
+
 func Tokenize(content string) []string {
 	lastSplit := 0
 	tokens := make([]string, 0)
@@ -34,25 +53,6 @@ func Tokenize(content string) []string {
 	}
 
 	return tokens
-}
-
-type Index interface {
-	Search(key string) (map[string]int, error)
-	Insert(key string, docID string) error
-}
-
-type KeyGenerator func(token string) ([]string, error)
-
-type SearchService struct {
-	index  Index
-	keyGen KeyGenerator
-}
-
-func NewSearchService(index Index, keyGen KeyGenerator) *SearchService {
-	return &SearchService{
-		index:  index,
-		keyGen: keyGen,
-	}
 }
 
 func (s *SearchService) IndexDocument(
