@@ -1,3 +1,4 @@
-env: "prod"
+env: "local"
 storage_path: "./storage/fts-queue.db"
 dump_path: "./data/enwiki-latest-abstract1.xml.gz"
+trie: "radix"

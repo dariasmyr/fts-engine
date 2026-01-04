@@ -9,9 +9,19 @@ import (
 )
 
 type Config struct {
-	Env         string `yaml:"env" env-default:"local"`
-	StoragePath string `yaml:"storage_path" env-required:"true"`
-	DumpPath    string `yaml:"dump_path" env-default:"./data/enwiki-latest-abstract10.xml.gz"`
+	Env         string    `yaml:"env" env-default:"local"`
+	StoragePath string    `yaml:"storage_path" env-required:"true"`
+	DumpPath    string    `yaml:"dump_path" env-default:"./data/enwiki-latest-abstract10.xml.gz"`
+	FTS         FTSConfig `yaml:"fts"`
+}
+
+type FTSConfig struct {
+	Engine string     `yaml:"engine" env-default:"trie"`
+	Trie   TrieConfig `yaml:"trie"`
+}
+
+type TrieConfig struct {
+	Type string `yaml:"type" env-default:"radix"`
 }
 
 func MustLoad() *Config {
@@ -41,6 +51,8 @@ func MustLoad() *Config {
 		fmt.Printf("Error: DumpPath does not exist: %s", cfg.DumpPath)
 	}
 
+	validateConfig(&cfg)
+
 	return &cfg
 }
 
@@ -62,4 +74,18 @@ func fetchConfigPath() string {
 
 	fmt.Println("Config path:", res)
 	return res
+}
+
+func validateConfig(cfg *Config) {
+	switch cfg.FTS.Engine {
+	case "trie":
+		switch cfg.FTS.Trie.Type {
+		case "radix", "trigram":
+		default:
+			panic("unknown trie type: " + cfg.FTS.Trie.Type)
+		}
+	case "kv":
+	default:
+		panic("unknown fts engine: " + cfg.FTS.Engine)
+	}
 }
