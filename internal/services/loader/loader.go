@@ -49,6 +49,7 @@ func (l *Loader) LoadDocuments(ctx context.Context) (documents []models.Document
 	defer func() {
 		err = f.Close()
 		if err != nil {
+			l.log.Error("Failed to close file", "error", err)
 		}
 	}()
 	gz, err := gzip.NewReader(f)
