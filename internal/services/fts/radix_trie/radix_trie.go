@@ -192,6 +192,9 @@ func (t *Trie) Analyze() utils.TrieStats {
 	var s utils.TrieStats
 	var totalDepth int
 
+	levelChildrenSum := make(map[int]int)
+	levelNodeCount := make(map[int]int)
+
 	var dfs func(n *Node, depth int)
 	dfs = func(n *Node, depth int) {
 		s.Nodes++
@@ -205,12 +208,33 @@ func (t *Trie) Analyze() utils.TrieStats {
 		}
 		s.TotalDocs += len(n.docs)
 
+		numChildren := len(n.children)
+		s.TotalChildren += numChildren
+		levelChildrenSum[depth] += numChildren
+		levelNodeCount[depth]++
+
 		for _, c := range n.children {
-			dfs(c, depth+1)
+			if c != nil {
+				dfs(c, depth+1)
+			}
 		}
 	}
 
 	dfs(t.root, 0)
-	s.AvgDepth = float64(totalDepth) / float64(s.Nodes)
+
+	if s.Nodes > 0 {
+		s.AvgDepth = float64(totalDepth) / float64(s.Nodes)
+	}
+
+	// Average not nil children count per level (for first 3 levels)
+	for depth := 0; depth <= 3; depth++ {
+		if levelNodeCount[depth] > 0 {
+			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel,
+				float64(levelChildrenSum[depth])/float64(levelNodeCount[depth]))
+		} else {
+			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel, 0)
+		}
+	}
+
 	return s
 }

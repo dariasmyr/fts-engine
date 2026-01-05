@@ -3,11 +3,13 @@ package utils
 import "runtime"
 
 type TrieStats struct {
-	Nodes     int
-	LeafNodes int
-	MaxDepth  int
-	AvgDepth  float64
-	TotalDocs int
+	Nodes               int
+	LeafNodes           int
+	MaxDepth            int
+	AvgDepth            float64
+	TotalDocs           int
+	AvgChildrenPerLevel []float64 // average (not nil for trigram) children count per level
+	TotalChildren       int
 }
 
 func MeasureMemory(build func()) runtime.MemStats {

@@ -127,7 +127,7 @@ func main() {
 			}
 		})
 
-		analyzeTrie(ftsEngine, memStats, log)
+		analyzeTrie(cfg, ftsEngine, memStats, log)
 		return
 	}
 
@@ -181,6 +181,7 @@ func main() {
 }
 
 func analyzeTrie(
+	cfg *config.Config,
 	engine cui.SearchEngine,
 	memStats runtime.MemStats,
 	log *slog.Logger,
@@ -194,16 +195,22 @@ func analyzeTrie(
 	stats := svc.Analyse()
 
 	log.Info("FTS analysis result",
-		"engine", "radix",
+		"engine", cfg.FTS.Engine,
+		"trie-type", cfg.FTS.Trie.Type,
 		"nodes", stats.Nodes,
 		"leafNodes", stats.LeafNodes,
 		"maxDepth", stats.MaxDepth,
 		"avgDepth", stats.AvgDepth,
 		"totalDocs", stats.TotalDocs,
+		"totalChildren", stats.TotalChildren,
 		"heapMB", memStats.HeapAlloc/1024/1024,
 		"heapObjects", memStats.HeapObjects,
 		"totalAllocMB", memStats.TotalAlloc/1024/1024,
 	)
+
+	for level, avg := range stats.AvgChildrenPerLevel {
+		log.Info(fmt.Sprintf("Level %d: avg children = %.2f", level, avg))
+	}
 
 }
 
