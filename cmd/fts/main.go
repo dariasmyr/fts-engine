@@ -118,14 +118,17 @@ func main() {
 	}
 
 	duration := time.Since(startTime)
-	log.Info(fmt.Sprintf("Loaded %d documents in %v", len(documents), duration))
+	log.Info(fmt.Sprintf("Unpacked & parsed %d documents in %v", len(documents), duration))
 
 	if cfg.Mode.Type == "experiment" {
+		startTime = time.Now()
 		memStats := utils.MeasureMemory(func() {
 			for _, doc := range documents {
 				_ = ftsEngine.IndexDocument(ctx, doc.ID, doc.Abstract)
 			}
 		})
+		duration = time.Since(startTime)
+		log.Info(fmt.Sprintf("Indexed %d documents in %v", len(documents), duration))
 
 		analyzeTrie(cfg, ftsEngine, memStats, log)
 		return
