@@ -1,4 +1,4 @@
-package fts_kv
+package kv
 
 import (
 	"context"
@@ -10,6 +10,34 @@ import (
 	"reflect"
 	"testing"
 )
+
+var documents = []models.Document{{
+	DocumentBase: models.DocumentBase{
+		Title:    "Wikipedia: Sans Souci Hotel (Ballston Spa)",
+		URL:      "https://en.wikipedia.org/wiki/Sans_Souci_Hotel_(Ballston_Spa)",
+		Abstract: "Wikipedia: The Sans Souci Hotel was a hotel located in Ballston Spa, Saratoga County, New York. It was built in 1803, closed as a hotel in 1849, and the building, used for other purposes, was torn down in 1887.",
+	},
+	Extract: "",
+	ID:      "1",
+},
+	{
+		DocumentBase: models.DocumentBase{
+			Title:    "Wikipedia: Hotellet",
+			URL:      "https://en.wikipedia.org/wiki/Hotellet",
+			Abstract: "Wikipedia: Hotellet (Danish original title: The Hotel) is a Danish television series that originally aired on Danish channel TV 2 between 2000–2002.",
+		},
+		Extract: "",
+		ID:      "2",
+	},
+	{
+		DocumentBase: models.DocumentBase{
+			Title:    "Wikipedia: Rosa (barge)",
+			URL:      "https://en.wikipedia.org/wiki/Rosa_(barge)",
+			Abstract: "Wikipedia: Rosa is a French hotel barge of Dutch origin. Since 1990 she has been offering cruises to international tourists on the Canal de Garonne in the Nouvelle Aquitaine region of South West France.",
+		},
+		Extract: "",
+		ID:      "3",
+	}}
 
 func TestInsertAndSearchDocument(t *testing.T) {
 	log := slog.New(
@@ -23,47 +51,15 @@ func TestInsertAndSearchDocument(t *testing.T) {
 
 	keyValueFTS := New(log, storage, storage)
 
-	documents := make([]models.Document, 0, 3)
-
-	document1 := models.Document{
-		DocumentBase: models.DocumentBase{
-			Title:    "Wikipedia: Sans Souci Hotel (Ballston Spa)",
-			URL:      "https://en.wikipedia.org/wiki/Sans_Souci_Hotel_(Ballston_Spa)",
-			Abstract: "Wikipedia: The Sans Souci Hotel was a hotel located in Ballston Spa, Saratoga County, New York. It was built in 1803, closed as a hotel in 1849, and the building, used for other purposes, was torn down in 1887.",
-		},
-		Extract: "",
-		ID:      "1",
-	}
-
-	document2 := models.Document{
-		DocumentBase: models.DocumentBase{
-			Title:    "Wikipedia: Hotellet",
-			URL:      "https://en.wikipedia.org/wiki/Hotellet",
-			Abstract: "Wikipedia: Hotellet (Danish original title: The Hotel) is a Danish television series that originally aired on Danish channel TV 2 between 2000–2002.",
-		},
-		Extract: "",
-		ID:      "2",
-	}
-
-	document3 := models.Document{
-		DocumentBase: models.DocumentBase{
-			Title:    "Wikipedia: Rosa (barge)",
-			URL:      "https://en.wikipedia.org/wiki/Rosa_(barge)",
-			Abstract: "Wikipedia: Rosa is a French hotel barge of Dutch origin. Since 1990 she has been offering cruises to international tourists on the Canal de Garonne in the Nouvelle Aquitaine region of South West France.",
-		},
-		Extract: "",
-		ID:      "3",
-	}
-
-	documents = append(documents, document1, document2, document3)
-
 	for _, document := range documents {
-		id, err := keyValueFTS.ProcessDocument(context.Background(), document)
-		if err != nil {
-			t.Errorf("Failed to process document: %v", err)
+		indexErr := keyValueFTS.IndexDocument(
+			context.Background(),
+			document.ID,
+			document.Abstract,
+		)
+		if indexErr != nil {
+			t.Errorf("Failed to process document: %v", indexErr)
 		}
-		fmt.Printf("Processed document with id: %s\n", id)
-
 		_, err = storage.SaveDocument(context.Background(), document)
 		if err != nil {
 			t.Errorf("Failed to save document: %v", err)
@@ -77,23 +73,23 @@ func TestInsertAndSearchDocument(t *testing.T) {
 	}{
 		{
 			query:               "hotel",
-			expectedDocAbstract: []string{document1.Abstract, document2.Abstract, document3.Abstract},
+			expectedDocAbstract: []string{documents[0].Abstract, documents[1].Abstract, documents[2].Abstract},
 		},
 		{
 			query:               "Wikipedia",
-			expectedDocAbstract: []string{document1.Abstract, document2.Abstract, document3.Abstract},
+			expectedDocAbstract: []string{documents[0].Abstract, documents[1].Abstract, documents[2].Abstract},
 		},
 		{
 			query:               "Rosa",
-			expectedDocAbstract: []string{document3.Abstract},
+			expectedDocAbstract: []string{documents[2].Abstract},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
-			docResults, err := keyValueFTS.SearchDocuments(context.Background(), tt.query, 10)
-			if err != nil {
-				t.Errorf("Search error: %s", err)
+			docResults, searchErr := keyValueFTS.SearchDocuments(context.Background(), tt.query, 10)
+			if searchErr != nil {
+				t.Errorf("Search error: %s", searchErr)
 			}
 			docs := make([]string, 0, len(docResults.ResultData))
 			for _, resultInfo := range docResults.ResultData {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"fts-hw/internal/domain/models"
+	"fts-hw/internal/services/fts"
 	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
@@ -12,30 +13,16 @@ import (
 	"testing"
 )
 
-func TestTrigramTrieInsertAndSearch(t *testing.T) {
-	log := slog.New(
-		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
-	)
-	trie := NewTrie()
-	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
-	if err != nil {
-		t.Fatalf("Failed to initialize storage: %v", err)
-	}
-	defer storage.Close()
-
-	documents := make([]models.Document, 0, 3)
-
-	document1 := models.Document{
-		DocumentBase: models.DocumentBase{
-			Title:    "Wikipedia: Sans Souci Hotel (Ballston Spa)",
-			URL:      "https://en.wikipedia.org/wiki/Sans_Souci_Hotel_(Ballston_Spa)",
-			Abstract: "Wikipedia: The Sans Souci Hotel was a hotel located in Ballston Spa, Saratoga County, New York. It was built in 1803, closed as a hotel in 1849, and the building, used for other purposes, was torn down in 1887.",
-		},
-		Extract: "",
-		ID:      "1",
-	}
-
-	document2 := models.Document{
+var documents = []models.Document{{
+	DocumentBase: models.DocumentBase{
+		Title:    "Wikipedia: Sans Souci Hotel (Ballston Spa)",
+		URL:      "https://en.wikipedia.org/wiki/Sans_Souci_Hotel_(Ballston_Spa)",
+		Abstract: "Wikipedia: The Sans Souci Hotel was a hotel located in Ballston Spa, Saratoga County, New York. It was built in 1803, closed as a hotel in 1849, and the building, used for other purposes, was torn down in 1887.",
+	},
+	Extract: "",
+	ID:      "1",
+},
+	{
 		DocumentBase: models.DocumentBase{
 			Title:    "Wikipedia: Hotellet",
 			URL:      "https://en.wikipedia.org/wiki/Hotellet",
@@ -43,9 +30,8 @@ func TestTrigramTrieInsertAndSearch(t *testing.T) {
 		},
 		Extract: "",
 		ID:      "2",
-	}
-
-	document3 := models.Document{
+	},
+	{
 		DocumentBase: models.DocumentBase{
 			Title:    "Wikipedia: Rosa (barge)",
 			URL:      "https://en.wikipedia.org/wiki/Rosa_(barge)",
@@ -53,9 +39,24 @@ func TestTrigramTrieInsertAndSearch(t *testing.T) {
 		},
 		Extract: "",
 		ID:      "3",
-	}
+	}}
 
-	documents = append(documents, document1, document2, document3)
+func TestTrigramTrieInsertAndSearch(t *testing.T) {
+	log := slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
+	)
+	trigramTrie := NewTrie()
+
+	ftsService := fts.NewSearchService(
+		trigramTrie,
+		TrigramKeys,
+	)
+	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
+	if err != nil {
+		t.Fatalf("Failed to initialize storage: %v", err)
+	}
+	defer storage.Close()
+
 	jobCh := make(chan models.Document)
 	var wg sync.WaitGroup
 
@@ -66,7 +67,14 @@ func TestTrigramTrieInsertAndSearch(t *testing.T) {
 	}
 
 	for _, document := range documents {
-		trie.IndexDocument(document.ID, document.Abstract)
+		indexErr := ftsService.IndexDocument(
+			context.Background(),
+			document.ID,
+			document.Abstract,
+		)
+		if indexErr != nil {
+			t.Log("failed to index document", "error", indexErr)
+		}
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
 		jobCh <- document
 		fmt.Printf("Added document with ID: %s to job channel\n", document.ID)
@@ -82,30 +90,30 @@ func TestTrigramTrieInsertAndSearch(t *testing.T) {
 		{
 			trigram: "hot", // trigram from "hotel"
 			expectedDocs: map[string]int{
-				document1.ID: 3,
-				document2.ID: 2,
-				document3.ID: 1,
+				"1": 2,
+				"2": 2,
+				"3": 1,
 			},
 		},
 		{
 			trigram: "wik", // trigram from "wikipedia"
 			expectedDocs: map[string]int{
-				document1.ID: 1,
-				document2.ID: 1,
-				document3.ID: 1,
+				"1": 1,
+				"2": 1,
+				"3": 1,
 			},
 		},
 		{
 			trigram: "ros", // trigram from "rosa"
 			expectedDocs: map[string]int{
-				document3.ID: 1,
+				"3": 1,
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.trigram, func(t *testing.T) {
-			docs, err := trie.Search(tt.trigram)
+			docs, err := trigramTrie.Search(tt.trigram)
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}
@@ -120,46 +128,17 @@ func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	trie := NewTrie()
+	trigramTrie := NewTrie()
+
+	ftsService := fts.NewSearchService(
+		trigramTrie,
+		TrigramKeys,
+	)
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
 	defer storage.Close()
-
-	documents := make([]models.Document, 0, 3)
-
-	document1 := models.Document{
-		DocumentBase: models.DocumentBase{
-			Title:    "Wikipedia: Sans Souci Hotel (Ballston Spa)",
-			URL:      "https://en.wikipedia.org/wiki/Sans_Souci_Hotel_(Ballston_Spa)",
-			Abstract: "Wikipedia: The Sans Souci Hotel was a hotel located in Ballston Spa, Saratoga County, New York. It was built in 1803, closed as a hotel in 1849, and the building, used for other purposes, was torn down in 1887.",
-		},
-		Extract: "",
-		ID:      "1",
-	}
-
-	document2 := models.Document{
-		DocumentBase: models.DocumentBase{
-			Title:    "Wikipedia: Hotellet",
-			URL:      "https://en.wikipedia.org/wiki/Hotellet",
-			Abstract: "Wikipedia: Hotellet (Danish original title: The Hotel) is a Danish television series that originally aired on Danish channel TV 2 between 2000–2002.",
-		},
-		Extract: "",
-		ID:      "2",
-	}
-
-	document3 := models.Document{
-		DocumentBase: models.DocumentBase{
-			Title:    "Wikipedia: Rosa (barge)",
-			URL:      "https://en.wikipedia.org/wiki/Rosa_(barge)",
-			Abstract: "Wikipedia: Rosa is a French hotel barge of Dutch origin. Since 1990 she has been offering cruises to international tourists on the Canal de Garonne in the Nouvelle Aquitaine region of South West France.",
-		},
-		Extract: "",
-		ID:      "3",
-	}
-
-	documents = append(documents, document1, document2, document3)
 
 	jobCh := make(chan models.Document)
 	var wg sync.WaitGroup
@@ -171,7 +150,14 @@ func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
 	}
 
 	for _, document := range documents {
-		trie.IndexDocument(document.ID, document.Abstract)
+		indexErr := ftsService.IndexDocument(
+			context.Background(),
+			document.ID,
+			document.Abstract,
+		)
+		if indexErr != nil {
+			t.Log("failed to index document", "error", indexErr)
+		}
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
 		jobCh <- document
 		fmt.Printf("Added document with ID: %s to job channel\n", document.ID)
@@ -186,24 +172,28 @@ func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
 	}{
 		{
 			query:               "hotel",
-			expectedDocAbstract: []string{document1.Abstract, document2.Abstract, document3.Abstract},
+			expectedDocAbstract: []string{documents[1].Abstract, documents[0].Abstract, documents[2].Abstract},
 		},
 		{
 			query:               "Wikipedia Hotellet",
-			expectedDocAbstract: []string{document2.Abstract, document3.Abstract, document1.Abstract},
+			expectedDocAbstract: []string{documents[1].Abstract, documents[0].Abstract, documents[2].Abstract},
 		},
 		{
 			query:               "Rosa",
-			expectedDocAbstract: []string{document3.Abstract},
+			expectedDocAbstract: []string{documents[2].Abstract},
 		},
 	}
 
 	for _, tt := range tests {
 		fmt.Println("Start searching:", tt.query)
 		t.Run(tt.query, func(t *testing.T) {
-			docResults, err := trie.SearchDocuments(context.Background(), tt.query, 10)
-			if err != nil {
-				t.Errorf("Search error: %s", err)
+			docResults, searchErr :=
+				ftsService.SearchDocuments(
+					context.Background(),
+					tt.query,
+					10)
+			if searchErr != nil {
+				t.Errorf("Search error: %s", searchErr)
 			}
 			docs := make([]string, 0, len(docResults.ResultData))
 			for _, doc := range docResults.ResultData {

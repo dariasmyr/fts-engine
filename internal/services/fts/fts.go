@@ -1,102 +1,37 @@
-package trigramtrie
+package fts
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"fts-hw/internal/domain/models"
-	utils "fts-hw/internal/utils/format"
+	"fts-hw/internal/utils"
+	snowballeng "github.com/kljensen/snowball/english"
 	"sort"
-	"sync"
 	"time"
 	"unicode/utf8"
-
-	snowballeng "github.com/kljensen/snowball/english"
 )
 
-type Node struct {
-	docs          map[string]int
-	continuations [26]*Node
+type Index interface {
+	Search(key string) (map[string]int, error)
+	Insert(key string, docID string) error
+	Analyze() utils.TrieStats
 }
 
-func newNode() *Node {
-	return &Node{
-		docs: make(map[string]int),
+type KeyGenerator func(token string) ([]string, error)
+
+type SearchService struct {
+	index  Index
+	keyGen KeyGenerator
+}
+
+func NewSearchService(index Index, keyGen KeyGenerator) *SearchService {
+	return &SearchService{
+		index:  index,
+		keyGen: keyGen,
 	}
 }
 
-type Trie struct {
-	root *Node
-	mu   sync.RWMutex
-}
-
-func NewTrie() *Trie {
-	return &Trie{
-		root: newNode(),
-	}
-}
-
-var ErrInvalidTrigramSize = errors.New("trigram must have exactly 3 characters")
-
-func (t *Trie) Insert(trigram string, docID string) error {
-	if len(trigram) != 3 {
-		return ErrInvalidTrigramSize
-	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	node := t.root
-	for i := 0; i < 3; i++ {
-		index := trigram[i] - 'a'
-		if index < 0 || index >= 26 {
-			return fmt.Errorf("invalid character in trigram %v", trigram)
-		}
-		if node.continuations[index] == nil {
-			node.continuations[index] = newNode()
-		}
-		node = node.continuations[index]
-	}
-	// Increase doc entry count
-	node.docs[docID]++
-	return nil
-}
-
-func (t *Trie) Search(trigram string) (map[string]int, error) {
-	if len(trigram) != 3 {
-		return nil, ErrInvalidTrigramSize
-	}
-
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	node := t.root
-	for i := 0; i < 3; i++ {
-		index := trigram[i] - 'a'
-		if index < 0 || index >= 26 {
-			return nil, fmt.Errorf("invalid character in trigram %v", trigram)
-		}
-		if node.continuations[index] == nil {
-			fmt.Println("Trigram not found")
-			return nil, nil
-		}
-		node = node.continuations[index]
-	}
-	// Return trigram doc entries
-	return node.docs, nil
-}
-
-func getTrigrams(token string) []string {
-	if len(token) < 3 {
-		return nil
-	}
-	trigrams := make([]string, 0, 3)
-	for i := 0; i < len(token)-2; i++ {
-		trigrams = append(trigrams, token[i:i+3])
-	}
-	return trigrams
-}
-
-func tokenize(content string) []string {
+func Tokenize(content string) []string {
 	lastSplit := 0
 	tokens := make([]string, 0)
 	for i, char := range content {
@@ -121,8 +56,12 @@ func tokenize(content string) []string {
 	return tokens
 }
 
-func (t *Trie) IndexDocument(docID string, content string) {
-	tokens := tokenize(content)
+func (s *SearchService) IndexDocument(
+	ctx context.Context,
+	docID string,
+	content string,
+) error {
+	tokens := Tokenize(content)
 	for _, token := range tokens {
 		// skip stop words
 		if snowballeng.IsStopWord(token) {
@@ -130,23 +69,32 @@ func (t *Trie) IndexDocument(docID string, content string) {
 		}
 		//lowercase and stemmimg (eng only)
 		token = snowballeng.Stem(token, false)
-		trigrams := getTrigrams(token)
-		for _, trigram := range trigrams {
-			err := t.Insert(trigram, docID)
-			if err != nil {
-				fmt.Println(err)
-				continue
+		keys, err := s.keyGen(token)
+		if err != nil {
+			return fmt.Errorf("trie: index document: %w", err)
+		}
+
+		for _, trigram := range keys {
+			insertErr := s.index.Insert(trigram, docID)
+			if insertErr != nil {
+				return fmt.Errorf("trie: insert document while indexing: %w", insertErr)
 			}
 		}
 	}
+
+	return nil
 }
 
-func (t *Trie) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
+func (s *SearchService) SearchDocuments(
+	ctx context.Context,
+	query string,
+	maxResults int,
+) (*models.SearchResult, error) {
 	startTime := time.Now()
 	timings := make(map[string]string)
 
 	preprocessStart := time.Now()
-	tokens := tokenize(query)
+	tokens := Tokenize(query)
 	timings["preprocess"] = utils.FormatDuration(time.Since(preprocessStart))
 
 	searchStart := time.Now()
@@ -161,15 +109,16 @@ func (t *Trie) SearchDocuments(ctx context.Context, query string, maxResults int
 		}
 		//lowercase and stemmimg (eng only)
 		token = snowballeng.Stem(token, false)
-		trigrams := getTrigrams(token)
-		if len(trigrams) == 0 {
-			return nil, ErrInvalidTrigramSize
+
+		keys, err := s.keyGen(token)
+		if err != nil {
+			return nil, err
 		}
 
-		for _, trigram := range trigrams {
-			docEntries, err := t.Search(trigram)
-			if err != nil {
-				return nil, err
+		for _, key := range keys {
+			docEntries, searchErr := s.index.Search(key)
+			if searchErr != nil {
+				return nil, searchErr
 			}
 			if docEntries == nil {
 				continue
@@ -179,6 +128,7 @@ func (t *Trie) SearchDocuments(ctx context.Context, query string, maxResults int
 				docTotalMatches[docID] += count
 			}
 		}
+
 	}
 
 	if len(docUniqueMatches) < maxResults {
@@ -218,4 +168,8 @@ func (t *Trie) SearchDocuments(ctx context.Context, query string, maxResults int
 		Timings:           timings,
 		TotalResultsCount: len(docUniqueMatches),
 	}, nil
+}
+
+func (s *SearchService) Analyse() utils.TrieStats {
+	return s.index.Analyze()
 }

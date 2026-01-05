@@ -3,23 +3,26 @@ package main
 import (
 	"context"
 	"fmt"
-	"fts-hw/config"
-	"fts-hw/internal/domain/models"
-	"fts-hw/internal/services/loader"
-	"runtime"
-	"sync"
-	"time"
-
-	//"fts-hw/internal/domain/models"
-	"fts-hw/internal/lib/logger/sl"
-	"fts-hw/internal/services/cui"
-	ftsTrie "fts-hw/internal/services/fts_trie"
-	"fts-hw/internal/storage/leveldb"
+	"fts-hw/internal/services/fts/kv"
+	trigramtrie "fts-hw/internal/services/fts/trigram_trie"
+	"fts-hw/internal/utils"
 	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
+	"sync"
 	"syscall"
+	"time"
+
+	"fts-hw/config"
+	"fts-hw/internal/domain/models"
+	"fts-hw/internal/lib/logger/sl"
+	"fts-hw/internal/services/cui"
+	ftsService "fts-hw/internal/services/fts"
+	"fts-hw/internal/services/fts/loader"
+	radixtrie "fts-hw/internal/services/fts/radix_trie"
+	"fts-hw/internal/storage/leveldb"
 )
 
 const (
@@ -32,8 +35,14 @@ const (
 	_readinessDrainDelay = 5 * time.Second
 )
 
+func ensureDir(p string) {
+	os.MkdirAll(p, 0755)
+}
+
 func main() {
 	cfg := config.MustLoad()
+
+	ensureDir("data")
 
 	var workerCount = runtime.NumCPU()
 
@@ -45,6 +54,9 @@ func main() {
 
 	log := setupLogger(cfg.Env)
 	log.Info("fts", "env", cfg.Env)
+	log.Info("fts", "engine", cfg.FTS.Engine)
+	log.Info("fts", "engine-type", cfg.FTS.Trie.Type)
+	log.Info("fts", "mode", cfg.Mode.Type)
 
 	storage, err := leveldb.NewStorage(log, cfg.StoragePath)
 	if err != nil {
@@ -68,11 +80,32 @@ func main() {
 		cancel()
 	}()
 
-	//keyValueFTS := ftsKV.New(log, storage, storage)
-	// log.Info("Key Value FTS initialised")
+	var ftsEngine cui.SearchEngine
 
-	trieFTS := ftsTrie.NewNode()
-	log.Info("Trie FTS initialised")
+	switch cfg.FTS.Engine {
+
+	case "kv":
+		ftsEngine = kv.New(log, storage, storage)
+	case "trie":
+		switch cfg.FTS.Trie.Type {
+
+		case "radix":
+			trie := radixtrie.NewTrie()
+			ftsEngine = ftsService.NewSearchService(
+				trie,
+				radixtrie.WordKeys,
+			)
+
+		case "trigram":
+			trie := trigramtrie.NewTrie()
+			ftsEngine = ftsService.NewSearchService(
+				trie,
+				trigramtrie.TrigramKeys,
+			)
+		}
+	}
+
+	log.Info("FTS engine initialised")
 
 	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
 	log.Info("Loader initialised")
@@ -85,7 +118,21 @@ func main() {
 	}
 
 	duration := time.Since(startTime)
-	log.Info(fmt.Sprintf("Loaded %d documents in %v", len(documents), duration))
+	log.Info(fmt.Sprintf("Unpacked & parsed %d documents in %v", len(documents), duration))
+
+	if cfg.Mode.Type == "experiment" {
+		startTime = time.Now()
+		memStats := utils.MeasureMemory(func() {
+			for _, doc := range documents {
+				_ = ftsEngine.IndexDocument(ctx, doc.ID, doc.Abstract)
+			}
+		})
+		duration = time.Since(startTime)
+		log.Info(fmt.Sprintf("Indexed %d documents in %v", len(documents), duration))
+
+		analyzeTrie(cfg, ftsEngine, memStats, log)
+		return
+	}
 
 	startTime = time.Now()
 
@@ -113,11 +160,13 @@ func main() {
 			log.Info("Received shutdown signal, shutting down...")
 			return
 		default:
-			trieFTS.IndexDocument(documents[i].ID, documents[i].Abstract)
+			indexErr := ftsEngine.IndexDocument(ctx, documents[i].ID, documents[i].Abstract)
+			if indexErr != nil {
+				log.Error("could not index document:", "error", indexErr)
+			}
 
-			//_, err = keyValueFTS.ProcessDocument(ctx, &doc)
+			// log.Info("Document indexed, adding to job chan", "doc", i)
 
-			//log.Info("Document indexed, adding to job chan", "doc", i)
 			jobCh <- documents[i]
 		}
 	}
@@ -125,13 +174,47 @@ func main() {
 	close(jobCh)
 	wg.Wait()
 
-	appCUI := cui.New(ctx, log, trieFTS, storage, 10)
+	appCUI := cui.New(ctx, log, ftsEngine, storage, 10)
 
 	cuiErr := appCUI.Start()
 	if cuiErr != nil {
 		log.Error("Failed to start appCUI", "error", sl.Err(cuiErr))
 		return
 	}
+}
+
+func analyzeTrie(
+	cfg *config.Config,
+	engine cui.SearchEngine,
+	memStats runtime.MemStats,
+	log *slog.Logger,
+) {
+	svc, ok := engine.(*ftsService.SearchService)
+	if !ok {
+		log.Warn("analyzeTrie: engine does not support analysis")
+		return
+	}
+
+	stats := svc.Analyse()
+
+	log.Info("FTS analysis result",
+		"engine", cfg.FTS.Engine,
+		"trie-type", cfg.FTS.Trie.Type,
+		"nodes", stats.Nodes,
+		"leafNodes", stats.LeafNodes,
+		"maxDepth", stats.MaxDepth,
+		"avgDepth", stats.AvgDepth,
+		"totalDocs", stats.TotalDocs,
+		"totalChildren", stats.TotalChildren,
+		"heapMB", memStats.HeapAlloc/1024/1024,
+		"heapObjects", memStats.HeapObjects,
+		"totalAllocMB", memStats.TotalAlloc/1024/1024,
+	)
+
+	for level, avg := range stats.AvgChildrenPerLevel {
+		log.Info(fmt.Sprintf("Level %d: avg children = %.2f", level, avg))
+	}
+
 }
 
 func setupLogger(env string) *slog.Logger {
