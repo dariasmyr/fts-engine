@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"fts-hw/internal/domain/models"
-	utils "fts-hw/internal/utils/format"
+	"fts-hw/internal/utils"
 	snowballeng "github.com/kljensen/snowball/english"
 	"sort"
 	"time"
@@ -14,6 +14,7 @@ import (
 type Index interface {
 	Search(key string) (map[string]int, error)
 	Insert(key string, docID string) error
+	Analyze() utils.TrieStats
 }
 
 type KeyGenerator func(token string) ([]string, error)
@@ -167,4 +168,8 @@ func (s *SearchService) SearchDocuments(
 		Timings:           timings,
 		TotalResultsCount: len(docUniqueMatches),
 	}, nil
+}
+
+func (s *SearchService) Analyse() utils.TrieStats {
+	return s.index.Analyze()
 }

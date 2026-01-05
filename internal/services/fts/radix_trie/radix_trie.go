@@ -1,6 +1,7 @@
 package radixtrie
 
 import (
+	"fts-hw/internal/utils"
 	"sync"
 )
 
@@ -185,4 +186,31 @@ func (t *Trie) next(current *Node, rest string) (*Node, string, bool, bool) {
 
 func WordKeys(token string) ([]string, error) {
 	return []string{token}, nil
+}
+
+func (t *Trie) Analyze() utils.TrieStats {
+	var s utils.TrieStats
+	var totalDepth int
+
+	var dfs func(n *Node, depth int)
+	dfs = func(n *Node, depth int) {
+		s.Nodes++
+		totalDepth += depth
+
+		if n.terminal {
+			s.LeafNodes++
+		}
+		if depth > s.MaxDepth {
+			s.MaxDepth = depth
+		}
+		s.TotalDocs += len(n.docs)
+
+		for _, c := range n.children {
+			dfs(c, depth+1)
+		}
+	}
+
+	dfs(t.root, 0)
+	s.AvgDepth = float64(totalDepth) / float64(s.Nodes)
+	return s
 }

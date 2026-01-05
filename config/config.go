@@ -9,15 +9,20 @@ import (
 )
 
 type Config struct {
-	Env         string    `yaml:"env" env-default:"local"`
-	StoragePath string    `yaml:"storage_path" env-required:"true"`
-	DumpPath    string    `yaml:"dump_path" env-default:"./data/enwiki-latest-abstract10.xml.gz"`
-	FTS         FTSConfig `yaml:"fts"`
+	Env         string     `yaml:"env" env-default:"local"`
+	StoragePath string     `yaml:"storage_path" env-required:"true"`
+	DumpPath    string     `yaml:"dump_path" env-default:"./data/enwiki-latest-abstract10.xml.gz"`
+	FTS         FTSConfig  `yaml:"fts"`
+	Mode        ModeConfig `yaml:"mode"`
 }
 
 type FTSConfig struct {
 	Engine string     `yaml:"engine" env-default:"trie"`
 	Trie   TrieConfig `yaml:"trie"`
+}
+
+type ModeConfig struct {
+	Type string `yaml:"type" env-default:"prod"`
 }
 
 type TrieConfig struct {

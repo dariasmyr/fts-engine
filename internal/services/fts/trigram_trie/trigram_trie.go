@@ -3,12 +3,13 @@ package trigramtrie
 import (
 	"errors"
 	"fmt"
+	"fts-hw/internal/utils"
 	"sync"
 )
 
 type Node struct {
-	docs          map[string]int
-	continuations [26]*Node
+	docs     map[string]int
+	children [26]*Node
 }
 
 func newNode() *Node {
@@ -43,10 +44,10 @@ func (t *Trie) Insert(trigram string, docID string) error {
 		if index < 0 || index >= 26 {
 			return fmt.Errorf("invalid character in trigram %v", trigram)
 		}
-		if node.continuations[index] == nil {
-			node.continuations[index] = newNode()
+		if node.children[index] == nil {
+			node.children[index] = newNode()
 		}
-		node = node.continuations[index]
+		node = node.children[index]
 	}
 	// Increase doc entry count
 	node.docs[docID]++
@@ -67,11 +68,11 @@ func (t *Trie) Search(word string) (map[string]int, error) {
 		if index < 0 || index >= 26 {
 			return nil, fmt.Errorf("invalid character in trigram %v", word)
 		}
-		if node.continuations[index] == nil {
+		if node.children[index] == nil {
 			fmt.Println("Trigram not found")
 			return nil, nil
 		}
-		node = node.continuations[index]
+		node = node.children[index]
 	}
 	// Return trigram doc entries
 	return node.docs, nil
@@ -94,4 +95,32 @@ func TrigramKeys(token string) ([]string, error) {
 		return nil, ErrInvalidTrigramSize
 	}
 	return trigrams, nil
+}
+
+func (t *Trie) Analyze() utils.TrieStats {
+	var s utils.TrieStats
+	var totalDepth int
+
+	var dfs func(n *Node, depth int)
+	dfs = func(n *Node, depth int) {
+		s.Nodes++
+		totalDepth += depth
+		if len(n.docs) > 0 {
+			s.LeafNodes++
+		}
+		if depth > s.MaxDepth {
+			s.MaxDepth = depth
+		}
+		s.TotalDocs += len(n.docs)
+
+		for _, c := range n.children {
+			if c != nil {
+				dfs(c, depth+1)
+			}
+		}
+	}
+
+	dfs(t.root, 0)
+	s.AvgDepth = float64(totalDepth) / float64(s.Nodes)
+	return s
 }

@@ -5,3 +5,5 @@ fts:
   engine: "trie"
   trie:
     type: "radix"
+mode:
+  type: "prod"

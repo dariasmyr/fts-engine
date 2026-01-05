@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"fts-hw/internal/services/fts/kv"
 	trigramtrie "fts-hw/internal/services/fts/trigram_trie"
+	"fts-hw/internal/utils"
 	"io"
 	"log/slog"
 	"os"
@@ -53,6 +54,9 @@ func main() {
 
 	log := setupLogger(cfg.Env)
 	log.Info("fts", "env", cfg.Env)
+	log.Info("fts", "engine", cfg.FTS.Engine)
+	log.Info("fts", "engine-type", cfg.FTS.Trie.Type)
+	log.Info("fts", "mode", cfg.Mode.Type)
 
 	storage, err := leveldb.NewStorage(log, cfg.StoragePath)
 	if err != nil {
@@ -116,6 +120,17 @@ func main() {
 	duration := time.Since(startTime)
 	log.Info(fmt.Sprintf("Loaded %d documents in %v", len(documents), duration))
 
+	if cfg.Mode.Type == "experiment" {
+		memStats := utils.MeasureMemory(func() {
+			for _, doc := range documents {
+				_ = ftsEngine.IndexDocument(ctx, doc.ID, doc.Abstract)
+			}
+		})
+
+		analyzeTrie(ftsEngine, memStats, log)
+		return
+	}
+
 	startTime = time.Now()
 
 	log.Info("Initialize worker pool")
@@ -147,7 +162,7 @@ func main() {
 				log.Error("could not index document:", "error", indexErr)
 			}
 
-			log.Info("Document indexed, adding to job chan", "doc", i)
+			// log.Info("Document indexed, adding to job chan", "doc", i)
 
 			jobCh <- documents[i]
 		}
@@ -163,6 +178,33 @@ func main() {
 		log.Error("Failed to start appCUI", "error", sl.Err(cuiErr))
 		return
 	}
+}
+
+func analyzeTrie(
+	engine cui.SearchEngine,
+	memStats runtime.MemStats,
+	log *slog.Logger,
+) {
+	svc, ok := engine.(*ftsService.SearchService)
+	if !ok {
+		log.Warn("analyzeTrie: engine does not support analysis")
+		return
+	}
+
+	stats := svc.Analyse()
+
+	log.Info("FTS analysis result",
+		"engine", "radix",
+		"nodes", stats.Nodes,
+		"leafNodes", stats.LeafNodes,
+		"maxDepth", stats.MaxDepth,
+		"avgDepth", stats.AvgDepth,
+		"totalDocs", stats.TotalDocs,
+		"heapMB", memStats.HeapAlloc/1024/1024,
+		"heapObjects", memStats.HeapObjects,
+		"totalAllocMB", memStats.TotalAlloc/1024/1024,
+	)
+
 }
 
 func setupLogger(env string) *slog.Logger {
