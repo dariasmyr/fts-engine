@@ -1,4 +1,4 @@
-package radixhashtrie
+package radixtriesliced
 
 import (
 	"fts-hw/internal/utils"

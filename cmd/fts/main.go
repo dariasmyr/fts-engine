@@ -21,8 +21,8 @@ import (
 	"fts-hw/internal/services/cui"
 	ftsService "fts-hw/internal/services/fts"
 	"fts-hw/internal/services/fts/loader"
-	radixhashtrie "fts-hw/internal/services/fts/radix_hash_trie"
 	radixtrie "fts-hw/internal/services/fts/radix_trie"
+	radixtriesliced "fts-hw/internal/services/fts/radix_trie_sliced"
 	"fts-hw/internal/storage/leveldb"
 )
 
@@ -97,11 +97,11 @@ func main() {
 				radixtrie.WordKeys,
 			)
 
-		case "radix-hash":
-			trie := radixhashtrie.NewTrie()
+		case "radix-sliced":
+			trie := radixtriesliced.NewTrie()
 			ftsEngine = ftsService.NewSearchService(
 				trie,
-				radixhashtrie.WordKeys,
+				radixtriesliced.WordKeys,
 			)
 
 		case "trigram":
