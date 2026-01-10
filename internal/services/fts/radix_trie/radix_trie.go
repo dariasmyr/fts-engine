@@ -6,10 +6,10 @@ import (
 )
 
 type Node struct {
-	prefix   string
 	terminal bool
-	docs     map[string]int
+	prefix   string
 	children []*Node
+	docs     map[string]int
 }
 
 func newNode(prefix string) *Node {

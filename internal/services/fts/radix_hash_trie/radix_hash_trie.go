@@ -11,10 +11,10 @@ type DocEntry struct {
 }
 
 type Node struct {
-	prefix   string
 	terminal bool
-	docs     []DocEntry
+	prefix   string
 	children []int
+	docs     []DocEntry
 }
 
 func (t *Trie) newNode(prefix string) int {
