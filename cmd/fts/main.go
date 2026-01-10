@@ -21,6 +21,7 @@ import (
 	"fts-hw/internal/services/cui"
 	ftsService "fts-hw/internal/services/fts"
 	"fts-hw/internal/services/fts/loader"
+	radixhashtrie "fts-hw/internal/services/fts/radix_hash_trie"
 	radixtrie "fts-hw/internal/services/fts/radix_trie"
 	"fts-hw/internal/storage/leveldb"
 )
@@ -91,6 +92,13 @@ func main() {
 
 		case "radix":
 			trie := radixtrie.NewTrie()
+			ftsEngine = ftsService.NewSearchService(
+				trie,
+				radixtrie.WordKeys,
+			)
+
+		case "radix-hash":
+			trie := radixhashtrie.NewTrie()
 			ftsEngine = ftsService.NewSearchService(
 				trie,
 				radixtrie.WordKeys,
