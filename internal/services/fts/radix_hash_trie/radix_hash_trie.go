@@ -11,7 +11,6 @@ type DocEntry struct {
 }
 
 type Node struct {
-	terminal bool
 	prefix   string
 	children []int
 	docs     []DocEntry
@@ -73,7 +72,6 @@ func (t *Trie) Insert(word string, docID string) error {
 				rest = rest[p:]
 
 				if rest == "" {
-					t.nodes[current].terminal = true
 					t.addDoc(current, docID)
 					return nil
 				}
@@ -100,21 +98,18 @@ func (t *Trie) Insert(word string, docID string) error {
 			// if rest is not empty, create new node and mark it as end for new word
 			if newSuffix != "" {
 				newNodeIdx = t.newNode(newSuffix)
-				t.nodes[newNodeIdx].terminal = true
 				t.addDoc(newNodeIdx, docID)
 				t.nodes[middle].children = append(t.nodes[middle].children, newNodeIdx)
 				return nil
 			}
 
 			// rest is empty, mark middle common node as end for new word
-			t.nodes[middle].terminal = true
 			t.addDoc(middle, docID)
 			return nil
 		}
 
 		//if no child fitted new word by prefix - just add new node
 		newNodeIdx = t.newNode(rest)
-		t.nodes[newNodeIdx].terminal = true
 		t.addDoc(newNodeIdx, docID)
 		t.nodes[current].children = append(t.nodes[current].children, newNodeIdx)
 		return nil
@@ -198,7 +193,7 @@ func (t *Trie) next(current int, rest string) (int, string, bool, bool) {
 		// rest fully consumed
 		if p == len(rest) {
 			// exact match only if node is terminal
-			if t.nodes[child].terminal {
+			if t.nodes[child].IsTerminal() {
 				return child, "", true, true
 			}
 			// query word matched only a prefix of a longer word in a tree - so it's not found
@@ -236,7 +231,7 @@ func (t *Trie) Analyze() utils.TrieStats {
 		s.Nodes++
 		totalDepth += depth
 
-		if t.nodes[n].terminal {
+		if t.nodes[n].IsTerminal() {
 			s.LeafNodes++
 		}
 		if depth > s.MaxDepth {
@@ -271,4 +266,8 @@ func (t *Trie) Analyze() utils.TrieStats {
 	}
 
 	return s
+}
+
+func (n *Node) IsTerminal() bool {
+	return len(n.docs) > 0
 }

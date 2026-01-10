@@ -101,7 +101,7 @@ func main() {
 			trie := radixhashtrie.NewTrie()
 			ftsEngine = ftsService.NewSearchService(
 				trie,
-				radixtrie.WordKeys,
+				radixhashtrie.WordKeys,
 			)
 
 		case "trigram":
