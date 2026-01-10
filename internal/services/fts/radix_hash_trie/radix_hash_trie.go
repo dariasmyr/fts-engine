@@ -1,21 +1,27 @@
-package radixtrie
+package radixhashtrie
 
 import (
 	"fts-hw/internal/utils"
 	"sync"
 )
 
+type DocEntry struct {
+	docID string
+	count uint16
+}
+
 type Node struct {
 	prefix   string
 	terminal bool
-	docs     map[string]int
+	docs     []DocEntry
 	children []int
 }
 
 func (t *Trie) newNode(prefix string) int {
 	t.nodes = append(t.nodes, Node{
-		prefix: prefix,
-		docs:   make(map[string]int),
+		prefix:   prefix,
+		docs:     make([]DocEntry, 0),
+		children: make([]int, 0),
 	})
 
 	return len(t.nodes) - 1
@@ -51,7 +57,7 @@ func (t *Trie) Insert(word string, docID string) error {
 	current := t.root
 	rest := word
 
-	var nodeIdx int
+	var newNodeIdx int
 
 	for {
 		for i, child := range t.nodes[current].children {
@@ -68,7 +74,7 @@ func (t *Trie) Insert(word string, docID string) error {
 
 				if rest == "" {
 					t.nodes[current].terminal = true
-					t.nodes[current].docs[docID]++
+					t.addDoc(current, docID)
 					return nil
 				}
 
@@ -93,28 +99,54 @@ func (t *Trie) Insert(word string, docID string) error {
 
 			// if rest is not empty, create new node and mark it as end for new word
 			if newSuffix != "" {
-				nodeIdx = t.newNode(newSuffix)
-				t.nodes[nodeIdx].terminal = true
-				t.nodes[nodeIdx].docs[docID]++
-				t.nodes[middle].children = append(t.nodes[middle].children, nodeIdx)
+				newNodeIdx = t.newNode(newSuffix)
+				t.nodes[newNodeIdx].terminal = true
+				t.addDoc(newNodeIdx, docID)
+				t.nodes[middle].children = append(t.nodes[middle].children, newNodeIdx)
 				return nil
 			}
 
 			// rest is empty, mark middle common node as end for new word
 			t.nodes[middle].terminal = true
-			t.nodes[middle].docs[docID]++
+			t.addDoc(middle, docID)
 			return nil
 		}
 
 		//if no child fitted new word by prefix - just add new node
-		nodeIdx = t.newNode(rest)
-		t.nodes[nodeIdx].terminal = true
-		t.nodes[nodeIdx].docs[docID]++
-		t.nodes[current].children = append(t.nodes[current].children, nodeIdx)
+		newNodeIdx = t.newNode(rest)
+		t.nodes[newNodeIdx].terminal = true
+		t.addDoc(newNodeIdx, docID)
+		t.nodes[current].children = append(t.nodes[current].children, newNodeIdx)
 		return nil
 
 	NEXT:
 	}
+}
+
+func (t *Trie) addDoc(nodeIdx int, docID string) {
+	node := &t.nodes[nodeIdx]
+
+	for i := range node.docs {
+		if node.docs[i].docID == docID {
+			node.docs[i].count++
+			return
+		}
+	}
+
+	node.docs = append(node.docs, DocEntry{
+		docID: docID,
+		count: 1,
+	})
+}
+
+func (t *Trie) collectDocs(nodeIdx int) map[string]int {
+	node := t.nodes[nodeIdx]
+	result := make(map[string]int, len(node.docs))
+
+	for _, d := range node.docs {
+		result[d.docID] = int(d.count)
+	}
+	return result
 }
 
 func (t *Trie) Search(word string) (map[string]int, error) {
@@ -137,11 +169,7 @@ func (t *Trie) Search(word string) (map[string]int, error) {
 		}
 
 		if exact {
-			result := make(map[string]int, len(t.nodes[nextNodeIdx].docs))
-			for k, v := range t.nodes[nextNodeIdx].docs {
-				result[k] = v
-			}
-			return result, nil
+			return t.collectDocs(nextNodeIdx), nil
 		}
 
 		currentIdx = nextNodeIdx

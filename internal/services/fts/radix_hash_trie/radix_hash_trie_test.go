@@ -1,4 +1,4 @@
-package radixtrie
+package radixhashtrie
 
 import (
 	"context"
