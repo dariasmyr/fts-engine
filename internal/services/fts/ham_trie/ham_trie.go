@@ -18,16 +18,13 @@ type DocEntry struct {
 	count uint16
 }
 
-type Entry struct {
-	key  string
-	docs []DocEntry
-}
-
+// Node is an internal HAMT node that stores direction
 type Node struct {
-	bitmap   uint32
-	children []any
+	bitmap   uint32 // bitmap to indicate occupied slots f.e. occupied slot 5 = 0b00000000000000000000000001000000
+	children []any  // slice of *Node or *Leaf
 }
 
+// Leaf if a terminal node with actual key and documents
 type Leaf struct {
 	hash uint32
 	key  string
@@ -62,17 +59,25 @@ func hashKey(key string) uint32 {
 }
 
 func bitpos(hash uint32, level int) (idx int, mask uint32) {
+	// shift hash right by (level * shiftBits) bits
+	// hash (32 bits):    00000001 01101100 10101010 01011010
+	// hash >> (2 * 5) =  00000000 00010110 11001010 10100101
+	// then mask the shifted 5 bits using & 0b11111 AND operation to get a value from 0 to 31
+	// 0b01101 & 0b11111= 00000000 00000000 00000000 00001101
+	// idx of 0b01101 = 13
 	idx = int((hash >> (level * shiftBits)) & 0b11111)
+	// convert index into a bitmask with a single 1 at position idx
+	// mask = 0b00000000000000000010000000000000
 	mask = 1 << idx
 	return
 }
 
+// childIndex returns the index of the child in the compressed children slice
 func childIndex(bitmap uint32, mask uint32) int {
 	return bits.OnesCount32(bitmap & (mask - 1))
 }
 
 func (t *Trie) Insert(word string, docID string) error {
-
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -86,6 +91,7 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 
 	pos := childIndex(n.bitmap, mask)
 
+	// slot empty (free) - create a leaf to store a word
 	if n.bitmap&mask == 0 {
 		leaf := &Leaf{
 			hash: hash,
@@ -96,9 +102,13 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 			}},
 		}
 
+		// mark the slot as used by AND operation
+		// bitmap   = 00100000
+		// mask     = 00001000
+		// n.bitmap = 00101000
 		n.bitmap |= mask
-		n.children = append(n.children, nil)
-		copy(n.children[pos+1:], n.children[pos:])
+		// insert new leaf node inside children to a special position
+		n.children = append(n.children[:pos], append([]any{nil}, n.children[pos:]...)...)
 		n.children[pos] = leaf
 		return n
 	}
@@ -107,14 +117,18 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 
 	switch c := child.(type) {
 	case *Leaf:
+		// found terminal node - check key
+		// if keys matches, increment doc count
 		if c.key == key {
 			addDoc(&c.docs, docID)
 			return n
 		}
 
-		n.children[pos] = mergeLeaves(c, hash, key, docID, level+1)
+		// collision: merge two leaved
+		n.children[pos] = mergeLeavesIter(c, hash, key, docID, level+1)
 		return n
 	case *Node:
+		// go deeper into internal node to check
 		n.children[pos] = insertNode(c, hash, key, docID, level+1)
 		return n
 	}
@@ -122,56 +136,66 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 	return n
 }
 
-func mergeLeaves(existing *Leaf, hash uint32, key, docID string, level int) *Node {
+func mergeLeavesIter(existing *Leaf, hash uint32, key, docID string, level int) *Node {
 	node := newNode()
+	currentNode := node
+	currentExisting := existing
+	currentHash := hash
+	currentKey := key
+	currentDocID := docID
+	currentLevel := level
 
-	if level >= maxLevel {
-		node.children = []any{
-			existing,
-			&Leaf{
-				hash: hash,
-				key:  key,
-				docs: []DocEntry{{docID, 1}},
-			},
-		}
-		node.bitmap = 0b11
-		return node
-	}
-
-	idx1, mask1 := bitpos(existing.hash, level)
-	idx2, mask2 := bitpos(hash, level)
-
-	if idx1 != idx2 {
-		node.bitmap = mask1 | mask2
-		if idx1 < idx2 {
-			node.children = []any{
-				existing,
+	for {
+		if currentLevel >= maxLevel {
+			currentNode.bitmap = 0b11
+			currentNode.children = []any{
+				currentExisting,
 				&Leaf{
-					hash: hash,
-					key:  key,
-					docs: []DocEntry{
-						{docID, 1},
-					},
-				}}
-		} else {
-			node.children = []any{
-				&Leaf{
-					hash: hash,
-					key:  key,
-					docs: []DocEntry{
-						{docID, 1},
-					},
+					hash: currentHash,
+					key:  currentKey,
+					docs: []DocEntry{{currentDocID, 1}},
 				},
-				existing,
 			}
+			return node
 		}
-		return node
-	}
 
-	node.bitmap = mask1
-	child := mergeLeaves(existing, hash, key, docID, level+1)
-	node.children = []any{child}
-	return node
+		idx1, mask1 := bitpos(existing.hash, level)
+		idx2, mask2 := bitpos(hash, level)
+
+		if idx1 != idx2 {
+			currentNode.bitmap = mask1 | mask2
+			if idx1 < idx2 {
+				currentNode.children = []any{
+					currentExisting,
+					&Leaf{
+						hash: currentHash,
+						key:  currentKey,
+						docs: []DocEntry{
+							{currentDocID, 1},
+						},
+					}}
+			} else {
+				currentNode.children = []any{
+					&Leaf{
+						hash: currentHash,
+						key:  currentKey,
+						docs: []DocEntry{
+							{currentDocID, 1},
+						},
+					},
+					currentExisting,
+				}
+			}
+			return node
+		}
+
+		// two nodes with positions collide - create intermediate node and go deeper
+		child := newNode()
+		child.bitmap = mask1
+		currentNode.children = []any{child}
+		currentNode = child
+		currentLevel++
+	}
 }
 
 func addDoc(docs *[]DocEntry, docID string) {
@@ -189,7 +213,6 @@ func addDoc(docs *[]DocEntry, docID string) {
 }
 
 func (t *Trie) Search(word string) (map[string]int, error) {
-
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
