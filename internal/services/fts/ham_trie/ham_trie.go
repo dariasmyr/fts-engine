@@ -9,7 +9,7 @@ import (
 
 const (
 	shiftBits = 5
-	maxLevel  = 7 // 32-hash/5 = 6.2 => 7 nodes deep
+	maxLevel  = 6 // 32-hash/5 = 6.2 => 7 nodes deep
 )
 
 type Document struct {
@@ -58,7 +58,7 @@ func hashKey(key string) uint32 {
 	return h.Sum32()
 }
 
-func nextNode(n *Node, hash uint32, level int) (child any, pos int, mask uint32) {
+func lookupNextNode(n *Node, hash uint32, level int) (child any, pos int, mask uint32) {
 	// shift hash right by (level * shiftBits) bits
 	// hash (32 bits):    00000001 01101100 10101010 01011010
 	// hash >> (2 * 5) =  00000000 00010110 11001010 10100101
@@ -82,9 +82,10 @@ func nextNode(n *Node, hash uint32, level int) (child any, pos int, mask uint32)
 	return n.children[pos], pos, mask
 }
 
-func lookupTerminalEntry(n *Terminal, hash uint32) (entry *Entry, pos int, mask uint8) {
-	// get first 2 bits
-	idx := int(hash & 0b11)
+func lookupTerminalEntry(n *Terminal, hash uint32, level int) (entry *Entry, pos int, mask uint8) {
+	// shift hash right by (level * shiftBits) bits
+	// get 2 bits
+	idx := int((hash >> (level * shiftBits)) & 0b11)
 
 	// convert index into a bitmask with a single 1 at position idx
 	mask = uint8(1 << idx)
@@ -99,8 +100,8 @@ func lookupTerminalEntry(n *Terminal, hash uint32) (entry *Entry, pos int, mask 
 	return &n.entries[pos], pos, mask
 }
 
-func insertIntoTerminal(t *Terminal, hash uint32, key, docID string) {
-	entry, pos, mask := lookupTerminalEntry(t, hash)
+func insertIntoTerminal(t *Terminal, hash uint32, key, docID string, level int) {
+	entry, pos, mask := lookupTerminalEntry(t, hash, level)
 
 	// slot is free
 	if entry == nil {
@@ -145,7 +146,7 @@ func (t *Trie) Insert(word string, docID string) error {
 }
 
 func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
-	child, pos, mask := nextNode(n, hash, level)
+	child, pos, mask := lookupNextNode(n, hash, level)
 
 	if level == maxLevel {
 		var term *Terminal
@@ -161,7 +162,7 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 			term = child.(*Terminal)
 		}
 
-		insertIntoTerminal(term, hash, key, docID)
+		insertIntoTerminal(term, hash, key, docID, level)
 		return n
 	}
 
@@ -210,7 +211,7 @@ func (t *Trie) Search(word string) (map[string]int, error) {
 
 	for level := 0; level <= maxLevel; level++ {
 
-		child, _, _ := nextNode(node, hash, level)
+		child, _, _ := lookupNextNode(node, hash, level)
 
 		if child == nil {
 			return nil, nil
@@ -218,7 +219,7 @@ func (t *Trie) Search(word string) (map[string]int, error) {
 
 		if level == maxLevel {
 			term := child.(*Terminal)
-			return searchTerminal(term, hash, word), nil
+			return searchTerminal(term, hash, word, level), nil
 		}
 
 		node = child.(*Node)
@@ -227,8 +228,8 @@ func (t *Trie) Search(word string) (map[string]int, error) {
 	return nil, nil
 }
 
-func searchTerminal(t *Terminal, hash uint32, key string) map[string]int {
-	entry, _, _ := lookupTerminalEntry(t, hash)
+func searchTerminal(t *Terminal, hash uint32, key string, level int) map[string]int {
+	entry, _, _ := lookupTerminalEntry(t, hash, level)
 
 	if entry != nil {
 		if entry.key == key {
