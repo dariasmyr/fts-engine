@@ -61,23 +61,28 @@ func hashKey(key string) uint32 {
 	return h.Sum32()
 }
 
-func bitpos(hash uint32, level int) (idx int, mask uint32) {
+func next(n *Node, hash uint32, level int) (child any, pos int, mask uint32) {
 	// shift hash right by (level * shiftBits) bits
 	// hash (32 bits):    00000001 01101100 10101010 01011010
 	// hash >> (2 * 5) =  00000000 00010110 11001010 10100101
 	// then mask the shifted 5 bits using & 0b11111 AND operation to get a value from 0 to 31
 	// 0b01101 & 0b11111= 00000000 00000000 00000000 00001101
 	// idx of 0b01101 = 13
-	idx = int((hash >> (level * shiftBits)) & 0b11111)
+	idx := int((hash >> (level * shiftBits)) & 0b11111)
+
 	// convert index into a bitmask with a single 1 at position idx
 	// mask = 0b00000000000000000010000000000000
 	mask = 1 << idx
-	return
-}
 
-// childIndex returns the index of the child in the compressed children slice
-func childIndex(bitmap uint32, mask uint32) int {
-	return bits.OnesCount32(bitmap & (mask - 1))
+	// returns the index of the child in the compressed children slice
+	pos = bits.OnesCount32(n.bitmap & (mask - 1))
+
+	// slot empty (free)
+	if n.bitmap&mask == 0 {
+		return nil, pos, mask
+	}
+
+	return n.children[pos], pos, mask
 }
 
 func (t *Trie) Insert(word string, docID string) error {
@@ -90,19 +95,14 @@ func (t *Trie) Insert(word string, docID string) error {
 }
 
 func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
-	_, mask := bitpos(hash, level)
-
-	pos := childIndex(n.bitmap, mask)
+	child, pos, mask := next(n, hash, level)
 
 	// slot empty (free) - create a leaf to store a word
-	if n.bitmap&mask == 0 {
-		leaf := &Leaf{
-			hash: hash,
-			key:  key,
-			docs: []DocEntry{{
-				docID,
-				1,
-			}},
+	if child == nil {
+		leaf := &Leaf{hash, key, []DocEntry{{
+			docID,
+			1,
+		}},
 		}
 
 		// mark the slot as used by AND operation
@@ -114,8 +114,6 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 		n.children = append(n.children[:pos], append([]any{leaf}, n.children[pos:]...)...)
 		return n
 	}
-
-	child := n.children[pos]
 
 	switch c := child.(type) {
 	case *Leaf:
@@ -178,13 +176,15 @@ func splitLeaf(existing *Leaf, hash uint32, key, docID string, level int) *Node 
 	node := newNode()
 
 	for {
-		idx1, mask1 := bitpos(existing.hash, level)
-		idx2, mask2 := bitpos(hash, level)
+		// child and pos for existing Leaf
+		_, pos1, mask1 := next(node, existing.hash, level)
+		// pos and mask for new hash
+		_, pos2, mask2 := next(node, hash, level)
 
 		// different slots
-		if idx1 != idx2 || level >= maxLevel {
+		if pos1 != pos2 || level >= maxLevel {
 			node.bitmap = mask1 | mask2
-			if idx1 < idx2 {
+			if pos1 < pos2 {
 				node.children = []any{
 					existing,
 					&Leaf{hash, key, []DocEntry{
@@ -205,9 +205,9 @@ func splitLeaf(existing *Leaf, hash uint32, key, docID string, level int) *Node 
 
 		// two nodes with same slot - create intermediate node and go deeper
 		node.bitmap = mask1
-		child := newNode()
-		node.children = []any{child}
-		node = child
+		childNode := newNode()
+		node.children = []any{childNode}
+		node = childNode
 		level++
 	}
 }
@@ -234,14 +234,8 @@ func (t *Trie) Search(word string) (map[string]int, error) {
 	node := t.root
 
 	for level := 0; level <= maxLevel; level++ {
-		_, mask := bitpos(hash, level)
-		if node.bitmap&mask == 0 {
-			return nil, nil
-		}
 
-		pos := childIndex(node.bitmap, mask)
-		child := node.children[pos]
-
+		child, _, _ := next(node, hash, level)
 		switch c := child.(type) {
 		case *Leaf:
 			if c.key != word {
