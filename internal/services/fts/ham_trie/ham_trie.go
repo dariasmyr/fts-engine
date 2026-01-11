@@ -20,7 +20,7 @@ type DocEntry struct {
 
 // Node is an internal HAMT node that stores direction
 type Node struct {
-	bitmap   uint32 // bitmap to indicate occupied slots f.e. occupied slot 5 = 0b00000000000000000000000001000000
+	bitmap   uint32 // bitmap to indicate occupied slots i.e. occupied slot 5 = 0b00000000000000000000000001000000
 	children []any  // slice of *Node or *Leaf
 }
 
@@ -125,7 +125,7 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 		}
 
 		// collision: merge two leaved
-		n.children[pos] = mergeLeavesIter(c, hash, key, docID, level+1)
+		n.children[pos] = mergeLeaves(c, hash, key, docID, level+1)
 		return n
 	case *Node:
 		// go deeper into internal node to check
@@ -136,26 +136,20 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 	return n
 }
 
-func mergeLeavesIter(existing *Leaf, hash uint32, key, docID string, level int) *Node {
+func mergeLeaves(existing *Leaf, hash uint32, key, docID string, level int) *Node {
 	node := newNode()
-	currentNode := node
-	currentExisting := existing
-	currentHash := hash
-	currentKey := key
-	currentDocID := docID
-	currentLevel := level
 
 	for {
-		if currentLevel >= maxLevel {
-			currentNode.bitmap = 0b11
-			currentNode.children = []any{
-				currentExisting,
+		if level >= maxLevel {
+			node.children = []any{
+				existing,
 				&Leaf{
-					hash: currentHash,
-					key:  currentKey,
-					docs: []DocEntry{{currentDocID, 1}},
+					hash: hash,
+					key:  key,
+					docs: []DocEntry{{docID, 1}},
 				},
 			}
+			node.bitmap = 0b11
 			return node
 		}
 
@@ -163,38 +157,37 @@ func mergeLeavesIter(existing *Leaf, hash uint32, key, docID string, level int) 
 		idx2, mask2 := bitpos(hash, level)
 
 		if idx1 != idx2 {
-			currentNode.bitmap = mask1 | mask2
+			node.bitmap = mask1 | mask2
 			if idx1 < idx2 {
-				currentNode.children = []any{
-					currentExisting,
+				node.children = []any{
+					existing,
 					&Leaf{
-						hash: currentHash,
-						key:  currentKey,
+						hash: hash,
+						key:  key,
 						docs: []DocEntry{
-							{currentDocID, 1},
+							{docID, 1},
 						},
 					}}
 			} else {
-				currentNode.children = []any{
+				node.children = []any{
 					&Leaf{
-						hash: currentHash,
-						key:  currentKey,
+						hash: hash,
+						key:  key,
 						docs: []DocEntry{
-							{currentDocID, 1},
+							{docID, 1},
 						},
 					},
-					currentExisting,
+					existing,
 				}
 			}
 			return node
 		}
 
 		// two nodes with positions collide - create intermediate node and go deeper
-		child := newNode()
-		child.bitmap = mask1
-		currentNode.children = []any{child}
-		currentNode = child
-		currentLevel++
+		node.bitmap = mask1
+		child := mergeLeaves(existing, hash, key, docID, level+1)
+		node.children = []any{child}
+		return node
 	}
 }
 
