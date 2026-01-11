@@ -8,9 +8,8 @@ import (
 )
 
 const (
-	hashBits  = 32
 	shiftBits = 5
-	maxLevel  = hashBits / shiftBits
+	maxLevel  = 7 // 32-hash/5 = 6.2 => 7 nodes deep
 )
 
 type DocEntry struct {
@@ -172,10 +171,10 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 }
 
 // splitLeaf creates subtree for two leaves with different hashes
-func splitLeaf(existing *Leaf, hash uint32, key, docID string, level int) *Node {
+func splitLeaf(existing *Leaf, hash uint32, key, docID string, startLevel int) *Node {
 	node := newNode()
 
-	for {
+	for level := startLevel; level <= maxLevel; level++ {
 		// child and pos for existing Leaf
 		_, pos1, mask1 := next(node, existing.hash, level)
 		// pos and mask for new hash
@@ -210,6 +209,8 @@ func splitLeaf(existing *Leaf, hash uint32, key, docID string, level int) *Node 
 		node = childNode
 		level++
 	}
+
+	return node
 }
 
 func addDoc(docs *[]DocEntry, docID string) {
@@ -302,7 +303,7 @@ func (t *Trie) Analyze() utils.TrieStats {
 	}
 
 	// Average not nil children count per level (for first 3 levels)
-	for depth := 0; depth <= 3; depth++ {
+	for depth := 0; depth <= 10; depth++ {
 		if levelNodeCount[depth] > 0 {
 			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel,
 				float64(levelChildrenSum[depth])/float64(levelNodeCount[depth]))
