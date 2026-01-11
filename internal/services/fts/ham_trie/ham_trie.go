@@ -31,6 +31,12 @@ type Leaf struct {
 	docs []DocEntry
 }
 
+// CollisionNode stores different keys with identical hash
+type CollisionNode struct {
+	hash   uint32
+	leaves []*Leaf
+}
+
 type Trie struct {
 	root *Node
 	mu   sync.RWMutex
@@ -45,10 +51,7 @@ func newNode() *Node {
 
 func NewTrie() *Trie {
 	return &Trie{
-		root: &Node{
-			bitmap:   0,
-			children: make([]any, 0),
-		},
+		root: newNode(),
 	}
 }
 
@@ -97,8 +100,8 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 			hash: hash,
 			key:  key,
 			docs: []DocEntry{{
-				docID: docID,
-				count: 1,
+				docID,
+				1,
 			}},
 		}
 
@@ -108,8 +111,7 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 		// n.bitmap = 00101000
 		n.bitmap |= mask
 		// insert new leaf node inside children to a special position
-		n.children = append(n.children[:pos], append([]any{nil}, n.children[pos:]...)...)
-		n.children[pos] = leaf
+		n.children = append(n.children[:pos], append([]any{leaf}, n.children[pos:]...)...)
 		return n
 	}
 
@@ -118,15 +120,50 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 	switch c := child.(type) {
 	case *Leaf:
 		// found terminal node - check key
-		// if keys matches, increment doc count
+		// same keys, increment doc count
 		if c.key == key {
 			addDoc(&c.docs, docID)
 			return n
 		}
 
-		// collision: merge two leaved
-		n.children[pos] = mergeLeaves(c, hash, key, docID, level+1)
+		// same hash (collision): create collision node
+		if c.hash == hash {
+			cn := &CollisionNode{
+				hash: hash,
+				leaves: []*Leaf{
+					c,
+					{
+						hash,
+						key,
+						[]DocEntry{{docID, 1}},
+					},
+				},
+			}
+			n.children[pos] = cn
+			return n
+		}
+
+		// different hash - splitLeaf
+		node := splitLeaf(c, hash, key, docID, level+1)
+		n.children[pos] = node
 		return n
+
+	case *CollisionNode:
+		// same hash quaranteed
+		for _, l := range c.leaves {
+			if l.key == key {
+				addDoc(&l.docs, docID)
+				return n
+			}
+		}
+
+		c.leaves = append(c.leaves, &Leaf{
+			hash: hash,
+			key:  key,
+			docs: []DocEntry{{docID, 1}},
+		})
+		return n
+
 	case *Node:
 		// go deeper into internal node to check
 		n.children[pos] = insertNode(c, hash, key, docID, level+1)
@@ -136,46 +173,29 @@ func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
 	return n
 }
 
-func mergeLeaves(existing *Leaf, hash uint32, key, docID string, level int) *Node {
+// splitLeaf creates subtree for two leaves with different hashes
+func splitLeaf(existing *Leaf, hash uint32, key, docID string, level int) *Node {
 	node := newNode()
 
 	for {
-		if level >= maxLevel {
-			node.children = []any{
-				existing,
-				&Leaf{
-					hash: hash,
-					key:  key,
-					docs: []DocEntry{{docID, 1}},
-				},
-			}
-			node.bitmap = 0b11
-			return node
-		}
-
 		idx1, mask1 := bitpos(existing.hash, level)
 		idx2, mask2 := bitpos(hash, level)
 
-		if idx1 != idx2 {
+		// different slots
+		if idx1 != idx2 || level >= maxLevel {
 			node.bitmap = mask1 | mask2
 			if idx1 < idx2 {
 				node.children = []any{
 					existing,
-					&Leaf{
-						hash: hash,
-						key:  key,
-						docs: []DocEntry{
-							{docID, 1},
-						},
+					&Leaf{hash, key, []DocEntry{
+						{docID, 1},
+					},
 					}}
 			} else {
 				node.children = []any{
-					&Leaf{
-						hash: hash,
-						key:  key,
-						docs: []DocEntry{
-							{docID, 1},
-						},
+					&Leaf{hash, key, []DocEntry{
+						{docID, 1},
+					},
 					},
 					existing,
 				}
@@ -183,11 +203,12 @@ func mergeLeaves(existing *Leaf, hash uint32, key, docID string, level int) *Nod
 			return node
 		}
 
-		// two nodes with positions collide - create intermediate node and go deeper
+		// two nodes with same slot - create intermediate node and go deeper
 		node.bitmap = mask1
-		child := mergeLeaves(existing, hash, key, docID, level+1)
+		child := newNode()
 		node.children = []any{child}
-		return node
+		node = child
+		level++
 	}
 }
 
