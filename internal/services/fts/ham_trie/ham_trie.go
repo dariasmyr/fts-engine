@@ -12,28 +12,26 @@ const (
 	maxLevel  = 7 // 32-hash/5 = 6.2 => 7 nodes deep
 )
 
-type DocEntry struct {
+type Document struct {
 	docID string
 	count uint16
+}
+
+// Terminal if a node with actual key and documents
+type Terminal struct {
+	bitmap  uint8   // bitmap to indicate occupied 2 last bits
+	entries []Entry // array of documents
+}
+
+type Entry struct {
+	key  string
+	docs []Document
 }
 
 // Node is an internal HAMT node that stores direction
 type Node struct {
 	bitmap   uint32 // bitmap to indicate occupied slots i.e. occupied slot 5 = 0b00000000000000000000000001000000
-	children []any  // slice of *Node or *Leaf
-}
-
-// Leaf if a terminal node with actual key and documents
-type Leaf struct {
-	hash uint32
-	key  string
-	docs []DocEntry
-}
-
-// CollisionNode stores different keys with identical hash
-type CollisionNode struct {
-	hash   uint32
-	leaves []*Leaf
+	children []any  // slice of *Node or *Terminal
 }
 
 type Trie struct {
@@ -60,7 +58,7 @@ func hashKey(key string) uint32 {
 	return h.Sum32()
 }
 
-func next(n *Node, hash uint32, level int) (child any, pos int, mask uint32) {
+func nextNode(n *Node, hash uint32, level int) (child any, pos int, mask uint32) {
 	// shift hash right by (level * shiftBits) bits
 	// hash (32 bits):    00000001 01101100 10101010 01011010
 	// hash >> (2 * 5) =  00000000 00010110 11001010 10100101
@@ -84,6 +82,59 @@ func next(n *Node, hash uint32, level int) (child any, pos int, mask uint32) {
 	return n.children[pos], pos, mask
 }
 
+func lookupTerminalEntry(n *Terminal, hash uint32) (entry *Entry, pos int, mask uint8) {
+	// get first 2 bits
+	idx := int(hash & 0b11)
+
+	// convert index into a bitmask with a single 1 at position idx
+	mask = uint8(1 << idx)
+
+	pos = bits.OnesCount8(n.bitmap & (mask - 1))
+
+	// slot empty (free)
+	if n.bitmap&mask == 0 {
+		return nil, pos, mask
+	}
+
+	return &n.entries[pos], pos, mask
+}
+
+func insertIntoTerminal(t *Terminal, hash uint32, key, docID string) {
+	entry, pos, mask := lookupTerminalEntry(t, hash)
+
+	// slot is free
+	if entry == nil {
+		t.bitmap |= mask
+		t.entries = append(
+			t.entries[:pos],
+			append(
+				[]Entry{{
+					key:  key,
+					docs: []Document{{docID, 1}}},
+				}, t.entries[pos:]...)...,
+		)
+		return
+	}
+
+	//slot is occupied - check key
+	if entry.key == key {
+		addDoc(&entry.docs, docID)
+	}
+
+	// fallback: 2 same bits, keys differ
+	for i := range t.entries {
+		if t.entries[i].key == key {
+			addDoc(&t.entries[i].docs, docID)
+			return
+		}
+	}
+
+	t.entries = append(t.entries, Entry{
+		key:  key,
+		docs: []Document{{docID, 1}},
+	})
+}
+
 func (t *Trie) Insert(word string, docID string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -94,126 +145,49 @@ func (t *Trie) Insert(word string, docID string) error {
 }
 
 func insertNode(n *Node, hash uint32, key, docID string, level int) *Node {
-	child, pos, mask := next(n, hash, level)
+	child, pos, mask := nextNode(n, hash, level)
+
+	if level == maxLevel {
+		var term *Terminal
+
+		if child == nil {
+			term = &Terminal{}
+			n.bitmap |= mask
+			n.children = append(
+				n.children[:pos],
+				append([]any{term}, n.children[pos:]...)...,
+			)
+		} else {
+			term = child.(*Terminal)
+		}
+
+		insertIntoTerminal(term, hash, key, docID)
+		return n
+	}
 
 	// slot empty (free) - create a leaf to store a word
 	if child == nil {
-		leaf := &Leaf{hash, key, []DocEntry{{
-			docID,
-			1,
-		}},
-		}
-
+		newChild := newNode()
 		// mark the slot as used by AND operation
 		// bitmap   = 00100000
 		// mask     = 00001000
 		// n.bitmap = 00101000
 		n.bitmap |= mask
 		// insert new leaf node inside children to a special position
-		n.children = append(n.children[:pos], append([]any{leaf}, n.children[pos:]...)...)
+		n.children = append(
+			n.children[:pos],
+			append([]any{newChild}, n.children[pos:]...)...,
+		)
+		n.children[pos] = insertNode(newChild, hash, key, docID, level+1)
 		return n
 	}
 
-	switch c := child.(type) {
-	case *Leaf:
-		// found terminal node - check key
-		// same keys, increment doc count
-		if c.key == key {
-			addDoc(&c.docs, docID)
-			return n
-		}
-
-		// same hash (collision): create collision node
-		if c.hash == hash {
-			cn := &CollisionNode{
-				hash: hash,
-				leaves: []*Leaf{
-					c,
-					{
-						hash,
-						key,
-						[]DocEntry{{docID, 1}},
-					},
-				},
-			}
-			n.children[pos] = cn
-			return n
-		}
-
-		// different hash - splitLeaf
-		node := splitLeaf(c, hash, key, docID, level+1)
-		n.children[pos] = node
-		return n
-
-	case *CollisionNode:
-		// same hash quaranteed
-		for _, l := range c.leaves {
-			if l.key == key {
-				addDoc(&l.docs, docID)
-				return n
-			}
-		}
-
-		c.leaves = append(c.leaves, &Leaf{
-			hash: hash,
-			key:  key,
-			docs: []DocEntry{{docID, 1}},
-		})
-		return n
-
-	case *Node:
-		// go deeper into internal node to check
-		n.children[pos] = insertNode(c, hash, key, docID, level+1)
-		return n
-	}
-
+	// already have Node, go deeper
+	n.children[pos] = insertNode(child.(*Node), hash, key, docID, level+1)
 	return n
 }
 
-// splitLeaf creates subtree for two leaves with different hashes
-func splitLeaf(existing *Leaf, hash uint32, key, docID string, startLevel int) *Node {
-	node := newNode()
-
-	for level := startLevel; level <= maxLevel; level++ {
-		// child and pos for existing Leaf
-		_, pos1, mask1 := next(node, existing.hash, level)
-		// pos and mask for new hash
-		_, pos2, mask2 := next(node, hash, level)
-
-		// different slots
-		if pos1 != pos2 || level >= maxLevel {
-			node.bitmap = mask1 | mask2
-			if pos1 < pos2 {
-				node.children = []any{
-					existing,
-					&Leaf{hash, key, []DocEntry{
-						{docID, 1},
-					},
-					}}
-			} else {
-				node.children = []any{
-					&Leaf{hash, key, []DocEntry{
-						{docID, 1},
-					},
-					},
-					existing,
-				}
-			}
-			return node
-		}
-
-		// two nodes with same slot - create intermediate node and go deeper
-		node.bitmap = mask1
-		childNode := newNode()
-		node.children = []any{childNode}
-		node = childNode
-		level++
-	}
-
-	return node
-}
-
-func addDoc(docs *[]DocEntry, docID string) {
+func addDoc(docs *[]Document, docID string) {
 	for i := range *docs {
 		if (*docs)[i].docID == docID {
 			(*docs)[i].count++
@@ -221,7 +195,7 @@ func addDoc(docs *[]DocEntry, docID string) {
 		}
 	}
 
-	*docs = append(*docs, DocEntry{
+	*docs = append(*docs, Document{
 		docID: docID,
 		count: 1,
 	})
@@ -236,22 +210,36 @@ func (t *Trie) Search(word string) (map[string]int, error) {
 
 	for level := 0; level <= maxLevel; level++ {
 
-		child, _, _ := next(node, hash, level)
-		switch c := child.(type) {
-		case *Leaf:
-			if c.key != word {
-				return nil, nil
-			}
-			return collectDocs(c.docs), nil
-		case *Node:
-			node = c
+		child, _, _ := nextNode(node, hash, level)
+
+		if child == nil {
+			return nil, nil
 		}
+
+		if level == maxLevel {
+			term := child.(*Terminal)
+			return searchTerminal(term, hash, word), nil
+		}
+
+		node = child.(*Node)
 	}
 
 	return nil, nil
 }
 
-func collectDocs(docs []DocEntry) map[string]int {
+func searchTerminal(t *Terminal, hash uint32, key string) map[string]int {
+	entry, _, _ := lookupTerminalEntry(t, hash)
+
+	if entry != nil {
+		if entry.key == key {
+			return collectDocs(entry.docs)
+		}
+	}
+
+	return nil
+}
+
+func collectDocs(docs []Document) map[string]int {
 	result := make(map[string]int, len(docs))
 
 	for _, d := range docs {
@@ -289,9 +277,11 @@ func (t *Trie) Analyze() utils.TrieStats {
 			for _, c := range node.children {
 				dfs(c, depth+1)
 			}
-		case *Leaf:
+		case *Terminal:
 			s.LeafNodes++
-			s.TotalDocs += len(node.docs)
+			for i := range node.entries {
+				s.TotalDocs += len(node.entries[i].docs)
+			}
 		}
 
 	}
@@ -303,7 +293,7 @@ func (t *Trie) Analyze() utils.TrieStats {
 	}
 
 	// Average not nil children count per level (for first 3 levels)
-	for depth := 0; depth <= 10; depth++ {
+	for depth := 0; depth <= 8; depth++ {
 		if levelNodeCount[depth] > 0 {
 			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel,
 				float64(levelChildrenSum[depth])/float64(levelNodeCount[depth]))
