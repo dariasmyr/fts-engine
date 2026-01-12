@@ -65,10 +65,10 @@ func (t *Terminal) Append(word, id string) {
 		docs: Documents{fts.Document{ID: id, Count: 1}},
 	}
 
-	// вставка в слайс с сохранением сортировки
-	t.entries = append(t.entries, entry{}) // расширяем слайс на 1 элемент
-	copy(t.entries[i+1:], t.entries[i:])   // сдвигаем хвост
-	t.entries[i] = newEntry                // вставляем новый entry
+	// add and save order
+	t.entries = append(t.entries, entry{})
+	copy(t.entries[i+1:], t.entries[i:])
+	t.entries[i] = newEntry
 }
 
 func (t *Terminal) Find(word string) Documents {
