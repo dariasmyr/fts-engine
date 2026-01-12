@@ -1,11 +1,10 @@
-package hamtrie
+package hampointered
 
 import (
 	"context"
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/services/fts"
-	"fts-hw/internal/services/fts/hamt"
 	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
@@ -50,7 +49,7 @@ func TestRadixTrieInsertAndSearch(t *testing.T) {
 
 	ftsService := fts.NewSearchService(
 		trie,
-		hamt.WordKeys,
+		fts.WordKeys,
 	)
 
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
@@ -134,7 +133,7 @@ func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 
 	ftsService := fts.NewSearchService(
 		radixTrie,
-		hamt.WordKeys,
+		fts.WordKeys,
 	)
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {

@@ -18,6 +18,7 @@ const (
 
 type Documents []fts.Document
 
+// Add uses binary search across the docs and insert it in the right place
 func (d Documents) Add(id string) Documents {
 	i := sort.Search(len(d), func(i int) bool { return d[i].ID >= id })
 

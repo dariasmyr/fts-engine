@@ -1,4 +1,4 @@
-package hamtrie
+package hampointered
 
 import (
 	"fts-hw/internal/services/fts"
