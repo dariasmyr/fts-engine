@@ -4,7 +4,7 @@ import "runtime"
 
 type TrieStats struct {
 	Nodes               int
-	LeafNodes           int
+	Leaves              int
 	MaxDepth            int
 	AvgDepth            float64
 	TotalDocs           int
