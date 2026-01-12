@@ -83,28 +83,50 @@ type nodeptr = uint64
 
 // Terminal is the 7th trie level. Terminal nodes store actual values instead of children
 type Terminal struct {
-	entries map[string][]fts.Document
+	entries []entry
 }
 
-// Append appends a new value to the dense array preserving the correct order
+// Append appends a new value to the array with binary search
 func (t *Terminal) Append(word, id string) {
-	if t.entries == nil {
-		t.entries = make(map[string][]fts.Document)
-	}
-	docs := t.entries[word]
+	i := sort.Search(len(t.entries), func(i int) bool {
+		return t.entries[i].key >= word
+	})
 
-	// ищем документ с таким ID
-	for i := range docs {
-		if docs[i].ID == id {
-			docs[i].Count++
-			t.entries[word] = docs
-			return
+	if i < len(t.entries) && t.entries[i].key == word {
+		// word found — look for doc with same ID
+		docs := t.entries[i].docs
+		for j := range docs {
+			if docs[j].ID == id {
+				docs[j].Count++
+				t.entries[i].docs = docs
+				return
+			}
 		}
+		// add new doc
+		t.entries[i].docs = append(t.entries[i].docs, fts.Document{ID: id, Count: 1})
+		return
 	}
 
-	// нового документа ещё нет
-	docs = append(docs, fts.Document{ID: id, Count: 1})
-	t.entries[word] = docs
+	// слово не найдено — вставляем новый entry
+	newEntry := entry{
+		key:  word,
+		docs: Documents{fts.Document{ID: id, Count: 1}},
+	}
+
+	// вставка в слайс с сохранением сортировки
+	t.entries = append(t.entries, entry{}) // расширяем слайс на 1 элемент
+	copy(t.entries[i+1:], t.entries[i:])   // сдвигаем хвост
+	t.entries[i] = newEntry                // вставляем новый entry
+}
+
+func (t *Terminal) Find(word string) Documents {
+	i := sort.Search(len(t.entries), func(i int) bool {
+		return t.entries[i].key >= word
+	})
+	if i < len(t.entries) && t.entries[i].key == word {
+		return t.entries[i].docs
+	}
+	return nil
 }
 
 // Node is the base HAMT node for the first 6 trie levels
@@ -156,8 +178,8 @@ func (t *Trie) Search(key string) ([]fts.Document, error) {
 		return nil, nil
 	}
 
-	docs, ok := term.entries[key]
-	if !ok {
+	docs := term.Find(key)
+	if docs == nil {
 		return nil, nil
 	}
 
@@ -257,8 +279,8 @@ func (t *Trie) Analyze() utils.TrieStats {
 			term := t.terms[ptr]
 			s.Leaves++
 			// считаем все документы в терминале
-			for _, docs := range term.entries {
-				s.TotalDocs += len(docs)
+			for _, entry := range term.entries {
+				s.TotalDocs += len(entry.docs)
 			}
 			return
 		}
