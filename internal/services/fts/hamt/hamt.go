@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"math/bits"
 	"slices"
+	"sort"
 	"sync"
 )
 
@@ -18,17 +19,33 @@ const (
 type Documents []fts.Document
 
 func (d Documents) Add(id string) Documents {
-	for i, doc := range d {
-		if doc.ID == id {
-			d[i].Count++
-			return d
-		}
+
+	i := sort.Search(len(d), func(i int) bool { return d[i].ID >= id })
+
+	for i < len(d) && d[i].ID == id {
+		d[i].Count++
+		return d
 	}
 
-	return append(d, fts.Document{
+	newDoc := fts.Document{
 		ID:    id,
 		Count: 1,
-	})
+	}
+
+	if cap(d) > len(d) {
+		d = append(d, fts.Document{})
+		copy(d[i+1:], d[i:])
+		d[i] = newDoc
+	} else {
+		newCap := 2*len(d) + 1
+		newSlice := make(Documents, len(d)+1, newCap)
+		copy(newSlice[:i], d[:i])
+		newSlice[i] = newDoc
+		copy(newSlice[i+1:], d[i:])
+		d = newSlice
+	}
+
+	return d
 }
 
 // entry serves collision resolution. Its key is compared against the actual given key
@@ -114,7 +131,7 @@ func New() *Trie {
 func (t *Trie) Search(key string) ([]fts.Document, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	
+
 	node := nodeptr(0)
 	hash := strhash32(key)
 

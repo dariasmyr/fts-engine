@@ -8,6 +8,8 @@ import (
 	"fts-hw/internal/utils"
 	"io"
 	"log/slog"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"runtime"
@@ -136,10 +138,15 @@ func main() {
 	duration := time.Since(startTime)
 	log.Info(fmt.Sprintf("Unpacked & parsed %d documents in %v", len(documents), duration))
 
+	go func() {
+		http.ListenAndServe("localhost:6060", nil)
+	}()
+
 	if cfg.Mode.Type == "experiment" {
 		startTime = time.Now()
 		memStats := utils.MeasureMemory(func() {
 			for _, doc := range documents {
+				fmt.Println("Start indexing ", doc.ID)
 				_ = ftsEngine.IndexDocument(ctx, doc.ID, doc.Abstract)
 			}
 		})
@@ -217,7 +224,7 @@ func analyzeTrie(
 		"engine", cfg.FTS.Engine,
 		"trie-type", cfg.FTS.Trie.Type,
 		"nodes", stats.Nodes,
-		"leafNodes", stats.LeafNodes,
+		"leafNodes", stats.Leaves,
 		"maxDepth", stats.MaxDepth,
 		"avgDepth", stats.AvgDepth,
 		"totalDocs", stats.TotalDocs,
