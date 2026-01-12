@@ -24,7 +24,7 @@ type Trie struct {
 	mu   sync.RWMutex
 }
 
-func NewTrie() *Trie {
+func New() *Trie {
 	return &Trie{
 		root: newNode(),
 	}

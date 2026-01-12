@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"fts-hw/internal/services/fts"
+	hamt "fts-hw/internal/services/fts/hamt"
+	hamtpointered "fts-hw/internal/services/fts/hamtpointered"
 	"fts-hw/internal/services/fts/kv"
 	trigramtrie "fts-hw/internal/services/fts/trigram"
 	"fts-hw/internal/utils"
@@ -22,7 +25,6 @@ import (
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/cui"
 	ftsService "fts-hw/internal/services/fts"
-	hamtrie "fts-hw/internal/services/fts/hamt"
 	"fts-hw/internal/services/fts/loader"
 	radixtrie "fts-hw/internal/services/fts/radix"
 	radixtriesliced "fts-hw/internal/services/fts/slicedradix"
@@ -94,28 +96,35 @@ func main() {
 		switch cfg.FTS.Trie.Type {
 
 		case "radix":
-			trie := radixtrie.NewTrie()
+			trie := radixtrie.New()
 			ftsEngine = ftsService.NewSearchService(
 				trie,
-				radixtrie.WordKeys,
+				fts.WordKeys,
 			)
 
-		case "radix-sliced":
-			trie := radixtriesliced.NewTrie()
+		case "slicedradix":
+			trie := radixtriesliced.New()
 			ftsEngine = ftsService.NewSearchService(
 				trie,
-				radixtriesliced.WordKeys,
+				fts.WordKeys,
 			)
 
-		case "ham":
-			trie := hamtrie.NewTrie()
+		case "hamt":
+			trie := hamt.New()
 			ftsEngine = ftsService.NewSearchService(
 				trie,
-				hamtrie.WordKeys,
+				fts.WordKeys,
+			)
+
+		case "hamtpointered":
+			trie := hamtpointered.New()
+			ftsEngine = ftsService.NewSearchService(
+				trie,
+				fts.WordKeys,
 			)
 
 		case "trigram":
-			trie := trigramtrie.NewTrie()
+			trie := trigramtrie.New()
 			ftsEngine = ftsService.NewSearchService(
 				trie,
 				trigramtrie.TrigramKeys,

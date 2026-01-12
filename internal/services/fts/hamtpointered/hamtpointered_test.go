@@ -1,10 +1,11 @@
-package radixtrie
+package hamtrie
 
 import (
 	"context"
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/services/fts"
+	"fts-hw/internal/services/fts/hamt"
 	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
@@ -45,11 +46,11 @@ func TestRadixTrieInsertAndSearch(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	radixTrie := New()
+	trie := New()
 
 	ftsService := fts.NewSearchService(
-		radixTrie,
-		fts.WordKeys,
+		trie,
+		hamt.WordKeys,
 	)
 
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
@@ -114,7 +115,7 @@ func TestRadixTrieInsertAndSearch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.word, func(t *testing.T) {
-			docs, err := radixTrie.Search(tt.word)
+			docs, err := trie.Search(tt.word)
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}
@@ -133,7 +134,7 @@ func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 
 	ftsService := fts.NewSearchService(
 		radixTrie,
-		fts.WordKeys,
+		hamt.WordKeys,
 	)
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
@@ -205,7 +206,7 @@ func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 				docs = append(docs, docResult.Abstract)
 			}
 			if !reflect.DeepEqual(docs, tt.expectedDocAbstract) {
-				t.Errorf("Expected %v, but got %v", tt.expectedDocAbstract, docs)
+				t.Errorf("\nExpected: %v\n     Got: %v", tt.expectedDocAbstract, docs)
 			}
 		})
 	}

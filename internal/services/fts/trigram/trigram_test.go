@@ -45,7 +45,7 @@ func TestTrigramTrieInsertAndSearch(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	trigramTrie := NewTrie()
+	trigramTrie := New()
 
 	ftsService := fts.NewSearchService(
 		trigramTrie,
@@ -128,7 +128,7 @@ func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	trigramTrie := NewTrie()
+	trigramTrie := New()
 
 	ftsService := fts.NewSearchService(
 		trigramTrie,
