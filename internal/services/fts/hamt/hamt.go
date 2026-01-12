@@ -19,32 +19,17 @@ const (
 type Documents []fts.Document
 
 func (d Documents) Add(id string) Documents {
-
 	i := sort.Search(len(d), func(i int) bool { return d[i].ID >= id })
 
-	for i < len(d) && d[i].ID == id {
+	if i < len(d) && d[i].ID == id {
 		d[i].Count++
 		return d
 	}
 
-	newDoc := fts.Document{
-		ID:    id,
-		Count: 1,
-	}
-
-	if cap(d) > len(d) {
-		d = append(d, fts.Document{})
-		copy(d[i+1:], d[i:])
-		d[i] = newDoc
-	} else {
-		newCap := 2*len(d) + 1
-		newSlice := make(Documents, len(d)+1, newCap)
-		copy(newSlice[:i], d[:i])
-		newSlice[i] = newDoc
-		copy(newSlice[i+1:], d[i:])
-		d = newSlice
-	}
-
+	newDoc := fts.Document{ID: id, Count: 1}
+	d = append(d, fts.Document{})
+	copy(d[i+1:], d[i:])
+	d[i] = newDoc
 	return d
 }
 
@@ -94,20 +79,11 @@ func (t *Terminal) Append(word, id string) {
 
 	if i < len(t.entries) && t.entries[i].key == word {
 		// word found — look for doc with same ID
-		docs := t.entries[i].docs
-		for j := range docs {
-			if docs[j].ID == id {
-				docs[j].Count++
-				t.entries[i].docs = docs
-				return
-			}
-		}
-		// add new doc
-		t.entries[i].docs = append(t.entries[i].docs, fts.Document{ID: id, Count: 1})
+		t.entries[i].docs = t.entries[i].docs.Add(id)
 		return
 	}
 
-	// слово не найдено — вставляем новый entry
+	// add new entry
 	newEntry := entry{
 		key:  word,
 		docs: Documents{fts.Document{ID: id, Count: 1}},
