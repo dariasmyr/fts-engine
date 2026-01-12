@@ -1,4 +1,4 @@
-package radixtrie
+package hampointered
 
 import (
 	"context"
@@ -45,10 +45,10 @@ func TestRadixTrieInsertAndSearch(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	radixTrie := New()
+	trie := New()
 
 	ftsService := fts.NewSearchService(
-		radixTrie,
+		trie,
 		fts.WordKeys,
 	)
 
@@ -114,7 +114,7 @@ func TestRadixTrieInsertAndSearch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.word, func(t *testing.T) {
-			docs, err := radixTrie.Search(tt.word)
+			docs, err := trie.Search(tt.word)
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}
@@ -205,7 +205,7 @@ func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 				docs = append(docs, docResult.Abstract)
 			}
 			if !reflect.DeepEqual(docs, tt.expectedDocAbstract) {
-				t.Errorf("Expected %v, but got %v", tt.expectedDocAbstract, docs)
+				t.Errorf("\nExpected: %v\n     Got: %v", tt.expectedDocAbstract, docs)
 			}
 		})
 	}

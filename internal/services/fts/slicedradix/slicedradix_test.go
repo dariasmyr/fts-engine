@@ -45,11 +45,11 @@ func TestRadixTrieInsertAndSearch(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	radixTrie := NewTrie()
+	radixTrie := New()
 
 	ftsService := fts.NewSearchService(
 		radixTrie,
-		WordKeys,
+		fts.WordKeys,
 	)
 
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
@@ -129,11 +129,11 @@ func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	radixTrie := NewTrie()
+	radixTrie := New()
 
 	ftsService := fts.NewSearchService(
 		radixTrie,
-		WordKeys,
+		fts.WordKeys,
 	)
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {

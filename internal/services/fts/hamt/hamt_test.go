@@ -49,7 +49,7 @@ func TestRadixTrieInsertAndSearch(t *testing.T) {
 
 	ftsService := fts.NewSearchService(
 		trie,
-		WordKeys,
+		fts.WordKeys,
 	)
 
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
@@ -133,7 +133,7 @@ func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 
 	ftsService := fts.NewSearchService(
 		radixTrie,
-		WordKeys,
+		fts.WordKeys,
 	)
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {

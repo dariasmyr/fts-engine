@@ -85,7 +85,7 @@ func validateConfig(cfg *Config) {
 	switch cfg.FTS.Engine {
 	case "trie":
 		switch cfg.FTS.Trie.Type {
-		case "radix", "radix-sliced", "ham", "trigram":
+		case "radix", "slicedradix", "hamt", "hamtpointered", "trigram":
 		default:
 			panic("unknown trie type: " + cfg.FTS.Trie.Type)
 		}

@@ -23,6 +23,10 @@ type Index interface {
 	Analyze() utils.TrieStats
 }
 
+func WordKeys(token string) ([]string, error) {
+	return []string{token}, nil
+}
+
 type KeyGenerator func(token string) ([]string, error)
 
 type SearchService struct {

@@ -18,6 +18,7 @@ const (
 
 type Documents []fts.Document
 
+// Add uses binary search across the docs and insert it in the right place
 func (d Documents) Add(id string) Documents {
 	i := sort.Search(len(d), func(i int) bool { return d[i].ID >= id })
 
@@ -232,15 +233,9 @@ func strhash32(str string) uint32 {
 	return h.Sum32()
 }
 
-func WordKeys(token string) ([]string, error) {
-	return []string{token}, nil
-}
-
 func (t *Trie) Analyze() utils.TrieStats {
 	var s utils.TrieStats
 	var totalDepth int
-
-	const maxTrieDepth = depth // константа из вашего кода, глубина HAMT = 7
 
 	levelChildrenSum := make(map[int]int)
 	levelNodeCount := make(map[int]int)
@@ -248,20 +243,18 @@ func (t *Trie) Analyze() utils.TrieStats {
 	var dfs func(ptr nodeptr, currentDepth int, isTerm bool)
 	dfs = func(ptr nodeptr, currentDepth int, isTerm bool) {
 		if isTerm {
-			// Проверяем, что индекс терминала корректный
 			if int(ptr) >= len(t.terms) {
 				return
 			}
 			term := t.terms[ptr]
 			s.Leaves++
 			// считаем все документы в терминале
-			for _, entry := range term.entries {
-				s.TotalDocs += len(entry.docs)
+			for _, e := range term.entries {
+				s.TotalDocs += len(e.docs)
 			}
 			return
 		}
 
-		// Проверяем, что индекс ноды корректный
 		if int(ptr) >= len(t.nodes) {
 			return
 		}
@@ -279,8 +272,7 @@ func (t *Trie) Analyze() utils.TrieStats {
 		levelNodeCount[currentDepth]++
 
 		for _, c := range node.children {
-			// если следующий уровень терминальный (последний уровень), передаем isTerm=true
-			if currentDepth == maxTrieDepth-2 { // 6-й уровень → 7-й терминал
+			if currentDepth == depth-2 {
 				dfs(c, currentDepth+1, true)
 			} else {
 				dfs(c, currentDepth+1, false)
@@ -288,15 +280,13 @@ func (t *Trie) Analyze() utils.TrieStats {
 		}
 	}
 
-	// Запуск обхода с корня
 	dfs(0, 0, false)
 
 	if s.Nodes > 0 {
 		s.AvgDepth = float64(totalDepth) / float64(s.Nodes)
 	}
 
-	// Среднее количество детей на уровне (для первых 10 уровней)
-	for d := 0; d <= 10; d++ {
+	for d := 0; d <= depth; d++ {
 		if levelNodeCount[d] > 0 {
 			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel,
 				float64(levelChildrenSum[d])/float64(levelNodeCount[d]))

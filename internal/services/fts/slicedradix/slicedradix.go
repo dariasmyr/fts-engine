@@ -26,7 +26,7 @@ type Trie struct {
 	mu    sync.RWMutex
 }
 
-func NewTrie() *Trie {
+func New() *Trie {
 	var t Trie
 	t.nodes = make([]Node, 0)
 	t.root = t.newNode("")
@@ -197,10 +197,6 @@ func (t *Trie) next(current int, rest string) (int, string, bool, bool) {
 	}
 
 	return 0, "", false, false
-}
-
-func WordKeys(token string) ([]string, error) {
-	return []string{token}, nil
 }
 
 func (t *Trie) Analyze() utils.TrieStats {
