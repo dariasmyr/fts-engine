@@ -3,6 +3,7 @@ package trigramtrie
 import (
 	"errors"
 	"fmt"
+	"fts-hw/internal/services/fts"
 	"fts-hw/internal/utils"
 	"sync"
 )
@@ -54,7 +55,7 @@ func (t *Trie) Insert(trigram string, docID string) error {
 	return nil
 }
 
-func (t *Trie) Search(word string) (map[string]int, error) {
+func (t *Trie) Search(word string) ([]fts.Document, error) {
 	if len(word) != 3 {
 		return nil, ErrInvalidTrigramSize
 	}
@@ -75,7 +76,19 @@ func (t *Trie) Search(word string) (map[string]int, error) {
 		node = node.children[index]
 	}
 	// Return trigram doc entries
-	return node.docs, nil
+	return collectDocs(node.docs), nil
+}
+
+func collectDocs(docs map[string]int) []fts.Document {
+	s := make([]fts.Document, 0, len(docs))
+	for id, count := range docs {
+		s = append(s, fts.Document{
+			ID:    id,
+			Count: count,
+		})
+	}
+
+	return s
 }
 
 func getTrigrams(token string) []string {
@@ -109,7 +122,7 @@ func (t *Trie) Analyze() utils.TrieStats {
 		s.Nodes++
 		totalDepth += depth
 		if len(n.docs) > 0 {
-			s.LeafNodes++
+			s.Leaves++
 		}
 		if depth > s.MaxDepth {
 			s.MaxDepth = depth

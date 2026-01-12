@@ -1,33 +1,36 @@
-package radixtrie
+package radixtriesliced
 
 import (
+	"fts-hw/internal/services/fts"
 	"fts-hw/internal/utils"
 	"sync"
 )
 
 type Node struct {
-	terminal bool
 	prefix   string
-	children []*Node
-	docs     map[string]int
+	children []int
+	docs     []fts.Document
 }
 
-func newNode(prefix string) *Node {
-	return &Node{
+func (t *Trie) newNode(prefix string) int {
+	t.nodes = append(t.nodes, Node{
 		prefix: prefix,
-		docs:   make(map[string]int),
-	}
+	})
+
+	return len(t.nodes) - 1
 }
 
 type Trie struct {
-	root *Node
-	mu   sync.RWMutex
+	root  int
+	nodes []Node
+	mu    sync.RWMutex
 }
 
 func NewTrie() *Trie {
-	return &Trie{
-		root: newNode(""),
-	}
+	var t Trie
+	t.nodes = make([]Node, 0)
+	t.root = t.newNode("")
+	return &t
 }
 
 // longest common prefix
@@ -47,24 +50,23 @@ func (t *Trie) Insert(word string, docID string) error {
 	current := t.root
 	rest := word
 
-	var node *Node
+	var newNodeIdx int
 
 	for {
-		for i, child := range current.children {
-			p := lcp(rest, child.prefix)
+		for i, child := range t.nodes[current].children {
+			p := lcp(rest, t.nodes[child].prefix)
 
 			if p == 0 {
 				continue
 			}
 
 			// prefix fully matched with child - go deeper
-			if p == len(child.prefix) {
+			if p == len(t.nodes[child].prefix) {
 				current = child
 				rest = rest[p:]
 
 				if rest == "" {
-					current.terminal = true
-					current.docs[docID]++
+					t.addDoc(current, docID)
 					return nil
 				}
 
@@ -72,71 +74,84 @@ func (t *Trie) Insert(word string, docID string) error {
 			}
 
 			// split
-			common := child.prefix[:p]
-			childSuffix := child.prefix[p:]
+			common := t.nodes[child].prefix[:p]
+			childSuffix := t.nodes[child].prefix[p:]
 			newSuffix := rest[p:]
 
-			middle := newNode(common)
+			middle := t.newNode(common)
 
 			// shorten old child prefix
-			child.prefix = childSuffix
+			t.nodes[child].prefix = childSuffix
 
 			// relink old node
-			middle.children = append(middle.children, child)
+			t.nodes[middle].children = append(t.nodes[middle].children, child)
 
 			// replace child with middle node (with common suffix)
-			current.children[i] = middle
+			t.nodes[current].children[i] = middle
 
 			// if rest is not empty, create new node and mark it as end for new word
 			if newSuffix != "" {
-				node = newNode(newSuffix)
-				node.terminal = true
-				node.docs[docID]++
-				middle.children = append(middle.children, node)
+				newNodeIdx = t.newNode(newSuffix)
+				t.addDoc(newNodeIdx, docID)
+				t.nodes[middle].children = append(t.nodes[middle].children, newNodeIdx)
 				return nil
 			}
 
 			// rest is empty, mark middle common node as end for new word
-			middle.terminal = true
-			middle.docs[docID]++
+			t.addDoc(middle, docID)
 			return nil
 		}
 
 		//if no child fitted new word by prefix - just add new node
-		node = newNode(rest)
-		node.terminal = true
-		node.docs[docID]++
-		current.children = append(current.children, node)
+		newNodeIdx = t.newNode(rest)
+		t.addDoc(newNodeIdx, docID)
+		t.nodes[current].children = append(t.nodes[current].children, newNodeIdx)
 		return nil
 
 	NEXT:
 	}
 }
 
-func (t *Trie) Search(word string) (map[string]int, error) {
+func (t *Trie) addDoc(nodeIdx int, docID string) {
+	node := &t.nodes[nodeIdx]
+
+	for i := range node.docs {
+		if node.docs[i].ID == docID {
+			node.docs[i].Count++
+			return
+		}
+	}
+
+	node.docs = append(node.docs, fts.Document{
+		ID:    docID,
+		Count: 1,
+	})
+}
+
+func (t *Trie) Search(word string) ([]fts.Document, error) {
 
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	current := t.root
+	currentIdx := t.root
 	rest := word
 
 	for {
-		nextNode, nextRest, matched, exact := t.next(current, rest)
+		nextNodeIdx, nextRest, matched, exact := t.next(currentIdx, rest)
+
+		if nextNodeIdx == 0 {
+			return nil, nil
+		}
 
 		if !matched {
 			return nil, nil
 		}
 
 		if exact {
-			result := make(map[string]int, len(nextNode.docs))
-			for k, v := range nextNode.docs {
-				result[k] = v
-			}
-			return result, nil
+			return t.nodes[nextNodeIdx].docs, nil
 		}
 
-		current = nextNode
+		currentIdx = nextNodeIdx
 		rest = nextRest
 	}
 }
@@ -148,9 +163,9 @@ func (t *Trie) Search(word string) (map[string]int, error) {
 //	nextRest  - remaining part of the word after consuming prefix
 //	matched   - whether ANY progress was made
 //	exact     - whether the word fully matched on this node boundary
-func (t *Trie) next(current *Node, rest string) (*Node, string, bool, bool) {
-	for _, child := range current.children {
-		p := lcp(rest, child.prefix)
+func (t *Trie) next(current int, rest string) (int, string, bool, bool) {
+	for _, child := range t.nodes[current].children {
+		p := lcp(rest, t.nodes[child].prefix)
 
 		// case 0:
 		// no common prefix at all - try next child
@@ -162,26 +177,26 @@ func (t *Trie) next(current *Node, rest string) (*Node, string, bool, bool) {
 		// rest fully consumed
 		if p == len(rest) {
 			// exact match only if node is terminal
-			if child.terminal {
+			if t.nodes[child].IsTerminal() {
 				return child, "", true, true
 			}
 			// query word matched only a prefix of a longer word in a tree - so it's not found
-			return nil, "", false, false
+			return 0, "", false, false
 		}
 
 		// case 2:
 		// child prefix fully matched, go deeper
-		if p == len(child.prefix) {
+		if p == len(t.nodes[child].prefix) {
 			return child, rest[p:], true, false
 		}
 
 		// case 3:
 		// partial overlap:
 		// - the word does not exist in the trie
-		return nil, "", false, false
+		return 0, "", false, false
 	}
 
-	return nil, "", false, false
+	return 0, "", false, false
 }
 
 func WordKeys(token string) ([]string, error) {
@@ -195,28 +210,26 @@ func (t *Trie) Analyze() utils.TrieStats {
 	levelChildrenSum := make(map[int]int)
 	levelNodeCount := make(map[int]int)
 
-	var dfs func(n *Node, depth int)
-	dfs = func(n *Node, depth int) {
+	var dfs func(n int, depth int)
+	dfs = func(n int, depth int) {
 		s.Nodes++
 		totalDepth += depth
 
-		if n.terminal {
-			s.LeafNodes++
+		if t.nodes[n].IsTerminal() {
+			s.Leaves++
 		}
 		if depth > s.MaxDepth {
 			s.MaxDepth = depth
 		}
-		s.TotalDocs += len(n.docs)
+		s.TotalDocs += len(t.nodes[n].docs)
 
-		numChildren := len(n.children)
+		numChildren := len(t.nodes[n].children)
 		s.TotalChildren += numChildren
 		levelChildrenSum[depth] += numChildren
 		levelNodeCount[depth]++
 
-		for _, c := range n.children {
-			if c != nil {
-				dfs(c, depth+1)
-			}
+		for _, c := range t.nodes[n].children {
+			dfs(c, depth+1)
 		}
 	}
 
@@ -237,4 +250,8 @@ func (t *Trie) Analyze() utils.TrieStats {
 	}
 
 	return s
+}
+
+func (n *Node) IsTerminal() bool {
+	return len(n.docs) > 0
 }

@@ -5,15 +5,21 @@ import (
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/utils"
-	snowballeng "github.com/kljensen/snowball/english"
 	"sort"
 	"time"
 	"unicode/utf8"
+
+	snowballeng "github.com/kljensen/snowball/english"
 )
 
+type Document struct {
+	ID    string
+	Count int
+}
+
 type Index interface {
-	Search(key string) (map[string]int, error)
-	Insert(key string, docID string) error
+	Search(key string) ([]Document, error)
+	Insert(key string, id string) error
 	Analyze() utils.TrieStats
 }
 
@@ -116,16 +122,16 @@ func (s *SearchService) SearchDocuments(
 		}
 
 		for _, key := range keys {
-			docEntries, searchErr := s.index.Search(key)
-			if searchErr != nil {
-				return nil, searchErr
+			docs, err := s.index.Search(key)
+			if err != nil {
+				return nil, err
 			}
-			if docEntries == nil {
+			if len(docs) == 0 {
 				continue
 			}
-			for docID, count := range docEntries {
-				docUniqueMatches[docID]++
-				docTotalMatches[docID] += count
+			for _, doc := range docs {
+				docUniqueMatches[doc.ID]++
+				docTotalMatches[doc.ID] += doc.Count
 			}
 		}
 
