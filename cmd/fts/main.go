@@ -108,7 +108,7 @@ func main() {
 			)
 
 		case "ham":
-			trie := hamtrie.New()
+			trie := hamtrie.NewTrie()
 			ftsEngine = ftsService.NewSearchService(
 				trie,
 				hamtrie.WordKeys,
