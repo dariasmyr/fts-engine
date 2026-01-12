@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"fts-hw/internal/services/fts/kv"
-	trigramtrie "fts-hw/internal/services/fts/trigram_trie"
+	trigramtrie "fts-hw/internal/services/fts/trigram"
 	"fts-hw/internal/utils"
 	"io"
 	"log/slog"
@@ -20,10 +20,10 @@ import (
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/cui"
 	ftsService "fts-hw/internal/services/fts"
-	hamtrie "fts-hw/internal/services/fts/ham_trie"
+	hamtrie "fts-hw/internal/services/fts/hamt"
 	"fts-hw/internal/services/fts/loader"
-	radixtrie "fts-hw/internal/services/fts/radix_trie"
-	radixtriesliced "fts-hw/internal/services/fts/radix_trie_sliced"
+	radixtrie "fts-hw/internal/services/fts/radix"
+	radixtriesliced "fts-hw/internal/services/fts/slicedradix"
 	"fts-hw/internal/storage/leveldb"
 )
 
@@ -106,7 +106,7 @@ func main() {
 			)
 
 		case "ham":
-			trie := hamtrie.NewTrie()
+			trie := hamtrie.New()
 			ftsEngine = ftsService.NewSearchService(
 				trie,
 				hamtrie.WordKeys,
