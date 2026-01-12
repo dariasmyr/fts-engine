@@ -45,10 +45,10 @@ func TestRadixTrieInsertAndSearch(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	radixTrie := NewTrie()
+	trie := New()
 
 	ftsService := fts.NewSearchService(
-		radixTrie,
+		trie,
 		WordKeys,
 	)
 
@@ -86,35 +86,35 @@ func TestRadixTrieInsertAndSearch(t *testing.T) {
 
 	tests := []struct {
 		word         string
-		expectedDocs map[string]int
+		expectedDocs []fts.Document
 	}{
 		{
 			word: "hotel",
-			expectedDocs: map[string]int{
-				"1": 3,
-				"2": 1,
-				"3": 1,
+			expectedDocs: []fts.Document{
+				{"1", 3},
+				{"2", 1},
+				{"3", 1},
 			},
 		},
 		{
 			word: "wikipedia",
-			expectedDocs: map[string]int{
-				"1": 1,
-				"2": 1,
-				"3": 1,
+			expectedDocs: []fts.Document{
+				{"1", 1},
+				{"2", 1},
+				{"3", 1},
 			},
 		},
 		{
 			word: "rosa",
-			expectedDocs: map[string]int{
-				"3": 1,
+			expectedDocs: []fts.Document{
+				{"3", 1},
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.word, func(t *testing.T) {
-			docs, err := radixTrie.Search(tt.word)
+			docs, err := trie.Search(tt.word)
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}
@@ -129,7 +129,7 @@ func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	radixTrie := NewTrie()
+	radixTrie := New()
 
 	ftsService := fts.NewSearchService(
 		radixTrie,
@@ -205,7 +205,7 @@ func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 				docs = append(docs, docResult.Abstract)
 			}
 			if !reflect.DeepEqual(docs, tt.expectedDocAbstract) {
-				t.Errorf("Expected %v, but got %v", tt.expectedDocAbstract, docs)
+				t.Errorf("\nExpected: %v\n     Got: %v", tt.expectedDocAbstract, docs)
 			}
 		})
 	}

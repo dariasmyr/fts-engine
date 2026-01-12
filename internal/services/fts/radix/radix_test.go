@@ -1,4 +1,4 @@
-package trigramtrie
+package radixtrie
 
 import (
 	"context"
@@ -41,16 +41,17 @@ var documents = []models.Document{{
 		ID:      "3",
 	}}
 
-func TestTrigramTrieInsertAndSearch(t *testing.T) {
+func TestRadixTrieInsertAndSearch(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	trigramTrie := NewTrie()
+	radixTrie := NewTrie()
 
 	ftsService := fts.NewSearchService(
-		trigramTrie,
-		TrigramKeys,
+		radixTrie,
+		WordKeys,
 	)
+
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
@@ -73,9 +74,9 @@ func TestTrigramTrieInsertAndSearch(t *testing.T) {
 			document.Abstract,
 		)
 		if indexErr != nil {
-			t.Log("failed to index document", "error", indexErr)
+			t.Errorf("Failed to index document: %v", indexErr)
 		}
-		fmt.Printf("Indexed document with id: %s\n", document.ID)
+		fmt.Printf("Indexed document abstract with id: %s\n", document.ID)
 		jobCh <- document
 		fmt.Printf("Added document with ID: %s to job channel\n", document.ID)
 	}
@@ -84,36 +85,36 @@ func TestTrigramTrieInsertAndSearch(t *testing.T) {
 	wg.Wait()
 
 	tests := []struct {
-		trigram      string
-		expectedDocs map[string]int
+		word         string
+		expectedDocs []fts.Document
 	}{
 		{
-			trigram: "hot", // trigram from "hotel"
-			expectedDocs: map[string]int{
-				"1": 2,
-				"2": 2,
-				"3": 1,
+			word: "hotel",
+			expectedDocs: []fts.Document{
+				{"1", 3},
+				{"2", 1},
+				{"3", 1},
 			},
 		},
 		{
-			trigram: "wik", // trigram from "wikipedia"
-			expectedDocs: map[string]int{
-				"1": 1,
-				"2": 1,
-				"3": 1,
+			word: "wikipedia",
+			expectedDocs: []fts.Document{
+				{"1", 1},
+				{"2", 1},
+				{"3", 1},
 			},
 		},
 		{
-			trigram: "ros", // trigram from "rosa"
-			expectedDocs: map[string]int{
-				"3": 1,
+			word: "rosa",
+			expectedDocs: []fts.Document{
+				{"3", 1},
 			},
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.trigram, func(t *testing.T) {
-			docs, err := trigramTrie.Search(tt.trigram)
+		t.Run(tt.word, func(t *testing.T) {
+			docs, err := radixTrie.Search(tt.word)
 			if err != nil {
 				t.Errorf("Search error: %s", err)
 			}
@@ -124,15 +125,15 @@ func TestTrigramTrieInsertAndSearch(t *testing.T) {
 	}
 }
 
-func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
+func TestRadixTrieInsertAndSearchDocument(t *testing.T) {
 	log := slog.New(
 		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
 	)
-	trigramTrie := NewTrie()
+	radixTrie := NewTrie()
 
 	ftsService := fts.NewSearchService(
-		trigramTrie,
-		TrigramKeys,
+		radixTrie,
+		WordKeys,
 	)
 	storage, err := leveldb.NewStorage(log, "../../../storage/fts-trie_test.db")
 	if err != nil {
@@ -156,7 +157,7 @@ func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
 			document.Abstract,
 		)
 		if indexErr != nil {
-			t.Log("failed to index document", "error", indexErr)
+			t.Errorf("Failed to index document: %v", indexErr)
 		}
 		fmt.Printf("Indexed document with id: %s\n", document.ID)
 		jobCh <- document
@@ -172,7 +173,7 @@ func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
 	}{
 		{
 			query:               "hotel",
-			expectedDocAbstract: []string{documents[1].Abstract, documents[0].Abstract, documents[2].Abstract},
+			expectedDocAbstract: []string{documents[0].Abstract, documents[1].Abstract, documents[2].Abstract},
 		},
 		{
 			query:               "Wikipedia Hotellet",
@@ -187,13 +188,13 @@ func TestTrigramTrieInsertAndSearchDocument(t *testing.T) {
 	for _, tt := range tests {
 		fmt.Println("Start searching:", tt.query)
 		t.Run(tt.query, func(t *testing.T) {
-			docResults, searchErr :=
-				ftsService.SearchDocuments(
-					context.Background(),
-					tt.query,
-					10)
-			if searchErr != nil {
-				t.Errorf("Search error: %s", searchErr)
+			docResults, err := ftsService.SearchDocuments(
+				context.Background(),
+				tt.query,
+				10,
+			)
+			if err != nil {
+				t.Errorf("Search error: %s", err)
 			}
 			docs := make([]string, 0, len(docResults.ResultData))
 			for _, doc := range docResults.ResultData {
