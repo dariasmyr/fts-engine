@@ -40,32 +40,7 @@ type entry struct {
 	docs Documents
 }
 
-type bucket []entry
-
-func (b bucket) find(str string) Documents {
-	for _, e := range b {
-		if e.key == str {
-			return e.docs
-		}
-	}
-
-	return nil
-}
-
-func (b bucket) add(word, id string) bucket {
-	for i, e := range b {
-		if e.key == word {
-			b[i].docs = e.docs.Add(id)
-		}
-	}
-
-	return append(b, entry{
-		key:  word,
-		docs: Documents(nil).Add(id),
-	})
-}
-
-type nodeptr = uint64
+type nodeptr = uint32
 
 // Terminal is the 7th trie level. Terminal nodes store actual values instead of children
 type Terminal struct {
