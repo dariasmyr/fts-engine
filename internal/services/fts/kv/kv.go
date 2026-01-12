@@ -2,7 +2,6 @@ package kv
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/utils"
@@ -23,10 +22,6 @@ type KeyValueFTS struct {
 	documentSaver    DocumentSaver
 	documentProvider DocumentProvider
 }
-
-var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
-)
 
 type DocumentSaver interface {
 	SaveWordsWithIndexing(ctx context.Context, documentID string, words []string) error
