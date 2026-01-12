@@ -146,7 +146,6 @@ func main() {
 		startTime = time.Now()
 		memStats := utils.MeasureMemory(func() {
 			for _, doc := range documents {
-				fmt.Println("Start indexing ", doc.ID)
 				_ = ftsEngine.IndexDocument(ctx, doc.ID, doc.Abstract)
 			}
 		})

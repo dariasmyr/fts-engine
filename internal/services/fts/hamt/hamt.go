@@ -83,22 +83,28 @@ type nodeptr = uint64
 
 // Terminal is the 7th trie level. Terminal nodes store actual values instead of children
 type Terminal struct {
-	bitmap uint8    // bitmap to address 2 last bits (32%5=2) of hash
-	bucks  []bucket // array of documents
+	entries map[string][]fts.Document
 }
 
 // Append appends a new value to the dense array preserving the correct order
-func (t Terminal) Append(idx uint32, word, id string) Terminal {
-	mask := uint8(1) << idx
-	index := bits.OnesCount8(t.bitmap & (mask - 1))
+func (t *Terminal) Append(word, id string) {
+	if t.entries == nil {
+		t.entries = make(map[string][]fts.Document)
+	}
+	docs := t.entries[word]
 
-	if t.bitmap&mask == 0 {
-		t.bitmap |= mask
-		t.bucks = slices.Insert(t.bucks, index, make(bucket, 0, 1))
+	// ищем документ с таким ID
+	for i := range docs {
+		if docs[i].ID == id {
+			docs[i].Count++
+			t.entries[word] = docs
+			return
+		}
 	}
 
-	t.bucks[index] = t.bucks[index].add(word, id)
-	return t
+	// нового документа ещё нет
+	docs = append(docs, fts.Document{ID: id, Count: 1})
+	t.entries[word] = docs
 }
 
 // Node is the base HAMT node for the first 6 trie levels
@@ -146,12 +152,16 @@ func (t *Trie) Search(key string) ([]fts.Document, error) {
 	}
 
 	term := t.terms[node]
-	if term.bitmap&(1<<hash) == 0 {
+	if term.entries == nil {
 		return nil, nil
 	}
 
-	buck := term.bucks[bits.OnesCount8(term.bitmap&((1<<hash)-1))]
-	return buck.find(key), nil
+	docs, ok := term.entries[key]
+	if !ok {
+		return nil, nil
+	}
+
+	return docs, nil
 }
 
 func (t *Trie) Insert(word, id string) error {
@@ -183,7 +193,7 @@ func (t *Trie) Insert(word, id string) error {
 
 	// hash contains 7 bits at this point. First 5 of them are already used. The last 2
 	// are the object of interest, therefore erase the first 5 by shifting them away
-	t.terms[termptr] = t.terms[termptr].Append(hash>>quant, word, id)
+	t.terms[termptr].Append(word, id)
 	return nil
 }
 
@@ -232,44 +242,66 @@ func (t *Trie) Analyze() utils.TrieStats {
 	var s utils.TrieStats
 	var totalDepth int
 
+	const maxTrieDepth = depth // константа из вашего кода, глубина HAMT = 7
+
 	levelChildrenSum := make(map[int]int)
 	levelNodeCount := make(map[int]int)
 
-	var traverse func(n nodeptr, level int)
-	traverse = func(n nodeptr, level int) {
-		if level >= 7 {
-			// terminal node
-			for _, buck := range t.terms[n].bucks {
-				s.TotalDocs += len(buck)
+	var dfs func(ptr nodeptr, currentDepth int, isTerm bool)
+	dfs = func(ptr nodeptr, currentDepth int, isTerm bool) {
+		if isTerm {
+			// Проверяем, что индекс терминала корректный
+			if int(ptr) >= len(t.terms) {
+				return
 			}
-
+			term := t.terms[ptr]
+			s.Leaves++
+			// считаем все документы в терминале
+			for _, docs := range term.entries {
+				s.TotalDocs += len(docs)
+			}
 			return
 		}
 
-		node := t.nodes[n]
-		s.TotalChildren += len(node.children)
-		levelChildrenSum[level] += len(node.children)
-		levelNodeCount[level]++
+		// Проверяем, что индекс ноды корректный
+		if int(ptr) >= len(t.nodes) {
+			return
+		}
+		node := t.nodes[ptr]
 
-		for _, child := range node.children {
-			traverse(child, level+1)
+		s.Nodes++
+		totalDepth += currentDepth
+		if currentDepth > s.MaxDepth {
+			s.MaxDepth = currentDepth
+		}
+
+		childCount := len(node.children)
+		s.TotalChildren += childCount
+		levelChildrenSum[currentDepth] += childCount
+		levelNodeCount[currentDepth]++
+
+		for _, c := range node.children {
+			// если следующий уровень терминальный (последний уровень), передаем isTerm=true
+			if currentDepth == maxTrieDepth-2 { // 6-й уровень → 7-й терминал
+				dfs(c, currentDepth+1, true)
+			} else {
+				dfs(c, currentDepth+1, false)
+			}
 		}
 	}
 
-	s.Nodes = len(t.nodes) + len(t.terms)
-	s.Leaves = len(t.terms)
-	s.MaxDepth = depth
-	traverse(0, 0)
+	// Запуск обхода с корня
+	dfs(0, 0, false)
 
 	if s.Nodes > 0 {
 		s.AvgDepth = float64(totalDepth) / float64(s.Nodes)
 	}
 
-	// Average not nil children count per level (for first 3 levels)
-	for depth := 0; depth <= 8; depth++ {
-		if levelNodeCount[depth] > 0 {
+	// Среднее количество детей на уровне (для первых 10 уровней)
+	for d := 0; d <= 10; d++ {
+		if levelNodeCount[d] > 0 {
 			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel,
-				float64(levelChildrenSum[depth])/float64(levelNodeCount[depth]))
+				float64(levelChildrenSum[d])/float64(levelNodeCount[d]))
 		} else {
 			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel, 0)
 		}
