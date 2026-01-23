@@ -261,7 +261,7 @@ func (t *Trie) Analyze() utils.TrieStats {
 		s.AvgDepth = float64(totalDepth) / float64(s.Nodes)
 	}
 
-	for d := 0; d <= depth; d++ {
+	for d := 1; d <= depth; d++ {
 		if levelNodeCount[d] > 0 {
 			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel,
 				float64(levelChildrenSum[d])/float64(levelNodeCount[d]))
