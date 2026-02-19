@@ -17,16 +17,40 @@ type Config struct {
 }
 
 type FTSConfig struct {
-	Engine string     `yaml:"engine" env-default:"trie"`
-	Trie   TrieConfig `yaml:"trie"`
+	Engine  string        `yaml:"engine" env-default:"trie"`
+	Indexer IndexerConfig `yaml:"indexer"`
+	Filter  FilterConfig  `yaml:"filter"`
 }
 
 type ModeConfig struct {
 	Type string `yaml:"type" env-default:"prod"`
 }
 
-type TrieConfig struct {
+type IndexerConfig struct {
 	Type string `yaml:"type" env-default:"radix"`
+}
+
+type FilterConfig struct {
+	Type   string       `yaml:"type" env-default:"none"`
+	Bloom  BloomConfig  `yaml:"bloom"`
+	Cuckoo CuckooConfig `yaml:"cuckoo"`
+	Ribbon RibbonConfig `yaml:"ribbon"`
+}
+
+type BloomConfig struct {
+	Capacity uint64 `yaml:"capacity" env-default:"1000000"`
+	Hashes   uint64 `yaml:"hashes" env-default:"7"`
+}
+
+type CuckooConfig struct {
+	Capacity uint64 `yaml:"capacity" env-default:"1000000"`
+	BucketSz int    `yaml:"bucket_size" env-default:"4"`
+	MaxKicks int    `yaml:"max_kicks" env-default:"500"`
+}
+
+type RibbonConfig struct {
+	Bits  uint64 `yaml:"bits" env-default:"1048576"`
+	Width uint64 `yaml:"width" env-default:"8"`
 }
 
 func MustLoad() *Config {
@@ -82,12 +106,27 @@ func fetchConfigPath() string {
 }
 
 func validateConfig(cfg *Config) {
+	indexerType := cfg.FTS.Indexer.Type
+	if indexerType == "" {
+		indexerType = "radix"
+	}
+	filterType := cfg.FTS.Filter.Type
+	if filterType == "" {
+		filterType = "none"
+	}
+
 	switch cfg.FTS.Engine {
 	case "trie":
-		switch cfg.FTS.Trie.Type {
+		switch indexerType {
 		case "radix", "slicedradix", "hamt", "hamtpointered", "trigram":
 		default:
-			panic("unknown trie type: " + cfg.FTS.Trie.Type)
+			panic("unknown indexer type: " + indexerType)
+		}
+
+		switch filterType {
+		case "none", "bloom", "cuckoo", "ribbon":
+		default:
+			panic("unknown filter type: " + filterType)
 		}
 	case "kv":
 	default:

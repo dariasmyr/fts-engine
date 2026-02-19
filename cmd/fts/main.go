@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"fts-hw/internal/services/fts"
-	hamt "fts-hw/internal/services/fts/hamt"
-	hamtpointered "fts-hw/internal/services/fts/hamtpointered"
+	ftsFactory "fts-hw/internal/services/fts/factory"
+	"fts-hw/internal/services/fts/filters"
 	"fts-hw/internal/services/fts/kv"
-	trigramtrie "fts-hw/internal/services/fts/trigram"
 	"fts-hw/internal/utils"
 	"io"
 	"log/slog"
@@ -26,8 +24,6 @@ import (
 	"fts-hw/internal/services/cui"
 	ftsService "fts-hw/internal/services/fts"
 	"fts-hw/internal/services/fts/loader"
-	radixtrie "fts-hw/internal/services/fts/radix"
-	radixtriesliced "fts-hw/internal/services/fts/slicedradix"
 	"fts-hw/internal/storage/leveldb"
 )
 
@@ -47,6 +43,8 @@ func ensureDir(p string) {
 
 func main() {
 	cfg := config.MustLoad()
+	indexerType := resolveIndexerType(cfg)
+	filterType := resolveFilterType(cfg)
 
 	ensureDir("data")
 
@@ -61,7 +59,8 @@ func main() {
 	log := setupLogger(cfg.Env)
 	log.Info("fts", "env", cfg.Env)
 	log.Info("fts", "engine", cfg.FTS.Engine)
-	log.Info("fts", "engine-type", cfg.FTS.Trie.Type)
+	log.Info("fts", "indexer-type", indexerType)
+	log.Info("fts", "filter-type", filterType)
 	log.Info("fts", "mode", cfg.Mode.Type)
 
 	storage, err := leveldb.NewStorage(log, cfg.StoragePath)
@@ -93,43 +92,34 @@ func main() {
 	case "kv":
 		ftsEngine = kv.New(log, storage, storage)
 	case "trie":
-		switch cfg.FTS.Trie.Type {
-
-		case "radix":
-			trie := radixtrie.New()
-			ftsEngine = ftsService.NewSearchService(
-				trie,
-				fts.WordKeys,
-			)
-
-		case "slicedradix":
-			trie := radixtriesliced.New()
-			ftsEngine = ftsService.NewSearchService(
-				trie,
-				fts.WordKeys,
-			)
-
-		case "hamt":
-			trie := hamt.New()
-			ftsEngine = ftsService.NewSearchService(
-				trie,
-				fts.WordKeys,
-			)
-
-		case "hamtpointered":
-			trie := hamtpointered.New()
-			ftsEngine = ftsService.NewSearchService(
-				trie,
-				fts.WordKeys,
-			)
-
-		case "trigram":
-			trie := trigramtrie.New()
-			ftsEngine = ftsService.NewSearchService(
-				trie,
-				trigramtrie.TrigramKeys,
-			)
+		indexer, keyGen, indexerErr := ftsFactory.NewIndexer(indexerType)
+		if indexerErr != nil {
+			log.Error("Failed to create indexer", "error", sl.Err(indexerErr))
+			return
 		}
+
+		filter, filterErr := ftsFactory.NewFilter(ftsFactory.FilterOptions{
+			Type: filterType,
+			Bloom: filters.BloomConfig{
+				Capacity: cfg.FTS.Filter.Bloom.Capacity,
+				Hashes:   cfg.FTS.Filter.Bloom.Hashes,
+			},
+			Cuckoo: filters.CuckooConfig{
+				Capacity: cfg.FTS.Filter.Cuckoo.Capacity,
+				BucketSz: cfg.FTS.Filter.Cuckoo.BucketSz,
+				MaxKicks: cfg.FTS.Filter.Cuckoo.MaxKicks,
+			},
+			Ribbon: filters.RibbonConfig{
+				Bits:  cfg.FTS.Filter.Ribbon.Bits,
+				Width: cfg.FTS.Filter.Ribbon.Width,
+			},
+		})
+		if filterErr != nil {
+			log.Error("Failed to create filter", "error", sl.Err(filterErr))
+			return
+		}
+
+		ftsEngine = ftsService.NewSearchService(indexer, keyGen, filter)
 	}
 
 	log.Info("FTS engine initialised")
@@ -220,7 +210,11 @@ func analyzeTrie(
 	memStats runtime.MemStats,
 	log *slog.Logger,
 ) {
-	svc, ok := engine.(*ftsService.SearchService)
+	type analyzable interface {
+		Analyse() utils.TrieStats
+	}
+
+	svc, ok := engine.(analyzable)
 	if !ok {
 		log.Warn("analyzeTrie: engine does not support analysis")
 		return
@@ -230,7 +224,8 @@ func analyzeTrie(
 
 	log.Info("FTS analysis result",
 		"engine", cfg.FTS.Engine,
-		"trie-type", cfg.FTS.Trie.Type,
+		"indexer-type", resolveIndexerType(cfg),
+		"filter-type", resolveFilterType(cfg),
 		"nodes", stats.Nodes,
 		"leafNodes", stats.Leaves,
 		"maxDepth", stats.MaxDepth,
@@ -246,6 +241,20 @@ func analyzeTrie(
 		log.Info(fmt.Sprintf("Level %d: avg children = %.2f", level, avg))
 	}
 
+}
+
+func resolveIndexerType(cfg *config.Config) string {
+	if cfg.FTS.Indexer.Type != "" {
+		return cfg.FTS.Indexer.Type
+	}
+	return "radix"
+}
+
+func resolveFilterType(cfg *config.Config) string {
+	if cfg.FTS.Filter.Type != "" {
+		return cfg.FTS.Filter.Type
+	}
+	return "none"
 }
 
 func setupLogger(env string) *slog.Logger {

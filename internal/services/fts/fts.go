@@ -23,6 +23,11 @@ type Index interface {
 	Analyze() utils.TrieStats
 }
 
+type TermFilter interface {
+	Add(key string)
+	MightContain(key string) bool
+}
+
 func WordKeys(token string) ([]string, error) {
 	return []string{token}, nil
 }
@@ -32,12 +37,19 @@ type KeyGenerator func(token string) ([]string, error)
 type SearchService struct {
 	index  Index
 	keyGen KeyGenerator
+	filter TermFilter
 }
 
-func NewSearchService(index Index, keyGen KeyGenerator) *SearchService {
+func NewSearchService(index Index, keyGen KeyGenerator, filters ...TermFilter) *SearchService {
+	var filter TermFilter = noopFilter{}
+	if len(filters) > 0 && filters[0] != nil {
+		filter = filters[0]
+	}
+
 	return &SearchService{
 		index:  index,
 		keyGen: keyGen,
+		filter: filter,
 	}
 }
 
@@ -85,6 +97,7 @@ func (s *SearchService) IndexDocument(
 		}
 
 		for _, trigram := range keys {
+			s.filter.Add(trigram)
 			insertErr := s.index.Insert(trigram, docID)
 			if insertErr != nil {
 				return fmt.Errorf("trie: insert document while indexing: %w", insertErr)
@@ -126,6 +139,10 @@ func (s *SearchService) SearchDocuments(
 		}
 
 		for _, key := range keys {
+			if !s.filter.MightContain(key) {
+				continue
+			}
+
 			docs, err := s.index.Search(key)
 			if err != nil {
 				return nil, err
@@ -157,6 +174,9 @@ func (s *SearchService) SearchDocuments(
 
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].UniqueMatches == results[j].UniqueMatches {
+			if results[i].TotalMatches == results[j].TotalMatches {
+				return results[i].ID < results[j].ID
+			}
 			return results[i].TotalMatches > results[j].TotalMatches
 		}
 		return results[i].UniqueMatches > results[j].UniqueMatches
@@ -183,3 +203,9 @@ func (s *SearchService) SearchDocuments(
 func (s *SearchService) Analyse() utils.TrieStats {
 	return s.index.Analyze()
 }
+
+type noopFilter struct{}
+
+func (noopFilter) Add(string) {}
+
+func (noopFilter) MightContain(string) bool { return true }

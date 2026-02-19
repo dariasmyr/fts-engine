@@ -3,7 +3,19 @@ storage_path: "./storage/fts-queue.db"
 dump_path: "./data/enwiki-latest-abstract1.xml.gz"
 fts:
   engine: "trie"
-  trie:
-    type: "radix"
+  indexer:
+    type: "radix" # radix | slicedradix | hamt | hamtpointered | trigram
+  filter:
+    type: "none" # none | bloom | cuckoo | ribbon
+    bloom:
+      capacity: 1000000
+      hashes: 7
+    cuckoo:
+      capacity: 1000000
+      bucket_size: 4
+      max_kicks: 500
+    ribbon:
+      bits: 1048576
+      width: 8
 mode:
   type: "prod"

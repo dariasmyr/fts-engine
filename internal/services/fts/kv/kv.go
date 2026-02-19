@@ -255,6 +255,9 @@ func (fts *KeyValueFTS) SearchDocuments(ctx context.Context, query string, maxRe
 	// Sort by unique matches and (if equal) total matches
 	sort.Slice(docMatches, func(i, j int) bool {
 		if docMatches[i].uniqueMatches == docMatches[j].uniqueMatches {
+			if docMatches[i].totalMatches == docMatches[j].totalMatches {
+				return docMatches[i].docID < docMatches[j].docID
+			}
 			return docMatches[i].totalMatches > docMatches[j].totalMatches
 		}
 		return docMatches[i].uniqueMatches > docMatches[j].uniqueMatches
