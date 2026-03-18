@@ -1,7 +1,7 @@
 package hamt
 
 import (
-	"fts-hw/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"hash/fnv"
 	"math/bits"
 	"slices"

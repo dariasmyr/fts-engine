@@ -3,8 +3,8 @@ package kv
 import (
 	"context"
 	"fmt"
-	"fts-hw/internal/adapters/storage/leveldb"
-	"fts-hw/internal/domain/models"
+	"github.com/dariasmyr/fts-engine/internal/adapters/storage/leveldb"
+	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"log/slog"
 	"os"
 	"sort"

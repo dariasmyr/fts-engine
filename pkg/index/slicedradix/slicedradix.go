@@ -1,7 +1,7 @@
 package slicedradix
 
 import (
-	"fts-hw/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"sync"
 )
 

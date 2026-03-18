@@ -11,4 +11,4 @@ fts:
     stem_en: true
     min_length: 3
 mode:
-  type: "test"
+  type: "prod"

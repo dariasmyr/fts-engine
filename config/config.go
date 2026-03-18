@@ -20,16 +20,11 @@ type FTSConfig struct {
 	Engine   string         `yaml:"engine" env-default:"trie"`
 	Index    string         `yaml:"index"`
 	KeyGen   string         `yaml:"keygen"`
-	Trie     TrieConfig     `yaml:"trie"`
 	Pipeline PipelineConfig `yaml:"pipeline"`
 }
 
 type ModeConfig struct {
 	Type string `yaml:"type" env-default:"prod"`
-}
-
-type TrieConfig struct {
-	Type string `yaml:"type"`
 }
 
 type PipelineConfig struct {
@@ -92,14 +87,6 @@ func fetchConfigPath() string {
 }
 
 func validateConfig(cfg *Config) {
-	if cfg.FTS.Index != "" && cfg.FTS.Trie.Type != "" && cfg.FTS.Index != cfg.FTS.Trie.Type {
-		panic("fts.index and fts.trie.type conflict: " + cfg.FTS.Index + " != " + cfg.FTS.Trie.Type)
-	}
-
-	if cfg.FTS.Index == "" && cfg.FTS.Trie.Type != "" {
-		cfg.FTS.Index = cfg.FTS.Trie.Type
-	}
-
 	if cfg.FTS.Index == "" {
 		cfg.FTS.Index = "radix"
 	}
@@ -131,7 +118,7 @@ func validateConfig(cfg *Config) {
 	}
 
 	switch cfg.Mode.Type {
-	case "prod", "test", "experiment":
+	case "prod", "experiment":
 	default:
 		panic("unknown mode type: " + cfg.Mode.Type)
 	}

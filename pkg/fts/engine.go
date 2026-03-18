@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"fts-hw/pkg/textproc"
+	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
 type Service struct {
