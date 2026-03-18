@@ -3,7 +3,12 @@ storage_path: "./storage/fts-queue.db"
 dump_path: "./data/enwiki-latest-abstract1.xml.gz"
 fts:
   engine: "trie"
-  trie:
-    type: "radix"
+  index: "radix"
+  keygen: "word"
+  pipeline:
+    lowercase: true
+    stopwords_en: true
+    stem_en: true
+    min_length: 3
 mode:
   type: "prod"

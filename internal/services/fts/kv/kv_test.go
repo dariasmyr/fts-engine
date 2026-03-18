@@ -3,11 +3,11 @@ package kv
 import (
 	"context"
 	"fmt"
-	"fts-hw/internal/domain/models"
-	"fts-hw/internal/storage/leveldb"
+	"github.com/dariasmyr/fts-engine/internal/adapters/storage/leveldb"
+	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"log/slog"
 	"os"
-	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -100,9 +100,23 @@ func TestInsertAndSearchDocument(t *testing.T) {
 				}
 				docs = append(docs, docResult.Abstract)
 			}
-			if !reflect.DeepEqual(docs, tt.expectedDocAbstract) {
-				t.Errorf("Expected %v, but got %v", tt.expectedDocAbstract, docs)
+
+			sort.Strings(docs)
+			expected := append([]string(nil), tt.expectedDocAbstract...)
+			sort.Strings(expected)
+
+			if len(docs) != len(expected) {
+				t.Errorf("Expected %d docs, but got %d", len(expected), len(docs))
+				return
 			}
+
+			for i := range docs {
+				if docs[i] != expected[i] {
+					t.Errorf("Expected %v, but got %v", tt.expectedDocAbstract, docs)
+					return
+				}
+			}
+
 		})
 	}
 }

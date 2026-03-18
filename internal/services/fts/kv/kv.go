@@ -3,8 +3,8 @@ package kv
 import (
 	"context"
 	"fmt"
-	"fts-hw/internal/domain/models"
-	"fts-hw/internal/utils"
+	"github.com/dariasmyr/fts-engine/internal/domain/models"
+	"github.com/dariasmyr/fts-engine/internal/utils"
 	"iter"
 	"log/slog"
 	"sort"
