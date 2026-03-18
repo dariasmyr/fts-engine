@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 	"time"
-	"unicode"
+
+	"fts-hw/pkg/textproc"
 )
 
 type Service struct {
@@ -21,7 +21,7 @@ func New(index Index, keyGen KeyGenerator, opts ...Option) *Service {
 	s := &Service{
 		index:             index,
 		keyGen:            keyGen,
-		pipeline:          defaultPipeline{},
+		pipeline:          textproc.DefaultEnglishPipeline(),
 		durationFormatter: formatDuration,
 	}
 
@@ -156,34 +156,4 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dus", d.Microseconds())
 	}
 	return fmt.Sprintf("%dms", d.Milliseconds())
-}
-
-type defaultPipeline struct{}
-
-func (defaultPipeline) Process(text string) []string {
-	if text == "" {
-		return nil
-	}
-
-	tokens := make([]string, 0, 16)
-	var b strings.Builder
-
-	flush := func() {
-		if b.Len() == 0 {
-			return
-		}
-		tokens = append(tokens, b.String())
-		b.Reset()
-	}
-
-	for _, r := range text {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(unicode.ToLower(r))
-			continue
-		}
-		flush()
-	}
-	flush()
-
-	return tokens
 }
