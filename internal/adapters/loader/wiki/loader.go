@@ -1,4 +1,4 @@
-package loader
+package wiki
 
 import (
 	"compress/gzip"
@@ -25,22 +25,17 @@ type Loader struct {
 	dumpPath string
 }
 
-func NewLoader(log *slog.Logger, dumpPath string) *Loader {
-	return &Loader{
-		log:      log,
-		dumpPath: dumpPath,
-	}
+func New(log *slog.Logger, dumpPath string) *Loader {
+	return &Loader{log: log, dumpPath: dumpPath}
 }
 
-// LoadDocuments loads a Wikipedia abstract dump and returns a slice of documents.
-// Dump example: https://dumps.wikimedia.your.org/enwiki/latest/enwiki-latest-abstract1.xml.gz
 func (l *Loader) LoadDocuments(ctx context.Context) (documents []models.Document, err error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-
 	}
+
 	f, err := os.Open(l.dumpPath)
 	if err != nil {
 		l.log.Error("Failed to open file", "error", err)
@@ -52,26 +47,19 @@ func (l *Loader) LoadDocuments(ctx context.Context) (documents []models.Document
 			l.log.Error("Failed to close file", "error", err)
 		}
 	}()
+
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
-		err = gz.Close()
-		if err != nil {
-		}
+		_ = gz.Close()
 	}()
 
 	dec := xml.NewDecoder(gz)
 	dump := struct {
 		Documents []models.Document `xml:"doc"`
 	}{}
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
 
 	if decodeErr := dec.Decode(&dump); decodeErr != nil {
 		return nil, decodeErr
@@ -99,7 +87,7 @@ func (l *Loader) ChunkDocuments(documents []models.Document, chunkSize int) [][]
 		if end > len(documents) {
 			end = len(documents)
 		}
-		chunks[i] = documents[i:end]
+		chunks[i] = documents[start:end]
 	}
 
 	return chunks
@@ -111,27 +99,25 @@ func (l *Loader) generateID(document models.Document) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-func (l *Loader) parseUrl(docURL string) (host string, title string, err error) {
+func (l *Loader) parseURL(docURL string) (host string, title string, err error) {
 	parsedURL, err := url.Parse(docURL)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to parse URL: %v", err)
 	}
 
 	var hostBuilder strings.Builder
-
 	hostBuilder.WriteString(parsedURL.Scheme)
 	hostBuilder.WriteString("://")
 	hostBuilder.WriteString(parsedURL.Host)
 
 	host = hostBuilder.String()
-
 	title = strings.TrimPrefix(parsedURL.Path, "/wiki/")
 
 	return host, title, nil
 }
 
 func (l *Loader) FetchAndProcessDocument(ctx context.Context, doc models.Document) (models.Document, error) {
-	host, title, err := l.parseUrl(doc.URL)
+	host, title, err := l.parseURL(doc.URL)
 	if err != nil {
 		l.log.Error("Error parsing url", "error", sl.Err(err))
 		return doc, err
@@ -142,6 +128,7 @@ func (l *Loader) FetchAndProcessDocument(ctx context.Context, doc models.Documen
 	if reqErr != nil {
 		return doc, reqErr
 	}
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		l.log.Error("Error getting url", "error", sl.Err(err))

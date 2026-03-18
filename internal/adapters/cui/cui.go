@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"fts-hw/internal/adapters/storage/leveldb"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
-	"fts-hw/internal/storage/leveldb"
 	"log/slog"
 	"os"
 	"regexp"
@@ -141,7 +141,6 @@ func (c *CUI) layout(g *gocui.Gui) error {
 		return fmt.Errorf("terminal window is too small")
 	}
 
-	// Left Sidebar for Time Measurement
 	if v, err := g.SetView("time", 0, 0, maxX/4, maxY-2); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
@@ -151,7 +150,6 @@ func (c *CUI) layout(g *gocui.Gui) error {
 		v.Frame = true
 	}
 
-	// Search Input - Right side, top
 	if v, err := g.SetView("input", maxX/4+1, 2, maxX-2, 4); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
@@ -162,7 +160,6 @@ func (c *CUI) layout(g *gocui.Gui) error {
 		_, _ = g.SetCurrentView("input")
 	}
 
-	// Max Results Input - Right side, below search input
 	if v, err := g.SetView("maxResults", maxX/4+1, 5, maxX/2, 7); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err
@@ -174,7 +171,6 @@ func (c *CUI) layout(g *gocui.Gui) error {
 		fmt.Fprintf(v, "%d", c.maxResults)
 	}
 
-	// Output View - Right side, below max results
 	if v, err := g.SetView("output", maxX/4+1, 8, maxX-2, maxY-2); err != nil {
 		if !errors.Is(err, gocui.ErrUnknownView) {
 			return err

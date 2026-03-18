@@ -17,11 +17,11 @@ import (
 	"time"
 
 	"fts-hw/config"
+	"fts-hw/internal/adapters/cui"
+	"fts-hw/internal/adapters/loader/wiki"
+	"fts-hw/internal/adapters/storage/leveldb"
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
-	"fts-hw/internal/services/cui"
-	"fts-hw/internal/services/fts/loader"
-	"fts-hw/internal/storage/leveldb"
 	pkgfts "fts-hw/pkg/fts"
 	"fts-hw/pkg/index/hamt"
 	"fts-hw/pkg/index/hamtpointered"
@@ -116,7 +116,7 @@ func main() {
 
 	log.Info("FTS engine initialised")
 
-	dumpLoader := loader.NewLoader(log, cfg.DumpPath)
+	dumpLoader := wiki.New(log, cfg.DumpPath)
 	log.Info("Loader initialised")
 
 	startTime := time.Now()
