@@ -197,8 +197,8 @@ Notes:
   - Switch `pkg/fts.Engine` to pipeline dependency.
   - Add golden tests for tokenize/filter parity.
 
-- PR-3: Public slicedradix
-  - Move `slicedradix` to `pkg/index/slicedradix`.
+- PR-3: Public indexers
+  - Example: move `slicedradix` to `pkg/index/slicedradix`.
   - Keep `Serialize/Load`.
   - Add contract + concurrency tests.
 
@@ -208,19 +208,15 @@ Notes:
   - Add configurable pipeline filters for test mode.
   - Prepare config migration guide.
 
-- PR-5: Remaining indexers
-  - Move `radix`, `trigram`, `hamt`, `hamtpointered` into `pkg/index/*`.
-  - Unify tests through shared contract suite.
-
-- PR-6: Remove old internal packages
+- PR-5: Remove old internal packages
   - Remove `internal/services/fts/*` once `pkg/*` equivalents exist.
   - Remove old wiring and unused types.
 
-- PR-7: Internal boundaries
+- PR-6: Internal boundaries
   - Extract `internal/adapters/storage/leveldb`, `internal/adapters/loader/wiki`, `internal/adapters/cui`.
   - Ensure core imports no `internal` packages.
 
-- PR-8: Docs + examples + release
+- PR-7: Docs + examples + release
   - Update README for library usage with integration example.
   - Publish changelog + migration guide.
 
