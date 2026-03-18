@@ -36,7 +36,7 @@ type containsOnlyFilter struct {
 	allowed map[string]bool
 }
 
-func (f containsOnlyFilter) Add(item []byte) {}
+func (f containsOnlyFilter) Add(item []byte) bool { return true }
 
 func (f containsOnlyFilter) Contains(item []byte) bool {
 	return f.allowed[string(item)]

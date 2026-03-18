@@ -80,13 +80,15 @@ func (bf *BloomFilter) isBitSet(hashValue uint64) bool {
 }
 
 // Add adds element to filter
-func (bf *BloomFilter) Add(item []byte) {
+func (bf *BloomFilter) Add(item []byte) bool {
 	for i := uint64(0); i < bf.k; i++ {
 		h := bf.hashFuncs[i]
 		hashValue := h(item)
 
 		bf.setBit(hashValue)
 	}
+
+	return true
 }
 
 // Contains checks is element "probably exists", or "certainly does not exist" in the filter

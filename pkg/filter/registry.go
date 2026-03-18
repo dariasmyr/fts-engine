@@ -7,7 +7,7 @@ import (
 )
 
 type Filter interface {
-	Add(item []byte)
+	Add(item []byte) bool
 	Contains(item []byte) bool
 }
 

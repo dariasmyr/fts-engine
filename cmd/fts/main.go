@@ -317,6 +317,14 @@ func registerBuiltInFilters(cfg *config.Config) {
 			cfg.FTS.Bloom.K,
 		), nil
 	})
+
+	register("cuckoo", func() (pkgfilter.Filter, error) {
+		return pkgfilter.NewCuckooFilter(
+			cfg.FTS.Cuckoo.BucketCount,
+			cfg.FTS.Cuckoo.BucketSize,
+			cfg.FTS.Cuckoo.MaxKicks,
+		), nil
+	})
 }
 
 func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {
