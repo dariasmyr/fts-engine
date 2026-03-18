@@ -30,7 +30,9 @@ type ModeConfig struct {
 type PipelineConfig struct {
 	Lowercase   bool `yaml:"lowercase" env-default:"true"`
 	StopwordsEN bool `yaml:"stopwords_en" env-default:"true"`
+	StopwordsRU bool `yaml:"stopwords_ru" env-default:"false"`
 	StemEN      bool `yaml:"stem_en" env-default:"true"`
+	StemRU      bool `yaml:"stem_ru" env-default:"false"`
 	MinLength   int  `yaml:"min_length" env-default:"3"`
 }
 

@@ -8,7 +8,9 @@ fts:
   pipeline:
     lowercase: true
     stopwords_en: true
+    stopwords_ru: false
     stem_en: true
+    stem_ru: false
     min_length: 3
 mode:
   type: "prod"

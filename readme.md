@@ -76,6 +76,12 @@ idx := trigram.New()
 engine := fts.New(idx, keygen.Trigram, fts.WithPipeline(textproc.DefaultEnglishPipeline()))
 ```
 
+Available defaults:
+
+- `textproc.DefaultEnglishPipeline()`
+- `textproc.DefaultRussianPipeline()`
+- `textproc.DefaultMultilingualPipeline()`
+
 ### 3) Optional: custom filter pipeline
 
 ```go
@@ -121,7 +127,9 @@ fts:
   pipeline:
     lowercase: true
     stopwords_en: true
+    stopwords_ru: false
     stem_en: true
+    stem_ru: false
     min_length: 3
 mode:
   type: "prod"        # prod|experiment

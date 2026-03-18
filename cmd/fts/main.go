@@ -313,8 +313,16 @@ func buildPipeline(cfg *config.Config) textproc.Pipeline {
 		filters = append(filters, textproc.EnglishStopwordFilter{})
 	}
 
+	if cfg.FTS.Pipeline.StopwordsRU {
+		filters = append(filters, textproc.RussianStopwordFilter{})
+	}
+
 	if cfg.FTS.Pipeline.StemEN {
 		filters = append(filters, textproc.EnglishStemFilter{})
+	}
+
+	if cfg.FTS.Pipeline.StemRU {
+		filters = append(filters, textproc.RussianStemFilter{})
 	}
 
 	return textproc.NewPipeline(textproc.AlnumTokenizer{}, filters...)
