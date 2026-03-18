@@ -3,8 +3,6 @@ package trigram
 import (
 	"errors"
 	"testing"
-
-	trigramtrie "fts-hw/internal/services/fts/trigram"
 )
 
 func TestIndexInsertAndSearch(t *testing.T) {
@@ -60,13 +58,13 @@ func TestIndexValidateTrigramLength(t *testing.T) {
 	idx := New()
 
 	err := idx.Insert("hi", "doc-1")
-	if !errors.Is(err, trigramtrie.ErrInvalidTrigramSize) {
-		t.Fatalf("Insert() error = %v, want %v", err, trigramtrie.ErrInvalidTrigramSize)
+	if !errors.Is(err, ErrInvalidTrigramSize) {
+		t.Fatalf("Insert() error = %v, want %v", err, ErrInvalidTrigramSize)
 	}
 
 	_, err = idx.Search("hi")
-	if !errors.Is(err, trigramtrie.ErrInvalidTrigramSize) {
-		t.Fatalf("Search() error = %v, want %v", err, trigramtrie.ErrInvalidTrigramSize)
+	if !errors.Is(err, ErrInvalidTrigramSize) {
+		t.Fatalf("Search() error = %v, want %v", err, ErrInvalidTrigramSize)
 	}
 }
 
