@@ -45,6 +45,11 @@ type Pipeline interface {
 	Process(text string) []string
 }
 
+type Filter interface {
+	Add(item []byte)
+	Contains(item []byte) bool
+}
+
 type Engine interface {
 	IndexDocument(ctx context.Context, docID DocID, content string) error
 	SearchDocuments(ctx context.Context, query string, maxResults int) (*SearchResult, error)

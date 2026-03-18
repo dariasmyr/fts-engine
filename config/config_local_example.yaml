@@ -5,6 +5,11 @@ fts:
   engine: "trie"
   index: "radix"
   keygen: "word"
+  filter: "none"
+  bloom:
+    expected_items: 1000000
+    bits_per_item: 10
+    k: 7
   pipeline:
     lowercase: true
     stopwords_en: true

@@ -14,6 +14,7 @@ type Service struct {
 	index             Index
 	keyGen            KeyGenerator
 	pipeline          Pipeline
+	filter            Filter
 	durationFormatter func(time.Duration) string
 }
 
@@ -68,6 +69,9 @@ func (s *Service) IndexDocument(ctx context.Context, docID DocID, content string
 		}
 
 		for _, key := range keys {
+			if s.filter != nil {
+				s.filter.Add([]byte(key))
+			}
 			if err := s.index.Insert(key, docID); err != nil {
 				return fmt.Errorf("fts: index document: insert: %w", err)
 			}
@@ -104,6 +108,10 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 		}
 
 		for _, key := range keys {
+			if s.filter != nil && !s.filter.Contains([]byte(key)) {
+				continue
+			}
+
 			docs, err := s.index.Search(key)
 			if err != nil {
 				return nil, fmt.Errorf("fts: search: index search: %w", err)

@@ -15,6 +15,7 @@ Reusable full-text search engine in Go with configurable indexing strategies, to
   - `hamtpointered`
 - Public text processing pipeline in `pkg/textproc`.
 - Public key generators in `pkg/keygen`.
+- Public probabilistic filters in `pkg/filter`.
 - CLI entrypoint in `cmd/fts` with:
   - `prod` mode (run with configurable filters and interactive CUI)
   - `experiment` mode (collect indexing metrics)
@@ -118,6 +119,11 @@ fts:
   engine: "trie"
   index: "radix"      # radix|slicedradix|trigram|hamt|hamtpointered
   keygen: "word"      # word|trigram
+  filter: "none"      # none|bloom
+  bloom:
+    expected_items: 1000000
+    bits_per_item: 10
+    k: 7
   pipeline:
     lowercase: true
     stopwords_en: true

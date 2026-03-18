@@ -20,7 +20,15 @@ type FTSConfig struct {
 	Engine   string         `yaml:"engine" env-default:"trie"`
 	Index    string         `yaml:"index"`
 	KeyGen   string         `yaml:"keygen"`
+	Filter   string         `yaml:"filter" env-default:"none"`
+	Bloom    BloomConfig    `yaml:"bloom"`
 	Pipeline PipelineConfig `yaml:"pipeline"`
+}
+
+type BloomConfig struct {
+	ExpectedItems uint64 `yaml:"expected_items" env-default:"1000000"`
+	BitsPerItem   uint64 `yaml:"bits_per_item" env-default:"10"`
+	K             uint64 `yaml:"k" env-default:"7"`
 }
 
 type ModeConfig struct {
@@ -99,6 +107,10 @@ func validateConfig(cfg *Config) {
 		}
 	}
 
+	if cfg.FTS.Filter == "" {
+		cfg.FTS.Filter = "none"
+	}
+
 	switch cfg.FTS.Engine {
 	case "trie":
 		switch cfg.FTS.Index {
@@ -115,6 +127,12 @@ func validateConfig(cfg *Config) {
 	case "word", "trigram":
 	default:
 		panic("unknown keygen type: " + cfg.FTS.KeyGen)
+	}
+
+	switch cfg.FTS.Filter {
+	case "none", "bloom":
+	default:
+		panic("unknown filter type: " + cfg.FTS.Filter)
 	}
 
 	switch cfg.Mode.Type {
