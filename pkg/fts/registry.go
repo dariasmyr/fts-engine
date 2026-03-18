@@ -54,3 +54,10 @@ func RegisteredIndexes() []string {
 	sort.Strings(names)
 	return names
 }
+
+func IsIndexRegistered(name string) bool {
+	registryMu.RLock()
+	_, ok := registry[name]
+	registryMu.RUnlock()
+	return ok
+}

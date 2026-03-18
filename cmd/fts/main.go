@@ -3,11 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"fts-hw/internal/services/fts"
-	hamt "fts-hw/internal/services/fts/hamt"
-	hamtpointered "fts-hw/internal/services/fts/hamtpointered"
 	"fts-hw/internal/services/fts/kv"
-	trigramtrie "fts-hw/internal/services/fts/trigram"
 	"fts-hw/internal/utils"
 	"io"
 	"log/slog"
@@ -24,11 +20,16 @@ import (
 	"fts-hw/internal/domain/models"
 	"fts-hw/internal/lib/logger/sl"
 	"fts-hw/internal/services/cui"
-	ftsService "fts-hw/internal/services/fts"
 	"fts-hw/internal/services/fts/loader"
-	radixtrie "fts-hw/internal/services/fts/radix"
-	radixtriesliced "fts-hw/internal/services/fts/slicedradix"
 	"fts-hw/internal/storage/leveldb"
+	pkgfts "fts-hw/pkg/fts"
+	"fts-hw/pkg/index/hamt"
+	"fts-hw/pkg/index/hamtpointered"
+	"fts-hw/pkg/index/radix"
+	"fts-hw/pkg/index/slicedradix"
+	"fts-hw/pkg/index/trigram"
+	"fts-hw/pkg/keygen"
+	"fts-hw/pkg/textproc"
 )
 
 const (
@@ -61,7 +62,8 @@ func main() {
 	log := setupLogger(cfg.Env)
 	log.Info("fts", "env", cfg.Env)
 	log.Info("fts", "engine", cfg.FTS.Engine)
-	log.Info("fts", "engine-type", cfg.FTS.Trie.Type)
+	log.Info("fts", "index", cfg.FTS.Index)
+	log.Info("fts", "keygen", cfg.FTS.KeyGen)
 	log.Info("fts", "mode", cfg.Mode.Type)
 
 	storage, err := leveldb.NewStorage(log, cfg.StoragePath)
@@ -93,43 +95,23 @@ func main() {
 	case "kv":
 		ftsEngine = kv.New(log, storage, storage)
 	case "trie":
-		switch cfg.FTS.Trie.Type {
+		registerBuiltInIndexes()
 
-		case "radix":
-			trie := radixtrie.New()
-			ftsEngine = ftsService.NewSearchService(
-				trie,
-				fts.WordKeys,
-			)
-
-		case "slicedradix":
-			trie := radixtriesliced.New()
-			ftsEngine = ftsService.NewSearchService(
-				trie,
-				fts.WordKeys,
-			)
-
-		case "hamt":
-			trie := hamt.New()
-			ftsEngine = ftsService.NewSearchService(
-				trie,
-				fts.WordKeys,
-			)
-
-		case "hamtpointered":
-			trie := hamtpointered.New()
-			ftsEngine = ftsService.NewSearchService(
-				trie,
-				fts.WordKeys,
-			)
-
-		case "trigram":
-			trie := trigramtrie.New()
-			ftsEngine = ftsService.NewSearchService(
-				trie,
-				trigramtrie.TrigramKeys,
-			)
+		index, err := pkgfts.NewIndex(cfg.FTS.Index)
+		if err != nil {
+			log.Error("Failed to create index", "error", sl.Err(err))
+			return
 		}
+
+		keyGen, err := selectKeyGenerator(cfg.FTS.KeyGen)
+		if err != nil {
+			log.Error("Failed to select keygen", "error", sl.Err(err))
+			return
+		}
+
+		pipeline := buildPipeline(cfg)
+		svc := pkgfts.New(index, keyGen, pkgfts.WithPipeline(pipeline))
+		ftsEngine = &serviceAdapter{service: svc}
 	}
 
 	log.Info("FTS engine initialised")
@@ -220,17 +202,23 @@ func analyzeTrie(
 	memStats runtime.MemStats,
 	log *slog.Logger,
 ) {
-	svc, ok := engine.(*ftsService.SearchService)
+	statsProvider, ok := engine.(interface {
+		AnalyzeStats() (pkgfts.Stats, bool)
+	})
 	if !ok {
 		log.Warn("analyzeTrie: engine does not support analysis")
 		return
 	}
 
-	stats := svc.Analyse()
+	stats, ok := statsProvider.AnalyzeStats()
+	if !ok {
+		log.Warn("analyzeTrie: engine does not support analysis")
+		return
+	}
 
 	log.Info("FTS analysis result",
 		"engine", cfg.FTS.Engine,
-		"trie-type", cfg.FTS.Trie.Type,
+		"index", cfg.FTS.Index,
 		"nodes", stats.Nodes,
 		"leafNodes", stats.Leaves,
 		"maxDepth", stats.MaxDepth,
@@ -246,6 +234,90 @@ func analyzeTrie(
 		log.Info(fmt.Sprintf("Level %d: avg children = %.2f", level, avg))
 	}
 
+}
+
+type serviceAdapter struct {
+	service *pkgfts.Service
+}
+
+func (s *serviceAdapter) IndexDocument(ctx context.Context, docID string, content string) error {
+	return s.service.IndexDocument(ctx, pkgfts.DocID(docID), content)
+}
+
+func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
+	result, err := s.service.SearchDocuments(ctx, query, maxResults)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]models.ResultData, 0, len(result.Results))
+	for _, item := range result.Results {
+		out = append(out, models.ResultData{
+			ID:            string(item.ID),
+			UniqueMatches: item.UniqueMatches,
+			TotalMatches:  item.TotalMatches,
+		})
+	}
+
+	return &models.SearchResult{
+		ResultData:        out,
+		TotalResultsCount: result.TotalResultsCount,
+		Timings:           result.Timings,
+	}, nil
+}
+
+func (s *serviceAdapter) AnalyzeStats() (pkgfts.Stats, bool) {
+	return s.service.Analyze()
+}
+
+func registerBuiltInIndexes() {
+	register := func(name string, factory pkgfts.IndexFactory) {
+		if pkgfts.IsIndexRegistered(name) {
+			return
+		}
+		if err := pkgfts.RegisterIndex(name, factory); err != nil {
+			panic(err)
+		}
+	}
+
+	register("radix", func() (pkgfts.Index, error) { return radix.New(), nil })
+	register("slicedradix", func() (pkgfts.Index, error) { return slicedradix.New(), nil })
+	register("hamt", func() (pkgfts.Index, error) { return hamt.New(), nil })
+	register("hamtpointered", func() (pkgfts.Index, error) { return hamtpointered.New(), nil })
+	register("trigram", func() (pkgfts.Index, error) { return trigram.New(), nil })
+}
+
+func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {
+	switch kind {
+	case "word":
+		return keygen.Word, nil
+	case "trigram":
+		return keygen.Trigram, nil
+	default:
+		return nil, fmt.Errorf("unknown keygen %q", kind)
+	}
+}
+
+func buildPipeline(cfg *config.Config) textproc.Pipeline {
+	filters := make([]textproc.Filter, 0, 4)
+
+	if cfg.FTS.Pipeline.Lowercase {
+		filters = append(filters, textproc.LowercaseFilter{})
+	}
+
+	if cfg.FTS.Pipeline.MinLength > 0 {
+		filters = append(filters, textproc.MinLengthOrNumericFilter{MinLength: cfg.FTS.Pipeline.MinLength})
+	}
+
+	if cfg.FTS.Pipeline.StopwordsEN {
+		filters = append(filters, textproc.EnglishStopwordFilter{})
+	}
+
+	if cfg.FTS.Pipeline.StemEN {
+		filters = append(filters, textproc.EnglishStemFilter{})
+	}
+
+	return textproc.NewPipeline(textproc.AlnumTokenizer{}, filters...)
 }
 
 func setupLogger(env string) *slog.Logger {

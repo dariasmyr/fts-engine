@@ -206,7 +206,6 @@ Notes:
   - Add `pkg/fts/registry`.
   - Switch `cmd/fts/main.go` to factory-based wiring.
   - Add configurable pipeline filters for test mode.
-  - Prepare config migration guide.
 
 - PR-5: Remove old internal packages
   - Remove `internal/services/fts/*` once `pkg/*` equivalents exist.

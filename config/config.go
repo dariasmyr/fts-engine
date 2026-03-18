@@ -17,8 +17,11 @@ type Config struct {
 }
 
 type FTSConfig struct {
-	Engine string     `yaml:"engine" env-default:"trie"`
-	Trie   TrieConfig `yaml:"trie"`
+	Engine   string         `yaml:"engine" env-default:"trie"`
+	Index    string         `yaml:"index"`
+	KeyGen   string         `yaml:"keygen"`
+	Trie     TrieConfig     `yaml:"trie"`
+	Pipeline PipelineConfig `yaml:"pipeline"`
 }
 
 type ModeConfig struct {
@@ -26,7 +29,14 @@ type ModeConfig struct {
 }
 
 type TrieConfig struct {
-	Type string `yaml:"type" env-default:"radix"`
+	Type string `yaml:"type"`
+}
+
+type PipelineConfig struct {
+	Lowercase   bool `yaml:"lowercase" env-default:"true"`
+	StopwordsEN bool `yaml:"stopwords_en" env-default:"true"`
+	StemEN      bool `yaml:"stem_en" env-default:"true"`
+	MinLength   int  `yaml:"min_length" env-default:"3"`
 }
 
 func MustLoad() *Config {
@@ -82,15 +92,47 @@ func fetchConfigPath() string {
 }
 
 func validateConfig(cfg *Config) {
+	if cfg.FTS.Index != "" && cfg.FTS.Trie.Type != "" && cfg.FTS.Index != cfg.FTS.Trie.Type {
+		panic("fts.index and fts.trie.type conflict: " + cfg.FTS.Index + " != " + cfg.FTS.Trie.Type)
+	}
+
+	if cfg.FTS.Index == "" && cfg.FTS.Trie.Type != "" {
+		cfg.FTS.Index = cfg.FTS.Trie.Type
+	}
+
+	if cfg.FTS.Index == "" {
+		cfg.FTS.Index = "radix"
+	}
+
+	if cfg.FTS.KeyGen == "" {
+		if cfg.FTS.Index == "trigram" {
+			cfg.FTS.KeyGen = "trigram"
+		} else {
+			cfg.FTS.KeyGen = "word"
+		}
+	}
+
 	switch cfg.FTS.Engine {
 	case "trie":
-		switch cfg.FTS.Trie.Type {
+		switch cfg.FTS.Index {
 		case "radix", "slicedradix", "hamt", "hamtpointered", "trigram":
 		default:
-			panic("unknown trie type: " + cfg.FTS.Trie.Type)
+			panic("unknown index type: " + cfg.FTS.Index)
 		}
 	case "kv":
 	default:
 		panic("unknown fts engine: " + cfg.FTS.Engine)
+	}
+
+	switch cfg.FTS.KeyGen {
+	case "word", "trigram":
+	default:
+		panic("unknown keygen type: " + cfg.FTS.KeyGen)
+	}
+
+	switch cfg.Mode.Type {
+	case "prod", "test", "experiment":
+	default:
+		panic("unknown mode type: " + cfg.Mode.Type)
 	}
 }

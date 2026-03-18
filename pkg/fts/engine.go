@@ -151,6 +151,14 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 	}, nil
 }
 
+func (s *Service) Analyze() (Stats, bool) {
+	analyzer, ok := s.index.(Analyzer)
+	if !ok {
+		return Stats{}, false
+	}
+	return analyzer.Analyze(), true
+}
+
 func formatDuration(d time.Duration) string {
 	if d < time.Millisecond {
 		return fmt.Sprintf("%dus", d.Microseconds())
