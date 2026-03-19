@@ -342,10 +342,37 @@ func tryLoadSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGene
 	}
 	defer f.Close()
 
-	svc, err := pkgfts.NewFromSnapshot(f, keyGen, pkgfts.WithPipeline(pipeline))
+	loaded, err := pkgfts.LoadSegmentSnapshot(f)
 	if err != nil {
 		return nil, false, fmt.Errorf("load snapshot: %w", err)
 	}
+
+	if loaded.IndexName != cfg.FTS.Index {
+		log.Warn("Snapshot index type differs from config",
+			"snapshot_index", loaded.IndexName,
+			"config_index", cfg.FTS.Index,
+			"path", path,
+		)
+	}
+
+	configFilter := cfg.FTS.Filter
+	if configFilter == "none" {
+		configFilter = ""
+	}
+	if loaded.FilterName != configFilter {
+		log.Warn("Snapshot filter type differs from config",
+			"snapshot_filter", loaded.FilterName,
+			"config_filter", cfg.FTS.Filter,
+			"path", path,
+		)
+	}
+
+	builtOpts := []pkgfts.Option{pkgfts.WithPipeline(pipeline)}
+	if loaded.Filter != nil {
+		builtOpts = append(builtOpts, pkgfts.WithFilter(loaded.Filter))
+	}
+
+	svc := pkgfts.New(loaded.Index, keyGen, builtOpts...)
 
 	log.Info("Loaded FTS snapshot", "path", path)
 	return svc, true, nil

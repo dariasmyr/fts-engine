@@ -38,12 +38,12 @@ import (
 func main() {
 	idx := radix.New()
 	pipe := textproc.DefaultEnglishPipeline()
-engine := fts.New(idx, keygen.Word, fts.WithPipeline(pipe))
+	engine := fts.New(idx, keygen.Word, fts.WithPipeline(pipe))
 
 	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
 	res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
 
-fmt.Println(res.TotalResultsCount)
+	fmt.Println(res.TotalResultsCount)
 }
 ```
 
@@ -66,6 +66,37 @@ res, _ := restored.SearchDocuments(context.Background(), "hello", 10)
 fmt.Println(res.TotalResultsCount)
 ```
 
+### File snapshots: default and configurable modes
+
+`SaveSnapshotFile` uses default file persistence mode: atomic publish (`tmp -> rename`), batched buffered writes, and file sync enabled.
+
+Default mode example (save + load + search):
+
+```go
+svc := fts.New(radix.New(), keygen.Word)
+_ = svc.IndexDocument(context.Background(), "doc-1", "hello world")
+
+_ = svc.SaveSnapshotFile("./data/segments/default.fidx", "radix", "")
+
+loaded, _ := fts.NewFromSnapshotFile("./data/segments/default.fidx", keygen.Word)
+res, _ := loaded.SearchDocuments(context.Background(), "hello", 10)
+fmt.Println(res.TotalResultsCount)
+```
+
+Configurable mode example (custom buffer policy):
+
+```go
+opts := fts.DefaultSnapshotFileOptions()
+opts.BufferSize = 2 << 20      // 2 MiB
+opts.FlushThreshold = 512 << 10 // 512 KiB
+opts.SyncFile = true
+
+svc := fts.New(radix.New(), keygen.Word)
+_ = svc.IndexDocument(context.Background(), "doc-1", "hello world")
+
+_ = svc.SaveSnapshotFileWithOptions("./data/segments/default.fidx", "radix", "", opts)
+```
+
 ## Usage in a third-party project
 
 This example shows how to consume the engine as a library from another Go service.
@@ -84,7 +115,7 @@ If you work from a local checkout, use `replace` in `go.mod`:
 replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
 ```
 
-### 3) Switch strategy without changing app flow
+### 2) Switch strategy without changing app flow
 
 - Word index: `radix.New()` + `keygen.Word`
 - Trigram index: `trigram.New()` + `keygen.Trigram`
@@ -172,10 +203,25 @@ mode:
   type: "prod"        # prod|experiment
 ```
 
+Snapshot fields (`fts.snapshot`):
+
+- `enabled`: enable snapshot persistence flow in CLI prod mode.
+- `path`: final snapshot artifact path.
+- `load_on_start`: if true and snapshot exists, load it and skip rebuild.
+- `save_on_build`: if true, save snapshot after indexing finishes.
+- `buffer_size`: writer buffer size used during save.
+- `flush_threshold`: buffered flush threshold used by the built-in save helper.
+- `sync_file`: fsync temp file before atomic rename.
+
 ## CLI modes
 
-- `prod`: run engine with configurable pipeline and interactive CUI search.
-- `experiment`: run indexing and print memory/index stats.
+- `prod`:
+  - runs engine with configurable pipeline and interactive CUI search,
+  - if `fts.snapshot.enabled=true` and `load_on_start=true` and snapshot exists: loads snapshot and skips re-index,
+  - otherwise indexes documents and (if `save_on_build=true`) persists snapshot atomically.
+- `experiment`:
+  - always indexes current input and prints memory/index stats,
+  - does not run CUI snapshot restore flow.
 
 ## Tests
 
