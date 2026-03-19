@@ -12,19 +12,17 @@ import (
 )
 
 type Service struct {
-	index             Index
-	keyGen            KeyGenerator
-	pipeline          Pipeline
-	filter            Filter
-	durationFormatter func(time.Duration) string
+	index    Index
+	keyGen   KeyGenerator
+	pipeline Pipeline
+	filter   Filter
 }
 
 func New(index Index, keyGen KeyGenerator, opts ...Option) *Service {
 	s := &Service{
-		index:             index,
-		keyGen:            keyGen,
-		pipeline:          textproc.DefaultEnglishPipeline(),
-		durationFormatter: formatDuration,
+		index:    index,
+		keyGen:   keyGen,
+		pipeline: textproc.DefaultEnglishPipeline(),
 	}
 
 	for _, opt := range opts {
@@ -92,7 +90,7 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 
 	preStart := time.Now()
 	tokens := s.pipeline.Process(query)
-	timings["preprocess"] = s.durationFormatter(time.Since(preStart))
+	timings["preprocess"] = formatDuration(time.Since(preStart))
 
 	searchStart := time.Now()
 	uniqueMatches := make(map[DocID]int)
@@ -125,7 +123,7 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 		}
 	}
 
-	timings["search_tokens"] = s.durationFormatter(time.Since(searchStart))
+	timings["search_tokens"] = formatDuration(time.Since(searchStart))
 
 	results := make([]Result, 0, len(uniqueMatches))
 	for id, unique := range uniqueMatches {
@@ -151,7 +149,7 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 		maxResults = totalFound
 	}
 
-	timings["total"] = s.durationFormatter(time.Since(start))
+	timings["total"] = formatDuration(time.Since(start))
 
 	return &SearchResult{
 		Results:           results[:maxResults],
