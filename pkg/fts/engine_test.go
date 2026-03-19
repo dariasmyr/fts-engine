@@ -12,6 +12,7 @@ type memoryIndex struct {
 		key string
 		id  DocID
 	}
+	searches []string
 }
 
 func newMemoryIndex() *memoryIndex {
@@ -27,7 +28,18 @@ func (m *memoryIndex) Insert(key string, id DocID) error {
 }
 
 func (m *memoryIndex) Search(key string) ([]DocRef, error) {
+	m.searches = append(m.searches, key)
 	return m.entries[key], nil
+}
+
+type containsOnlyFilter struct {
+	allowed map[string]bool
+}
+
+func (f containsOnlyFilter) Add(item []byte) bool { return true }
+
+func (f containsOnlyFilter) Contains(item []byte) bool {
+	return f.allowed[string(item)]
 }
 
 func TestSearchDocumentsSortAndLimit(t *testing.T) {
@@ -130,5 +142,27 @@ func TestContextCancellation(t *testing.T) {
 	_, err := svc.SearchDocuments(ctx, "text", 10)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("SearchDocuments() err = %v, want context canceled", err)
+	}
+}
+
+func TestSearchDocumentsSkipsIndexWhenFilterMisses(t *testing.T) {
+	idx := newMemoryIndex()
+	idx.entries["known"] = []DocRef{{ID: "doc", Count: 1}}
+
+	svc := New(idx, WordKeys, WithFilter(containsOnlyFilter{
+		allowed: map[string]bool{"known": true},
+	}))
+
+	res, err := svc.SearchDocuments(context.Background(), "unknown", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+
+	if res.TotalResultsCount != 0 {
+		t.Fatalf("TotalResultsCount = %d, want 0", res.TotalResultsCount)
+	}
+
+	if len(idx.searches) != 0 {
+		t.Fatalf("index search calls = %d, want 0", len(idx.searches))
 	}
 }

@@ -20,7 +20,22 @@ type FTSConfig struct {
 	Engine   string         `yaml:"engine" env-default:"trie"`
 	Index    string         `yaml:"index"`
 	KeyGen   string         `yaml:"keygen"`
+	Filter   string         `yaml:"filter" env-default:"none"`
+	Bloom    BloomConfig    `yaml:"bloom"`
+	Cuckoo   CuckooConfig   `yaml:"cuckoo"`
 	Pipeline PipelineConfig `yaml:"pipeline"`
+}
+
+type BloomConfig struct {
+	ExpectedItems uint64 `yaml:"expected_items" env-default:"1000000"`
+	BitsPerItem   uint64 `yaml:"bits_per_item" env-default:"10"`
+	K             uint64 `yaml:"k" env-default:"7"`
+}
+
+type CuckooConfig struct {
+	BucketCount int `yaml:"bucket_count" env-default:"262144"`
+	BucketSize  int `yaml:"bucket_size" env-default:"4"`
+	MaxKicks    int `yaml:"max_kicks" env-default:"500"`
 }
 
 type ModeConfig struct {
@@ -101,6 +116,10 @@ func validateConfig(cfg *Config) {
 		}
 	}
 
+	if cfg.FTS.Filter == "" {
+		cfg.FTS.Filter = "none"
+	}
+
 	switch cfg.FTS.Engine {
 	case "trie":
 		switch cfg.FTS.Index {
@@ -117,6 +136,24 @@ func validateConfig(cfg *Config) {
 	case "word", "trigram":
 	default:
 		panic("unknown keygen type: " + cfg.FTS.KeyGen)
+	}
+
+	switch cfg.FTS.Filter {
+	case "none", "bloom", "cuckoo":
+	default:
+		panic("unknown filter type: " + cfg.FTS.Filter)
+	}
+
+	if cfg.FTS.Cuckoo.BucketCount <= 0 {
+		panic("cuckoo bucket_count must be > 0")
+	}
+
+	if cfg.FTS.Cuckoo.BucketSize <= 0 {
+		panic("cuckoo bucket_size must be > 0")
+	}
+
+	if cfg.FTS.Cuckoo.MaxKicks < 0 {
+		panic("cuckoo max_kicks must be >= 0")
 	}
 
 	switch cfg.Mode.Type {

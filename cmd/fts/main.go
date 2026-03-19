@@ -22,6 +22,7 @@ import (
 	"github.com/dariasmyr/fts-engine/internal/adapters/storage/leveldb"
 	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/internal/lib/logger/sl"
+	pkgfilter "github.com/dariasmyr/fts-engine/pkg/filter"
 	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/index/hamt"
 	"github.com/dariasmyr/fts-engine/pkg/index/hamtpointered"
@@ -64,6 +65,7 @@ func main() {
 	log.Info("fts", "engine", cfg.FTS.Engine)
 	log.Info("fts", "index", cfg.FTS.Index)
 	log.Info("fts", "keygen", cfg.FTS.KeyGen)
+	log.Info("fts", "filter", cfg.FTS.Filter)
 	log.Info("fts", "mode", cfg.Mode.Type)
 
 	storage, err := leveldb.NewStorage(log, cfg.StoragePath)
@@ -96,6 +98,7 @@ func main() {
 		ftsEngine = kv.New(log, storage, storage)
 	case "trie":
 		registerBuiltInIndexes()
+		registerBuiltInFilters(cfg)
 
 		index, err := pkgfts.NewIndex(cfg.FTS.Index)
 		if err != nil {
@@ -109,8 +112,14 @@ func main() {
 			return
 		}
 
+		searchFilter, err := selectFilter(cfg)
+		if err != nil {
+			log.Error("Failed to select filter", "error", sl.Err(err))
+			return
+		}
+
 		pipeline := buildPipeline(cfg)
-		svc := pkgfts.New(index, keyGen, pkgfts.WithPipeline(pipeline))
+		svc := pkgfts.New(index, keyGen, pkgfts.WithPipeline(pipeline), pkgfts.WithFilter(searchFilter))
 		ftsEngine = &serviceAdapter{service: svc}
 	}
 
@@ -287,6 +296,37 @@ func registerBuiltInIndexes() {
 	register("trigram", func() (pkgfts.Index, error) { return trigram.New(), nil })
 }
 
+func registerBuiltInFilters(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+
+	register := func(name string, factory pkgfilter.Factory) {
+		if pkgfilter.IsRegistered(name) {
+			return
+		}
+		if err := pkgfilter.Register(name, factory); err != nil {
+			panic(err)
+		}
+	}
+
+	register("bloom", func() (pkgfilter.Filter, error) {
+		return pkgfilter.NewBloomFilter(
+			cfg.FTS.Bloom.ExpectedItems,
+			cfg.FTS.Bloom.BitsPerItem,
+			cfg.FTS.Bloom.K,
+		), nil
+	})
+
+	register("cuckoo", func() (pkgfilter.Filter, error) {
+		return pkgfilter.NewCuckooFilter(
+			cfg.FTS.Cuckoo.BucketCount,
+			cfg.FTS.Cuckoo.BucketSize,
+			cfg.FTS.Cuckoo.MaxKicks,
+		), nil
+	})
+}
+
 func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {
 	switch kind {
 	case "word":
@@ -296,6 +336,14 @@ func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {
 	default:
 		return nil, fmt.Errorf("unknown keygen %q", kind)
 	}
+}
+
+func selectFilter(cfg *config.Config) (pkgfts.Filter, error) {
+	if cfg == nil || cfg.FTS.Filter == "" || cfg.FTS.Filter == "none" {
+		return nil, nil
+	}
+
+	return pkgfilter.New(cfg.FTS.Filter)
 }
 
 func buildPipeline(cfg *config.Config) textproc.Pipeline {

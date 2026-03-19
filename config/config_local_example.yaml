@@ -5,6 +5,15 @@ fts:
   engine: "trie"
   index: "radix"
   keygen: "word"
+  filter: "none"
+  bloom:
+    expected_items: 1000000
+    bits_per_item: 10
+    k: 7
+  cuckoo:
+    bucket_count: 262144
+    bucket_size: 4
+    max_kicks: 500
   pipeline:
     lowercase: true
     stopwords_en: true

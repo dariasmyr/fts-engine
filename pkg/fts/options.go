@@ -19,3 +19,9 @@ func WithDurationFormatter(formatter func(time.Duration) string) Option {
 		}
 	}
 }
+
+func WithFilter(f Filter) Option {
+	return func(s *Service) {
+		s.filter = f
+	}
+}
