@@ -3,9 +3,17 @@ storage_path: "./storage/fts-queue.db"
 dump_path: "./data/enwiki-latest-abstract1.xml.gz"
 fts:
   engine: "trie"
-  index: "radix"
+  index: "slicedradix"
   keygen: "word"
   filter: "none"
+  snapshot:
+    enabled: true
+    path: "./data/segments/default.fidx"
+    load_on_start: true
+    save_on_build: true
+    buffer_size: 1048576
+    flush_threshold: 262144
+    sync_file: true
   bloom:
     expected_items: 1000000
     bits_per_item: 10

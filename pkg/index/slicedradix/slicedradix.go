@@ -1,7 +1,10 @@
 package slicedradix
 
 import (
+	"encoding/gob"
+	"fmt"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"io"
 	"sync"
 )
 
@@ -17,10 +20,69 @@ type Index struct {
 	mu    sync.RWMutex
 }
 
+type snapshotNode struct {
+	Prefix   string
+	Children []int
+	Docs     []fts.DocRef
+}
+
+type snapshotIndex struct {
+	Root  int
+	Nodes []snapshotNode
+}
+
 func New() *Index {
 	var t Index
 	t.root = t.newNode("")
 	return &t
+}
+
+func (t *Index) Serialize(w io.Writer) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	snap := snapshotIndex{
+		Root:  t.root,
+		Nodes: make([]snapshotNode, 0, len(t.nodes)),
+	}
+
+	for i := range t.nodes {
+		n := t.nodes[i]
+		snap.Nodes = append(snap.Nodes, snapshotNode{
+			Prefix:   n.prefix,
+			Children: append([]int(nil), n.children...),
+			Docs:     append([]fts.DocRef(nil), n.docs...),
+		})
+	}
+
+	if err := gob.NewEncoder(w).Encode(snap); err != nil {
+		return fmt.Errorf("slicedradix: serialize: %w", err)
+	}
+
+	return nil
+}
+
+func Load(r io.Reader) (fts.Index, error) {
+	var snap snapshotIndex
+	if err := gob.NewDecoder(r).Decode(&snap); err != nil {
+		return nil, fmt.Errorf("slicedradix: load: %w", err)
+	}
+
+	idx := &Index{
+		root:  snap.Root,
+		nodes: make([]node, 0, len(snap.Nodes)),
+	}
+
+	for i := range snap.Nodes {
+		s := snap.Nodes[i]
+		idx.nodes = append(idx.nodes, node{
+			prefix:   s.Prefix,
+			children: append([]int(nil), s.Children...),
+			docs:     append([]fts.DocRef(nil), s.Docs...),
+		})
+	}
+
+	return idx, nil
 }
 
 func (t *Index) newNode(prefix string) int {

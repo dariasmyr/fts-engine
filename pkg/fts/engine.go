@@ -1,6 +1,7 @@
 package fts
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,19 +12,17 @@ import (
 )
 
 type Service struct {
-	index             Index
-	keyGen            KeyGenerator
-	pipeline          Pipeline
-	filter            Filter
-	durationFormatter func(time.Duration) string
+	index    Index
+	keyGen   KeyGenerator
+	pipeline Pipeline
+	filter   Filter
 }
 
 func New(index Index, keyGen KeyGenerator, opts ...Option) *Service {
 	s := &Service{
-		index:             index,
-		keyGen:            keyGen,
-		pipeline:          textproc.DefaultEnglishPipeline(),
-		durationFormatter: formatDuration,
+		index:    index,
+		keyGen:   keyGen,
+		pipeline: textproc.DefaultEnglishPipeline(),
 	}
 
 	for _, opt := range opts {
@@ -91,7 +90,7 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 
 	preStart := time.Now()
 	tokens := s.pipeline.Process(query)
-	timings["preprocess"] = s.durationFormatter(time.Since(preStart))
+	timings["preprocess"] = formatDuration(time.Since(preStart))
 
 	searchStart := time.Now()
 	uniqueMatches := make(map[DocID]int)
@@ -124,7 +123,7 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 		}
 	}
 
-	timings["search_tokens"] = s.durationFormatter(time.Since(searchStart))
+	timings["search_tokens"] = formatDuration(time.Since(searchStart))
 
 	results := make([]Result, 0, len(uniqueMatches))
 	for id, unique := range uniqueMatches {
@@ -150,7 +149,7 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 		maxResults = totalFound
 	}
 
-	timings["total"] = s.durationFormatter(time.Since(start))
+	timings["total"] = formatDuration(time.Since(start))
 
 	return &SearchResult{
 		Results:           results[:maxResults],
@@ -165,6 +164,36 @@ func (s *Service) Analyze() (Stats, bool) {
 		return Stats{}, false
 	}
 	return analyzer.Analyze(), true
+}
+
+func (s *Service) SaveSnapshot(w io.Writer, indexName string, filterName string) error {
+	return SaveSegmentSnapshot(w, indexName, s.index, filterName, s.filter)
+}
+
+func (s *Service) SaveSnapshotBuffered(w io.Writer, indexName string, filterName string) error {
+	if w == nil {
+		return fmt.Errorf("fts: save snapshot buffered: nil writer")
+	}
+
+	var buf bytes.Buffer
+	if err := s.SaveSnapshot(&buf, indexName, filterName); err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(w, &buf); err != nil {
+		return fmt.Errorf("fts: save snapshot buffered: write destination: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) SaveSnapshotBufferedAsync(w io.Writer, indexName string, filterName string) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(errCh)
+		errCh <- s.SaveSnapshotBuffered(w, indexName, filterName)
+	}()
+	return errCh
 }
 
 func formatDuration(d time.Duration) string {
