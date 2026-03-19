@@ -38,13 +38,32 @@ import (
 func main() {
 	idx := radix.New()
 	pipe := textproc.DefaultEnglishPipeline()
-	engine := fts.New(idx, keygen.Word, fts.WithPipeline(pipe))
+engine := fts.New(idx, keygen.Word, fts.WithPipeline(pipe))
 
 	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
 	res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
 
-	fmt.Println(res.TotalResultsCount)
+fmt.Println(res.TotalResultsCount)
 }
+```
+
+## Segment snapshots (append-only)
+
+Index/filter state can be persisted to any `io.Writer` (file, object storage stream) and restored from `io.Reader`.
+
+```go
+var buf bytes.Buffer
+
+// Register snapshot codecs for selected index/filter once.
+// Example for built-ins is in cmd/fts/main.go (registerBuiltInSnapshotCodecs).
+
+svc := fts.New(radix.New(), keygen.Word)
+_ = svc.IndexDocument(context.Background(), "doc-1", "hello world")
+_ = svc.SaveSnapshot(&buf, "radix", "")
+
+restored, _ := fts.NewFromSnapshot(bytes.NewReader(buf.Bytes()), keygen.Word)
+res, _ := restored.SearchDocuments(context.Background(), "hello", 10)
+fmt.Println(res.TotalResultsCount)
 ```
 
 ## Usage in a third-party project
@@ -126,6 +145,14 @@ fts:
   index: "radix"      # radix|slicedradix|trigram|hamt|hamtpointered
   keygen: "word"      # word|trigram
   filter: "none"      # none|bloom|cuckoo
+  snapshot:
+    enabled: true
+    path: "./data/segments/default.fidx"
+    load_on_start: true
+    save_on_build: true
+    buffer_size: 1048576
+    flush_threshold: 262144
+    sync_file: true
   bloom:
     expected_items: 1000000
     bits_per_item: 10

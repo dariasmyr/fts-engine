@@ -21,9 +21,20 @@ type FTSConfig struct {
 	Index    string         `yaml:"index"`
 	KeyGen   string         `yaml:"keygen"`
 	Filter   string         `yaml:"filter" env-default:"none"`
+	Snapshot SnapshotConfig `yaml:"snapshot"`
 	Bloom    BloomConfig    `yaml:"bloom"`
 	Cuckoo   CuckooConfig   `yaml:"cuckoo"`
 	Pipeline PipelineConfig `yaml:"pipeline"`
+}
+
+type SnapshotConfig struct {
+	Enabled        bool   `yaml:"enabled" env-default:"false"`
+	Path           string `yaml:"path" env-default:"./data/segments/default.fidx"`
+	LoadOnStart    bool   `yaml:"load_on_start" env-default:"true"`
+	SaveOnBuild    bool   `yaml:"save_on_build" env-default:"true"`
+	BufferSize     int    `yaml:"buffer_size" env-default:"1048576"`
+	FlushThreshold int    `yaml:"flush_threshold" env-default:"262144"`
+	SyncFile       bool   `yaml:"sync_file" env-default:"true"`
 }
 
 type BloomConfig struct {
@@ -118,6 +129,18 @@ func validateConfig(cfg *Config) {
 
 	if cfg.FTS.Filter == "" {
 		cfg.FTS.Filter = "none"
+	}
+
+	if cfg.FTS.Snapshot.Path == "" {
+		cfg.FTS.Snapshot.Path = "./data/segments/default.fidx"
+	}
+
+	if cfg.FTS.Snapshot.BufferSize <= 0 {
+		cfg.FTS.Snapshot.BufferSize = 1048576
+	}
+
+	if cfg.FTS.Snapshot.FlushThreshold <= 0 {
+		cfg.FTS.Snapshot.FlushThreshold = 262144
 	}
 
 	switch cfg.FTS.Engine {
