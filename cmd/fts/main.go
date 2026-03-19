@@ -43,6 +43,11 @@ const (
 	_readinessDrainDelay = 5 * time.Second
 )
 
+var (
+	registerIndexesOnce sync.Once
+	registerFiltersOnce sync.Once
+)
+
 func ensureDir(p string) {
 	os.MkdirAll(p, 0755)
 }
@@ -280,20 +285,19 @@ func (s *serviceAdapter) AnalyzeStats() (pkgfts.Stats, bool) {
 }
 
 func registerBuiltInIndexes() {
-	register := func(name string, factory pkgfts.IndexFactory) {
-		if pkgfts.IsIndexRegistered(name) {
-			return
+	registerIndexesOnce.Do(func() {
+		register := func(name string, factory pkgfts.IndexFactory) {
+			if err := pkgfts.RegisterIndex(name, factory); err != nil {
+				panic(err)
+			}
 		}
-		if err := pkgfts.RegisterIndex(name, factory); err != nil {
-			panic(err)
-		}
-	}
 
-	register("radix", func() (pkgfts.Index, error) { return radix.New(), nil })
-	register("slicedradix", func() (pkgfts.Index, error) { return slicedradix.New(), nil })
-	register("hamt", func() (pkgfts.Index, error) { return hamt.New(), nil })
-	register("hamtpointered", func() (pkgfts.Index, error) { return hamtpointered.New(), nil })
-	register("trigram", func() (pkgfts.Index, error) { return trigram.New(), nil })
+		register("radix", func() (pkgfts.Index, error) { return radix.New(), nil })
+		register("slicedradix", func() (pkgfts.Index, error) { return slicedradix.New(), nil })
+		register("hamt", func() (pkgfts.Index, error) { return hamt.New(), nil })
+		register("hamtpointered", func() (pkgfts.Index, error) { return hamtpointered.New(), nil })
+		register("trigram", func() (pkgfts.Index, error) { return trigram.New(), nil })
+	})
 }
 
 func registerBuiltInFilters(cfg *config.Config) {
@@ -301,29 +305,28 @@ func registerBuiltInFilters(cfg *config.Config) {
 		return
 	}
 
-	register := func(name string, factory pkgfilter.Factory) {
-		if pkgfilter.IsRegistered(name) {
-			return
+	registerFiltersOnce.Do(func() {
+		register := func(name string, factory pkgfilter.Factory) {
+			if err := pkgfilter.Register(name, factory); err != nil {
+				panic(err)
+			}
 		}
-		if err := pkgfilter.Register(name, factory); err != nil {
-			panic(err)
-		}
-	}
 
-	register("bloom", func() (pkgfilter.Filter, error) {
-		return pkgfilter.NewBloomFilter(
-			cfg.FTS.Bloom.ExpectedItems,
-			cfg.FTS.Bloom.BitsPerItem,
-			cfg.FTS.Bloom.K,
-		), nil
-	})
+		register("bloom", func() (pkgfilter.Filter, error) {
+			return pkgfilter.NewBloomFilter(
+				cfg.FTS.Bloom.ExpectedItems,
+				cfg.FTS.Bloom.BitsPerItem,
+				cfg.FTS.Bloom.K,
+			), nil
+		})
 
-	register("cuckoo", func() (pkgfilter.Filter, error) {
-		return pkgfilter.NewCuckooFilter(
-			cfg.FTS.Cuckoo.BucketCount,
-			cfg.FTS.Cuckoo.BucketSize,
-			cfg.FTS.Cuckoo.MaxKicks,
-		), nil
+		register("cuckoo", func() (pkgfilter.Filter, error) {
+			return pkgfilter.NewCuckooFilter(
+				cfg.FTS.Cuckoo.BucketCount,
+				cfg.FTS.Cuckoo.BucketSize,
+				cfg.FTS.Cuckoo.MaxKicks,
+			), nil
+		})
 	})
 }
 

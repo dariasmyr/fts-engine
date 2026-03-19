@@ -2,7 +2,6 @@ package fts
 
 import (
 	"fmt"
-	"sort"
 	"sync"
 )
 
@@ -41,23 +40,4 @@ func NewIndex(name string) (Index, error) {
 	}
 
 	return factory()
-}
-
-func RegisteredIndexes() []string {
-	registryMu.RLock()
-	names := make([]string, 0, len(registry))
-	for name := range registry {
-		names = append(names, name)
-	}
-	registryMu.RUnlock()
-
-	sort.Strings(names)
-	return names
-}
-
-func IsIndexRegistered(name string) bool {
-	registryMu.RLock()
-	_, ok := registry[name]
-	registryMu.RUnlock()
-	return ok
 }
