@@ -1,8 +1,11 @@
 package hamtpointered
 
 import (
+	"encoding/gob"
+	"fmt"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"hash/fnv"
+	"io"
 	"math/bits"
 	"sync"
 )
@@ -32,12 +35,90 @@ type Index struct {
 	mu   sync.RWMutex
 }
 
+type snapshotNode struct {
+	Bitmap   uint32
+	Children []snapshotChild
+}
+
+type snapshotChild struct {
+	Node     *snapshotNode
+	Terminal *snapshotTerminal
+}
+
+type snapshotTerminal struct {
+	Entries []entry
+}
+
 func newNode() *node {
 	return &node{children: make([]any, 0)}
 }
 
 func New() *Index {
 	return &Index{root: newNode()}
+}
+
+func (t *Index) Serialize(w io.Writer) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.root == nil {
+		return fmt.Errorf("hamtpointered: serialize: nil root")
+	}
+
+	if err := gob.NewEncoder(w).Encode(encodeNode(t.root)); err != nil {
+		return fmt.Errorf("hamtpointered: serialize: %w", err)
+	}
+
+	return nil
+}
+
+func Load(r io.Reader) (fts.Index, error) {
+	var snap snapshotNode
+	if err := gob.NewDecoder(r).Decode(&snap); err != nil {
+		return nil, fmt.Errorf("hamtpointered: load: %w", err)
+	}
+
+	return &Index{root: decodeNode(&snap)}, nil
+}
+
+func encodeNode(n *node) *snapshotNode {
+	if n == nil {
+		return nil
+	}
+
+	snap := &snapshotNode{Bitmap: n.bitmap, Children: make([]snapshotChild, 0, len(n.children))}
+	for _, child := range n.children {
+		s := snapshotChild{}
+		switch v := child.(type) {
+		case *node:
+			s.Node = encodeNode(v)
+		case *terminalNode:
+			s.Terminal = &snapshotTerminal{Entries: append([]entry(nil), v.entries...)}
+		}
+		snap.Children = append(snap.Children, s)
+	}
+
+	return snap
+}
+
+func decodeNode(s *snapshotNode) *node {
+	if s == nil {
+		return nil
+	}
+
+	n := &node{bitmap: s.Bitmap, children: make([]any, 0, len(s.Children))}
+	for i := range s.Children {
+		child := s.Children[i]
+		if child.Node != nil {
+			n.children = append(n.children, decodeNode(child.Node))
+			continue
+		}
+		if child.Terminal != nil {
+			n.children = append(n.children, &terminalNode{entries: append([]entry(nil), child.Terminal.Entries...)})
+		}
+	}
+
+	return n
 }
 
 func hashKey(key string) uint32 {

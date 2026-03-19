@@ -1,7 +1,10 @@
 package filter
 
 import (
+	"encoding/gob"
+	"fmt"
 	"hash/fnv"
+	"io"
 	"math/rand"
 )
 
@@ -13,6 +16,12 @@ type CuckooFilter struct {
 	buckets    []Bucket // array of buckets
 	bucketSize int      // number of slots per bucket
 	maxKicks   int      // max number of evictions during insert
+}
+
+type cuckooSnapshot struct {
+	BucketSize int
+	MaxKicks   int
+	Buckets    [][]uint8
 }
 
 func NewCuckooFilter(bucketCount int, bucketSize int, maxKicks int) *CuckooFilter {
@@ -29,6 +38,39 @@ func NewCuckooFilter(bucketCount int, bucketSize int, maxKicks int) *CuckooFilte
 		bucketSize: bucketSize,
 		maxKicks:   maxKicks,
 	}
+}
+
+func (cf *CuckooFilter) Serialize(w io.Writer) error {
+	buckets := make([][]uint8, 0, len(cf.buckets))
+	for _, bucket := range cf.buckets {
+		buckets = append(buckets, append([]uint8(nil), bucket.slots...))
+	}
+
+	snapshot := cuckooSnapshot{
+		BucketSize: cf.bucketSize,
+		MaxKicks:   cf.maxKicks,
+		Buckets:    buckets,
+	}
+
+	if err := gob.NewEncoder(w).Encode(snapshot); err != nil {
+		return fmt.Errorf("cuckoo: serialize: %w", err)
+	}
+
+	return nil
+}
+
+func LoadCuckooFilter(r io.Reader) (*CuckooFilter, error) {
+	var snap cuckooSnapshot
+	if err := gob.NewDecoder(r).Decode(&snap); err != nil {
+		return nil, fmt.Errorf("cuckoo: load: %w", err)
+	}
+
+	cf := NewCuckooFilter(len(snap.Buckets), snap.BucketSize, snap.MaxKicks)
+	for i := range snap.Buckets {
+		cf.buckets[i].slots = append(cf.buckets[i].slots[:0], snap.Buckets[i]...)
+	}
+
+	return cf, nil
 }
 
 func fingerprint(key []byte) uint8 {

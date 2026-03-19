@@ -2,7 +2,10 @@ package filter
 
 import (
 	"encoding/binary"
+	"encoding/gob"
+	"fmt"
 	"hash/fnv"
+	"io"
 )
 
 type BloomFilter struct {
@@ -10,6 +13,12 @@ type BloomFilter struct {
 	k         uint64 // numbed of hash-funcs
 	bitset    []uint64
 	hashFuncs []func([]byte) uint64
+}
+
+type bloomSnapshot struct {
+	M      uint64
+	K      uint64
+	Bitset []uint64
 }
 
 // NewBloomFilter created new Bloom filter
@@ -46,6 +55,31 @@ func NewBloomFilter(expectedItems uint64, bitsPerItem uint64, k uint64) *BloomFi
 		bitset:    bitset,
 		hashFuncs: hashFuncs,
 	}
+}
+
+func (bf *BloomFilter) Serialize(w io.Writer) error {
+	snapshot := bloomSnapshot{
+		M:      bf.m,
+		K:      bf.k,
+		Bitset: append([]uint64(nil), bf.bitset...),
+	}
+
+	if err := gob.NewEncoder(w).Encode(snapshot); err != nil {
+		return fmt.Errorf("bloom: serialize: %w", err)
+	}
+
+	return nil
+}
+
+func LoadBloomFilter(r io.Reader) (*BloomFilter, error) {
+	var snap bloomSnapshot
+	if err := gob.NewDecoder(r).Decode(&snap); err != nil {
+		return nil, fmt.Errorf("bloom: load: %w", err)
+	}
+
+	bf := NewBloomFilter(1, snap.M, snap.K)
+	bf.bitset = append([]uint64(nil), snap.Bitset...)
+	return bf, nil
 }
 
 // bitLocation define word index in bf.bitset and index of a byte in a word

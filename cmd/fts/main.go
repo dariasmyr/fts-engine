@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/dariasmyr/fts-engine/internal/services/fts/kv"
+	ftspersist "github.com/dariasmyr/fts-engine/internal/services/fts/persist"
 	"github.com/dariasmyr/fts-engine/internal/utils"
 	"io"
 	"log/slog"
@@ -44,8 +46,9 @@ const (
 )
 
 var (
-	registerIndexesOnce sync.Once
-	registerFiltersOnce sync.Once
+	registerIndexesOnce   sync.Once
+	registerFiltersOnce   sync.Once
+	registerSnapshotsOnce sync.Once
 )
 
 func ensureDir(p string) {
@@ -104,12 +107,7 @@ func main() {
 	case "trie":
 		registerBuiltInIndexes()
 		registerBuiltInFilters(cfg)
-
-		index, err := pkgfts.NewIndex(cfg.FTS.Index)
-		if err != nil {
-			log.Error("Failed to create index", "error", sl.Err(err))
-			return
-		}
+		registerBuiltInSnapshotCodecs()
 
 		keyGen, err := selectKeyGenerator(cfg.FTS.KeyGen)
 		if err != nil {
@@ -117,15 +115,13 @@ func main() {
 			return
 		}
 
-		searchFilter, err := selectFilter(cfg)
+		pipeline := buildPipeline(cfg)
+		svc, loadedFromSnapshot, err := buildService(log, cfg, keyGen, pipeline)
 		if err != nil {
-			log.Error("Failed to select filter", "error", sl.Err(err))
+			log.Error("Failed to initialize trie service", "error", sl.Err(err))
 			return
 		}
-
-		pipeline := buildPipeline(cfg)
-		svc := pkgfts.New(index, keyGen, pkgfts.WithPipeline(pipeline), pkgfts.WithFilter(searchFilter))
-		ftsEngine = &serviceAdapter{service: svc}
+		ftsEngine = &serviceAdapter{service: svc, snapshotLoaded: loadedFromSnapshot}
 	}
 
 	log.Info("FTS engine initialised")
@@ -163,43 +159,56 @@ func main() {
 
 	startTime = time.Now()
 
-	log.Info("Initialize worker pool")
-	jobCh := make(chan models.Document)
-	var wg sync.WaitGroup
-	for range workerCount {
-		select {
-		case <-rootCtx.Done():
-			log.Info("Received shutdown signal, shutting down...")
-			return
-		default:
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				fmt.Println("Starting worker")
-				storage.BatchDocument(ctx, jobCh)
-			}()
-		}
+	adapter, ok := ftsEngine.(*serviceAdapter)
+	if !ok {
+		log.Error("unexpected search engine type")
+		return
 	}
 
-	for i := range documents {
-		select {
-		case <-rootCtx.Done():
-			log.Info("Received shutdown signal, shutting down...")
-			return
-		default:
-			indexErr := ftsEngine.IndexDocument(ctx, documents[i].ID, documents[i].Abstract)
-			if indexErr != nil {
-				log.Error("could not index document:", "error", indexErr)
+	if !adapter.snapshotLoaded {
+		log.Info("Initialize worker pool")
+		jobCh := make(chan models.Document)
+		var wg sync.WaitGroup
+		for range workerCount {
+			select {
+			case <-rootCtx.Done():
+				log.Info("Received shutdown signal, shutting down...")
+				return
+			default:
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					fmt.Println("Starting worker")
+					storage.BatchDocument(ctx, jobCh)
+				}()
 			}
-
-			// log.Info("Document indexed, adding to job chan", "doc", i)
-
-			jobCh <- documents[i]
 		}
-	}
 
-	close(jobCh)
-	wg.Wait()
+		for i := range documents {
+			select {
+			case <-rootCtx.Done():
+				log.Info("Received shutdown signal, shutting down...")
+				return
+			default:
+				indexErr := ftsEngine.IndexDocument(ctx, documents[i].ID, documents[i].Abstract)
+				if indexErr != nil {
+					log.Error("could not index document:", "error", indexErr)
+				}
+
+				jobCh <- documents[i]
+			}
+		}
+
+		close(jobCh)
+		wg.Wait()
+
+		if err := saveSnapshotIfEnabled(log, cfg, adapter.service); err != nil {
+			log.Error("Failed to persist snapshot", "error", sl.Err(err))
+			return
+		}
+	} else {
+		log.Info("Skipping re-indexing: snapshot loaded", "path", cfg.FTS.Snapshot.Path)
+	}
 
 	appCUI := cui.New(ctx, log, ftsEngine, storage, 10)
 
@@ -251,7 +260,8 @@ func analyzeTrie(
 }
 
 type serviceAdapter struct {
-	service *pkgfts.Service
+	service        *pkgfts.Service
+	snapshotLoaded bool
 }
 
 func (s *serviceAdapter) IndexDocument(ctx context.Context, docID string, content string) error {
@@ -282,6 +292,124 @@ func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxR
 
 func (s *serviceAdapter) AnalyzeStats() (pkgfts.Stats, bool) {
 	return s.service.Analyze()
+}
+
+func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
+	if cfg == nil {
+		return nil, false, fmt.Errorf("nil config")
+	}
+
+	if cfg.Mode.Type == "prod" && cfg.FTS.Snapshot.Enabled && cfg.FTS.Snapshot.LoadOnStart {
+		svc, ok, err := tryLoadSnapshot(log, cfg, keyGen, pipeline)
+		if err != nil {
+			return nil, false, err
+		}
+		if ok {
+			return svc, true, nil
+		}
+	}
+
+	index, err := pkgfts.NewIndex(cfg.FTS.Index)
+	if err != nil {
+		return nil, false, err
+	}
+
+	searchFilter, err := selectFilter(cfg)
+	if err != nil {
+		return nil, false, err
+	}
+
+	svc := pkgfts.New(index, keyGen, pkgfts.WithPipeline(pipeline), pkgfts.WithFilter(searchFilter))
+	return svc, false, nil
+}
+
+func tryLoadSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
+	path := cfg.FTS.Snapshot.Path
+	if path == "" {
+		return nil, false, nil
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("check snapshot path: %w", err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false, fmt.Errorf("open snapshot: %w", err)
+	}
+	defer f.Close()
+
+	loaded, err := pkgfts.LoadSegmentSnapshot(f)
+	if err != nil {
+		return nil, false, fmt.Errorf("load snapshot: %w", err)
+	}
+
+	if loaded.IndexName != cfg.FTS.Index {
+		log.Warn("Snapshot index type differs from config",
+			"snapshot_index", loaded.IndexName,
+			"config_index", cfg.FTS.Index,
+			"path", path,
+		)
+	}
+
+	configFilter := cfg.FTS.Filter
+	if configFilter == "none" {
+		configFilter = ""
+	}
+	if loaded.FilterName != configFilter {
+		log.Warn("Snapshot filter type differs from config",
+			"snapshot_filter", loaded.FilterName,
+			"config_filter", cfg.FTS.Filter,
+			"path", path,
+		)
+	}
+
+	builtOpts := []pkgfts.Option{pkgfts.WithPipeline(pipeline)}
+	if loaded.Filter != nil {
+		builtOpts = append(builtOpts, pkgfts.WithFilter(loaded.Filter))
+	}
+
+	svc := pkgfts.New(loaded.Index, keyGen, builtOpts...)
+
+	log.Info("Loaded FTS snapshot", "path", path)
+	return svc, true, nil
+}
+
+func saveSnapshotIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Service) error {
+	if cfg == nil || svc == nil {
+		return nil
+	}
+
+	if !cfg.FTS.Snapshot.Enabled || !cfg.FTS.Snapshot.SaveOnBuild {
+		return nil
+	}
+
+	filterName := cfg.FTS.Filter
+	if filterName == "none" {
+		filterName = ""
+	}
+
+	opts := ftspersist.SaveOptions{
+		BufferSize:     cfg.FTS.Snapshot.BufferSize,
+		FlushThreshold: cfg.FTS.Snapshot.FlushThreshold,
+		SyncFile:       cfg.FTS.Snapshot.SyncFile,
+	}
+
+	if err := ftspersist.SaveFTSSnapshotAtomicWithOptions(
+		cfg.FTS.Snapshot.Path,
+		svc,
+		cfg.FTS.Index,
+		filterName,
+		opts,
+	); err != nil {
+		return err
+	}
+
+	log.Info("FTS snapshot persisted", "path", cfg.FTS.Snapshot.Path)
+	return nil
 }
 
 func registerBuiltInIndexes() {
@@ -326,6 +454,55 @@ func registerBuiltInFilters(cfg *config.Config) {
 				cfg.FTS.Cuckoo.BucketSize,
 				cfg.FTS.Cuckoo.MaxKicks,
 			), nil
+		})
+	})
+}
+
+func registerBuiltInSnapshotCodecs() {
+	registerSnapshotsOnce.Do(func() {
+		registerIndexCodec := func(name string, loader pkgfts.IndexSnapshotLoader) {
+			err := pkgfts.RegisterIndexSnapshotCodec(name,
+				func(index pkgfts.Index, w io.Writer) error {
+					serializable, ok := index.(pkgfts.Serializable)
+					if !ok {
+						return fmt.Errorf("index %q does not support serialization", name)
+					}
+					return serializable.Serialize(w)
+				},
+				loader,
+			)
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		registerFilterCodec := func(name string, loader pkgfts.FilterSnapshotLoader) {
+			err := pkgfts.RegisterFilterSnapshotCodec(name,
+				func(filter pkgfts.Filter, w io.Writer) error {
+					serializable, ok := filter.(pkgfts.Serializable)
+					if !ok {
+						return fmt.Errorf("filter %q does not support serialization", name)
+					}
+					return serializable.Serialize(w)
+				},
+				loader,
+			)
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		registerIndexCodec("radix", radix.Load)
+		registerIndexCodec("slicedradix", slicedradix.Load)
+		registerIndexCodec("hamt", hamt.Load)
+		registerIndexCodec("hamtpointered", hamtpointered.Load)
+		registerIndexCodec("trigram", trigram.Load)
+
+		registerFilterCodec("bloom", func(r io.Reader) (pkgfts.Filter, error) {
+			return pkgfilter.LoadBloomFilter(r)
+		})
+		registerFilterCodec("cuckoo", func(r io.Reader) (pkgfts.Filter, error) {
+			return pkgfilter.LoadCuckooFilter(r)
 		})
 	})
 }

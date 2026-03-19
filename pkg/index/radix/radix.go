@@ -1,7 +1,10 @@
 package radix
 
 import (
+	"encoding/gob"
+	"fmt"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"io"
 	"sync"
 )
 
@@ -24,8 +27,73 @@ type Index struct {
 	mu   sync.RWMutex
 }
 
+type snapshotNode struct {
+	Terminal bool
+	Prefix   string
+	Docs     []fts.DocRef
+	Children []snapshotNode
+}
+
 func New() *Index {
 	return &Index{root: newNode("")}
+}
+
+func (t *Index) Serialize(w io.Writer) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.root == nil {
+		return fmt.Errorf("radix: serialize: nil root")
+	}
+
+	if err := gob.NewEncoder(w).Encode(encodeNode(t.root)); err != nil {
+		return fmt.Errorf("radix: serialize: %w", err)
+	}
+
+	return nil
+}
+
+func Load(r io.Reader) (fts.Index, error) {
+	var snap snapshotNode
+	if err := gob.NewDecoder(r).Decode(&snap); err != nil {
+		return nil, fmt.Errorf("radix: load: %w", err)
+	}
+
+	return &Index{root: decodeNode(snap)}, nil
+}
+
+func encodeNode(n *node) snapshotNode {
+	if n == nil {
+		return snapshotNode{}
+	}
+
+	snap := snapshotNode{
+		Terminal: n.terminal,
+		Prefix:   n.prefix,
+		Docs:     collectDocs(n.docs),
+		Children: make([]snapshotNode, 0, len(n.children)),
+	}
+
+	for _, child := range n.children {
+		snap.Children = append(snap.Children, encodeNode(child))
+	}
+
+	return snap
+}
+
+func decodeNode(s snapshotNode) *node {
+	n := newNode(s.Prefix)
+	n.terminal = s.Terminal
+	for _, doc := range s.Docs {
+		n.docs[doc.ID] = doc.Count
+	}
+
+	n.children = make([]*node, 0, len(s.Children))
+	for _, child := range s.Children {
+		n.children = append(n.children, decodeNode(child))
+	}
+
+	return n
 }
 
 func lcp(a, b string) int {

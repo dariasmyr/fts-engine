@@ -1,8 +1,11 @@
 package hamt
 
 import (
+	"encoding/gob"
+	"fmt"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"hash/fnv"
+	"io"
 	"math/bits"
 	"slices"
 	"sort"
@@ -78,8 +81,95 @@ type Index struct {
 	terms []terminal
 }
 
+type snapshotEntry struct {
+	Key  string
+	Docs []fts.DocRef
+}
+
+type snapshotTerminal struct {
+	Entries []snapshotEntry
+}
+
+type snapshotNode struct {
+	Bitmap   uint32
+	Children []nodeptr
+}
+
+type snapshotIndex struct {
+	Nodes []snapshotNode
+	Terms []snapshotTerminal
+}
+
 func New() *Index {
 	return &Index{nodes: make([]node, 1)}
+}
+
+func (t *Index) Serialize(w io.Writer) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	snap := snapshotIndex{
+		Nodes: make([]snapshotNode, 0, len(t.nodes)),
+		Terms: make([]snapshotTerminal, 0, len(t.terms)),
+	}
+
+	for i := range t.nodes {
+		n := t.nodes[i]
+		snap.Nodes = append(snap.Nodes, snapshotNode{
+			Bitmap:   n.bitmap,
+			Children: append([]nodeptr(nil), n.children...),
+		})
+	}
+
+	for i := range t.terms {
+		term := t.terms[i]
+		entries := make([]snapshotEntry, 0, len(term.entries))
+		for _, e := range term.entries {
+			entries = append(entries, snapshotEntry{Key: e.key, Docs: append([]fts.DocRef(nil), e.docs...)})
+		}
+		snap.Terms = append(snap.Terms, snapshotTerminal{Entries: entries})
+	}
+
+	if err := gob.NewEncoder(w).Encode(snap); err != nil {
+		return fmt.Errorf("hamt: serialize: %w", err)
+	}
+
+	return nil
+}
+
+func Load(r io.Reader) (fts.Index, error) {
+	var snap snapshotIndex
+	if err := gob.NewDecoder(r).Decode(&snap); err != nil {
+		return nil, fmt.Errorf("hamt: load: %w", err)
+	}
+
+	idx := &Index{
+		nodes: make([]node, 0, len(snap.Nodes)),
+		terms: make([]terminal, 0, len(snap.Terms)),
+	}
+
+	for i := range snap.Nodes {
+		n := snap.Nodes[i]
+		idx.nodes = append(idx.nodes, node{
+			bitmap:   n.Bitmap,
+			children: append([]nodeptr(nil), n.Children...),
+		})
+	}
+
+	for i := range snap.Terms {
+		s := snap.Terms[i]
+		entries := make([]entry, 0, len(s.Entries))
+		for _, e := range s.Entries {
+			entries = append(entries, entry{key: e.Key, docs: append([]fts.DocRef(nil), e.Docs...)})
+		}
+		idx.terms = append(idx.terms, terminal{entries: entries})
+	}
+
+	if len(idx.nodes) == 0 {
+		idx.nodes = make([]node, 1)
+	}
+
+	return idx, nil
 }
 
 func (t *Index) Search(key string) ([]fts.DocRef, error) {
