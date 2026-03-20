@@ -434,13 +434,13 @@ func registerBuiltInFilters(cfg *config.Config) {
 	}
 
 	registerFiltersOnce.Do(func() {
-		register := func(name string, factory pkgfilter.Factory) {
-			if err := pkgfilter.Register(name, factory); err != nil {
+		register := func(name string, factory pkgfts.FilterFactory) {
+			if err := pkgfts.RegisterFilter(name, factory); err != nil {
 				panic(err)
 			}
 		}
 
-		register("bloom", func() (pkgfilter.Filter, error) {
+		register("bloom", func() (pkgfts.Filter, error) {
 			return pkgfilter.NewBloomFilter(
 				cfg.FTS.Bloom.ExpectedItems,
 				cfg.FTS.Bloom.BitsPerItem,
@@ -448,7 +448,7 @@ func registerBuiltInFilters(cfg *config.Config) {
 			), nil
 		})
 
-		register("cuckoo", func() (pkgfilter.Filter, error) {
+		register("cuckoo", func() (pkgfts.Filter, error) {
 			return pkgfilter.NewCuckooFilter(
 				cfg.FTS.Cuckoo.BucketCount,
 				cfg.FTS.Cuckoo.BucketSize,
@@ -523,7 +523,7 @@ func selectFilter(cfg *config.Config) (pkgfts.Filter, error) {
 		return nil, nil
 	}
 
-	return pkgfilter.New(cfg.FTS.Filter)
+	return pkgfts.NewFilter(cfg.FTS.Filter)
 }
 
 func buildPipeline(cfg *config.Config) textproc.Pipeline {

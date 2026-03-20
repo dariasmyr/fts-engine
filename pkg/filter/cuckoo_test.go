@@ -1,6 +1,10 @@
 package filter
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+)
 
 func TestCuckooFilterInsertAndContains(t *testing.T) {
 	cf := NewCuckooFilter(256, 4, 200)
@@ -20,7 +24,7 @@ func TestCuckooFilterInsertAndContains(t *testing.T) {
 }
 
 func TestCuckooAsFilter(t *testing.T) {
-	var f Filter = NewCuckooFilter(256, 4, 200)
+	var f fts.Filter = NewCuckooFilter(256, 4, 200)
 
 	f.Add([]byte("beta"))
 
