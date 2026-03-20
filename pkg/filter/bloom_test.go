@@ -22,7 +22,7 @@ func TestBloomFilterAddAndContains(t *testing.T) {
 func TestRegistryRegisterAndNew(t *testing.T) {
 	name := "test-bloom-registry"
 
-	err := fts.RegisterFilter(name, func() (Filter, error) {
+	err := fts.RegisterFilter(name, func() (fts.Filter, error) {
 		return NewBloomFilter(100, 10, 3), nil
 	})
 	if err != nil {
