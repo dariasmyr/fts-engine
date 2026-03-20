@@ -8,69 +8,65 @@ import (
 type IndexFactory func() (Index, error)
 type FilterFactory func() (Filter, error)
 
+type registry[T any, F ~func() (T, error)] struct {
+	mu   sync.RWMutex
+	data map[string]F
+}
+
+func newRegistry[T any, F ~func() (T, error)]() registry[T, F] {
+	return registry[T, F]{
+		data: make(map[string]F),
+	}
+}
+
+func (r *registry[T, F]) register(name string, factory F, kind string) error {
+	if name == "" {
+		return fmt.Errorf("fts: register %s: empty name", kind)
+	}
+	if factory == nil {
+		return fmt.Errorf("fts: register %s: nil factory", kind)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.data[name]; exists {
+		return fmt.Errorf("fts: register %s: duplicate name %q", kind, name)
+	}
+
+	r.data[name] = factory
+	return nil
+}
+
+func (r *registry[T, F]) new(name string, kind string) (T, error) {
+	r.mu.RLock()
+	factory, ok := r.data[name]
+	r.mu.RUnlock()
+	if !ok {
+		var zero T
+		return zero, fmt.Errorf("fts: unknown %s %q", kind, name)
+	}
+
+	return factory()
+}
+
 var (
-	indexRegistryMu  sync.RWMutex
-	indexRegistry    = make(map[string]IndexFactory)
-	filterRegistryMu sync.RWMutex
-	filterRegistry   = make(map[string]FilterFactory)
+	indexRegistry  = newRegistry[Index, IndexFactory]()
+	filterRegistry = newRegistry[Filter, FilterFactory]()
 )
 
 func RegisterIndex(name string, factory IndexFactory) error {
-	if name == "" {
-		return fmt.Errorf("fts: register index: empty name")
-	}
-	if factory == nil {
-		return fmt.Errorf("fts: register index: nil factory")
-	}
-
-	indexRegistryMu.Lock()
-	defer indexRegistryMu.Unlock()
-
-	if _, exists := indexRegistry[name]; exists {
-		return fmt.Errorf("fts: register index: duplicate name %q", name)
-	}
-
-	indexRegistry[name] = factory
-	return nil
+	return indexRegistry.register(name, factory, "index")
 }
 
 func NewIndex(name string) (Index, error) {
-	indexRegistryMu.RLock()
-	factory, ok := indexRegistry[name]
-	indexRegistryMu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("fts: unknown index %q", name)
-	}
-
-	return factory()
+	return indexRegistry.new(name, "index")
 }
 
 func RegisterFilter(name string, factory FilterFactory) error {
-	if name == "" {
-		return fmt.Errorf("filter: register: empty name")
-	}
-	if factory == nil {
-		return fmt.Errorf("filter: register: nil factory")
-	}
-
-	filterRegistryMu.Lock()
-	defer filterRegistryMu.Unlock()
-
-	if _, exists := filterRegistry[name]; exists {
-		return fmt.Errorf("filter: register: duplicate name %q", name)
-	}
-
-	filterRegistry[name] = factory
-	return nil
+	return filterRegistry.register(name, factory, "filter")
 }
 
 func NewFilter(name string) (Filter, error) {
-	filterRegistryMu.RLock()
-	factory, ok := filterRegistry[name]
-	filterRegistryMu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("filter: unknown %q", name)
-	}
-
-	return factory()
+	return filterRegistry.new(name, "filter")
 }
