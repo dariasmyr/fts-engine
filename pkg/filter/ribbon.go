@@ -93,7 +93,7 @@ func (rf *RibbonFilter) fingerprint(item []byte) uint16 {
 }
 
 func (rf *RibbonFilter) fpMask() uint16 {
-	return (uint16(1) << 16) - 1
+	return ^uint16(0)
 }
 
 // expectedItems: ожидаемое количество ключей
