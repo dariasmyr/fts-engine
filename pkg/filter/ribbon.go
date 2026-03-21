@@ -127,6 +127,26 @@ func NewRibbonFilter(expectedItems uint32, extraCells uint32, w uint32, seed uin
 	}, nil
 }
 
+// NewRibbonFilterWithRetries создает фильтр и пытается собрать его с разными seed.
+func NewRibbonFilterWithRetries(expectedItems uint32, extraCells uint32, w uint32, seed uint64, items [][]byte, maxAttempts uint32) (*RibbonFilter, error) {
+	if maxAttempts == 0 {
+		return nil, errors.New("maxAttempts must be > 0")
+	}
+
+	for attempt := uint32(0); attempt < maxAttempts; attempt++ {
+		rf, err := NewRibbonFilter(expectedItems, extraCells, w, seed+uint64(attempt))
+		if err != nil {
+			return nil, err
+		}
+
+		if err := rf.Build(items); err == nil {
+			return rf, nil
+		}
+	}
+
+	return nil, errors.New("failed to build ribbon filter after retries")
+}
+
 // Build собирает весь сет фильтра по всем ключам за раз
 func (rf *RibbonFilter) Build(items [][]byte) error {
 	if len(items) == 0 {
