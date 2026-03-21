@@ -17,6 +17,7 @@ type RibbonFilter struct {
 	w     uint32 // ширина локального окна
 	seed  uint64
 	cells []uint16 // набор значений которые мы хотим XOR'ить, чтобы получить fingerprint
+	built bool
 }
 
 // в row будет все необходимое для XOR
@@ -132,6 +133,18 @@ func (rf *RibbonFilter) Build(items [][]byte) error {
 		return errors.New("items must not be empty")
 	}
 
+	// Защита для ребилда: пока новая сборка не закончилась успешно,
+	// фильтр считается неготовым, а старые values в cells очищаются.
+	rf.built = false
+	for i := range rf.cells {
+		rf.cells[i] = 0
+	}
+
+	// План сборки:
+	// 1) Превращаем каждый ключ в row (start/mask/fingerprint).
+	// 2) Делаем elimination: строим pivot-уравнения и сокращаем новые строки через XOR.
+	// 3) Делаем back substitution: идем по колонкам справа налево и восстанавливаем rf.cells.
+
 	// Распаковка слайса строк на записи для XOR
 	// Тут возможна оптимизация, например если известен размер ключа (например 16 байт)
 	// вместо [][]byte дать плоский массив [16]byte
@@ -140,22 +153,23 @@ func (rf *RibbonFilter) Build(items [][]byte) error {
 		rows = append(rows, rf.makeRow(item))
 	}
 
-	// pivots[i] хранит одно pivot-уравнение, в котором cells[i] является ведущей переменной
-	// Это уравнение используется, чтобы исключать одинаковые cells[i] из новых уравнений
-	// cells[2] XOR cells[3] = 1 // pivot для cells[2]
-	// если мы наткнемся на еще одно уравнение где первым идет cells[2]
-	// cells[2] XOR cells[5] = 0  // новое уравнение с тем же lead
-	// то cells[2] сокращаем:
-	// cells[2] XOR cells[3] = 1
-	// cells[2] XOR cells[3] = 0
-	// и получаем:
-	// cells[3] XOR cells[5] = 1
+	// pivots[i] хранит одно pivot-уравнение, где cells[i] — ведущая переменная.
+	// Когда в новом уравнении ведущая колонка тоже i, делаем XOR с pivots[i],
+	// чтобы убрать cells[i] и перейти к следующей ведущей колонке.
+	// Пример:
+	//   cells[2] XOR cells[3] = 1   // pivot для cells[2]
+	//   cells[2] XOR cells[5] = 0   // новое уравнение с тем же lead
+	// XOR --------------------------------------------
+	//   cells[3] XOR cells[5] = 1
 	pivots := make([]*row, rf.m)
 
 	// Gaussian elimination над GF(2)
 	for _, sourceRow := range rows {
 		cur := sourceRow
 
+		// Внутри одного sourceRow делаем elimination, пока уравнение не:
+		// 1) станет новым pivot, или
+		// 2) занулится полностью.
 		for cur.mask != 0 {
 			leadCol := cur.leadingColumn()
 
@@ -173,7 +187,7 @@ func (rf *RibbonFilter) Build(items [][]byte) error {
 		// Мы знаем fp и знаем, что fp получается в результате XOR с cells
 		// какие cells - мы не знаем - это определяется по маске в локальном окне
 
-		// если маска = 0 (пустая, а значит одинаковые cells срезались в результате сокращения Гаусса)
+		// если mask == 0 (все переменные сократились в результате XOR)
 		// то в случае успеха fp должен быть 0
 		// cells[2] XOR cells[4] = 1
 		// cells[2] XOR cells[4] = 1
@@ -189,8 +203,10 @@ func (rf *RibbonFilter) Build(items [][]byte) error {
 		}
 	}
 
-	// восстанавливаем значения cells с конца (так как уравнение для cells[col] может зависеть от ячеек с большими индексами).
-	// если для ячейки нет pivot-уравнения, она свободная, поэтому ставим 0.
+	// Обратная подстановка после elimination.
+	// Идем справа налево, потому что уравнение для cells[col] может
+	// ссылаться на cells с большими индексами, а они уже должны быть посчитаны.
+	// Если pivot для колонки нет, переменная свободная: выбираем значение 0.
 	for col := int(rf.m) - 1; col >= 0; col-- {
 		pivot := pivots[col]
 		if pivot == nil {
@@ -198,34 +214,46 @@ func (rf *RibbonFilter) Build(items [][]byte) error {
 			continue
 		}
 
-		// cell[col] XOR otherCells = fingerprint
-		// => cell[col] = fingerprint XOR otherCells
-		value := pivot.fingerprint
+		// Уравнение pivot имеет вид:
+		//   cells[col] XOR otherCells = fingerprint
+		// => cells[col] = fingerprint XOR otherCells
+		cellValue := pivot.fingerprint
 
 		localMask := pivot.mask
-		base := pivot.start
+		base := pivot.start // начало локального окна для этой строки
 
+		// Перебираем только установленные биты mask (только реально участвующие cells).
 		for localMask != 0 {
-			bitPos := bits.TrailingZeros64(localMask)
-			globalCol := base + uint32(bitPos)
+			bitPos := bits.TrailingZeros64(localMask) // индекс самого младшего установленного бита (1) в localMask
+			globalCol := base + uint32(bitPos)        // локальная позиция -> индекс в rf.cells
 
+			// Саму решаемую переменную cells[col] не добавляем.
 			if int(globalCol) != col {
-				value ^= rf.cells[globalCol]
+				cellValue ^= rf.cells[globalCol] // cellValue = cellValue ^ rf.cells[globalCol]
 			}
 
+			// Снимаем обработанный младший установленный бит.
 			localMask &= localMask - 1
 		}
 
-		rf.cells[col] = value & rf.fpMask()
+		rf.cells[col] = cellValue & rf.fpMask()
 	}
 
+	rf.built = true
 	return nil
 }
 
-// Contains проверяет, если ли ключ в сете
-// true = возможно есть
-// false = точно нет
+// Contains проверяет ключ через его XOR-уравнение.
+//
+// Результат:
+// true  => возможно есть (возможны ложноположительные срабатывания)
+// false => точно нет
 func (rf *RibbonFilter) Contains(item []byte) bool {
+	if !rf.built {
+		return false
+	}
+
+	// По ключу считаем start/mask/fingerprint (те же правила, что и в Build).
 	start := rf.start(item)
 	mask := rf.mask(item)
 	fp := rf.fingerprint(item)
@@ -233,12 +261,16 @@ func (rf *RibbonFilter) Contains(item []byte) bool {
 	var acc uint16 = 0
 
 	for i := uint32(0); i < rf.w; i++ {
+		// сдвиг маски вправо, через & оставляем только младший бит, если он не 0, значит включен
 		if ((mask >> i) & 1) != 0 {
-			acc ^= rf.cells[start+i]
+			// XOR'им значения rf.cells[start+i] только для битов i, где mask имеет 1.
+			acc ^= rf.cells[start+i] // на этом этапе все cells должны быть известны (сокращены в уравнениях XOR + восстановлены)
 		}
 	}
 
+	// берем fp из посчитанного xor
 	acc &= rf.fpMask()
+	// Сравниваем полученный XOR с fingerprint.
 	return acc == fp
 }
 
@@ -247,47 +279,50 @@ func (r row) leadingColumn() uint32 {
 	return r.start + uint32(bits.TrailingZeros64(r.mask))
 }
 
-// xorRows производит XOR двух rows в GF(2).
+// xorRows вычисляет (cur XOR pivot) как уравнения над GF(2).
 //
-// Для сравнения надо выровнять row b to row в глобальных координатах
-// XOR masks and XOR right-hand side.
-func xorRows(a row, b row) row {
-	if a.mask == 0 {
-		return b
+// Важно: bit k в mask означает не глобальную колонку k, а cells[start+k].
+// Поэтому перед XOR pivot.mask надо выровнять относительно cur.start.
+// После выравнивания совпадающие глобальные cells[i] окажутся в одном бите
+// и корректно сократятся (x XOR x = 0).
+func xorRows(cur row, pivot row) row {
+	if cur.mask == 0 {
+		return pivot
 	}
-	if b.mask == 0 {
-		return a
+	if pivot.mask == 0 {
+		return cur
 	}
 
-	// расстояние b.mask до a.start
-	shift := int(b.start) - int(a.start)
+	// Сдвиг между локальными окнами: переводим pivot.mask в координаты cur.start.
+	shift := int(pivot.start) - int(cur.start)
 
 	var aligned uint64
 	switch {
 	case shift >= 64:
 		aligned = 0
 	case shift >= 0:
-		aligned = b.mask << shift
+		aligned = pivot.mask << shift
 	case shift <= -64:
 		aligned = 0
 	default:
-		aligned = b.mask >> (-shift)
+		aligned = pivot.mask >> (-shift)
 	}
 
-	a.mask ^= aligned
-	a.fingerprint ^= b.fingerprint
+	cur.mask ^= aligned
+	cur.fingerprint ^= pivot.fingerprint
 
-	if a.mask == 0 {
-		a.start = 0
-		return a
+	if cur.mask == 0 {
+		cur.start = 0
+		return cur
 	}
 
-	// нормализация черех обрезание нулей
-	tz := bits.TrailingZeros64(a.mask)
-	a.start += uint32(tz)
-	a.mask >>= tz
+	// Нормализация: убираем хвостовые нули mask и сдвигаем start,
+	// чтобы первый установленный бит снова был в позиции 0.
+	tz := bits.TrailingZeros64(cur.mask)
+	cur.start += uint32(tz)
+	cur.mask >>= tz
 
-	return a
+	return cur
 }
 
 func (rf *RibbonFilter) hashWithSalt(item []byte, salt uint64) uint64 {
