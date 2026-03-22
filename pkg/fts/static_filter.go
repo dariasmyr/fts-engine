@@ -17,6 +17,45 @@ type BufferedStaticFilter struct {
 	tries  uint32
 }
 
+func (f *BufferedStaticFilter) BuildFromKeys(iterate func(func(string) bool) error) error {
+	if iterate == nil {
+		return fmt.Errorf("fts: buffered static filter: nil key iterator")
+	}
+
+	return f.BuildFromKeyStream(keyIteratorToStream(iterate))
+}
+
+func (f *BufferedStaticFilter) BuildFromKeyStream(stream func(func([]byte) bool) error) error {
+	if f == nil || f.static == nil {
+		return nil
+	}
+	if stream == nil {
+		return fmt.Errorf("fts: buffered static filter: nil key stream")
+	}
+
+	if retryable, ok := f.static.(RetryableStaticFilter); ok && f.tries > 1 {
+		if err := retryable.BuildWithRetriesFromKeyStream(stream, f.tries); err != nil {
+			return err
+		}
+		f.markBuiltAndResetBuffer()
+		return nil
+	}
+
+	if err := f.static.BuildFromKeyStream(stream); err != nil {
+		return err
+	}
+	f.markBuiltAndResetBuffer()
+	return nil
+}
+
+func keyIteratorToStream(iterate func(func(string) bool) error) func(func([]byte) bool) error {
+	return func(emit func([]byte) bool) error {
+		return iterate(func(key string) bool {
+			return emit([]byte(key))
+		})
+	}
+}
+
 func NewBufferedStaticFilter(static StaticFilter) *BufferedStaticFilter {
 	return NewBufferedStaticFilterWithRetries(static, 1)
 }
@@ -77,13 +116,13 @@ func (f *BufferedStaticFilter) Build() error {
 		return nil
 	}
 
-	items := make([][]byte, 0, len(f.keys))
+	keys := make([]string, 0, len(f.keys))
 	for key := range f.keys {
-		items = append(items, []byte(key))
+		keys = append(keys, key)
 	}
 	f.mu.Unlock()
 
-	if len(items) == 0 {
+	if len(keys) == 0 {
 		f.mu.Lock()
 		f.dirty = false
 		f.built = true
@@ -91,12 +130,7 @@ func (f *BufferedStaticFilter) Build() error {
 		return nil
 	}
 
-	var err error
-	if retryable, ok := f.static.(RetryableStaticFilter); ok && f.tries > 1 {
-		err = retryable.BuildWithRetries(items, f.tries)
-	} else {
-		err = f.static.Build(items)
-	}
+	err := f.BuildFromKeyStream(stringSliceToKeyStream(keys))
 	if err != nil {
 		f.mu.Lock()
 		f.built = false
@@ -110,6 +144,25 @@ func (f *BufferedStaticFilter) Build() error {
 	f.mu.Unlock()
 
 	return nil
+}
+
+func stringSliceToKeyStream(keys []string) func(func([]byte) bool) error {
+	return func(emit func([]byte) bool) error {
+		for _, key := range keys {
+			if !emit([]byte(key)) {
+				break
+			}
+		}
+		return nil
+	}
+}
+
+func (f *BufferedStaticFilter) markBuiltAndResetBuffer() {
+	f.mu.Lock()
+	f.keys = make(map[string]struct{})
+	f.dirty = false
+	f.built = true
+	f.mu.Unlock()
 }
 
 func (f *BufferedStaticFilter) Serialize(w io.Writer) error {

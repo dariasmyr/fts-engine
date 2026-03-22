@@ -1,7 +1,12 @@
 package filter
 
 import (
+	"bufio"
 	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
@@ -10,9 +15,22 @@ import (
 func TestRibbonFilterBuildAndContains(t *testing.T) {
 	items := [][]byte{[]byte("alpha"), []byte("beta"), []byte("gamma")}
 
-	rf, err := NewRibbonFilterWithRetries(32, 32, 24, 7, items, 10)
+	rf, err := NewRibbonFilter(32, 32, 24, 7)
 	if err != nil {
-		t.Fatalf("NewRibbonFilterWithRetries() error = %v", err)
+		t.Fatalf("NewRibbonFilter() error = %v", err)
+	}
+
+	stream := func(emit func([]byte) bool) error {
+		for _, item := range items {
+			if !emit(item) {
+				break
+			}
+		}
+		return nil
+	}
+
+	if err := rf.BuildWithRetriesFromKeyStream(stream, 10); err != nil {
+		t.Fatalf("BuildWithRetriesFromKeyStream() error = %v", err)
 	}
 
 	for _, item := range items {
@@ -32,9 +50,22 @@ func TestRibbonFilterWindowValidation(t *testing.T) {
 func TestRibbonFilterSerializeLoadRoundTrip(t *testing.T) {
 	items := [][]byte{[]byte("alpha"), []byte("beta"), []byte("gamma")}
 
-	rf, err := NewRibbonFilterWithRetries(32, 32, 24, 7, items, 10)
+	rf, err := NewRibbonFilter(32, 32, 24, 7)
 	if err != nil {
-		t.Fatalf("NewRibbonFilterWithRetries() error = %v", err)
+		t.Fatalf("NewRibbonFilter() error = %v", err)
+	}
+
+	stream := func(emit func([]byte) bool) error {
+		for _, item := range items {
+			if !emit(item) {
+				break
+			}
+		}
+		return nil
+	}
+
+	if err := rf.BuildWithRetriesFromKeyStream(stream, 10); err != nil {
+		t.Fatalf("BuildWithRetriesFromKeyStream() error = %v", err)
 	}
 
 	var payload bytes.Buffer
@@ -65,5 +96,100 @@ func TestRibbonFilterAsFTSFilterViaLazyAdapter(t *testing.T) {
 
 	if !f.Contains([]byte("delta")) {
 		t.Fatal("Contains(delta) = false, want true")
+	}
+}
+
+func TestRibbonFilterBuildFromKeyStream(t *testing.T) {
+	items := [][]byte{[]byte("alpha"), []byte("beta"), []byte("gamma")}
+
+	rf, err := NewRibbonFilter(32, 32, 24, 7)
+	if err != nil {
+		t.Fatalf("NewRibbonFilter() error = %v", err)
+	}
+
+	stream := func(emit func([]byte) bool) error {
+		for _, item := range items {
+			if !emit(item) {
+				break
+			}
+		}
+		return nil
+	}
+
+	if err := rf.BuildWithRetriesFromKeyStream(stream, 10); err != nil {
+		t.Fatalf("BuildWithRetriesFromKeyStream() error = %v", err)
+	}
+
+	for _, item := range items {
+		if !rf.Contains(item) {
+			t.Fatalf("Contains(%q) = false, want true", string(item))
+		}
+	}
+}
+
+func TestRibbonFilterBuildFromFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys.log")
+	data := []byte("alpha\nbeta\ngamma\n")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	rf, err := NewRibbonFilter(32, 32, 24, 7)
+	if err != nil {
+		t.Fatalf("NewRibbonFilter() error = %v", err)
+	}
+
+	if err := rf.BuildWithRetriesFromFile(path, 10); err != nil {
+		t.Fatalf("BuildWithRetriesFromFile() error = %v", err)
+	}
+
+	for _, key := range []string{"alpha", "beta", "gamma"} {
+		if !rf.Contains([]byte(key)) {
+			t.Fatalf("Contains(%q) = false, want true", key)
+		}
+	}
+}
+
+func TestRibbonFilterBuildFromFileWithCustomParser(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys.alog")
+	data := []byte("1|alpha\n2|beta\n3|gamma\n")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	parser := func(path string, emit func([]byte) bool) error {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		s := bufio.NewScanner(f)
+		for s.Scan() {
+			parts := strings.SplitN(strings.TrimSpace(s.Text()), "|", 2)
+			if len(parts) != 2 {
+				return fmt.Errorf("invalid alog row")
+			}
+			if !emit([]byte(parts[1])) {
+				break
+			}
+		}
+
+		return s.Err()
+	}
+
+	rf, err := NewRibbonFilter(32, 32, 24, 7)
+	if err != nil {
+		t.Fatalf("NewRibbonFilter() error = %v", err)
+	}
+
+	if err := rf.BuildWithRetriesFromFileWithParser(path, parser, 10); err != nil {
+		t.Fatalf("BuildWithRetriesFromFileWithParser() error = %v", err)
+	}
+
+	for _, key := range []string{"alpha", "beta", "gamma"} {
+		if !rf.Contains([]byte(key)) {
+			t.Fatalf("Contains(%q) = false, want true", key)
+		}
 	}
 }

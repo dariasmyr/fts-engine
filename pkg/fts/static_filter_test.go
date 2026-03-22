@@ -14,15 +14,35 @@ type testStaticFilter struct {
 	serialized bool
 }
 
-func (f *testStaticFilter) Build(items [][]byte) error {
+type testStreamStaticFilter struct {
+	testStaticFilter
+	streamBuilds int
+}
+
+func (f *testStreamStaticFilter) BuildFromKeyStream(stream func(func([]byte) bool) error) error {
+	f.streamBuilds++
+	f.set = make(map[string]struct{})
+	if err := stream(func(item []byte) bool {
+		f.set[string(item)] = struct{}{}
+		return true
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (f *testStaticFilter) BuildFromKeyStream(stream func(func([]byte) bool) error) error {
 	f.builds++
 	if f.buildErr != nil {
 		return f.buildErr
 	}
 
-	f.set = make(map[string]struct{}, len(items))
-	for _, item := range items {
+	f.set = make(map[string]struct{})
+	if err := stream(func(item []byte) bool {
 		f.set[string(item)] = struct{}{}
+		return true
+	}); err != nil {
+		return err
 	}
 
 	return nil
@@ -124,5 +144,30 @@ func TestBufferedStaticFilterSerializeDelegatesToStatic(t *testing.T) {
 
 	if !static.serialized {
 		t.Fatal("Serialize() did not call static serializer")
+	}
+}
+
+func TestBufferedStaticFilterBuildFromKeysUsesStreamBuildWhenSupported(t *testing.T) {
+	static := &testStreamStaticFilter{}
+	filter := NewBufferedStaticFilter(static)
+
+	err := filter.BuildFromKeys(func(emit func(string) bool) error {
+		emit("alpha")
+		emit("beta")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("BuildFromKeys() error = %v", err)
+	}
+
+	if static.streamBuilds != 1 {
+		t.Fatalf("stream builds = %d, want 1", static.streamBuilds)
+	}
+	if static.builds != 0 {
+		t.Fatalf("slice builds = %d, want 0", static.builds)
+	}
+
+	if !filter.Contains([]byte("alpha")) {
+		t.Fatal("Contains(alpha) = false, want true")
 	}
 }

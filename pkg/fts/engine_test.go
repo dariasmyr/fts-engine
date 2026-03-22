@@ -196,28 +196,7 @@ func TestSearchDocumentsDoesNotAutoBuildBuildableFilter(t *testing.T) {
 	}
 }
 
-func TestFinalizeIndexingBuildsBuildableFilter(t *testing.T) {
-	idx := newMemoryIndex()
-	filter := &buildableContainsFilter{
-		containsOnlyFilter: containsOnlyFilter{allowed: map[string]bool{"known": true}},
-	}
-
-	svc := New(idx, WordKeys, WithFilter(filter))
-
-	if err := svc.IndexDocument(context.Background(), "doc-1", "known"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
-	}
-
-	if err := svc.FinalizeIndexing(); err != nil {
-		t.Fatalf("FinalizeIndexing() error = %v", err)
-	}
-
-	if !filter.built {
-		t.Fatal("Build() was not called by FinalizeIndexing()")
-	}
-}
-
-func TestSearchUsesBufferedStaticFilterAfterFinalize(t *testing.T) {
+func TestSearchUsesBufferedStaticFilterAfterManualBuild(t *testing.T) {
 	idx := newMemoryIndex()
 	idx.entries["known"] = []DocRef{{ID: "doc", Count: 1}}
 
@@ -241,18 +220,18 @@ func TestSearchUsesBufferedStaticFilterAfterFinalize(t *testing.T) {
 		t.Fatalf("static builds before finalize = %d, want 0", static.builds)
 	}
 
-	if err := svc.FinalizeIndexing(); err != nil {
-		t.Fatalf("FinalizeIndexing() error = %v", err)
+	if err := filter.Build(); err != nil {
+		t.Fatalf("Build() error = %v", err)
 	}
 	if static.builds != 1 {
-		t.Fatalf("static builds after finalize = %d, want 1", static.builds)
+		t.Fatalf("static builds after Build() = %d, want 1", static.builds)
 	}
 
 	resAfter, err := svc.SearchDocuments(context.Background(), "known", 10)
 	if err != nil {
-		t.Fatalf("SearchDocuments() after finalize error = %v", err)
+		t.Fatalf("SearchDocuments() after Build() error = %v", err)
 	}
 	if resAfter.TotalResultsCount != 1 {
-		t.Fatalf("TotalResultsCount after finalize = %d, want 1", resAfter.TotalResultsCount)
+		t.Fatalf("TotalResultsCount after Build() = %d, want 1", resAfter.TotalResultsCount)
 	}
 }

@@ -15,7 +15,7 @@ Reusable full-text search engine in Go with configurable indexing strategies, to
   - `hamtpointered`
 - Public text processing pipeline in `pkg/textproc`.
 - Public key generators in `pkg/keygen`.
-- Public probabilistic filters in `pkg/filter`.
+- Public probabilistic filters in `pkg/filter` (`bloom`, `cuckoo`, `ribbon`).
 - CLI entrypoint in `cmd/fts` with:
   - `prod` mode (run with configurable filters and interactive CUI)
   - `experiment` mode (collect indexing metrics)
@@ -175,7 +175,7 @@ fts:
   engine: "trie"
   index: "radix"      # radix|slicedradix|trigram|hamt|hamtpointered
   keygen: "word"      # word|trigram
-  filter: "none"      # none|bloom|cuckoo
+  filter: "none"      # none|bloom|cuckoo|ribbon
   snapshot:
     enabled: true
     path: "./data/segments/default.fidx"
@@ -192,6 +192,12 @@ fts:
     bucket_count: 262144
     bucket_size: 4
     max_kicks: 500
+  ribbon:
+    expected_items: 1000000
+    extra_cells: 250000
+    window_size: 24      # 1..32
+    seed: 0
+    max_attempts: 5
   pipeline:
     lowercase: true
     stopwords_en: true
@@ -222,6 +228,47 @@ Snapshot fields (`fts.snapshot`):
 - `experiment`:
   - always indexes current input and prints memory/index stats,
   - does not run CUI snapshot restore flow.
+
+## Ribbon filter usage (file-based)
+
+Ribbon is static. Build is explicit and called manually.
+
+### Mode 1: default parser (`ParseLineKeys`)
+
+Use this when the file is plain text: one non-empty line equals one key.
+
+```go
+rf, _ := filter.NewRibbonFilter(1_000_000, 250_000, 24, 0)
+_ = rf.BuildWithRetriesFromFile("./data/keys.txt", 5)
+
+bf := fts.NewBufferedStaticFilterWithRetries(rf, 5)
+svc := fts.New(radix.New(), keygen.Word, fts.WithFilter(bf))
+```
+
+### Mode 2: custom parser (recommended for `.alog`/json/csv/binary)
+
+Parser is provided by caller; filter receives only extracted keys.
+
+```go
+parser := func(path string, emit func([]byte) bool) error {
+	// parse your format and call emit(key)
+	return nil
+}
+
+rf, _ := filter.NewRibbonFilter(1_000_000, 250_000, 24, 0)
+_ = rf.BuildWithRetriesFromFileWithParser("./data/keys.alog", parser, 5)
+```
+
+If you index first and buffer keys through `BufferedStaticFilter`, call build manually:
+
+```go
+rf, _ := filter.NewRibbonFilter(1_000_000, 250_000, 24, 0)
+bf := fts.NewBufferedStaticFilterWithRetries(rf, 5)
+svc := fts.New(radix.New(), keygen.Word, fts.WithFilter(bf))
+
+_ = svc.IndexDocument(ctx, "doc-1", "alpha beta")
+_ = bf.Build()
+```
 
 ## Tests
 

@@ -143,33 +143,18 @@ func NewRibbonFilter(expectedItems uint32, extraCells uint32, w uint32, seed uin
 	}, nil
 }
 
-// NewRibbonFilterWithRetries создает фильтр и пытается собрать его с разными seed.
-func NewRibbonFilterWithRetries(expectedItems uint32, extraCells uint32, w uint32, seed uint64, items [][]byte, maxAttempts uint32) (*RibbonFilter, error) {
-	if maxAttempts == 0 {
-		return nil, errors.New("maxAttempts must be > 0")
-	}
-
-	rf, err := NewRibbonFilter(expectedItems, extraCells, w, seed)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := rf.BuildWithRetries(items, maxAttempts); err == nil {
-		return rf, nil
-	}
-
-	return nil, errors.New("failed to build ribbon filter after retries")
-}
-
-func (rf *RibbonFilter) BuildWithRetries(items [][]byte, maxAttempts uint32) error {
+func (rf *RibbonFilter) BuildWithRetriesFromKeyStream(stream func(func([]byte) bool) error, maxAttempts uint32) error {
 	if maxAttempts == 0 {
 		return errors.New("maxAttempts must be > 0")
+	}
+	if stream == nil {
+		return errors.New("key stream must not be nil")
 	}
 
 	baseSeed := rf.seed
 	for attempt := uint32(0); attempt < maxAttempts; attempt++ {
 		rf.seed = baseSeed + uint64(attempt)
-		if err := rf.Build(items); err == nil {
+		if err := rf.BuildFromKeyStream(stream); err == nil {
 			return nil
 		}
 	}
@@ -178,10 +163,9 @@ func (rf *RibbonFilter) BuildWithRetries(items [][]byte, maxAttempts uint32) err
 	return errors.New("failed to build ribbon filter after retries")
 }
 
-// Build собирает весь сет фильтра по всем ключам за раз
-func (rf *RibbonFilter) Build(items [][]byte) error {
-	if len(items) == 0 {
-		return errors.New("items must not be empty")
+func (rf *RibbonFilter) BuildFromKeyStream(stream func(func([]byte) bool) error) error {
+	if stream == nil {
+		return errors.New("key stream must not be nil")
 	}
 
 	// Защита для ребилда: пока новая сборка не закончилась успешно,
@@ -210,7 +194,10 @@ func (rf *RibbonFilter) Build(items [][]byte) error {
 	pivots := make([]*row, rf.m)
 
 	// Gaussian elimination над GF(2)
-	for _, item := range items {
+	processed := false
+	var buildErr error
+	err := stream(func(item []byte) bool {
+		processed = true
 		cur := rf.makeRow(item)
 
 		// Внутри одного sourceRow делаем elimination, пока уравнение не:
@@ -245,8 +232,20 @@ func (rf *RibbonFilter) Build(items [][]byte) error {
 		// если cur.mask == 0 а cur.fingerprint != 0, значит все cells сократились, но fp не 0 - противоречие
 		// значит одни и те же cells дали разный fp
 		if cur.mask == 0 && cur.fingerprint != 0 {
-			return errors.New("build failed: inconsistent XOR system; increase extraCells or change seed")
+			buildErr = errors.New("build failed: inconsistent XOR system; increase extraCells or change seed")
+			return false
 		}
+
+		return true
+	})
+	if err != nil {
+		return err
+	}
+	if !processed {
+		return errors.New("items must not be empty")
+	}
+	if buildErr != nil {
+		return buildErr
 	}
 
 	// Обратная подстановка после elimination.

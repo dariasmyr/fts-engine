@@ -166,23 +166,6 @@ func (s *Service) Analyze() (Stats, bool) {
 	return analyzer.Analyze(), true
 }
 
-func (s *Service) FinalizeIndexing() error {
-	if s == nil || s.filter == nil {
-		return nil
-	}
-
-	buildable, ok := s.filter.(BuildableFilter)
-	if !ok {
-		return nil
-	}
-
-	if err := buildable.Build(); err != nil {
-		return fmt.Errorf("fts: finalize indexing: filter build: %w", err)
-	}
-
-	return nil
-}
-
 func (s *Service) SaveSnapshot(w io.Writer, indexName string, filterName string) error {
 	return SaveSegmentSnapshot(w, indexName, s.index, filterName, s.filter)
 }

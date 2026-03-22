@@ -55,15 +55,15 @@ type BuildableFilter interface {
 	Build() error
 }
 
-// StaticFilter describes filter,that is built in batches by whole amount of keys (ribbon)
+// StaticFilter describes filter built from replayable key stream.
 type StaticFilter interface {
-	Build(items [][]byte) error
+	BuildFromKeyStream(stream func(func([]byte) bool) error) error
 	Contains(item []byte) bool
 }
 
 type RetryableStaticFilter interface {
 	StaticFilter
-	BuildWithRetries(items [][]byte, maxAttempts uint32) error
+	BuildWithRetriesFromKeyStream(stream func(func([]byte) bool) error, maxAttempts uint32) error
 }
 
 type Engine interface {
