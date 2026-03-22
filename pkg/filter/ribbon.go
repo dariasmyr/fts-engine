@@ -192,17 +192,12 @@ func (rf *RibbonFilter) Build(items [][]byte) error {
 	}
 
 	// План сборки:
-	// 1) Превращаем каждый ключ в row (start/mask/fingerprint).
-	// 2) Делаем elimination: строим pivot-уравнения и сокращаем новые строки через XOR.
+	// 1) Для каждого ключа считаем row (start/mask/fingerprint).
+	// 2) Сразу делаем elimination: строим pivot-уравнения и сокращаем новые строки через XOR.
 	// 3) Делаем back substitution: идем по колонкам справа налево и восстанавливаем rf.cells.
-
-	// Распаковка слайса строк на записи для XOR
-	// Тут возможна оптимизация, например если известен размер ключа (например 16 байт)
-	// вместо [][]byte дать плоский массив [16]byte
-	rows := make([]row, 0, len(items))
-	for _, item := range items {
-		rows = append(rows, rf.makeRow(item))
-	}
+	//
+	// Важно: rows не буферизуем отдельным слайсом, чтобы не держать в памяти
+	// дубликат данных для больших наборов ключей.
 
 	// pivots[i] хранит одно pivot-уравнение, где cells[i] — ведущая переменная.
 	// Когда в новом уравнении ведущая колонка тоже i, делаем XOR с pivots[i],
@@ -215,8 +210,8 @@ func (rf *RibbonFilter) Build(items [][]byte) error {
 	pivots := make([]*row, rf.m)
 
 	// Gaussian elimination над GF(2)
-	for _, sourceRow := range rows {
-		cur := sourceRow
+	for _, item := range items {
+		cur := rf.makeRow(item)
 
 		// Внутри одного sourceRow делаем elimination, пока уравнение не:
 		// 1) станет новым pivot, или
