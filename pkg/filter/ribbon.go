@@ -35,6 +35,11 @@ const (
 	startSalt uint64 = 0x9e3779b97f4a7c15
 	maskSalt  uint64 = 0xc2b2ae3d27d4eb4f
 	fpSalt    uint64 = 0x165667b19e3779f9
+
+	// Текущее elimination хранит строку в локальной uint64-маске.
+	// При XOR после выравнивания двух окон нужен диапазон до (2*w - 1) бит.
+	// Чтобы избежать потери битов в uint64, лучше поставить лимит окна 32: 2*w - 1 <= 64 => w <= 32.
+	maxRibbonWindow uint32 = 32
 )
 
 // makeRow запечатывает все необходимое для XOR уравнения
@@ -112,8 +117,8 @@ func NewRibbonFilter(expectedItems uint32, extraCells uint32, w uint32, seed uin
 	if expectedItems == 0 {
 		return nil, errors.New("expectedItems must be > 0")
 	}
-	if w == 0 || w > 64 {
-		return nil, errors.New("w must be in range [1..64]")
+	if w == 0 || w > maxRibbonWindow {
+		return nil, errors.New("w must be in range [1..32]")
 	}
 
 	// Количество cells должно быть слегка выше количества expectedItems и не меньше минимального размера окна
@@ -314,18 +319,27 @@ func xorRows(cur row, pivot row) row {
 	}
 
 	// Сдвиг между локальными окнами: переводим pivot.mask в координаты cur.start.
+	// Это нужно не для "сравнения окон", а для XOR уравнений над ГЛОБАЛЬНЫМИ cells[i]:
+	// после выравнивания одинаковые глобальные ячейки попадают в один и тот же бит
+	// и корректно сокращаются (x XOR x = 0).
+	//
+	// Почему пропускаем очень большие сдвиги (shift >= 64):
+	// 1) маска шириной uint64 и поэтому у нас 64  позиций;
+	// 2) в elimination мы XOR'им строку только с pivot той же ведущей глобальной колонки,
+	//    поэтому такие сдвиги по факту не ожидаются для валидных row (при w <= 64),
+	//    но ветки оставлены как безопасная защита.
 	shift := int(pivot.start) - int(cur.start)
 
 	var aligned uint64
 	switch {
 	case shift >= 64:
-		// После сдвига влево на 64+ все биты выходят за uint64-окно [0..63],
-		// в координатах cur вклад отсутствует.
+		// После сдвига на >64бита (в одном окне ячейка в начале, в другом в конце), соответственно
+		// все биты выходят за uint64-окно [0..63] и общих позиций в окнах нет.
 		aligned = 0
 	case shift >= 0:
 		aligned = pivot.mask << shift
 	case shift <= -64:
-		// Аналогично для сдвига вправо на 64+: все биты исчезают.
+		// аналогично для сдвига вправо на 64+.
 		aligned = 0
 	default:
 		aligned = pivot.mask >> (-shift)
