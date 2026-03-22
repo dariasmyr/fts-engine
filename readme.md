@@ -32,13 +32,11 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/index/radix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
 func main() {
 	idx := radix.New()
-	pipe := textproc.DefaultEnglishPipeline()
-	engine := fts.New(idx, keygen.Word, fts.WithPipeline(pipe))
+	engine := fts.New(idx, keygen.Word)
 
 	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
 	res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
@@ -132,6 +130,12 @@ Available defaults:
 - `textproc.DefaultEnglishPipeline()`
 - `textproc.DefaultRussianPipeline()`
 - `textproc.DefaultMultilingualPipeline()`
+
+You can also apply language presets as options via `pkg/ftspreset`:
+
+```go
+engine := fts.New(radix.New(), keygen.Word, ftspreset.English())
+```
 
 ### 3) Optional: custom filter pipeline
 

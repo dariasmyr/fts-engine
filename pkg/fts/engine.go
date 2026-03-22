@@ -7,8 +7,6 @@ import (
 	"io"
 	"sort"
 	"time"
-
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
 type Service struct {
@@ -22,7 +20,7 @@ func New(index Index, keyGen KeyGenerator, opts ...Option) *Service {
 	s := &Service{
 		index:    index,
 		keyGen:   keyGen,
-		pipeline: textproc.DefaultEnglishPipeline(),
+		pipeline: defaultPipeline{},
 	}
 
 	for _, opt := range opts {
