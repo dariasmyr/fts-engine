@@ -113,33 +113,73 @@ If you work from a local checkout, use `replace` in `go.mod`:
 replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
 ```
 
-### 2) Switch strategy without changing app flow
+### 2) Choose one initialization flow
+
+#### Quickstart
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/keygen"
+)
+
+func main() {
+	idx := radix.New()
+	engine := fts.New(idx, keygen.Word)
+
+	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
+	res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
+
+	fmt.Println(res.TotalResultsCount)
+}
+```
+
+Use direct constructors and start indexing immediately.
+
+```go
+engine := fts.New(radix.New(), keygen.Word)
+```
+
+#### Explicit flow (recommended for most clients)
+
+Pick the exact index/key generator pair your app needs and keep wiring explicit.
 
 - Word index: `radix.New()` + `keygen.Word`
 - Trigram index: `trigram.New()` + `keygen.Trigram`
-
-Example:
 
 ```go
 idx := trigram.New()
 engine := fts.New(idx, keygen.Trigram, fts.WithPipeline(textproc.DefaultEnglishPipeline()))
 ```
 
-If you want to construct index/filter instances by name and use built-in snapshot codecs,
-register built-ins once at app startup:
+#### Built-in registry flow (config-driven by name)
+
+Use `pkg/ftsbuiltin` only when your app builds components by string name from config.
 
 ```go
 _ = ftsbuiltin.RegisterIndexes()
 _ = ftsbuiltin.RegisterFilters(ftsbuiltin.FilterOptions{
-    BloomExpectedItems: 1_000_000,
-    BloomBitsPerItem:   10,
-    BloomK:             7,
-    CuckooBucketCount:  262144,
-    CuckooBucketSize:   4,
-    CuckooMaxKicks:     500,
+	BloomExpectedItems: 1_000_000,
+	BloomBitsPerItem:   10,
+	BloomK:             7,
+	CuckooBucketCount:  262144,
+	CuckooBucketSize:   4,
+	CuckooMaxKicks:     500,
 })
 _ = ftsbuiltin.RegisterSnapshotCodecs()
+
+idx, _ := fts.NewIndex("radix")
+flt, _ := fts.NewFilter("bloom")
+engine := fts.New(idx, keygen.Word, fts.WithFilter(flt))
 ```
+
+If you do not construct by name from config, skip built-in registration.
 
 Available defaults:
 
