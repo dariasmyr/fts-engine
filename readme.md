@@ -32,13 +32,11 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/index/radix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
 func main() {
 	idx := radix.New()
-	pipe := textproc.DefaultEnglishPipeline()
-	engine := fts.New(idx, keygen.Word, fts.WithPipeline(pipe))
+	engine := fts.New(idx, keygen.Word)
 
 	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
 	res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
@@ -55,7 +53,7 @@ Index/filter state can be persisted to any `io.Writer` (file, object storage str
 var buf bytes.Buffer
 
 // Register snapshot codecs for selected index/filter once.
-// Example for built-ins is in cmd/fts/main.go (registerBuiltInSnapshotCodecs).
+// Built-in helpers are available in pkg/ftsbuiltin.
 
 svc := fts.New(radix.New(), keygen.Word)
 _ = svc.IndexDocument(context.Background(), "doc-1", "hello world")
@@ -127,11 +125,33 @@ idx := trigram.New()
 engine := fts.New(idx, keygen.Trigram, fts.WithPipeline(textproc.DefaultEnglishPipeline()))
 ```
 
+If you want to construct index/filter instances by name and use built-in snapshot codecs,
+register built-ins once at app startup:
+
+```go
+_ = ftsbuiltin.RegisterIndexes()
+_ = ftsbuiltin.RegisterFilters(ftsbuiltin.FilterOptions{
+    BloomExpectedItems: 1_000_000,
+    BloomBitsPerItem:   10,
+    BloomK:             7,
+    CuckooBucketCount:  262144,
+    CuckooBucketSize:   4,
+    CuckooMaxKicks:     500,
+})
+_ = ftsbuiltin.RegisterSnapshotCodecs()
+```
+
 Available defaults:
 
 - `textproc.DefaultEnglishPipeline()`
 - `textproc.DefaultRussianPipeline()`
 - `textproc.DefaultMultilingualPipeline()`
+
+You can also apply language presets as options via `pkg/ftspreset`:
+
+```go
+engine := fts.New(radix.New(), keygen.Word, ftspreset.English())
+```
 
 ### 3) Optional: custom filter pipeline
 

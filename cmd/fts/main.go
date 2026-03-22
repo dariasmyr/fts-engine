@@ -24,13 +24,8 @@ import (
 	"github.com/dariasmyr/fts-engine/internal/adapters/storage/leveldb"
 	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/internal/lib/logger/sl"
-	pkgfilter "github.com/dariasmyr/fts-engine/pkg/filter"
 	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/hamt"
-	"github.com/dariasmyr/fts-engine/pkg/index/hamtpointered"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/index/trigram"
+	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
@@ -43,12 +38,6 @@ const (
 
 const (
 	_readinessDrainDelay = 5 * time.Second
-)
-
-var (
-	registerIndexesOnce   sync.Once
-	registerFiltersOnce   sync.Once
-	registerSnapshotsOnce sync.Once
 )
 
 func ensureDir(p string) {
@@ -105,9 +94,27 @@ func main() {
 	case "kv":
 		ftsEngine = kv.New(log, storage, storage)
 	case "trie":
-		registerBuiltInIndexes()
-		registerBuiltInFilters(cfg)
-		registerBuiltInSnapshotCodecs()
+		if err := ftsbuiltin.RegisterIndexes(); err != nil {
+			log.Error("Failed to register indexes", "error", sl.Err(err))
+			return
+		}
+
+		if err := ftsbuiltin.RegisterFilters(ftsbuiltin.FilterOptions{
+			BloomExpectedItems: cfg.FTS.Bloom.ExpectedItems,
+			BloomBitsPerItem:   cfg.FTS.Bloom.BitsPerItem,
+			BloomK:             cfg.FTS.Bloom.K,
+			CuckooBucketCount:  cfg.FTS.Cuckoo.BucketCount,
+			CuckooBucketSize:   cfg.FTS.Cuckoo.BucketSize,
+			CuckooMaxKicks:     cfg.FTS.Cuckoo.MaxKicks,
+		}); err != nil {
+			log.Error("Failed to register filters", "error", sl.Err(err))
+			return
+		}
+
+		if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+			log.Error("Failed to register snapshot codecs", "error", sl.Err(err))
+			return
+		}
 
 		keyGen, err := selectKeyGenerator(cfg.FTS.KeyGen)
 		if err != nil {
@@ -410,101 +417,6 @@ func saveSnapshotIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Ser
 
 	log.Info("FTS snapshot persisted", "path", cfg.FTS.Snapshot.Path)
 	return nil
-}
-
-func registerBuiltInIndexes() {
-	registerIndexesOnce.Do(func() {
-		register := func(name string, factory pkgfts.IndexFactory) {
-			if err := pkgfts.RegisterIndex(name, factory); err != nil {
-				panic(err)
-			}
-		}
-
-		register("radix", func() (pkgfts.Index, error) { return radix.New(), nil })
-		register("slicedradix", func() (pkgfts.Index, error) { return slicedradix.New(), nil })
-		register("hamt", func() (pkgfts.Index, error) { return hamt.New(), nil })
-		register("hamtpointered", func() (pkgfts.Index, error) { return hamtpointered.New(), nil })
-		register("trigram", func() (pkgfts.Index, error) { return trigram.New(), nil })
-	})
-}
-
-func registerBuiltInFilters(cfg *config.Config) {
-	if cfg == nil {
-		return
-	}
-
-	registerFiltersOnce.Do(func() {
-		register := func(name string, factory pkgfts.FilterFactory) {
-			if err := pkgfts.RegisterFilter(name, factory); err != nil {
-				panic(err)
-			}
-		}
-
-		register("bloom", func() (pkgfts.Filter, error) {
-			return pkgfilter.NewBloomFilter(
-				cfg.FTS.Bloom.ExpectedItems,
-				cfg.FTS.Bloom.BitsPerItem,
-				cfg.FTS.Bloom.K,
-			), nil
-		})
-
-		register("cuckoo", func() (pkgfts.Filter, error) {
-			return pkgfilter.NewCuckooFilter(
-				cfg.FTS.Cuckoo.BucketCount,
-				cfg.FTS.Cuckoo.BucketSize,
-				cfg.FTS.Cuckoo.MaxKicks,
-			), nil
-		})
-	})
-}
-
-func registerBuiltInSnapshotCodecs() {
-	registerSnapshotsOnce.Do(func() {
-		registerIndexCodec := func(name string, loader pkgfts.IndexSnapshotLoader) {
-			err := pkgfts.RegisterIndexSnapshotCodec(name,
-				func(index pkgfts.Index, w io.Writer) error {
-					serializable, ok := index.(pkgfts.Serializable)
-					if !ok {
-						return fmt.Errorf("index %q does not support serialization", name)
-					}
-					return serializable.Serialize(w)
-				},
-				loader,
-			)
-			if err != nil {
-				panic(err)
-			}
-		}
-
-		registerFilterCodec := func(name string, loader pkgfts.FilterSnapshotLoader) {
-			err := pkgfts.RegisterFilterSnapshotCodec(name,
-				func(filter pkgfts.Filter, w io.Writer) error {
-					serializable, ok := filter.(pkgfts.Serializable)
-					if !ok {
-						return fmt.Errorf("filter %q does not support serialization", name)
-					}
-					return serializable.Serialize(w)
-				},
-				loader,
-			)
-			if err != nil {
-				panic(err)
-			}
-		}
-
-		registerIndexCodec("radix", radix.Load)
-		registerIndexCodec("slicedradix", slicedradix.Load)
-		registerIndexCodec("hamt", hamt.Load)
-		registerIndexCodec("hamtpointered", hamtpointered.Load)
-		registerIndexCodec("trigram", trigram.Load)
-
-		registerFilterCodec("bloom", func(r io.Reader) (pkgfts.Filter, error) {
-			return pkgfilter.LoadBloomFilter(r)
-		})
-		registerFilterCodec("cuckoo", func(r io.Reader) (pkgfts.Filter, error) {
-			return pkgfilter.LoadCuckooFilter(r)
-		})
-	})
 }
 
 func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {
