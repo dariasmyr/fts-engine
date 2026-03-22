@@ -204,6 +204,28 @@ pipe := textproc.NewPipeline(
 engine := fts.New(radix.New(), keygen.Word, fts.WithPipeline(pipe))
 ```
 
+### 4) Optional: filter-only usage (without index)
+
+You can use probabilistic filters as standalone membership checks.
+
+```go
+bf := filter.NewBloomFilter(1_000_000, 10, 7)
+bf.Add([]byte("alice@example.com"))
+
+fmt.Println(bf.Contains([]byte("alice@example.com"))) // true
+fmt.Println(bf.Contains([]byte("bob@example.com")))   // usually false, possible false positive
+
+cf := filter.NewCuckooFilter(262144, 4, 500)
+ok := cf.Add([]byte("session:123"))
+fmt.Println(ok, cf.Contains([]byte("session:123")))
+```
+
+Notes:
+
+- Bloom filter: `Add` always returns `true`; supports false positives.
+- Cuckoo filter: `Add` may return `false` when the filter is saturated.
+- Filter-only mode does not return documents; use an index for full-text retrieval.
+
 ## Build and run (CLI)
 
 Install dependencies:
