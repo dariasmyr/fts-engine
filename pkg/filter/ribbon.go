@@ -225,7 +225,7 @@ func (rf *RibbonFilter) Build(items [][]byte) error {
 
 	// Обратная подстановка после elimination.
 	// Идем справа налево, потому что уравнение для cells[col] может
-	// ссылаться на cells с большими индексами, а они уже должны быть посчитаны.
+	// ссылаться на cells с бОльшими индексами, а они уже должны быть посчитаны.
 	// Если pivot для колонки нет, переменная свободная: выбираем значение 0.
 	for col := int(rf.m) - 1; col >= 0; col-- {
 		pivot := pivots[col]
@@ -319,15 +319,22 @@ func xorRows(cur row, pivot row) row {
 	var aligned uint64
 	switch {
 	case shift >= 64:
+		// После сдвига влево на 64+ все биты выходят за uint64-окно [0..63],
+		// в координатах cur вклад отсутствует.
 		aligned = 0
 	case shift >= 0:
 		aligned = pivot.mask << shift
 	case shift <= -64:
+		// Аналогично для сдвига вправо на 64+: все биты исчезают.
 		aligned = 0
 	default:
 		aligned = pivot.mask >> (-shift)
 	}
 
+	// XOR с aligned = 0 ничего не меняет: x ^ 0 = x.
+	// cur.mask:        0b001011
+	// aligned:         0b001010
+	// новая cur.mask:  0b000001
 	cur.mask ^= aligned
 	cur.fingerprint ^= pivot.fingerprint
 
@@ -338,8 +345,12 @@ func xorRows(cur row, pivot row) row {
 
 	// Нормализация: убираем хвостовые нули mask и сдвигаем start,
 	// чтобы первый установленный бит снова был в позиции 0.
+	// и чтобы проход был только по установленным битам
+	// cur.mask   = 0b001010
 	tz := bits.TrailingZeros64(cur.mask)
+	//  cur.start += 1
 	cur.start += uint32(tz)
+	// cur.mask   = 0b001010 -> 0b000101
 	cur.mask >>= tz
 
 	return cur
