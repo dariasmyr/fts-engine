@@ -145,11 +145,18 @@ func main() {
 
 	if cfg.Mode.Type == "experiment" {
 		startTime = time.Now()
+		var finalizeErr error
 		memStats := utils.MeasureMemory(func() {
 			for _, doc := range documents {
 				_ = ftsEngine.IndexDocument(ctx, doc.ID, doc.Abstract)
 			}
+
+			finalizeErr = finalizeIndexingIfSupported(ftsEngine)
 		})
+		if finalizeErr != nil {
+			log.Error("Failed to finalize indexing", "error", sl.Err(finalizeErr))
+			return
+		}
 		duration = time.Since(startTime)
 		log.Info(fmt.Sprintf("Indexed %d documents in %v", len(documents), duration))
 
@@ -201,6 +208,11 @@ func main() {
 
 		close(jobCh)
 		wg.Wait()
+
+		if err := finalizeIndexingIfSupported(ftsEngine); err != nil {
+			log.Error("Failed to finalize indexing", "error", sl.Err(err))
+			return
+		}
 
 		if err := saveSnapshotIfEnabled(log, cfg, adapter.service); err != nil {
 			log.Error("Failed to persist snapshot", "error", sl.Err(err))
@@ -292,6 +304,21 @@ func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxR
 
 func (s *serviceAdapter) AnalyzeStats() (pkgfts.Stats, bool) {
 	return s.service.Analyze()
+}
+
+func (s *serviceAdapter) FinalizeIndexing() error {
+	return s.service.FinalizeIndexing()
+}
+
+func finalizeIndexingIfSupported(engine cui.SearchEngine) error {
+	finalizer, ok := engine.(interface {
+		FinalizeIndexing() error
+	})
+	if !ok {
+		return nil
+	}
+
+	return finalizer.FinalizeIndexing()
 }
 
 func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
@@ -455,6 +482,20 @@ func registerBuiltInFilters(cfg *config.Config) {
 				cfg.FTS.Cuckoo.MaxKicks,
 			), nil
 		})
+
+		register("ribbon", func() (pkgfts.Filter, error) {
+			rf, err := pkgfilter.NewRibbonFilter(
+				cfg.FTS.Ribbon.ExpectedItems,
+				cfg.FTS.Ribbon.ExtraCells,
+				cfg.FTS.Ribbon.WindowSize,
+				cfg.FTS.Ribbon.Seed,
+			)
+			if err != nil {
+				return nil, err
+			}
+
+			return pkgfts.NewBufferedStaticFilterWithRetries(rf, cfg.FTS.Ribbon.MaxAttempts), nil
+		})
 	})
 }
 
@@ -503,6 +544,14 @@ func registerBuiltInSnapshotCodecs() {
 		})
 		registerFilterCodec("cuckoo", func(r io.Reader) (pkgfts.Filter, error) {
 			return pkgfilter.LoadCuckooFilter(r)
+		})
+		registerFilterCodec("ribbon", func(r io.Reader) (pkgfts.Filter, error) {
+			rf, err := pkgfilter.LoadRibbonFilter(r)
+			if err != nil {
+				return nil, err
+			}
+
+			return pkgfts.NewBufferedStaticFilterWithRetries(rf, 1), nil
 		})
 	})
 }

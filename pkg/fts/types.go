@@ -45,9 +45,25 @@ type Pipeline interface {
 	Process(text string) []string
 }
 
+// Filter in a dynamic (bloom, cuckoo filters) that allow write on read
 type Filter interface {
 	Add(item []byte) bool
 	Contains(item []byte) bool
+}
+
+type BuildableFilter interface {
+	Build() error
+}
+
+// StaticFilter describes filter,that is built in batches by whole amount of keys (ribbon)
+type StaticFilter interface {
+	Build(items [][]byte) error
+	Contains(item []byte) bool
+}
+
+type RetryableStaticFilter interface {
+	StaticFilter
+	BuildWithRetries(items [][]byte, maxAttempts uint32) error
 }
 
 type Engine interface {

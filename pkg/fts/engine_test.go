@@ -42,6 +42,16 @@ func (f containsOnlyFilter) Contains(item []byte) bool {
 	return f.allowed[string(item)]
 }
 
+type buildableContainsFilter struct {
+	containsOnlyFilter
+	built bool
+}
+
+func (f *buildableContainsFilter) Build() error {
+	f.built = true
+	return nil
+}
+
 func TestSearchDocumentsSortAndLimit(t *testing.T) {
 	idx := newMemoryIndex()
 	idx.entries["alpha"] = []DocRef{{ID: "a", Count: 3}, {ID: "b", Count: 1}}
@@ -164,5 +174,85 @@ func TestSearchDocumentsSkipsIndexWhenFilterMisses(t *testing.T) {
 
 	if len(idx.searches) != 0 {
 		t.Fatalf("index search calls = %d, want 0", len(idx.searches))
+	}
+}
+
+func TestSearchDocumentsDoesNotAutoBuildBuildableFilter(t *testing.T) {
+	idx := newMemoryIndex()
+	idx.entries["known"] = []DocRef{{ID: "doc", Count: 1}}
+
+	filter := &buildableContainsFilter{
+		containsOnlyFilter: containsOnlyFilter{allowed: map[string]bool{"known": true}},
+	}
+
+	svc := New(idx, WordKeys, WithFilter(filter))
+
+	if _, err := svc.SearchDocuments(context.Background(), "known", 10); err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+
+	if filter.built {
+		t.Fatal("Build() was called during search, want explicit finalize only")
+	}
+}
+
+func TestFinalizeIndexingBuildsBuildableFilter(t *testing.T) {
+	idx := newMemoryIndex()
+	filter := &buildableContainsFilter{
+		containsOnlyFilter: containsOnlyFilter{allowed: map[string]bool{"known": true}},
+	}
+
+	svc := New(idx, WordKeys, WithFilter(filter))
+
+	if err := svc.IndexDocument(context.Background(), "doc-1", "known"); err != nil {
+		t.Fatalf("IndexDocument() error = %v", err)
+	}
+
+	if err := svc.FinalizeIndexing(); err != nil {
+		t.Fatalf("FinalizeIndexing() error = %v", err)
+	}
+
+	if !filter.built {
+		t.Fatal("Build() was not called by FinalizeIndexing()")
+	}
+}
+
+func TestSearchUsesBufferedStaticFilterAfterFinalize(t *testing.T) {
+	idx := newMemoryIndex()
+	idx.entries["known"] = []DocRef{{ID: "doc", Count: 1}}
+
+	static := &testStaticFilter{}
+	filter := NewBufferedStaticFilter(static)
+
+	svc := New(idx, WordKeys, WithFilter(filter))
+
+	if err := svc.IndexDocument(context.Background(), "doc-1", "known"); err != nil {
+		t.Fatalf("IndexDocument() error = %v", err)
+	}
+
+	resBefore, err := svc.SearchDocuments(context.Background(), "known", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() before finalize error = %v", err)
+	}
+	if resBefore.TotalResultsCount != 1 {
+		t.Fatalf("TotalResultsCount before finalize = %d, want 1", resBefore.TotalResultsCount)
+	}
+	if static.builds != 0 {
+		t.Fatalf("static builds before finalize = %d, want 0", static.builds)
+	}
+
+	if err := svc.FinalizeIndexing(); err != nil {
+		t.Fatalf("FinalizeIndexing() error = %v", err)
+	}
+	if static.builds != 1 {
+		t.Fatalf("static builds after finalize = %d, want 1", static.builds)
+	}
+
+	resAfter, err := svc.SearchDocuments(context.Background(), "known", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() after finalize error = %v", err)
+	}
+	if resAfter.TotalResultsCount != 1 {
+		t.Fatalf("TotalResultsCount after finalize = %d, want 1", resAfter.TotalResultsCount)
 	}
 }

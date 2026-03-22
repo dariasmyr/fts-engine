@@ -2,8 +2,11 @@ package filter
 
 import (
 	"encoding/binary"
+	"encoding/gob"
 	"errors"
+	"fmt"
 	"hash/fnv"
+	"io"
 	"math/bits"
 )
 
@@ -18,6 +21,14 @@ type RibbonFilter struct {
 	seed  uint64
 	cells []uint16 // набор значений которые мы хотим XOR'ить, чтобы получить fingerprint
 	built bool
+}
+
+type ribbonSnapshot struct {
+	M     uint32
+	W     uint32
+	Seed  uint64
+	Cells []uint16
+	Built bool
 }
 
 // в row будет все необходимое для XOR
@@ -138,18 +149,33 @@ func NewRibbonFilterWithRetries(expectedItems uint32, extraCells uint32, w uint3
 		return nil, errors.New("maxAttempts must be > 0")
 	}
 
-	for attempt := uint32(0); attempt < maxAttempts; attempt++ {
-		rf, err := NewRibbonFilter(expectedItems, extraCells, w, seed+uint64(attempt))
-		if err != nil {
-			return nil, err
-		}
+	rf, err := NewRibbonFilter(expectedItems, extraCells, w, seed)
+	if err != nil {
+		return nil, err
+	}
 
-		if err := rf.Build(items); err == nil {
-			return rf, nil
-		}
+	if err := rf.BuildWithRetries(items, maxAttempts); err == nil {
+		return rf, nil
 	}
 
 	return nil, errors.New("failed to build ribbon filter after retries")
+}
+
+func (rf *RibbonFilter) BuildWithRetries(items [][]byte, maxAttempts uint32) error {
+	if maxAttempts == 0 {
+		return errors.New("maxAttempts must be > 0")
+	}
+
+	baseSeed := rf.seed
+	for attempt := uint32(0); attempt < maxAttempts; attempt++ {
+		rf.seed = baseSeed + uint64(attempt)
+		if err := rf.Build(items); err == nil {
+			return nil
+		}
+	}
+
+	rf.seed = baseSeed
+	return errors.New("failed to build ribbon filter after retries")
 }
 
 // Build собирает весь сет фильтра по всем ключам за раз
@@ -384,4 +410,47 @@ func hash64(data []byte, seed uint64) uint64 {
 	_, _ = h.Write(data)
 
 	return h.Sum64()
+}
+
+func (rf *RibbonFilter) Serialize(w io.Writer) error {
+	snapshot := ribbonSnapshot{
+		M:     rf.m,
+		W:     rf.w,
+		Seed:  rf.seed,
+		Cells: append([]uint16(nil), rf.cells...),
+		Built: rf.built,
+	}
+
+	if err := gob.NewEncoder(w).Encode(snapshot); err != nil {
+		return fmt.Errorf("ribbon: serialize: %w", err)
+	}
+
+	return nil
+}
+
+func LoadRibbonFilter(r io.Reader) (*RibbonFilter, error) {
+	var snap ribbonSnapshot
+	if err := gob.NewDecoder(r).Decode(&snap); err != nil {
+		return nil, fmt.Errorf("ribbon: load: %w", err)
+	}
+
+	if snap.M == 0 {
+		return nil, errors.New("ribbon: load: invalid m")
+	}
+	if snap.W == 0 || snap.W > maxRibbonWindow {
+		return nil, errors.New("ribbon: load: invalid w")
+	}
+	if len(snap.Cells) != int(snap.M) {
+		return nil, errors.New("ribbon: load: invalid cells length")
+	}
+
+	rf := &RibbonFilter{
+		m:     snap.M,
+		w:     snap.W,
+		seed:  snap.Seed,
+		cells: append([]uint16(nil), snap.Cells...),
+		built: snap.Built,
+	}
+
+	return rf, nil
 }
