@@ -6,8 +6,6 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -177,44 +175,5 @@ func TestSaveSnapshotBufferedAsync(t *testing.T) {
 	}
 	if out.Len() == 0 {
 		t.Fatal("SaveSnapshotBufferedAsync() wrote empty payload")
-	}
-}
-
-func TestSaveSnapshotFileAndLoad(t *testing.T) {
-	indexCodecName := fmt.Sprintf("test-index-%s", t.Name())
-	if err := RegisterIndexSnapshotCodec(indexCodecName,
-		func(index Index, w io.Writer) error { return index.(Serializable).Serialize(w) },
-		loadSnapshotIndex,
-	); err != nil {
-		t.Fatalf("RegisterIndexSnapshotCodec() error = %v", err)
-	}
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "segment.fidx")
-
-	svc := New(newSnapshotIndex(), WordKeys)
-	if err := svc.IndexDocument(context.Background(), "doc-1", "alpha"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
-	}
-
-	if err := svc.SaveSnapshotFile(path, indexCodecName, ""); err != nil {
-		t.Fatalf("SaveSnapshotFile() error = %v", err)
-	}
-
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("saved snapshot file missing: %v", err)
-	}
-
-	restored, err := NewFromSnapshotFile(path, WordKeys)
-	if err != nil {
-		t.Fatalf("NewFromSnapshotFile() error = %v", err)
-	}
-
-	res, err := restored.SearchDocuments(context.Background(), "alpha", 10)
-	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
-	}
-	if res.TotalResultsCount != 1 {
-		t.Fatalf("TotalResultsCount = %d, want 1", res.TotalResultsCount)
 	}
 }

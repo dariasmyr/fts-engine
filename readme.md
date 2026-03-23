@@ -1,6 +1,6 @@
-# Full-Text Search Test Engine 
+# Full-Text Search Test Engine
 
-Reusable full-text search engine in Go with configurable indexing strategies, token pipeline, CLI mode, and experiment mode.
+Reusable full-text search engine in Go with configurable indexes, token pipeline, and snapshot support.
 
 ![Demo](docs/demo.gif)
 
@@ -20,102 +20,21 @@ Reusable full-text search engine in Go with configurable indexing strategies, to
   - `prod` mode (run with configurable filters and interactive CUI)
   - `experiment` mode (collect indexing metrics)
 
-## Quick start (library mode)
+## Library usage
 
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
-)
-
-func main() {
-	idx := radix.New()
-	engine := fts.New(idx, keygen.Word)
-
-	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
-	res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
-
-	fmt.Println(res.TotalResultsCount)
-}
-```
-
-## Segment snapshots (append-only)
-
-Index/filter state can be persisted to any `io.Writer` (file, object storage stream) and restored from `io.Reader`.
-
-```go
-var buf bytes.Buffer
-
-// Register snapshot codecs for selected index/filter once.
-// Built-in helpers are available in pkg/ftsbuiltin.
-
-svc := fts.New(radix.New(), keygen.Word)
-_ = svc.IndexDocument(context.Background(), "doc-1", "hello world")
-_ = svc.SaveSnapshot(&buf, "radix", "")
-
-restored, _ := fts.NewFromSnapshot(bytes.NewReader(buf.Bytes()), keygen.Word)
-res, _ := restored.SearchDocuments(context.Background(), "hello", 10)
-fmt.Println(res.TotalResultsCount)
-```
-
-### File snapshots: default and configurable modes
-
-`SaveSnapshotFile` uses default file persistence mode: atomic publish (`tmp -> rename`), batched buffered writes, and file sync enabled.
-
-Default mode example (save + load + search):
-
-```go
-svc := fts.New(radix.New(), keygen.Word)
-_ = svc.IndexDocument(context.Background(), "doc-1", "hello world")
-
-_ = svc.SaveSnapshotFile("./data/segments/default.fidx", "radix", "")
-
-loaded, _ := fts.NewFromSnapshotFile("./data/segments/default.fidx", keygen.Word)
-res, _ := loaded.SearchDocuments(context.Background(), "hello", 10)
-fmt.Println(res.TotalResultsCount)
-```
-
-Configurable mode example (custom buffer policy):
-
-```go
-opts := fts.DefaultSnapshotFileOptions()
-opts.BufferSize = 2 << 20      // 2 MiB
-opts.FlushThreshold = 512 << 10 // 512 KiB
-opts.SyncFile = true
-
-svc := fts.New(radix.New(), keygen.Word)
-_ = svc.IndexDocument(context.Background(), "doc-1", "hello world")
-
-_ = svc.SaveSnapshotFileWithOptions("./data/segments/default.fidx", "radix", "", opts)
-```
-
-## Usage in a third-party project
-
-This example shows how to consume the engine as a library from another Go service.
-
-### 1) Add dependency
-
-In your project:
+### 1) Install
 
 ```bash
 go get github.com/dariasmyr/fts-engine@latest
 ```
 
-If you work from a local checkout, use `replace` in `go.mod`:
+If you test against local source:
 
 ```go
 replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
 ```
 
-### 2) Choose one initialization flow
-
-#### Quickstart
+### 2) Quickstart
 
 ```go
 package main
@@ -130,8 +49,7 @@ import (
 )
 
 func main() {
-	idx := radix.New()
-	engine := fts.New(idx, keygen.Word)
+	engine := fts.New(radix.New(), keygen.Word)
 
 	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
 	res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
@@ -140,124 +58,133 @@ func main() {
 }
 ```
 
-Use direct constructors and start indexing immediately.
+### 3) Snapshots
+
+#### Custom `io.Writer`/`io.Reader` (with filter)
+
+Use `pkg/ftsbuiltin` for built-in name-based codecs (`radix`, `bloom`, etc.) without manual codec registry wiring.
 
 ```go
-engine := fts.New(radix.New(), keygen.Word)
+package main
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/pkg/keygen"
+)
+
+func main() {
+	opts := ftsbuiltin.FilterOptions{
+		BloomExpectedItems: 1_000_000,
+		BloomBitsPerItem:   10,
+		BloomK:             7,
+	}
+
+	idx, _ := ftsbuiltin.BuildIndex("radix")
+	flt, _ := ftsbuiltin.BuildFilter("bloom", opts)
+	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt))
+
+	_ = svc.IndexDocument(context.Background(), "doc-1", "snapshot with bloom filter")
+
+	var buf bytes.Buffer
+	_ = ftsbuiltin.SaveServiceSnapshot(&buf, svc, "radix", "bloom")
+
+	loaded, _ := ftsbuiltin.LoadSegmentSnapshot(bytes.NewReader(buf.Bytes()))
+	restored := fts.New(loaded.Index, keygen.Word, fts.WithFilter(loaded.Filter))
+
+	res, _ := restored.SearchDocuments(context.Background(), "snapshot", 10)
+	fmt.Println(res.TotalResultsCount)
+}
 ```
 
-#### Explicit flow (recommended for most clients)
-
-Pick the exact index/key generator pair your app needs and keep wiring explicit.
-
-- Word index: `radix.New()` + `keygen.Word`
-- Trigram index: `trigram.New()` + `keygen.Trigram`
+#### File-oriented variant (same snapshot payload)
 
 ```go
-idx := trigram.New()
-engine := fts.New(idx, keygen.Trigram, fts.WithPipeline(textproc.DefaultEnglishPipeline()))
+package main
+
+import (
+	"context"
+	"os"
+
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/pkg/keygen"
+)
+
+func main() {
+	idx, _ := ftsbuiltin.BuildIndex("radix")
+	svc := fts.New(idx, keygen.Word)
+	_ = svc.IndexDocument(context.Background(), "doc-1", "file snapshot demo")
+
+	out, _ := os.Create("./data/segments/default.fidx")
+	defer out.Close()
+	_ = ftsbuiltin.SaveServiceSnapshot(out, svc, "radix", "")
+
+	in, _ := os.Open("./data/segments/default.fidx")
+	defer in.Close()
+	loaded, _ := ftsbuiltin.LoadSegmentSnapshot(in)
+
+	_ = fts.New(loaded.Index, keygen.Word)
+}
 ```
 
-#### Built-in registry flow (config-driven by name)
+### 4) Custom pipeline and language presets
 
-Use `pkg/ftsbuiltin` only when your app builds components by string name from config.
-
-```go
-_ = ftsbuiltin.RegisterIndexes()
-_ = ftsbuiltin.RegisterFilters(ftsbuiltin.FilterOptions{
-	BloomExpectedItems: 1_000_000,
-	BloomBitsPerItem:   10,
-	BloomK:             7,
-	CuckooBucketCount:  262144,
-	CuckooBucketSize:   4,
-	CuckooMaxKicks:     500,
-})
-_ = ftsbuiltin.RegisterSnapshotCodecs()
-
-idx, _ := fts.NewIndex("radix")
-flt, _ := fts.NewFilter("bloom")
-engine := fts.New(idx, keygen.Word, fts.WithFilter(flt))
-```
-
-If you do not construct by name from config, skip built-in registration.
-
-Available defaults:
-
-- `textproc.DefaultEnglishPipeline()`
-- `textproc.DefaultRussianPipeline()`
-- `textproc.DefaultMultilingualPipeline()`
-
-You can also apply language presets as options via `pkg/ftspreset`:
+Default preset shortcut:
 
 ```go
 engine := fts.New(radix.New(), keygen.Word, ftspreset.English())
 ```
 
-### 3) Optional: custom filter pipeline
+Available presets:
+
+- `textproc.DefaultEnglishPipeline()`
+- `textproc.DefaultRussianPipeline()`
+- `textproc.DefaultMultilingualPipeline()`
+- `ftspreset.English()` / `ftspreset.Russian()` / `ftspreset.Multilingual()`
+
+Custom pipeline:
 
 ```go
 pipe := textproc.NewPipeline(
 	textproc.AlnumTokenizer{},
 	textproc.LowercaseFilter{},
 	textproc.MinLengthOrNumericFilter{MinLength: 2},
+	textproc.EnglishStopwordFilter{},
+	textproc.EnglishStemFilter{},
 )
+
 engine := fts.New(radix.New(), keygen.Word, fts.WithPipeline(pipe))
 ```
 
-### 4) Optional: filter-only usage (without index)
+## Run main app (local testing via config)
 
-You can use probabilistic filters as standalone membership checks.
+Use this only when you want to test the repository app itself (`cmd/fts`), not when embedding the library into your service.
 
-```go
-bf := filter.NewBloomFilter(1_000_000, 10, 7)
-bf.Add([]byte("alice@example.com"))
-
-fmt.Println(bf.Contains([]byte("alice@example.com"))) // true
-fmt.Println(bf.Contains([]byte("bob@example.com")))   // usually false, possible false positive
-
-cf := filter.NewCuckooFilter(262144, 4, 500)
-ok := cf.Add([]byte("session:123"))
-fmt.Println(ok, cf.Contains([]byte("session:123")))
-```
-
-Notes:
-
-- Bloom filter: `Add` always returns `true`; supports false positives.
-- Cuckoo filter: `Add` may return `false` when the filter is saturated.
-- Filter-only mode does not return documents; use an index for full-text retrieval.
-
-## Build and run (CLI)
-
-Install dependencies:
+1) Create config from template:
 
 ```bash
-go mod tidy
+cp ./config/config_local_example.yaml ./config/config_local.yaml
 ```
 
-Build:
+2) Run with config:
 
 ```bash
-go build -o build/fts ./cmd/fts
+go run ./cmd/fts --config=./config/config_local.yaml
 ```
 
-Run:
-
-```bash
-./build/fts --config=./config/config_local.yaml
-```
-
-## Configuration
-
-Main file: `config/config_local.yaml` (create from `config/config_local_example.yaml`).
-
-Core fields:
+Important config fields:
 
 ```yaml
 fts:
-  engine: "trie"
-  index: "radix"      # radix|slicedradix|trigram|hamt|hamtpointered
-  keygen: "word"      # word|trigram
-  filter: "none"      # none|bloom|cuckoo
+  engine: "trie"       # trie|kv
+  index: "radix"       # radix|slicedradix|trigram|hamt|hamtpointered
+  keygen: "word"       # word|trigram
+  filter: "none"       # none|bloom|cuckoo
   snapshot:
     enabled: true
     path: "./data/segments/default.fidx"
