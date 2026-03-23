@@ -4,30 +4,31 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
-	if err := registerRadixSnapshotCodec(); err != nil {
-		panic(err)
-	}
-
-	service := fts.New(radix.New(), keygen.Word)
-	_ = service.IndexDocument(context.Background(), "doc-1", "snapshot demo text")
-
-	var buf bytes.Buffer
-	if err := service.SaveSnapshot(&buf, "radix", ""); err != nil {
-		panic(err)
-	}
-
-	restored, err := fts.NewFromSnapshot(bytes.NewReader(buf.Bytes()), keygen.Word)
+	idx, err := ftsbuiltin.BuildIndex("radix")
 	if err != nil {
 		panic(err)
 	}
+
+	service := fts.New(idx, keygen.Word)
+	_ = service.IndexDocument(context.Background(), "doc-1", "snapshot demo text")
+
+	var buf bytes.Buffer
+	if err := ftsbuiltin.SaveServiceSnapshot(&buf, service, "radix", ""); err != nil {
+		panic(err)
+	}
+
+	loaded, err := ftsbuiltin.LoadSegmentSnapshot(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		panic(err)
+	}
+	restored := fts.New(loaded.Index, keygen.Word)
 
 	res, err := restored.SearchDocuments(context.Background(), "snapshot", 10)
 	if err != nil {
@@ -35,18 +36,4 @@ func main() {
 	}
 
 	fmt.Printf("restored results=%d\n", res.TotalResultsCount)
-}
-
-func registerRadixSnapshotCodec() error {
-	return fts.RegisterIndexSnapshotCodec(
-		"radix",
-		func(index fts.Index, w io.Writer) error {
-			serializable, ok := index.(fts.Serializable)
-			if !ok {
-				return fmt.Errorf("index radix does not support serialization")
-			}
-			return serializable.Serialize(w)
-		},
-		radix.Load,
-	)
 }

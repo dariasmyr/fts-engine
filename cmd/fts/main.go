@@ -94,28 +94,6 @@ func main() {
 	case "kv":
 		ftsEngine = kv.New(log, storage, storage)
 	case "trie":
-		if err := ftsbuiltin.RegisterIndexes(); err != nil {
-			log.Error("Failed to register indexes", "error", sl.Err(err))
-			return
-		}
-
-		if err := ftsbuiltin.RegisterFilters(ftsbuiltin.FilterOptions{
-			BloomExpectedItems: cfg.FTS.Bloom.ExpectedItems,
-			BloomBitsPerItem:   cfg.FTS.Bloom.BitsPerItem,
-			BloomK:             cfg.FTS.Bloom.K,
-			CuckooBucketCount:  cfg.FTS.Cuckoo.BucketCount,
-			CuckooBucketSize:   cfg.FTS.Cuckoo.BucketSize,
-			CuckooMaxKicks:     cfg.FTS.Cuckoo.MaxKicks,
-		}); err != nil {
-			log.Error("Failed to register filters", "error", sl.Err(err))
-			return
-		}
-
-		if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
-			log.Error("Failed to register snapshot codecs", "error", sl.Err(err))
-			return
-		}
-
 		keyGen, err := selectKeyGenerator(cfg.FTS.KeyGen)
 		if err != nil {
 			log.Error("Failed to select keygen", "error", sl.Err(err))
@@ -316,7 +294,7 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 		}
 	}
 
-	index, err := pkgfts.NewIndex(cfg.FTS.Index)
+	index, err := ftsbuiltin.BuildIndex(cfg.FTS.Index)
 	if err != nil {
 		return nil, false, err
 	}
@@ -349,7 +327,7 @@ func tryLoadSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGene
 	}
 	defer f.Close()
 
-	loaded, err := pkgfts.LoadSegmentSnapshot(f)
+	loaded, err := ftsbuiltin.LoadSegmentSnapshot(f)
 	if err != nil {
 		return nil, false, fmt.Errorf("load snapshot: %w", err)
 	}
@@ -405,13 +383,9 @@ func saveSnapshotIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Ser
 		SyncFile:       cfg.FTS.Snapshot.SyncFile,
 	}
 
-	if err := ftspersist.SaveFTSSnapshotAtomicWithOptions(
-		cfg.FTS.Snapshot.Path,
-		svc,
-		cfg.FTS.Index,
-		filterName,
-		opts,
-	); err != nil {
+	if err := ftspersist.SaveAtomicWithOptions(cfg.FTS.Snapshot.Path, opts, func(w io.Writer) error {
+		return ftsbuiltin.SaveServiceSnapshot(w, svc, cfg.FTS.Index, filterName)
+	}); err != nil {
 		return err
 	}
 
@@ -431,11 +405,26 @@ func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {
 }
 
 func selectFilter(cfg *config.Config) (pkgfts.Filter, error) {
-	if cfg == nil || cfg.FTS.Filter == "" || cfg.FTS.Filter == "none" {
+	if cfg == nil {
 		return nil, nil
 	}
 
-	return pkgfts.NewFilter(cfg.FTS.Filter)
+	return ftsbuiltin.BuildFilter(cfg.FTS.Filter, buildFilterOptions(cfg))
+}
+
+func buildFilterOptions(cfg *config.Config) ftsbuiltin.FilterOptions {
+	if cfg == nil {
+		return ftsbuiltin.FilterOptions{}
+	}
+
+	return ftsbuiltin.FilterOptions{
+		BloomExpectedItems: cfg.FTS.Bloom.ExpectedItems,
+		BloomBitsPerItem:   cfg.FTS.Bloom.BitsPerItem,
+		BloomK:             cfg.FTS.Bloom.K,
+		CuckooBucketCount:  cfg.FTS.Cuckoo.BucketCount,
+		CuckooBucketSize:   cfg.FTS.Cuckoo.BucketSize,
+		CuckooMaxKicks:     cfg.FTS.Cuckoo.MaxKicks,
+	}
 }
 
 func buildPipeline(cfg *config.Config) textproc.Pipeline {

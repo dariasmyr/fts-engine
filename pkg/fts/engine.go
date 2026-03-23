@@ -194,6 +194,14 @@ func (s *Service) SaveSnapshotBufferedAsync(w io.Writer, indexName string, filte
 	return errCh
 }
 
+func (s *Service) SnapshotComponents() (Index, Filter) {
+	if s == nil {
+		return nil, nil
+	}
+
+	return s.index, s.filter
+}
+
 func formatDuration(d time.Duration) string {
 	if d < time.Millisecond {
 		return fmt.Sprintf("%dus", d.Microseconds())
