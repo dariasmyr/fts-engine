@@ -442,18 +442,8 @@ func buildFilterIfNeeded(log *slog.Logger, svc *pkgfts.Service) error {
 		return nil
 	}
 
-	_, searchFilter := svc.SnapshotComponents()
-	if searchFilter == nil {
-		return nil
-	}
-
-	buildable, ok := searchFilter.(pkgfts.BuildableFilter)
-	if !ok {
-		return nil
-	}
-
 	startedAt := time.Now()
-	if err := buildable.Build(); err != nil {
+	if err := svc.BuildFilter(); err != nil {
 		return fmt.Errorf("build search filter: %w", err)
 	}
 

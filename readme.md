@@ -256,10 +256,7 @@ flt, _ := ftsbuiltin.BuildFilter("ribbon", opts)
 svc := fts.New(idx, keygen.Word, fts.WithFilter(flt))
 
 _ = svc.IndexDocument(context.Background(), "doc-1", "alpha beta")
-
-if buildable, ok := flt.(fts.BuildableFilter); ok {
-	_ = buildable.Build() // finalizes ribbon before strict Contains checks
-}
+_ = svc.BuildFilter() // builds static filters like ribbon before strict Contains checks
 ```
 
 In CLI mode (`cmd/fts`) this final build is now called automatically after indexing.

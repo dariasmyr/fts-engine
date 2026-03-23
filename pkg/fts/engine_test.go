@@ -235,3 +235,27 @@ func TestSearchUsesBufferedStaticFilterAfterManualBuild(t *testing.T) {
 		t.Fatalf("TotalResultsCount after Build() = %d, want 1", resAfter.TotalResultsCount)
 	}
 }
+
+func TestBuildFilterBuildsBuildableFilter(t *testing.T) {
+	idx := newMemoryIndex()
+	filter := &buildableContainsFilter{}
+
+	svc := New(idx, WordKeys, WithFilter(filter))
+
+	if err := svc.BuildFilter(); err != nil {
+		t.Fatalf("BuildFilter() error = %v", err)
+	}
+
+	if !filter.built {
+		t.Fatal("BuildFilter() did not call Build()")
+	}
+}
+
+func TestBuildFilterSkipsNonBuildableFilter(t *testing.T) {
+	idx := newMemoryIndex()
+	svc := New(idx, WordKeys, WithFilter(containsOnlyFilter{allowed: map[string]bool{"known": true}}))
+
+	if err := svc.BuildFilter(); err != nil {
+		t.Fatalf("BuildFilter() error = %v", err)
+	}
+}

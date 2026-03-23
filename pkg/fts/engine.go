@@ -202,6 +202,23 @@ func (s *Service) SnapshotComponents() (Index, Filter) {
 	return s.index, s.filter
 }
 
+func (s *Service) BuildFilter() error {
+	if s == nil || s.filter == nil {
+		return nil
+	}
+
+	buildable, ok := s.filter.(BuildableFilter)
+	if !ok {
+		return nil
+	}
+
+	if err := buildable.Build(); err != nil {
+		return fmt.Errorf("fts: build filter: %w", err)
+	}
+
+	return nil
+}
+
 func formatDuration(d time.Duration) string {
 	if d < time.Millisecond {
 		return fmt.Sprintf("%dus", d.Microseconds())
