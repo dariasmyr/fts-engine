@@ -25,6 +25,28 @@ type snapshotEnvelope struct {
 	FilterPayload []byte
 }
 
+type indexEnvelope struct {
+	Version      uint16
+	IndexName    string
+	IndexPayload []byte
+}
+
+type filterEnvelope struct {
+	Version       uint16
+	FilterName    string
+	FilterPayload []byte
+}
+
+type LoadedIndexSnapshot struct {
+	IndexName string
+	Index     fts.Index
+}
+
+type LoadedFilterSnapshot struct {
+	FilterName string
+	Filter     fts.Filter
+}
+
 func SaveServiceSnapshot(w io.Writer, svc *fts.Service, indexName string, filterName string) error {
 	if svc == nil {
 		return fmt.Errorf("ftsbuiltin: save snapshot: nil service")
@@ -115,6 +137,114 @@ func LoadSegmentSnapshot(r io.Reader) (*fts.LoadedSnapshot, error) {
 	}
 
 	return loaded, nil
+}
+
+func SaveIndexSnapshot(w io.Writer, indexName string, index fts.Index) error {
+	if w == nil {
+		return fmt.Errorf("ftsbuiltin: save index snapshot: nil writer")
+	}
+	if index == nil {
+		return fmt.Errorf("ftsbuiltin: save index snapshot: nil index")
+	}
+	if indexName == "" {
+		return fmt.Errorf("ftsbuiltin: save index snapshot: empty index name")
+	}
+
+	var indexPayload bytes.Buffer
+	if err := serializeIndex(indexName, index, &indexPayload); err != nil {
+		return fmt.Errorf("ftsbuiltin: save index snapshot: encode index %q: %w", indexName, err)
+	}
+
+	envelope := indexEnvelope{
+		Version:      snapshotVersion,
+		IndexName:    indexName,
+		IndexPayload: indexPayload.Bytes(),
+	}
+
+	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
+		return fmt.Errorf("ftsbuiltin: save index snapshot: encode envelope: %w", err)
+	}
+
+	return nil
+}
+
+func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
+	if r == nil {
+		return nil, fmt.Errorf("ftsbuiltin: load index snapshot: nil reader")
+	}
+
+	var envelope indexEnvelope
+	if err := gob.NewDecoder(r).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("ftsbuiltin: load index snapshot: decode envelope: %w", err)
+	}
+
+	if envelope.Version != snapshotVersion {
+		return nil, fmt.Errorf("ftsbuiltin: load index snapshot: unsupported version %d", envelope.Version)
+	}
+	if envelope.IndexName == "" {
+		return nil, fmt.Errorf("ftsbuiltin: load index snapshot: empty index name")
+	}
+
+	index, err := loadIndex(envelope.IndexName, bytes.NewReader(envelope.IndexPayload))
+	if err != nil {
+		return nil, fmt.Errorf("ftsbuiltin: load index snapshot: decode index %q: %w", envelope.IndexName, err)
+	}
+
+	return &LoadedIndexSnapshot{IndexName: envelope.IndexName, Index: index}, nil
+}
+
+func SaveFilterSnapshot(w io.Writer, filterName string, searchFilter fts.Filter) error {
+	if w == nil {
+		return fmt.Errorf("ftsbuiltin: save filter snapshot: nil writer")
+	}
+	if searchFilter == nil {
+		return fmt.Errorf("ftsbuiltin: save filter snapshot: nil filter")
+	}
+	if filterName == "" {
+		return fmt.Errorf("ftsbuiltin: save filter snapshot: empty filter name")
+	}
+
+	var filterPayload bytes.Buffer
+	if err := serializeFilter(filterName, searchFilter, &filterPayload); err != nil {
+		return fmt.Errorf("ftsbuiltin: save filter snapshot: encode filter %q: %w", filterName, err)
+	}
+
+	envelope := filterEnvelope{
+		Version:       snapshotVersion,
+		FilterName:    filterName,
+		FilterPayload: filterPayload.Bytes(),
+	}
+
+	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
+		return fmt.Errorf("ftsbuiltin: save filter snapshot: encode envelope: %w", err)
+	}
+
+	return nil
+}
+
+func LoadFilterSnapshot(r io.Reader) (*LoadedFilterSnapshot, error) {
+	if r == nil {
+		return nil, fmt.Errorf("ftsbuiltin: load filter snapshot: nil reader")
+	}
+
+	var envelope filterEnvelope
+	if err := gob.NewDecoder(r).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("ftsbuiltin: load filter snapshot: decode envelope: %w", err)
+	}
+
+	if envelope.Version != snapshotVersion {
+		return nil, fmt.Errorf("ftsbuiltin: load filter snapshot: unsupported version %d", envelope.Version)
+	}
+	if envelope.FilterName == "" {
+		return nil, fmt.Errorf("ftsbuiltin: load filter snapshot: empty filter name")
+	}
+
+	searchFilter, err := loadFilter(envelope.FilterName, bytes.NewReader(envelope.FilterPayload))
+	if err != nil {
+		return nil, fmt.Errorf("ftsbuiltin: load filter snapshot: decode filter %q: %w", envelope.FilterName, err)
+	}
+
+	return &LoadedFilterSnapshot{FilterName: envelope.FilterName, Filter: searchFilter}, nil
 }
 
 func serializeIndex(name string, index fts.Index, w io.Writer) error {

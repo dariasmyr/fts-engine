@@ -31,6 +31,9 @@ type FTSConfig struct {
 type SnapshotConfig struct {
 	Enabled        bool   `yaml:"enabled" env-default:"false"`
 	Path           string `yaml:"path" env-default:"./data/segments/default.fidx"`
+	SplitFiles     bool   `yaml:"split_files" env-default:"false"`
+	IndexPath      string `yaml:"index_path" env-default:""`
+	FilterPath     string `yaml:"filter_path" env-default:""`
 	LoadOnStart    bool   `yaml:"load_on_start" env-default:"true"`
 	SaveOnBuild    bool   `yaml:"save_on_build" env-default:"true"`
 	BufferSize     int    `yaml:"buffer_size" env-default:"1048576"`

@@ -13,6 +13,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"syscall"
@@ -314,6 +315,10 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 }
 
 func tryLoadSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
+	if useSplitSnapshotFiles(cfg) {
+		return tryLoadSplitSnapshot(log, cfg, keyGen, pipeline)
+	}
+
 	path := cfg.FTS.Snapshot.Path
 	if path == "" {
 		return nil, false, nil
@@ -368,6 +373,114 @@ func tryLoadSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGene
 	return svc, true, nil
 }
 
+func tryLoadSplitSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
+	indexPath := snapshotIndexPath(cfg)
+	filterPath := snapshotFilterPath(cfg)
+	expectedFilter := cfg.FTS.Filter
+	if expectedFilter == "none" {
+		expectedFilter = ""
+	}
+	if indexPath == "" {
+		return nil, false, nil
+	}
+
+	if _, err := os.Stat(indexPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("check index snapshot path: %w", err)
+	}
+
+	indexFile, err := os.Open(indexPath)
+	if err != nil {
+		return nil, false, fmt.Errorf("open index snapshot: %w", err)
+	}
+	defer indexFile.Close()
+
+	loadedIndex, err := ftsbuiltin.LoadIndexSnapshot(indexFile)
+	if err != nil {
+		return nil, false, fmt.Errorf("load index snapshot: %w", err)
+	}
+
+	if loadedIndex.IndexName != cfg.FTS.Index {
+		log.Warn("Snapshot index type differs from config",
+			"snapshot_index", loadedIndex.IndexName,
+			"config_index", cfg.FTS.Index,
+			"path", indexPath,
+		)
+	}
+
+	builtOpts := []pkgfts.Option{pkgfts.WithPipeline(pipeline)}
+
+	if expectedFilter != "" {
+		if filterPath == "" {
+			return nil, false, nil
+		}
+
+		if _, statErr := os.Stat(filterPath); statErr != nil {
+			if errors.Is(statErr, os.ErrNotExist) {
+				log.Info("Split filter snapshot is missing, rebuilding from source", "path", filterPath)
+				return nil, false, nil
+			}
+			return nil, false, fmt.Errorf("check filter snapshot path: %w", statErr)
+		}
+
+		filterFile, openErr := os.Open(filterPath)
+		if openErr != nil {
+			return nil, false, fmt.Errorf("open filter snapshot: %w", openErr)
+		}
+
+		loadedFilter, loadErr := ftsbuiltin.LoadFilterSnapshot(filterFile)
+		_ = filterFile.Close()
+		if loadErr != nil {
+			return nil, false, fmt.Errorf("load filter snapshot: %w", loadErr)
+		}
+
+		if loadedFilter.FilterName != expectedFilter {
+			log.Warn("Snapshot filter type differs from config",
+				"snapshot_filter", loadedFilter.FilterName,
+				"config_filter", cfg.FTS.Filter,
+				"path", filterPath,
+			)
+		}
+
+		if loadedFilter.Filter != nil {
+			builtOpts = append(builtOpts, pkgfts.WithFilter(loadedFilter.Filter))
+		}
+	} else if filterPath != "" {
+		if _, statErr := os.Stat(filterPath); statErr == nil {
+			filterFile, openErr := os.Open(filterPath)
+			if openErr != nil {
+				return nil, false, fmt.Errorf("open filter snapshot: %w", openErr)
+			}
+
+			loadedFilter, loadErr := ftsbuiltin.LoadFilterSnapshot(filterFile)
+			_ = filterFile.Close()
+			if loadErr != nil {
+				return nil, false, fmt.Errorf("load filter snapshot: %w", loadErr)
+			}
+
+			if loadedFilter.FilterName != expectedFilter {
+				log.Warn("Snapshot filter type differs from config",
+					"snapshot_filter", loadedFilter.FilterName,
+					"config_filter", cfg.FTS.Filter,
+					"path", filterPath,
+				)
+			}
+
+			if loadedFilter.Filter != nil {
+				builtOpts = append(builtOpts, pkgfts.WithFilter(loadedFilter.Filter))
+			}
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return nil, false, fmt.Errorf("check filter snapshot path: %w", statErr)
+		}
+	}
+
+	svc := pkgfts.New(loadedIndex.Index, keyGen, builtOpts...)
+	log.Info("Loaded split FTS snapshots", "index_path", indexPath, "filter_path", filterPath)
+	return svc, true, nil
+}
+
 func saveSnapshotIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Service) error {
 	if cfg == nil || svc == nil {
 		return nil
@@ -375,6 +488,10 @@ func saveSnapshotIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Ser
 
 	if !cfg.FTS.Snapshot.Enabled || !cfg.FTS.Snapshot.SaveOnBuild {
 		return nil
+	}
+
+	if useSplitSnapshotFiles(cfg) {
+		return saveSplitSnapshots(log, cfg, svc)
 	}
 
 	filterName := cfg.FTS.Filter
@@ -396,6 +513,109 @@ func saveSnapshotIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Ser
 
 	log.Info("FTS snapshot persisted", "path", cfg.FTS.Snapshot.Path)
 	return nil
+}
+
+func saveSplitSnapshots(log *slog.Logger, cfg *config.Config, svc *pkgfts.Service) error {
+	if cfg == nil || svc == nil {
+		return nil
+	}
+
+	indexPath := snapshotIndexPath(cfg)
+	filterPath := snapshotFilterPath(cfg)
+	if indexPath == "" {
+		return fmt.Errorf("snapshot index path is empty")
+	}
+
+	indexName := cfg.FTS.Index
+	filterName := cfg.FTS.Filter
+	if filterName == "none" {
+		filterName = ""
+	}
+
+	index, searchFilter := svc.SnapshotComponents()
+
+	opts := ftspersist.SaveOptions{
+		BufferSize:     cfg.FTS.Snapshot.BufferSize,
+		FlushThreshold: cfg.FTS.Snapshot.FlushThreshold,
+		SyncFile:       cfg.FTS.Snapshot.SyncFile,
+	}
+
+	if err := ftspersist.SaveAtomicWithOptions(indexPath, opts, func(w io.Writer) error {
+		return ftsbuiltin.SaveIndexSnapshot(w, indexName, index)
+	}); err != nil {
+		return err
+	}
+
+	if searchFilter != nil && filterName != "" {
+		if err := ftspersist.SaveAtomicWithOptions(filterPath, opts, func(w io.Writer) error {
+			return ftsbuiltin.SaveFilterSnapshot(w, filterName, searchFilter)
+		}); err != nil {
+			return err
+		}
+	} else if filterPath != "" {
+		if err := os.Remove(filterPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove stale filter snapshot: %w", err)
+		}
+	}
+
+	log.Info("FTS snapshots persisted", "index_path", indexPath, "filter_path", filterPath)
+	return nil
+}
+
+func useSplitSnapshotFiles(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+
+	if cfg.FTS.Snapshot.SplitFiles {
+		return true
+	}
+
+	return cfg.FTS.Snapshot.IndexPath != "" || cfg.FTS.Snapshot.FilterPath != ""
+}
+
+func snapshotIndexPath(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+
+	if cfg.FTS.Snapshot.IndexPath != "" {
+		return cfg.FTS.Snapshot.IndexPath
+	}
+
+	base := cfg.FTS.Snapshot.Path
+	if base == "" {
+		return ""
+	}
+
+	ext := filepath.Ext(base)
+	if ext == "" {
+		return base + ".index"
+	}
+
+	return base[:len(base)-len(ext)] + ".index" + ext
+}
+
+func snapshotFilterPath(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+
+	if cfg.FTS.Snapshot.FilterPath != "" {
+		return cfg.FTS.Snapshot.FilterPath
+	}
+
+	base := cfg.FTS.Snapshot.Path
+	if base == "" {
+		return ""
+	}
+
+	ext := filepath.Ext(base)
+	if ext == "" {
+		return base + ".filter"
+	}
+
+	return base[:len(base)-len(ext)] + ".filter" + ext
 }
 
 func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {

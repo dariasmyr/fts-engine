@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// BufferedStaticFilter apapts StaticFilter to Filter interface.
+// BufferedStaticFilter adapts StaticFilter to Filter interface.
 // Key is added on every Add(), but in the end the final build is called by Build().
 type BufferedStaticFilter struct {
 	mu     sync.Mutex

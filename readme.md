@@ -188,6 +188,9 @@ fts:
   snapshot:
     enabled: true
     path: "./data/segments/default.fidx"
+    split_files: false
+    index_path: ""            # optional, used when split_files=true
+    filter_path: ""           # optional, used when split_files=true
     load_on_start: true
     save_on_build: true
     buffer_size: 1048576
@@ -222,6 +225,9 @@ Snapshot fields (`fts.snapshot`):
 
 - `enabled`: enable snapshot persistence flow in CLI prod mode.
 - `path`: final snapshot artifact path.
+- `split_files`: if true, save/load index and filter in separate files.
+- `index_path`: optional explicit path for index snapshot file in split mode.
+- `filter_path`: optional explicit path for filter snapshot file in split mode.
 - `load_on_start`: if true and snapshot exists, load it and skip rebuild.
 - `save_on_build`: if true, save snapshot after indexing finishes.
 - `buffer_size`: writer buffer size used during save.
@@ -260,6 +266,25 @@ _ = svc.BuildFilter() // builds static filters like ribbon before strict Contain
 ```
 
 In CLI mode (`cmd/fts`) this final build is now called automatically after indexing.
+
+### Standalone filter `Contains` with normalization
+
+Use this when you work with filter directly (without `SearchDocuments`) and want to compare raw `Contains` vs normalized check.
+
+```go
+raw := ribbonFilter.Contains([]byte("GaMmA"))
+
+pipe := textproc.NewPipeline(textproc.AlnumTokenizer{}, textproc.LowercaseFilter{})
+
+normalized, err := fts.ContainsNormalized(ribbonFilter, "GaMmA", pipe, keygen.Word)
+if err != nil {
+	panic(err)
+}
+
+fmt.Println("raw", raw, "normalized", normalized)
+```
+
+`ContainsNormalized` applies pipeline + keygen and checks all normalized keys via `Contains`.
 
 ## Tests
 

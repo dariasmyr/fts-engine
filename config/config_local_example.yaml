@@ -9,6 +9,9 @@ fts:
   snapshot:
     enabled: true
     path: "./data/segments/default.fidx"
+    split_files: false
+    index_path: ""
+    filter_path: ""
     load_on_start: true
     save_on_build: true
     buffer_size: 1048576
