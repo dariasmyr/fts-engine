@@ -6,8 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-
-	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
 )
 
 const (
@@ -97,20 +95,6 @@ func SaveAtomicWithOptions(path string, opts SaveOptions, write func(w io.Writer
 	}
 
 	return nil
-}
-
-func SaveFTSSnapshotAtomic(path string, svc *pkgfts.Service, indexName string, filterName string) error {
-	return SaveFTSSnapshotAtomicWithOptions(path, svc, indexName, filterName, DefaultSaveOptions())
-}
-
-func SaveFTSSnapshotAtomicWithOptions(path string, svc *pkgfts.Service, indexName string, filterName string, opts SaveOptions) error {
-	if svc == nil {
-		return fmt.Errorf("persist: save fts snapshot atomic: nil service")
-	}
-
-	return SaveAtomicWithOptions(path, opts, func(w io.Writer) error {
-		return svc.SaveSnapshot(w, indexName, filterName)
-	})
 }
 
 type thresholdBufferedWriter struct {

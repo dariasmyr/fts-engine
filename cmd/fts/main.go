@@ -24,13 +24,8 @@ import (
 	"github.com/dariasmyr/fts-engine/internal/adapters/storage/leveldb"
 	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/internal/lib/logger/sl"
-	pkgfilter "github.com/dariasmyr/fts-engine/pkg/filter"
 	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/hamt"
-	"github.com/dariasmyr/fts-engine/pkg/index/hamtpointered"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/index/trigram"
+	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
@@ -43,12 +38,6 @@ const (
 
 const (
 	_readinessDrainDelay = 5 * time.Second
-)
-
-var (
-	registerIndexesOnce   sync.Once
-	registerFiltersOnce   sync.Once
-	registerSnapshotsOnce sync.Once
 )
 
 func ensureDir(p string) {
@@ -105,10 +94,6 @@ func main() {
 	case "kv":
 		ftsEngine = kv.New(log, storage, storage)
 	case "trie":
-		registerBuiltInIndexes()
-		registerBuiltInFilters(cfg)
-		registerBuiltInSnapshotCodecs()
-
 		keyGen, err := selectKeyGenerator(cfg.FTS.KeyGen)
 		if err != nil {
 			log.Error("Failed to select keygen", "error", sl.Err(err))
@@ -145,18 +130,11 @@ func main() {
 
 	if cfg.Mode.Type == "experiment" {
 		startTime = time.Now()
-		var finalizeErr error
 		memStats := utils.MeasureMemory(func() {
 			for _, doc := range documents {
 				_ = ftsEngine.IndexDocument(ctx, doc.ID, doc.Abstract)
 			}
-
-			finalizeErr = finalizeIndexingIfSupported(ftsEngine)
 		})
-		if finalizeErr != nil {
-			log.Error("Failed to finalize indexing", "error", sl.Err(finalizeErr))
-			return
-		}
 		duration = time.Since(startTime)
 		log.Info(fmt.Sprintf("Indexed %d documents in %v", len(documents), duration))
 
@@ -209,8 +187,8 @@ func main() {
 		close(jobCh)
 		wg.Wait()
 
-		if err := finalizeIndexingIfSupported(ftsEngine); err != nil {
-			log.Error("Failed to finalize indexing", "error", sl.Err(err))
+		if err := buildFilterIfNeeded(log, adapter.service); err != nil {
+			log.Error("Failed to finalize search filter", "error", sl.Err(err))
 			return
 		}
 
@@ -306,21 +284,6 @@ func (s *serviceAdapter) AnalyzeStats() (pkgfts.Stats, bool) {
 	return s.service.Analyze()
 }
 
-func (s *serviceAdapter) FinalizeIndexing() error {
-	return s.service.FinalizeIndexing()
-}
-
-func finalizeIndexingIfSupported(engine cui.SearchEngine) error {
-	finalizer, ok := engine.(interface {
-		FinalizeIndexing() error
-	})
-	if !ok {
-		return nil
-	}
-
-	return finalizer.FinalizeIndexing()
-}
-
 func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
 	if cfg == nil {
 		return nil, false, fmt.Errorf("nil config")
@@ -336,7 +299,7 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 		}
 	}
 
-	index, err := pkgfts.NewIndex(cfg.FTS.Index)
+	index, err := ftsbuiltin.BuildIndex(cfg.FTS.Index)
 	if err != nil {
 		return nil, false, err
 	}
@@ -369,7 +332,7 @@ func tryLoadSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGene
 	}
 	defer f.Close()
 
-	loaded, err := pkgfts.LoadSegmentSnapshot(f)
+	loaded, err := ftsbuiltin.LoadSegmentSnapshot(f)
 	if err != nil {
 		return nil, false, fmt.Errorf("load snapshot: %w", err)
 	}
@@ -425,135 +388,14 @@ func saveSnapshotIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Ser
 		SyncFile:       cfg.FTS.Snapshot.SyncFile,
 	}
 
-	if err := ftspersist.SaveFTSSnapshotAtomicWithOptions(
-		cfg.FTS.Snapshot.Path,
-		svc,
-		cfg.FTS.Index,
-		filterName,
-		opts,
-	); err != nil {
+	if err := ftspersist.SaveAtomicWithOptions(cfg.FTS.Snapshot.Path, opts, func(w io.Writer) error {
+		return ftsbuiltin.SaveServiceSnapshot(w, svc, cfg.FTS.Index, filterName)
+	}); err != nil {
 		return err
 	}
 
 	log.Info("FTS snapshot persisted", "path", cfg.FTS.Snapshot.Path)
 	return nil
-}
-
-func registerBuiltInIndexes() {
-	registerIndexesOnce.Do(func() {
-		register := func(name string, factory pkgfts.IndexFactory) {
-			if err := pkgfts.RegisterIndex(name, factory); err != nil {
-				panic(err)
-			}
-		}
-
-		register("radix", func() (pkgfts.Index, error) { return radix.New(), nil })
-		register("slicedradix", func() (pkgfts.Index, error) { return slicedradix.New(), nil })
-		register("hamt", func() (pkgfts.Index, error) { return hamt.New(), nil })
-		register("hamtpointered", func() (pkgfts.Index, error) { return hamtpointered.New(), nil })
-		register("trigram", func() (pkgfts.Index, error) { return trigram.New(), nil })
-	})
-}
-
-func registerBuiltInFilters(cfg *config.Config) {
-	if cfg == nil {
-		return
-	}
-
-	registerFiltersOnce.Do(func() {
-		register := func(name string, factory pkgfts.FilterFactory) {
-			if err := pkgfts.RegisterFilter(name, factory); err != nil {
-				panic(err)
-			}
-		}
-
-		register("bloom", func() (pkgfts.Filter, error) {
-			return pkgfilter.NewBloomFilter(
-				cfg.FTS.Bloom.ExpectedItems,
-				cfg.FTS.Bloom.BitsPerItem,
-				cfg.FTS.Bloom.K,
-			), nil
-		})
-
-		register("cuckoo", func() (pkgfts.Filter, error) {
-			return pkgfilter.NewCuckooFilter(
-				cfg.FTS.Cuckoo.BucketCount,
-				cfg.FTS.Cuckoo.BucketSize,
-				cfg.FTS.Cuckoo.MaxKicks,
-			), nil
-		})
-
-		register("ribbon", func() (pkgfts.Filter, error) {
-			rf, err := pkgfilter.NewRibbonFilter(
-				cfg.FTS.Ribbon.ExpectedItems,
-				cfg.FTS.Ribbon.ExtraCells,
-				cfg.FTS.Ribbon.WindowSize,
-				cfg.FTS.Ribbon.Seed,
-			)
-			if err != nil {
-				return nil, err
-			}
-
-			return pkgfts.NewBufferedStaticFilterWithRetries(rf, cfg.FTS.Ribbon.MaxAttempts), nil
-		})
-	})
-}
-
-func registerBuiltInSnapshotCodecs() {
-	registerSnapshotsOnce.Do(func() {
-		registerIndexCodec := func(name string, loader pkgfts.IndexSnapshotLoader) {
-			err := pkgfts.RegisterIndexSnapshotCodec(name,
-				func(index pkgfts.Index, w io.Writer) error {
-					serializable, ok := index.(pkgfts.Serializable)
-					if !ok {
-						return fmt.Errorf("index %q does not support serialization", name)
-					}
-					return serializable.Serialize(w)
-				},
-				loader,
-			)
-			if err != nil {
-				panic(err)
-			}
-		}
-
-		registerFilterCodec := func(name string, loader pkgfts.FilterSnapshotLoader) {
-			err := pkgfts.RegisterFilterSnapshotCodec(name,
-				func(filter pkgfts.Filter, w io.Writer) error {
-					serializable, ok := filter.(pkgfts.Serializable)
-					if !ok {
-						return fmt.Errorf("filter %q does not support serialization", name)
-					}
-					return serializable.Serialize(w)
-				},
-				loader,
-			)
-			if err != nil {
-				panic(err)
-			}
-		}
-
-		registerIndexCodec("radix", radix.Load)
-		registerIndexCodec("slicedradix", slicedradix.Load)
-		registerIndexCodec("hamt", hamt.Load)
-		registerIndexCodec("hamtpointered", hamtpointered.Load)
-		registerIndexCodec("trigram", trigram.Load)
-
-		registerFilterCodec("bloom", func(r io.Reader) (pkgfts.Filter, error) {
-			return pkgfilter.LoadBloomFilter(r)
-		})
-		registerFilterCodec("cuckoo", func(r io.Reader) (pkgfts.Filter, error) {
-			return pkgfilter.LoadCuckooFilter(r)
-		})
-		registerFilterCodec("ribbon", func(r io.Reader) (pkgfts.Filter, error) {
-			rf, err := pkgfilter.LoadRibbonFilter(r)
-			if err != nil {
-				return nil, err
-			}
-
-			return pkgfts.NewBufferedStaticFilterWithRetries(rf, 1), nil
-		})
-	})
 }
 
 func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {
@@ -568,11 +410,55 @@ func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {
 }
 
 func selectFilter(cfg *config.Config) (pkgfts.Filter, error) {
-	if cfg == nil || cfg.FTS.Filter == "" || cfg.FTS.Filter == "none" {
+	if cfg == nil {
 		return nil, nil
 	}
 
-	return pkgfts.NewFilter(cfg.FTS.Filter)
+	return ftsbuiltin.BuildFilter(cfg.FTS.Filter, buildFilterOptions(cfg))
+}
+
+func buildFilterOptions(cfg *config.Config) ftsbuiltin.FilterOptions {
+	if cfg == nil {
+		return ftsbuiltin.FilterOptions{}
+	}
+
+	return ftsbuiltin.FilterOptions{
+		BloomExpectedItems:  cfg.FTS.Bloom.ExpectedItems,
+		BloomBitsPerItem:    cfg.FTS.Bloom.BitsPerItem,
+		BloomK:              cfg.FTS.Bloom.K,
+		CuckooBucketCount:   cfg.FTS.Cuckoo.BucketCount,
+		CuckooBucketSize:    cfg.FTS.Cuckoo.BucketSize,
+		CuckooMaxKicks:      cfg.FTS.Cuckoo.MaxKicks,
+		RibbonExpectedItems: cfg.FTS.Ribbon.ExpectedItems,
+		RibbonExtraCells:    cfg.FTS.Ribbon.ExtraCells,
+		RibbonWindowSize:    cfg.FTS.Ribbon.WindowSize,
+		RibbonSeed:          cfg.FTS.Ribbon.Seed,
+		RibbonMaxAttempts:   cfg.FTS.Ribbon.MaxAttempts,
+	}
+}
+
+func buildFilterIfNeeded(log *slog.Logger, svc *pkgfts.Service) error {
+	if svc == nil {
+		return nil
+	}
+
+	_, searchFilter := svc.SnapshotComponents()
+	if searchFilter == nil {
+		return nil
+	}
+
+	buildable, ok := searchFilter.(pkgfts.BuildableFilter)
+	if !ok {
+		return nil
+	}
+
+	startedAt := time.Now()
+	if err := buildable.Build(); err != nil {
+		return fmt.Errorf("build search filter: %w", err)
+	}
+
+	log.Info("Search filter finalized", "duration", time.Since(startedAt))
+	return nil
 }
 
 func buildPipeline(cfg *config.Config) textproc.Pipeline {

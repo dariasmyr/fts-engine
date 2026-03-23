@@ -1,7 +1,6 @@
 package filter
 
 import (
-	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"testing"
 )
 
@@ -19,20 +18,8 @@ func TestBloomFilterAddAndContains(t *testing.T) {
 	}
 }
 
-func TestRegistryRegisterAndNew(t *testing.T) {
-	name := "test-bloom-registry"
-
-	err := fts.RegisterFilter(name, func() (fts.Filter, error) {
-		return NewBloomFilter(100, 10, 3), nil
-	})
-	if err != nil {
-		t.Fatalf("RegisterFilter() error = %v", err)
-	}
-
-	f, err := fts.NewFilter(name)
-	if err != nil {
-		t.Fatalf("NewFilter() error = %v", err)
-	}
+func TestBloomFilterFactoryEquivalent(t *testing.T) {
+	f := NewBloomFilter(100, 10, 3)
 
 	f.Add([]byte("beta"))
 	if !f.Contains([]byte("beta")) {

@@ -1,6 +1,6 @@
-# Full-Text Search Test Engine 
+# Full-Text Search Test Engine
 
-Reusable full-text search engine in Go with configurable indexing strategies, token pipeline, CLI mode, and experiment mode.
+Reusable full-text search engine in Go with configurable indexes, token pipeline, and snapshot support.
 
 ![Demo](docs/demo.gif)
 
@@ -15,12 +15,26 @@ Reusable full-text search engine in Go with configurable indexing strategies, to
   - `hamtpointered`
 - Public text processing pipeline in `pkg/textproc`.
 - Public key generators in `pkg/keygen`.
-- Public probabilistic filters in `pkg/filter` (`bloom`, `cuckoo`, `ribbon`).
+- Public probabilistic filters in `pkg/filter`.
 - CLI entrypoint in `cmd/fts` with:
   - `prod` mode (run with configurable filters and interactive CUI)
   - `experiment` mode (collect indexing metrics)
 
-## Quick start (library mode)
+## Library usage
+
+### 1) Install
+
+```bash
+go get github.com/dariasmyr/fts-engine@latest
+```
+
+If you test against local source:
+
+```go
+replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
+```
+
+### 2) Quickstart
 
 ```go
 package main
@@ -32,13 +46,10 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/index/radix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
 func main() {
-	idx := radix.New()
-	pipe := textproc.DefaultEnglishPipeline()
-	engine := fts.New(idx, keygen.Word, fts.WithPipeline(pipe))
+	engine := fts.New(radix.New(), keygen.Word)
 
 	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
 	res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
@@ -47,135 +58,133 @@ func main() {
 }
 ```
 
-## Segment snapshots (append-only)
+### 3) Snapshots
 
-Index/filter state can be persisted to any `io.Writer` (file, object storage stream) and restored from `io.Reader`.
+#### Custom `io.Writer`/`io.Reader` (with filter)
 
-```go
-var buf bytes.Buffer
-
-// Register snapshot codecs for selected index/filter once.
-// Example for built-ins is in cmd/fts/main.go (registerBuiltInSnapshotCodecs).
-
-svc := fts.New(radix.New(), keygen.Word)
-_ = svc.IndexDocument(context.Background(), "doc-1", "hello world")
-_ = svc.SaveSnapshot(&buf, "radix", "")
-
-restored, _ := fts.NewFromSnapshot(bytes.NewReader(buf.Bytes()), keygen.Word)
-res, _ := restored.SearchDocuments(context.Background(), "hello", 10)
-fmt.Println(res.TotalResultsCount)
-```
-
-### File snapshots: default and configurable modes
-
-`SaveSnapshotFile` uses default file persistence mode: atomic publish (`tmp -> rename`), batched buffered writes, and file sync enabled.
-
-Default mode example (save + load + search):
+Use `pkg/ftsbuiltin` for built-in name-based codecs (`radix`, `bloom`, etc.) without manual codec registry wiring.
 
 ```go
-svc := fts.New(radix.New(), keygen.Word)
-_ = svc.IndexDocument(context.Background(), "doc-1", "hello world")
+package main
 
-_ = svc.SaveSnapshotFile("./data/segments/default.fidx", "radix", "")
+import (
+	"bytes"
+	"context"
+	"fmt"
 
-loaded, _ := fts.NewFromSnapshotFile("./data/segments/default.fidx", keygen.Word)
-res, _ := loaded.SearchDocuments(context.Background(), "hello", 10)
-fmt.Println(res.TotalResultsCount)
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/pkg/keygen"
+)
+
+func main() {
+	opts := ftsbuiltin.FilterOptions{
+		BloomExpectedItems: 1_000_000,
+		BloomBitsPerItem:   10,
+		BloomK:             7,
+	}
+
+	idx, _ := ftsbuiltin.BuildIndex("radix")
+	flt, _ := ftsbuiltin.BuildFilter("bloom", opts)
+	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt))
+
+	_ = svc.IndexDocument(context.Background(), "doc-1", "snapshot with bloom filter")
+
+	var buf bytes.Buffer
+	_ = ftsbuiltin.SaveServiceSnapshot(&buf, svc, "radix", "bloom")
+
+	loaded, _ := ftsbuiltin.LoadSegmentSnapshot(bytes.NewReader(buf.Bytes()))
+	restored := fts.New(loaded.Index, keygen.Word, fts.WithFilter(loaded.Filter))
+
+	res, _ := restored.SearchDocuments(context.Background(), "snapshot", 10)
+	fmt.Println(res.TotalResultsCount)
+}
 ```
 
-Configurable mode example (custom buffer policy):
+#### File-oriented variant (same snapshot payload)
 
 ```go
-opts := fts.DefaultSnapshotFileOptions()
-opts.BufferSize = 2 << 20      // 2 MiB
-opts.FlushThreshold = 512 << 10 // 512 KiB
-opts.SyncFile = true
+package main
 
-svc := fts.New(radix.New(), keygen.Word)
-_ = svc.IndexDocument(context.Background(), "doc-1", "hello world")
+import (
+	"context"
+	"os"
 
-_ = svc.SaveSnapshotFileWithOptions("./data/segments/default.fidx", "radix", "", opts)
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/pkg/keygen"
+)
+
+func main() {
+	idx, _ := ftsbuiltin.BuildIndex("radix")
+	svc := fts.New(idx, keygen.Word)
+	_ = svc.IndexDocument(context.Background(), "doc-1", "file snapshot demo")
+
+	out, _ := os.Create("./data/segments/default.fidx")
+	defer out.Close()
+	_ = ftsbuiltin.SaveServiceSnapshot(out, svc, "radix", "")
+
+	in, _ := os.Open("./data/segments/default.fidx")
+	defer in.Close()
+	loaded, _ := ftsbuiltin.LoadSegmentSnapshot(in)
+
+	_ = fts.New(loaded.Index, keygen.Word)
+}
 ```
 
-## Usage in a third-party project
+### 4) Custom pipeline and language presets
 
-This example shows how to consume the engine as a library from another Go service.
-
-### 1) Add dependency
-
-In your project:
-
-```bash
-go get github.com/dariasmyr/fts-engine@latest
-```
-
-If you work from a local checkout, use `replace` in `go.mod`:
+Default preset shortcut:
 
 ```go
-replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
+engine := fts.New(radix.New(), keygen.Word, ftspreset.English())
 ```
 
-### 2) Switch strategy without changing app flow
-
-- Word index: `radix.New()` + `keygen.Word`
-- Trigram index: `trigram.New()` + `keygen.Trigram`
-
-Example:
-
-```go
-idx := trigram.New()
-engine := fts.New(idx, keygen.Trigram, fts.WithPipeline(textproc.DefaultEnglishPipeline()))
-```
-
-Available defaults:
+Available presets:
 
 - `textproc.DefaultEnglishPipeline()`
 - `textproc.DefaultRussianPipeline()`
 - `textproc.DefaultMultilingualPipeline()`
+- `ftspreset.English()` / `ftspreset.Russian()` / `ftspreset.Multilingual()`
 
-### 3) Optional: custom filter pipeline
+Custom pipeline:
 
 ```go
 pipe := textproc.NewPipeline(
 	textproc.AlnumTokenizer{},
 	textproc.LowercaseFilter{},
 	textproc.MinLengthOrNumericFilter{MinLength: 2},
+	textproc.EnglishStopwordFilter{},
+	textproc.EnglishStemFilter{},
 )
+
 engine := fts.New(radix.New(), keygen.Word, fts.WithPipeline(pipe))
 ```
 
-## Build and run (CLI)
+## Run main app (local testing via config)
 
-Install dependencies:
+Use this only when you want to test the repository app itself (`cmd/fts`), not when embedding the library into your service.
 
-```bash
-go mod tidy
-```
-
-Build:
+1) Create config from template:
 
 ```bash
-go build -o build/fts ./cmd/fts
+cp ./config/config_local_example.yaml ./config/config_local.yaml
 ```
 
-Run:
+2) Run with config:
 
 ```bash
-./build/fts --config=./config/config_local.yaml
+go run ./cmd/fts --config=./config/config_local.yaml
 ```
 
-## Configuration
-
-Main file: `config/config_local.yaml` (create from `config/config_local_example.yaml`).
-
-Core fields:
+Important config fields:
 
 ```yaml
 fts:
-  engine: "trie"
-  index: "radix"      # radix|slicedradix|trigram|hamt|hamtpointered
-  keygen: "word"      # word|trigram
-  filter: "none"      # none|bloom|cuckoo|ribbon
+  engine: "trie"       # trie|kv
+  index: "radix"       # radix|slicedradix|trigram|hamt|hamtpointered
+  keygen: "word"       # word|trigram
+  filter: "none"       # none|bloom|cuckoo|ribbon
   snapshot:
     enabled: true
     path: "./data/segments/default.fidx"
@@ -229,46 +238,31 @@ Snapshot fields (`fts.snapshot`):
   - always indexes current input and prints memory/index stats,
   - does not run CUI snapshot restore flow.
 
-## Ribbon filter usage (file-based)
+## Ribbon filter usage
 
-Ribbon is static. Build is explicit and called manually.
-
-### Mode 1: default parser (`ParseLineKeys`)
-
-Use this when the file is plain text: one non-empty line equals one key.
+Ribbon is a static filter. In `fts` it is used via `BufferedStaticFilter`.
 
 ```go
-rf, _ := filter.NewRibbonFilter(1_000_000, 250_000, 24, 0)
-_ = rf.BuildWithRetriesFromFile("./data/keys.txt", 5)
-
-bf := fts.NewBufferedStaticFilterWithRetries(rf, 5)
-svc := fts.New(radix.New(), keygen.Word, fts.WithFilter(bf))
-```
-
-### Mode 2: custom parser (recommended for `.alog`/json/csv/binary)
-
-Parser is provided by caller; filter receives only extracted keys.
-
-```go
-parser := func(path string, emit func([]byte) bool) error {
-	// parse your format and call emit(key)
-	return nil
+opts := ftsbuiltin.FilterOptions{
+	RibbonExpectedItems: 1_000_000,
+	RibbonExtraCells:    250_000,
+	RibbonWindowSize:    24,
+	RibbonSeed:          0,
+	RibbonMaxAttempts:   5,
 }
 
-rf, _ := filter.NewRibbonFilter(1_000_000, 250_000, 24, 0)
-_ = rf.BuildWithRetriesFromFileWithParser("./data/keys.alog", parser, 5)
+idx, _ := ftsbuiltin.BuildIndex("radix")
+flt, _ := ftsbuiltin.BuildFilter("ribbon", opts)
+svc := fts.New(idx, keygen.Word, fts.WithFilter(flt))
+
+_ = svc.IndexDocument(context.Background(), "doc-1", "alpha beta")
+
+if buildable, ok := flt.(fts.BuildableFilter); ok {
+	_ = buildable.Build() // finalizes ribbon before strict Contains checks
+}
 ```
 
-If you index first and buffer keys through `BufferedStaticFilter`, call build manually:
-
-```go
-rf, _ := filter.NewRibbonFilter(1_000_000, 250_000, 24, 0)
-bf := fts.NewBufferedStaticFilterWithRetries(rf, 5)
-svc := fts.New(radix.New(), keygen.Word, fts.WithFilter(bf))
-
-_ = svc.IndexDocument(ctx, "doc-1", "alpha beta")
-_ = bf.Build()
-```
+In CLI mode (`cmd/fts`) this final build is now called automatically after indexing.
 
 ## Tests
 
