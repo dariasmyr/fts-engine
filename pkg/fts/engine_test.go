@@ -47,6 +47,12 @@ type buildableContainsFilter struct {
 	built bool
 }
 
+type rejectingFilter struct{}
+
+func (rejectingFilter) Add(item []byte) bool { return false }
+
+func (rejectingFilter) Contains(item []byte) bool { return true }
+
 func (f *buildableContainsFilter) Build() error {
 	f.built = true
 	return nil
@@ -135,6 +141,16 @@ func TestIndexDocumentUsesKeyGenerator(t *testing.T) {
 
 	if len(idx.inserts) != 2 {
 		t.Fatalf("insert count = %d, want 2", len(idx.inserts))
+	}
+}
+
+func TestIndexDocumentReturnsErrorWhenFilterAddFails(t *testing.T) {
+	idx := newMemoryIndex()
+	svc := New(idx, WordKeys, WithFilter(rejectingFilter{}))
+
+	err := svc.IndexDocument(context.Background(), "doc-1", "Alpha")
+	if err == nil {
+		t.Fatal("IndexDocument() error = nil, want filter add failure")
 	}
 }
 

@@ -67,7 +67,9 @@ func (s *Service) IndexDocument(ctx context.Context, docID DocID, content string
 
 		for _, key := range keys {
 			if s.filter != nil {
-				_ = s.filter.Add([]byte(key))
+				if ok := s.filter.Add([]byte(key)); !ok {
+					return fmt.Errorf("fts: index document: filter add failed for key %q", key)
+				}
 			}
 			if err := s.index.Insert(key, docID); err != nil {
 				return fmt.Errorf("fts: index document: insert: %w", err)

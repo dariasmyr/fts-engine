@@ -9,41 +9,45 @@ import (
 )
 
 type Bucket struct {
-	slots []uint8 // 8-bit fingerprints
+	slots []uint16
 }
 
 type CuckooFilter struct {
-	buckets    []Bucket // array of buckets
-	bucketSize int      // number of slots per bucket
-	maxKicks   int      // max number of evictions during insert
+	buckets         []Bucket // array of buckets
+	bucketSize      int      // number of slots per bucket
+	maxKicks        int      // max number of evictions during insert
+	fingerprintMask uint16
 }
 
 type cuckooSnapshot struct {
 	BucketSize int
 	MaxKicks   int
-	Buckets    [][]uint8
+	Buckets    [][]uint16
 }
 
 func NewCuckooFilter(bucketCount int, bucketSize int, maxKicks int) *CuckooFilter {
+	mask := ^uint16(0)
+
 	buckets := make([]Bucket, bucketCount)
 
 	for i := range buckets {
 		buckets[i] = Bucket{
-			slots: make([]uint8, 0, bucketSize),
+			slots: make([]uint16, 0, bucketSize),
 		}
 	}
 
 	return &CuckooFilter{
-		buckets:    buckets,
-		bucketSize: bucketSize,
-		maxKicks:   maxKicks,
+		buckets:         buckets,
+		bucketSize:      bucketSize,
+		maxKicks:        maxKicks,
+		fingerprintMask: mask,
 	}
 }
 
 func (cf *CuckooFilter) Serialize(w io.Writer) error {
-	buckets := make([][]uint8, 0, len(cf.buckets))
+	buckets := make([][]uint16, 0, len(cf.buckets))
 	for _, bucket := range cf.buckets {
-		buckets = append(buckets, append([]uint8(nil), bucket.slots...))
+		buckets = append(buckets, append([]uint16(nil), bucket.slots...))
 	}
 
 	snapshot := cuckooSnapshot{
@@ -73,12 +77,18 @@ func LoadCuckooFilter(r io.Reader) (*CuckooFilter, error) {
 	return cf, nil
 }
 
-func fingerprint(key []byte) uint8 {
+func (cf *CuckooFilter) fingerprint(key []byte) uint16 {
 	h := fnv.New32a()
 	h.Write(key)
 
-	// returns 1 to 255 (zero is skipped and reserved for empty slots)
-	return uint8(h.Sum32()%255 + 1)
+	fp := uint16(h.Sum32()) & cf.fingerprintMask
+
+	// zero is skipped and reserved for empty slots
+	if fp == 0 {
+		return 1
+	}
+
+	return fp
 }
 
 // index1 computes the primary bucket index for a key.
@@ -90,14 +100,14 @@ func (cf *CuckooFilter) index1(key []byte) uint32 {
 }
 
 // index2 computes the alternate bucket index using XOR with fingerprint hash.
-func (cf *CuckooFilter) index2(i1 uint32, fp uint8) uint32 {
+func (cf *CuckooFilter) index2(i1 uint32, fp uint16) uint32 {
 	h := uint32(fp) * 0x5bd1e995
 	return (i1 ^ h) % uint32(len(cf.buckets))
 }
 
 // findIndexes calculates fingerprint and both candidate bucket indexes for a key.
-func (cf *CuckooFilter) findIndexes(key []byte) (fp uint8, i1, i2 uint32) {
-	fp = fingerprint(key)
+func (cf *CuckooFilter) findIndexes(key []byte) (fp uint16, i1, i2 uint32) {
+	fp = cf.fingerprint(key)
 	i1 = cf.index1(key)
 	i2 = cf.index2(i1, fp)
 
@@ -137,7 +147,7 @@ func (cf *CuckooFilter) Add(key []byte) bool {
 }
 
 // has checks if fingerprint exists in the bucket.
-func (b *Bucket) has(fp uint8) bool {
+func (b *Bucket) has(fp uint16) bool {
 	for _, v := range b.slots {
 		if v == fp {
 			return true
@@ -147,7 +157,7 @@ func (b *Bucket) has(fp uint8) bool {
 }
 
 // insert attempts to add fingerprint into bucket if space is available.
-func (b *Bucket) insert(fp uint8) bool {
+func (b *Bucket) insert(fp uint16) bool {
 	if len(b.slots) < cap(b.slots) {
 		b.slots = append(b.slots, fp)
 		return true
@@ -156,7 +166,7 @@ func (b *Bucket) insert(fp uint8) bool {
 }
 
 // swapRandom randomly evicts one fingerprint and replaces it with new one.
-func (b *Bucket) swapRandom(fp uint8) uint8 {
+func (b *Bucket) swapRandom(fp uint16) uint16 {
 	i := rand.Intn(len(b.slots))
 	old := b.slots[i]
 	b.slots[i] = fp
