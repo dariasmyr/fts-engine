@@ -26,3 +26,21 @@ func TestBloomFilterFactoryEquivalent(t *testing.T) {
 		t.Fatalf("Contains(beta) = false, want true")
 	}
 }
+
+func TestBloomFilterHashFunctionsUseDifferentSeeds(t *testing.T) {
+	bf := NewBloomFilter(100, 10, 4)
+	key := []byte("same-key")
+
+	h0 := bf.hashFuncs[0](key)
+	allEqual := true
+	for i := 1; i < len(bf.hashFuncs); i++ {
+		if bf.hashFuncs[i](key) != h0 {
+			allEqual = false
+			break
+		}
+	}
+
+	if allEqual {
+		t.Fatal("all bloom hash functions returned the same hash; expected different seeded hashes")
+	}
+}
