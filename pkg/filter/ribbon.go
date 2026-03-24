@@ -304,13 +304,13 @@ func (rf *RibbonFilter) Contains(item []byte) bool {
 	fp := rf.fingerprint(item)
 
 	var acc uint16 = 0
-
-	for i := uint32(0); i < rf.w; i++ {
+	localMask := mask
+	for localMask != 0 {
+		// сдвиг маски вправо оставляем только младший бит, если он не 0, значит включен
+		bitPos := bits.TrailingZeros64(localMask)
 		// сдвиг маски вправо, через & оставляем только младший бит, если он не 0, значит включен
-		if ((mask >> i) & 1) != 0 {
-			// XOR'им значения rf.cells[start+i] только для битов i, где mask имеет 1.
-			acc ^= rf.cells[start+i] // на этом этапе все cells должны быть известны (сокращены в уравнениях XOR + восстановлены)
-		}
+		acc ^= rf.cells[start+uint32(bitPos)]
+		localMask &= localMask - 1 // удаляем младшую 1
 	}
 
 	// берем fp из посчитанного xor
