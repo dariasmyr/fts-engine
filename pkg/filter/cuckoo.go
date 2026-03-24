@@ -126,6 +126,11 @@ func (cf *CuckooFilter) Contains(key []byte) bool {
 func (cf *CuckooFilter) Add(key []byte) bool {
 	fp, i1, i2 := cf.findIndexes(key)
 
+	// Duplicate insert should be a no-op.
+	if cf.buckets[i1].has(fp) || cf.buckets[i2].has(fp) {
+		return true
+	}
+
 	// try direct insertion into either bucket
 	if cf.buckets[i1].insert(fp) || cf.buckets[i2].insert(fp) {
 		return true

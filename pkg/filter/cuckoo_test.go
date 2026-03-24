@@ -32,3 +32,13 @@ func TestCuckooAsFilter(t *testing.T) {
 		t.Fatalf("Contains(beta) = false, want true")
 	}
 }
+
+func TestCuckooFilterDuplicateInsertDoesNotFail(t *testing.T) {
+	cf := NewCuckooFilter(16, 4, 50)
+
+	for i := 0; i < 1000; i++ {
+		if ok := cf.Add([]byte("may")); !ok {
+			t.Fatalf("Add(may) at iteration %d = false, want true for duplicate inserts", i)
+		}
+	}
+}
