@@ -81,7 +81,8 @@ func (cf *CuckooFilter) fingerprint(key []byte) uint16 {
 	h := fnv.New32a()
 	h.Write(key)
 
-	fp := uint16(h.Sum32()) & cf.fingerprintMask
+	sum := h.Sum32()
+	fp := uint16(sum>>16) & cf.fingerprintMask
 
 	// zero is skipped and reserved for empty slots
 	if fp == 0 {
