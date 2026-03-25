@@ -123,6 +123,12 @@ func SaveSegmentSnapshot(w io.Writer, indexName string, index Index, filterName 
 			return fmt.Errorf("fts: save snapshot: empty filter name")
 		}
 
+		if buildable, ok := filter.(BuildableFilter); ok {
+			if err := buildable.Build(); err != nil {
+				return fmt.Errorf("fts: save snapshot: build filter %q: %w", filterName, err)
+			}
+		}
+
 		filterCodec, ok := filterCodecByName(filterName)
 		if !ok {
 			return fmt.Errorf("fts: save snapshot: unknown filter codec %q", filterName)

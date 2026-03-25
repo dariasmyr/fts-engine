@@ -34,13 +34,14 @@ func NewBloomFilter(expectedItems uint64, bitsPerItem uint64, k uint64) *BloomFi
 
 	// Initiate every hash-funcs based on FNV-1a and seed.
 	for seed := uint64(0); seed < k; seed++ {
+		var seedBytes [8]byte
+		binary.LittleEndian.PutUint64(seedBytes[:], seed)
+
 		hashFuncs[seed] = func(data []byte) uint64 {
 			h := fnv.New64a() // new 64-bit FNV-1a hasher [web:11]
 
 			// Write seed as 8 bytes into hasher
-			seedBytes := make([]byte, 8)
-			binary.LittleEndian.PutUint64(seedBytes, seed)
-			h.Write(seedBytes)
+			h.Write(seedBytes[:])
 
 			h.Write(data)
 

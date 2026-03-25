@@ -24,12 +24,16 @@ type FTSConfig struct {
 	Snapshot SnapshotConfig `yaml:"snapshot"`
 	Bloom    BloomConfig    `yaml:"bloom"`
 	Cuckoo   CuckooConfig   `yaml:"cuckoo"`
+	Ribbon   RibbonConfig   `yaml:"ribbon"`
 	Pipeline PipelineConfig `yaml:"pipeline"`
 }
 
 type SnapshotConfig struct {
 	Enabled        bool   `yaml:"enabled" env-default:"false"`
 	Path           string `yaml:"path" env-default:"./data/segments/default.fidx"`
+	SplitFiles     bool   `yaml:"split_files" env-default:"false"`
+	IndexPath      string `yaml:"index_path" env-default:""`
+	FilterPath     string `yaml:"filter_path" env-default:""`
 	LoadOnStart    bool   `yaml:"load_on_start" env-default:"true"`
 	SaveOnBuild    bool   `yaml:"save_on_build" env-default:"true"`
 	BufferSize     int    `yaml:"buffer_size" env-default:"1048576"`
@@ -47,6 +51,14 @@ type CuckooConfig struct {
 	BucketCount int `yaml:"bucket_count" env-default:"262144"`
 	BucketSize  int `yaml:"bucket_size" env-default:"4"`
 	MaxKicks    int `yaml:"max_kicks" env-default:"500"`
+}
+
+type RibbonConfig struct {
+	ExpectedItems uint32 `yaml:"expected_items" env-default:"1000000"`
+	ExtraCells    uint32 `yaml:"extra_cells" env-default:"250000"`
+	WindowSize    uint32 `yaml:"window_size" env-default:"24"`
+	Seed          uint64 `yaml:"seed" env-default:"0"`
+	MaxAttempts   uint32 `yaml:"max_attempts" env-default:"5"`
 }
 
 type ModeConfig struct {
@@ -162,7 +174,7 @@ func validateConfig(cfg *Config) {
 	}
 
 	switch cfg.FTS.Filter {
-	case "none", "bloom", "cuckoo":
+	case "none", "bloom", "cuckoo", "ribbon":
 	default:
 		panic("unknown filter type: " + cfg.FTS.Filter)
 	}
@@ -177,6 +189,20 @@ func validateConfig(cfg *Config) {
 
 	if cfg.FTS.Cuckoo.MaxKicks < 0 {
 		panic("cuckoo max_kicks must be >= 0")
+	}
+
+	if cfg.FTS.Filter == "ribbon" {
+		if cfg.FTS.Ribbon.ExpectedItems == 0 {
+			panic("ribbon expected_items must be > 0")
+		}
+
+		if cfg.FTS.Ribbon.WindowSize == 0 || cfg.FTS.Ribbon.WindowSize > 32 {
+			panic("ribbon window_size must be in range [1..32]")
+		}
+
+		if cfg.FTS.Ribbon.MaxAttempts == 0 {
+			panic("ribbon max_attempts must be > 0")
+		}
 	}
 
 	switch cfg.Mode.Type {

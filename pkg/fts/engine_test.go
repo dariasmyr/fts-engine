@@ -42,6 +42,22 @@ func (f containsOnlyFilter) Contains(item []byte) bool {
 	return f.allowed[string(item)]
 }
 
+type buildableContainsFilter struct {
+	containsOnlyFilter
+	built bool
+}
+
+type rejectingFilter struct{}
+
+func (rejectingFilter) Add(item []byte) bool { return false }
+
+func (rejectingFilter) Contains(item []byte) bool { return true }
+
+func (f *buildableContainsFilter) Build() error {
+	f.built = true
+	return nil
+}
+
 func TestSearchDocumentsSortAndLimit(t *testing.T) {
 	idx := newMemoryIndex()
 	idx.entries["alpha"] = []DocRef{{ID: "a", Count: 3}, {ID: "b", Count: 1}}
@@ -128,6 +144,16 @@ func TestIndexDocumentUsesKeyGenerator(t *testing.T) {
 	}
 }
 
+func TestIndexDocumentReturnsErrorWhenFilterAddFails(t *testing.T) {
+	idx := newMemoryIndex()
+	svc := New(idx, WordKeys, WithFilter(rejectingFilter{}))
+
+	err := svc.IndexDocument(context.Background(), "doc-1", "Alpha")
+	if err == nil {
+		t.Fatal("IndexDocument() error = nil, want filter add failure")
+	}
+}
+
 func TestContextCancellation(t *testing.T) {
 	idx := newMemoryIndex()
 	svc := New(idx, WordKeys)
@@ -164,5 +190,88 @@ func TestSearchDocumentsSkipsIndexWhenFilterMisses(t *testing.T) {
 
 	if len(idx.searches) != 0 {
 		t.Fatalf("index search calls = %d, want 0", len(idx.searches))
+	}
+}
+
+func TestSearchDocumentsDoesNotAutoBuildBuildableFilter(t *testing.T) {
+	idx := newMemoryIndex()
+	idx.entries["known"] = []DocRef{{ID: "doc", Count: 1}}
+
+	filter := &buildableContainsFilter{
+		containsOnlyFilter: containsOnlyFilter{allowed: map[string]bool{"known": true}},
+	}
+
+	svc := New(idx, WordKeys, WithFilter(filter))
+
+	if _, err := svc.SearchDocuments(context.Background(), "known", 10); err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+
+	if filter.built {
+		t.Fatal("Build() was called during search, want explicit finalize only")
+	}
+}
+
+func TestSearchUsesBufferedStaticFilterAfterManualBuild(t *testing.T) {
+	idx := newMemoryIndex()
+	idx.entries["known"] = []DocRef{{ID: "doc", Count: 1}}
+
+	static := &testStaticFilter{}
+	filter := NewBufferedStaticFilter(static)
+
+	svc := New(idx, WordKeys, WithFilter(filter))
+
+	if err := svc.IndexDocument(context.Background(), "doc-1", "known"); err != nil {
+		t.Fatalf("IndexDocument() error = %v", err)
+	}
+
+	resBefore, err := svc.SearchDocuments(context.Background(), "known", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() before finalize error = %v", err)
+	}
+	if resBefore.TotalResultsCount != 1 {
+		t.Fatalf("TotalResultsCount before finalize = %d, want 1", resBefore.TotalResultsCount)
+	}
+	if static.builds != 0 {
+		t.Fatalf("static builds before finalize = %d, want 0", static.builds)
+	}
+
+	if err := filter.Build(); err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if static.builds != 1 {
+		t.Fatalf("static builds after Build() = %d, want 1", static.builds)
+	}
+
+	resAfter, err := svc.SearchDocuments(context.Background(), "known", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() after Build() error = %v", err)
+	}
+	if resAfter.TotalResultsCount != 1 {
+		t.Fatalf("TotalResultsCount after Build() = %d, want 1", resAfter.TotalResultsCount)
+	}
+}
+
+func TestBuildFilterBuildsBuildableFilter(t *testing.T) {
+	idx := newMemoryIndex()
+	filter := &buildableContainsFilter{}
+
+	svc := New(idx, WordKeys, WithFilter(filter))
+
+	if err := svc.BuildFilter(); err != nil {
+		t.Fatalf("BuildFilter() error = %v", err)
+	}
+
+	if !filter.built {
+		t.Fatal("BuildFilter() did not call Build()")
+	}
+}
+
+func TestBuildFilterSkipsNonBuildableFilter(t *testing.T) {
+	idx := newMemoryIndex()
+	svc := New(idx, WordKeys, WithFilter(containsOnlyFilter{allowed: map[string]bool{"known": true}}))
+
+	if err := svc.BuildFilter(); err != nil {
+		t.Fatalf("BuildFilter() error = %v", err)
 	}
 }

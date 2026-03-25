@@ -20,6 +20,12 @@ type FilterOptions struct {
 	CuckooBucketCount int
 	CuckooBucketSize  int
 	CuckooMaxKicks    int
+
+	RibbonExpectedItems uint32
+	RibbonExtraCells    uint32
+	RibbonWindowSize    uint32
+	RibbonSeed          uint64
+	RibbonMaxAttempts   uint32
 }
 
 func BuildIndex(name string) (fts.Index, error) {
@@ -47,6 +53,13 @@ func BuildFilter(name string, opts FilterOptions) (fts.Filter, error) {
 		return filter.NewBloomFilter(opts.BloomExpectedItems, opts.BloomBitsPerItem, opts.BloomK), nil
 	case "cuckoo":
 		return filter.NewCuckooFilter(opts.CuckooBucketCount, opts.CuckooBucketSize, opts.CuckooMaxKicks), nil
+	case "ribbon":
+		rf, err := filter.NewRibbonFilter(opts.RibbonExpectedItems, opts.RibbonExtraCells, opts.RibbonWindowSize, opts.RibbonSeed)
+		if err != nil {
+			return nil, err
+		}
+
+		return fts.NewBufferedStaticFilterWithRetries(rf, opts.RibbonMaxAttempts), nil
 	default:
 		return nil, fmt.Errorf("unknown filter %q", name)
 	}

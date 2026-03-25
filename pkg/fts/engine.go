@@ -67,7 +67,9 @@ func (s *Service) IndexDocument(ctx context.Context, docID DocID, content string
 
 		for _, key := range keys {
 			if s.filter != nil {
-				_ = s.filter.Add([]byte(key))
+				if ok := s.filter.Add([]byte(key)); !ok {
+					return fmt.Errorf("fts: index document: filter add failed for key %q", key)
+				}
 			}
 			if err := s.index.Insert(key, docID); err != nil {
 				return fmt.Errorf("fts: index document: insert: %w", err)
@@ -200,6 +202,23 @@ func (s *Service) SnapshotComponents() (Index, Filter) {
 	}
 
 	return s.index, s.filter
+}
+
+func (s *Service) BuildFilter() error {
+	if s == nil || s.filter == nil {
+		return nil
+	}
+
+	buildable, ok := s.filter.(BuildableFilter)
+	if !ok {
+		return nil
+	}
+
+	if err := buildable.Build(); err != nil {
+		return fmt.Errorf("fts: build filter: %w", err)
+	}
+
+	return nil
 }
 
 func formatDuration(d time.Duration) string {

@@ -36,6 +36,9 @@ replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
 - `preset/main.go` — language preset via `pkg/ftspreset`.
 - `custom-options/main.go` — custom pipeline and extra options.
 - `snapshot/main.go` — save/load snapshot in pure library mode.
+- `filters-dynamic/main.go` — built-in dynamic filters (`bloom`, `cuckoo`).
+- `filter-ribbon/main.go` — built-in static `ribbon` filter + explicit finalize.
+- `ribbon-file/main.go` — ribbon build from files: default parser save, custom parser save, load from file, normalized `Contains`.
 
 Run each example from repository root:
 
@@ -44,4 +47,7 @@ go run ./examples/client-library/default
 go run ./examples/client-library/preset
 go run ./examples/client-library/custom-options
 go run ./examples/client-library/snapshot
+go run ./examples/client-library/filters-dynamic
+go run ./examples/client-library/filter-ribbon
+go run ./examples/client-library/ribbon-file
 ```

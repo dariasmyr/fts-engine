@@ -184,10 +184,13 @@ fts:
   engine: "trie"       # trie|kv
   index: "radix"       # radix|slicedradix|trigram|hamt|hamtpointered
   keygen: "word"       # word|trigram
-  filter: "none"       # none|bloom|cuckoo
+  filter: "none"       # none|bloom|cuckoo|ribbon
   snapshot:
     enabled: true
     path: "./data/segments/default.fidx"
+    split_files: false
+    index_path: ""            # optional, used when split_files=true
+    filter_path: ""           # optional, used when split_files=true
     load_on_start: true
     save_on_build: true
     buffer_size: 1048576
@@ -201,6 +204,12 @@ fts:
     bucket_count: 262144
     bucket_size: 4
     max_kicks: 500
+  ribbon:
+    expected_items: 1000000
+    extra_cells: 250000
+    window_size: 24      # 1..32
+    seed: 0
+    max_attempts: 5
   pipeline:
     lowercase: true
     stopwords_en: true
@@ -216,6 +225,9 @@ Snapshot fields (`fts.snapshot`):
 
 - `enabled`: enable snapshot persistence flow in CLI prod mode.
 - `path`: final snapshot artifact path.
+- `split_files`: if true, save/load index and filter in separate files.
+- `index_path`: optional explicit path for index snapshot file in split mode.
+- `filter_path`: optional explicit path for filter snapshot file in split mode.
 - `load_on_start`: if true and snapshot exists, load it and skip rebuild.
 - `save_on_build`: if true, save snapshot after indexing finishes.
 - `buffer_size`: writer buffer size used during save.
@@ -231,6 +243,48 @@ Snapshot fields (`fts.snapshot`):
 - `experiment`:
   - always indexes current input and prints memory/index stats,
   - does not run CUI snapshot restore flow.
+
+## Ribbon filter usage
+
+Ribbon is a static filter. In `fts` it is used via `BufferedStaticFilter`.
+
+```go
+opts := ftsbuiltin.FilterOptions{
+	RibbonExpectedItems: 1_000_000,
+	RibbonExtraCells:    250_000,
+	RibbonWindowSize:    24,
+	RibbonSeed:          0,
+	RibbonMaxAttempts:   5,
+}
+
+idx, _ := ftsbuiltin.BuildIndex("radix")
+flt, _ := ftsbuiltin.BuildFilter("ribbon", opts)
+svc := fts.New(idx, keygen.Word, fts.WithFilter(flt))
+
+_ = svc.IndexDocument(context.Background(), "doc-1", "alpha beta")
+_ = svc.BuildFilter() // builds static filters like ribbon before strict Contains checks
+```
+
+In CLI mode (`cmd/fts`) this final build is now called automatically after indexing.
+
+### Standalone filter `Contains` with normalization
+
+Use this when you work with filter directly (without `SearchDocuments`) and want to compare raw `Contains` vs normalized check.
+
+```go
+raw := ribbonFilter.Contains([]byte("GaMmA"))
+
+pipe := textproc.NewPipeline(textproc.AlnumTokenizer{}, textproc.LowercaseFilter{})
+
+normalized, err := fts.ContainsNormalized(ribbonFilter, "GaMmA", pipe, keygen.Word)
+if err != nil {
+	panic(err)
+}
+
+fmt.Println("raw", raw, "normalized", normalized)
+```
+
+`ContainsNormalized` applies pipeline + keygen and checks all normalized keys via `Contains`.
 
 ## Tests
 
