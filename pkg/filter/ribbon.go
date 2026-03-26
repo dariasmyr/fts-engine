@@ -48,8 +48,6 @@ const (
 	startSalt uint64 = 0x9e3779b97f4a7c15
 	maskSalt  uint64 = 0xc2b2ae3d27d4eb4f
 	fpSalt    uint64 = 0x165667b19e3779f9
-	// Маска для fp (16bit)
-	fingerprintMask = ^uint16(0)
 
 	// Текущее elimination хранит строку в локальной uint64-маске.
 	// При XOR после выравнивания двух окон нужен диапазон до (2*w - 1) бит.
@@ -275,8 +273,7 @@ func (rf *RibbonFilter) BuildFromKeyStream(stream func(func([]byte) bool) error)
 			localMask &= localMask - 1
 		}
 
-		// Обрезаем значение до младших 16 бит
-		rf.cells[col] = cellValue & fingerprintMask
+		rf.cells[col] = cellValue
 	}
 
 	rf.built = true
@@ -307,8 +304,6 @@ func (rf *RibbonFilter) Contains(item []byte) bool {
 		localMask &= localMask - 1 // удаляем младшую 1
 	}
 
-	// берем fp из посчитанного xor
-	acc &= fingerprintMask
 	// Сравниваем полученный XOR с fingerprint.
 	return acc == fp
 }
