@@ -16,10 +16,12 @@ import (
 // которые собраются в XOR уравнение, которое равно куску хеша (fingerpint) ключа
 // cells[0] XOR cells[1] = fingerpint
 type RibbonFilter struct {
-	m     uint32 // чисто ячеек
-	w     uint32 // ширина локального окна
-	seed  uint64
-	span  uint32   // верхняя граница start
+	m    uint32 // чисто ячеек
+	w    uint32 // ширина локального окна
+	seed uint64
+	span uint32 // верхняя граница start
+	// uint16 как оптимальный компромисс (на 8uint снижает память на 40% но повышает false-positive rate 0.000040 -> 0.003939
+	// и не дает выйгрыша по скорости Contains):
 	cells []uint16 // набор значений которые мы хотим XOR'ить, чтобы получить fingerprint
 	built bool
 }
