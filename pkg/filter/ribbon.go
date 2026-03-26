@@ -425,8 +425,16 @@ func LoadRibbonFilter(r io.Reader) (*RibbonFilter, error) {
 	if snap.W == 0 || snap.W > maxRibbonWindow {
 		return nil, errors.New("ribbon: load: invalid w")
 	}
+	if snap.M < snap.W {
+		return nil, errors.New("ribbon: load: invalid m/w relation")
+	}
 	if len(snap.Cells) != int(snap.M) {
 		return nil, errors.New("ribbon: load: invalid cells length")
+	}
+
+	expectedSpan := snap.M - snap.W + 1
+	if snap.Span != expectedSpan {
+		return nil, errors.New("ribbon: load: invalid span")
 	}
 
 	rf := &RibbonFilter{
