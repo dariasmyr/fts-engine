@@ -60,48 +60,13 @@ func main() {
 
 ### 3) Snapshots
 
-#### Custom `io.Writer`/`io.Reader` (with filter)
+#### Simple file snapshot (index + filter in separate files)
 
 Use `pkg/ftsbuiltin` for built-in name-based codecs (`radix`, `bloom`, etc.) without manual codec registry wiring.
 
-```go
-package main
+For a more advanced in-memory `io.Writer`/`io.Reader` example with one combined payload, see `examples/client-library/snapshot-buffer-filter/main.go`.
 
-import (
-	"bytes"
-	"context"
-	"fmt"
-
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
-)
-
-func main() {
-	opts := ftsbuiltin.FilterOptions{
-		BloomExpectedItems: 1_000_000,
-		BloomBitsPerItem:   10,
-		BloomK:             7,
-	}
-
-	idx, _ := ftsbuiltin.BuildIndex("radix")
-	flt, _ := ftsbuiltin.BuildFilter("bloom", opts)
-	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt))
-
-	_ = svc.IndexDocument(context.Background(), "doc-1", "snapshot with bloom filter")
-
-	var buf bytes.Buffer
-	_ = ftsbuiltin.SaveServiceSnapshot(&buf, svc, "radix", "bloom")
-
-	loaded, _ := ftsbuiltin.LoadSegmentSnapshot(bytes.NewReader(buf.Bytes()))
-	restored := fts.New(loaded.Index, keygen.Word, fts.WithFilter(loaded.Filter))
-
-	res, _ := restored.SearchDocuments(context.Background(), "snapshot", 10)
-	fmt.Println(res.TotalResultsCount)
-}
-```
-
-#### File-oriented variant (same snapshot payload)
+Save index + filter snapshots:
 
 ```go
 package main
@@ -116,19 +81,50 @@ import (
 )
 
 func main() {
+	opts := ftsbuiltin.FilterOptions{BloomExpectedItems: 1_000_000, BloomBitsPerItem: 10, BloomK: 7}
+
 	idx, _ := ftsbuiltin.BuildIndex("radix")
-	svc := fts.New(idx, keygen.Word)
+	flt, _ := ftsbuiltin.BuildFilter("bloom", opts)
+	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt))
 	_ = svc.IndexDocument(context.Background(), "doc-1", "file snapshot demo")
 
-	out, _ := os.Create("./data/segments/default.fidx")
-	defer out.Close()
-	_ = ftsbuiltin.SaveServiceSnapshot(out, svc, "radix", "")
+	indexOut, _ := os.Create("./data/segments/default.fidx")
+	defer indexOut.Close()
+	_ = ftsbuiltin.SaveIndexSnapshot(indexOut, "radix", idx)
 
-	in, _ := os.Open("./data/segments/default.fidx")
-	defer in.Close()
-	loaded, _ := ftsbuiltin.LoadSegmentSnapshot(in)
+	filterOut, _ := os.Create("./data/segments/default.fflt")
+	defer filterOut.Close()
+	_ = ftsbuiltin.SaveFilterSnapshot(filterOut, "bloom", flt)
+}
+```
 
-	_ = fts.New(loaded.Index, keygen.Word)
+Load snapshots from files:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/pkg/keygen"
+)
+
+func main() {
+	indexIn, _ := os.Open("./data/segments/default.fidx")
+	defer indexIn.Close()
+	loadedIndex, _ := ftsbuiltin.LoadIndexSnapshot(indexIn)
+
+	filterIn, _ := os.Open("./data/segments/default.fflt")
+	defer filterIn.Close()
+	loadedFilter, _ := ftsbuiltin.LoadFilterSnapshot(filterIn)
+
+	restored := fts.New(loadedIndex.Index, keygen.Word, fts.WithFilter(loadedFilter.Filter))
+	res, _ := restored.SearchDocuments(context.Background(), "snapshot", 10)
+	fmt.Println(res.TotalResultsCount)
 }
 ```
 
@@ -188,9 +184,9 @@ fts:
   snapshot:
     enabled: true
     path: "./data/segments/default.fidx"
-    split_files: false
-    index_path: ""            # optional, used when split_files=true
-    filter_path: ""           # optional, used when split_files=true
+    split_files: true
+    index_path: "./data/segments/local.index.fidx"
+    filter_path: "./data/segments/loca.filter.fidx"
     load_on_start: true
     save_on_build: true
     buffer_size: 1048576
@@ -248,40 +244,107 @@ Snapshot fields (`fts.snapshot`):
 
 Ribbon is a static filter. In `fts` it is used via `BufferedStaticFilter`.
 
+Build ribbon from file with a custom parser:
+
 ```go
 opts := ftsbuiltin.FilterOptions{
-	RibbonExpectedItems: 1_000_000,
-	RibbonExtraCells:    250_000,
-	RibbonWindowSize:    24,
-	RibbonSeed:          0,
+	RibbonExpectedItems: 1_000_000, // estimated unique keys
+	RibbonExtraCells:    250_000,   
+	RibbonWindowSize:    16,       
+	RibbonSeed:          0,       
 	RibbonMaxAttempts:   5,
 }
 
-idx, _ := ftsbuiltin.BuildIndex("radix")
-flt, _ := ftsbuiltin.BuildFilter("ribbon", opts)
-svc := fts.New(idx, keygen.Word, fts.WithFilter(flt))
+rf, _ := filter.NewRibbonFilter(
+	opts.RibbonExpectedItems,
+	opts.RibbonExtraCells,
+	opts.RibbonWindowSize,
+	opts.RibbonSeed,
+)
 
-_ = svc.IndexDocument(context.Background(), "doc-1", "alpha beta")
-_ = svc.BuildFilter() // builds static filters like ribbon before strict Contains checks
+_ = rf.BuildWithRetriesFromFileWithParser("./data/keys.txt", parseKeysFile, opts.RibbonMaxAttempts)
+
+out, _ := os.Create("./data/segments/ribbon.filter.fidx")
+defer out.Close()
+_ = rf.Serialize(out)
 ```
 
-In CLI mode (`cmd/fts`) this final build is now called automatically after indexing.
+Minimal parser example (line-by-line keys):
+
+```go
+func parseKeysFile(path string, emit func([]byte) bool) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		key := strings.TrimSpace(s.Text())
+		if key == "" {
+			continue
+		}
+		if !emit([]byte(key)) {
+			break
+		}
+	}
+
+	return s.Err()
+}
+```
+
+Load ribbon filter from file:
+
+```go
+in, _ := os.Open("./data/segments/ribbon.filter.fidx")
+defer in.Close()
+
+ribbonFilter, _ := filter.LoadRibbonFilter(in)
+
+fmt.Println(ribbonFilter.Contains([]byte("market")))
+```
+
+Full runnable example (default parser save, custom parser save, load from file, normalized `Contains`) is in `examples/client-library/ribbon-file/main.go`.
 
 ### Standalone filter `Contains` with normalization
 
-Use this when you work with filter directly (without `SearchDocuments`) and want to compare raw `Contains` vs normalized check.
+Use this when you store normalized keys in filter and later want to check a raw user word.
+
+Example: indexed key is `beauty`, user enters `beautiful`.
+With stemming, both become `beauti`, so normalized check returns `true`.
 
 ```go
-raw := ribbonFilter.Contains([]byte("GaMmA"))
+pipe := textproc.NewPipeline(
+	textproc.AlnumTokenizer{},
+	textproc.LowercaseFilter{},
+	textproc.EnglishStemFilter{},
+)
 
-pipe := textproc.NewPipeline(textproc.AlnumTokenizer{}, textproc.LowercaseFilter{})
-
-normalized, err := fts.ContainsNormalized(ribbonFilter, "GaMmA", pipe, keygen.Word)
-if err != nil {
-	panic(err)
+indexedTerms := []string{"beauty", "hotel"}
+normalizedKeys := make([]string, 0, len(indexedTerms))
+for _, term := range indexedTerms {
+	keys, _ := fts.NormalizeToKeys(term, pipe, keygen.Word)
+	normalizedKeys = append(normalizedKeys, keys...)
 }
 
-fmt.Println("raw", raw, "normalized", normalized)
+rf, _ := filter.NewRibbonFilter(uint32(len(normalizedKeys)), 32, 24, 0)
+stream := func(emit func([]byte) bool) error {
+	for _, key := range normalizedKeys {
+		if !emit([]byte(key)) {
+			break
+		}
+	}
+	return nil
+}
+
+_ = rf.BuildWithRetriesFromKeyStream(stream, 5)
+
+raw := rf.Contains([]byte("beautiful")) // false: filter stores normalized keys
+
+normalized, _ := fts.ContainsNormalized(rf, "beautiful", pipe, keygen.Word)
+
+fmt.Println("raw", raw, "normalized", normalized) // raw=false normalized=true
 ```
 
 `ContainsNormalized` applies pipeline + keygen and checks all normalized keys via `Contains`.
