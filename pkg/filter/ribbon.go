@@ -42,6 +42,12 @@ type row struct {
 	fingerprint uint16 // результат XOR (определенные cells по маске)
 }
 
+// pivotSlot есть у каждого cell, но он может быть пустым (isSet = false) либо заполненным (isSet = true)
+type pivotSlot struct {
+	row   row
+	isSet bool
+}
+
 // специально разные константы для хеширования
 // (без них хеши для start, mask, fp будут коррелироваться и будут зависимыми -> будет выше шанс ложно положительных вызовов)
 const (
@@ -91,6 +97,7 @@ func derive(h uint64, span uint32, w uint32) (uint32, uint64, uint16) {
 
 // вспомогательная функция, которая миксует хеш через чередование и XOR битов
 // лучше, чем делать 3 разных ключа
+// результат ContainsFromFile показал, что замена 3 хешей на миксование 1 низина скорость Contains на 38% (33.63 ns -> 20.78 ns)
 func mix64(x uint64) uint64 {
 	x ^= x >> 30
 	x *= 0xbf58476d1ce4e5b9
@@ -183,7 +190,7 @@ func (rf *RibbonFilter) BuildFromKeyStream(stream func(func([]byte) bool) error)
 	//   cells[2] XOR cells[5] = 0   // новое уравнение с тем же lead
 	// XOR --------------------------------------------
 	//   cells[3] XOR cells[5] = 1
-	pivots := make([]*row, rf.m)
+	pivots := make([]pivotSlot, rf.m)
 
 	// Gaussian elimination над GF(2)
 	processed := false
@@ -198,13 +205,13 @@ func (rf *RibbonFilter) BuildFromKeyStream(stream func(func([]byte) bool) error)
 		for cur.mask != 0 {
 			leadCol := cur.leadingColumn()
 
-			if pivots[leadCol] == nil {
-				rowCopy := cur
-				pivots[leadCol] = &rowCopy
+			if !pivots[leadCol].isSet {
+				pivots[leadCol].row = cur
+				pivots[leadCol].isSet = true
 				break
 			}
 
-			cur = xorRows(cur, *pivots[leadCol])
+			cur = xorRows(cur, pivots[leadCol].row)
 		}
 
 		// То, о чем мы говорили ранее про одинаковые cells, которые внури XOR дают разный fp
@@ -245,8 +252,8 @@ func (rf *RibbonFilter) BuildFromKeyStream(stream func(func([]byte) bool) error)
 	// ссылаться на cells с бОльшими индексами, а они уже должны быть посчитаны.
 	// Если pivot для колонки нет, переменная свободная: выбираем значение 0.
 	for col := int(rf.m) - 1; col >= 0; col-- {
-		pivot := pivots[col]
-		if pivot == nil {
+		pivotCell := pivots[col]
+		if !pivotCell.isSet {
 			rf.cells[col] = 0
 			continue
 		}
@@ -254,10 +261,10 @@ func (rf *RibbonFilter) BuildFromKeyStream(stream func(func([]byte) bool) error)
 		// Уравнение pivot имеет вид:
 		//   cells[col] XOR otherCells = fingerprint
 		// => cells[col] = fingerprint XOR otherCells
-		cellValue := pivot.fingerprint
+		cellValue := pivotCell.row.fingerprint
 
-		localMask := pivot.mask
-		base := pivot.start // начало локального окна для этой строки
+		localMask := pivotCell.row.mask
+		base := pivotCell.row.start // начало локального окна для этой строки
 
 		// Перебираем только установленные биты mask (только реально участвующие cells).
 		for localMask != 0 {
