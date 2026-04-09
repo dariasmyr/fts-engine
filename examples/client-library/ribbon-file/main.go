@@ -48,7 +48,7 @@ func runDefaultParserSave(tmpDir string) error {
 		return err
 	}
 
-	if err = rf.BuildWithRetriesFromFile(plainPath, 5); err != nil {
+	if err = rf.BuildWithRetriesFromKeyStream(parseFileKeyStream(plainPath, filter.ParseLineKeys), 5); err != nil {
 		return err
 	}
 
@@ -75,7 +75,7 @@ func runCustomParserSave(tmpDir string) error {
 		return err
 	}
 
-	if err = rf.BuildWithRetriesFromFileWithParser(csvPath, parseCSVSecondColumn, 5); err != nil {
+	if err = rf.BuildWithRetriesFromKeyStream(parseFileKeyStream(csvPath, parseCSVSecondColumn), 5); err != nil {
 		return err
 	}
 
@@ -138,6 +138,12 @@ func parseCSVSecondColumn(path string, emit func([]byte) bool) error {
 	}
 
 	return scanner.Err()
+}
+
+func parseFileKeyStream(path string, parser func(string, func([]byte) bool) error) func(func([]byte) bool) error {
+	return func(emit func([]byte) bool) error {
+		return parser(path, emit)
+	}
 }
 
 func saveRibbonToFile(rf *filter.RibbonFilter, path string) error {

@@ -1,7 +1,6 @@
 package fts
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -168,32 +167,6 @@ func (s *Service) Analyze() (Stats, bool) {
 
 func (s *Service) SaveSnapshot(w io.Writer, indexName string, filterName string) error {
 	return SaveSegmentSnapshot(w, indexName, s.index, filterName, s.filter)
-}
-
-func (s *Service) SaveSnapshotBuffered(w io.Writer, indexName string, filterName string) error {
-	if w == nil {
-		return fmt.Errorf("fts: save snapshot buffered: nil writer")
-	}
-
-	var buf bytes.Buffer
-	if err := s.SaveSnapshot(&buf, indexName, filterName); err != nil {
-		return err
-	}
-
-	if _, err := io.Copy(w, &buf); err != nil {
-		return fmt.Errorf("fts: save snapshot buffered: write destination: %w", err)
-	}
-
-	return nil
-}
-
-func (s *Service) SaveSnapshotBufferedAsync(w io.Writer, indexName string, filterName string) <-chan error {
-	errCh := make(chan error, 1)
-	go func() {
-		defer close(errCh)
-		errCh <- s.SaveSnapshotBuffered(w, indexName, filterName)
-	}()
-	return errCh
 }
 
 func (s *Service) SnapshotComponents() (Index, Filter) {

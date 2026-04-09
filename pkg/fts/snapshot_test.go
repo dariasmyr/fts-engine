@@ -132,7 +132,7 @@ func TestSaveSegmentSnapshotUnknownCodec(t *testing.T) {
 	}
 }
 
-func TestSaveSnapshotBufferedWritesPayload(t *testing.T) {
+func TestSaveSnapshotWritesPayload(t *testing.T) {
 	indexCodecName := fmt.Sprintf("test-index-%s", t.Name())
 	if err := RegisterIndexSnapshotCodec(indexCodecName,
 		func(index Index, w io.Writer) error { return index.(Serializable).Serialize(w) },
@@ -147,33 +147,10 @@ func TestSaveSnapshotBufferedWritesPayload(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := svc.SaveSnapshotBuffered(&out, indexCodecName, ""); err != nil {
-		t.Fatalf("SaveSnapshotBuffered() error = %v", err)
+	if err := svc.SaveSnapshot(&out, indexCodecName, ""); err != nil {
+		t.Fatalf("SaveSnapshot() error = %v", err)
 	}
 	if out.Len() == 0 {
-		t.Fatal("SaveSnapshotBuffered() wrote empty payload")
-	}
-}
-
-func TestSaveSnapshotBufferedAsync(t *testing.T) {
-	indexCodecName := fmt.Sprintf("test-index-%s", t.Name())
-	if err := RegisterIndexSnapshotCodec(indexCodecName,
-		func(index Index, w io.Writer) error { return index.(Serializable).Serialize(w) },
-		loadSnapshotIndex,
-	); err != nil {
-		t.Fatalf("RegisterIndexSnapshotCodec() error = %v", err)
-	}
-
-	svc := New(newSnapshotIndex(), WordKeys)
-	if err := svc.IndexDocument(context.Background(), "doc-1", "alpha"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
-	}
-
-	var out bytes.Buffer
-	if err := <-svc.SaveSnapshotBufferedAsync(&out, indexCodecName, ""); err != nil {
-		t.Fatalf("SaveSnapshotBufferedAsync() error = %v", err)
-	}
-	if out.Len() == 0 {
-		t.Fatal("SaveSnapshotBufferedAsync() wrote empty payload")
+		t.Fatal("SaveSnapshot() wrote empty payload")
 	}
 }
