@@ -32,14 +32,19 @@ replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
 
 ## Examples in this folder
 
+Recommended path first:
+
 - `default/main.go` — minimal setup with defaults.
+- `snapshot/main.go` — save/load one snapshot payload in library mode.
 - `preset/main.go` — language preset via `pkg/ftspreset`.
+
+Additional scenarios:
+
 - `custom-options/main.go` — custom pipeline and extra options.
-- `snapshot/main.go` — save/load snapshot in pure library mode.
-- `snapshot-buffer-filter/main.go` — in-memory snapshot (`io.Writer`/`io.Reader`) with Bloom filter.
 - `filters-dynamic/main.go` — built-in dynamic filters (`bloom`, `cuckoo`).
 - `filter-ribbon/main.go` — built-in static `ribbon` filter + explicit finalize.
-- `ribbon-file/main.go` — ribbon build from files: default parser save, custom parser save, load from file, normalized `Contains`.
+- `snapshot-buffer-filter/main.go` — in-memory snapshot (`io.Writer`/`io.Reader`) with Bloom filter.
+- `ribbon-file/main.go` — advanced ribbon flow with file parsing adapters.
 
 Run each example from repository root:
 

@@ -60,45 +60,7 @@ func main() {
 
 ### 3) Snapshots
 
-#### Simple file snapshot (index + filter in separate files)
-
-Use `pkg/ftsbuiltin` for built-in name-based codecs (`radix`, `bloom`, etc.) without manual codec registry wiring.
-
-For a more advanced in-memory `io.Writer`/`io.Reader` example with one combined payload, see `examples/client-library/snapshot-buffer-filter/main.go`.
-
-Save index + filter snapshots:
-
-```go
-package main
-
-import (
-	"context"
-	"os"
-
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
-)
-
-func main() {
-	opts := ftsbuiltin.FilterOptions{BloomExpectedItems: 1_000_000, BloomBitsPerItem: 10, BloomK: 7}
-
-	idx, _ := ftsbuiltin.BuildIndex("radix")
-	flt, _ := ftsbuiltin.BuildFilter("bloom", opts)
-	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt))
-	_ = svc.IndexDocument(context.Background(), "doc-1", "file snapshot demo")
-
-	indexOut, _ := os.Create("./data/segments/default.fidx")
-	defer indexOut.Close()
-	_ = ftsbuiltin.SaveIndexSnapshot(indexOut, "radix", idx)
-
-	filterOut, _ := os.Create("./data/segments/default.fflt")
-	defer filterOut.Close()
-	_ = ftsbuiltin.SaveFilterSnapshot(filterOut, "bloom", flt)
-}
-```
-
-Load snapshots from files:
+Recommended library flow is one combined snapshot payload with explicit codec registration.
 
 ```go
 package main
@@ -106,27 +68,45 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
+func init() {
+	_ = fts.RegisterIndexSnapshotCodec("slicedradix",
+		func(index fts.Index, w io.Writer) error {
+			s, ok := index.(fts.Serializable)
+			if !ok {
+				return fmt.Errorf("slicedradix: index does not implement Serializable")
+			}
+			return s.Serialize(w)
+		},
+		slicedradix.Load,
+	)
+}
+
 func main() {
-	indexIn, _ := os.Open("./data/segments/default.fidx")
-	defer indexIn.Close()
-	loadedIndex, _ := ftsbuiltin.LoadIndexSnapshot(indexIn)
+	svc := fts.New(slicedradix.New(), keygen.Word)
+	_ = svc.IndexDocument(context.Background(), "doc-1", "snapshot demo")
 
-	filterIn, _ := os.Open("./data/segments/default.fflt")
-	defer filterIn.Close()
-	loadedFilter, _ := ftsbuiltin.LoadFilterSnapshot(filterIn)
+	out, _ := os.Create("./data/segments/default.fidx")
+	defer out.Close()
+	_ = svc.SaveSnapshot(out, "slicedradix", "")
 
-	restored := fts.New(loadedIndex.Index, keygen.Word, fts.WithFilter(loadedFilter.Filter))
+	in, _ := os.Open("./data/segments/default.fidx")
+	defer in.Close()
+	restored, _ := fts.NewFromSnapshot(in, keygen.Word)
+
 	res, _ := restored.SearchDocuments(context.Background(), "snapshot", 10)
 	fmt.Println(res.TotalResultsCount)
 }
 ```
+
+If you prefer built-in name-based helpers (`radix`, `bloom`, `ribbon`, etc.), use `pkg/ftsbuiltin` examples in `examples/client-library/snapshot` and `examples/client-library/snapshot-buffer-filter`.
 
 ### 4) Custom pipeline and language presets
 
@@ -244,7 +224,7 @@ Snapshot fields (`fts.snapshot`):
 
 Ribbon is a static filter. In `fts` it is used via `BufferedStaticFilter`.
 
-Build ribbon from file with a custom parser:
+Preferred build API is stream-based (`BuildWithRetriesFromKeyStream`).
 
 ```go
 opts := ftsbuiltin.FilterOptions{
@@ -262,14 +242,26 @@ rf, _ := filter.NewRibbonFilter(
 	opts.RibbonSeed,
 )
 
-_ = rf.BuildWithRetriesFromFileWithParser("./data/keys.txt", parseKeysFile, opts.RibbonMaxAttempts)
+stream := func(emit func([]byte) bool) error {
+	keys := []string{"alpha", "hotel", "market"}
+	for _, key := range keys {
+		if !emit([]byte(key)) {
+			break
+		}
+	}
+	return nil
+}
+
+_ = rf.BuildWithRetriesFromKeyStream(stream, opts.RibbonMaxAttempts)
 
 out, _ := os.Create("./data/segments/ribbon.filter.fidx")
 defer out.Close()
 _ = rf.Serialize(out)
 ```
 
-Minimal parser example (line-by-line keys):
+If your keys come from files, add a thin adapter in client code that converts file parsing to stream emission.
+
+Minimal parser adapter example (line-by-line keys):
 
 ```go
 func parseKeysFile(path string, emit func([]byte) bool) error {

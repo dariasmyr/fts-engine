@@ -139,8 +139,12 @@ func TestRibbonFilterBuildFromFile(t *testing.T) {
 		t.Fatalf("NewRibbonFilter() error = %v", err)
 	}
 
-	if err := rf.BuildWithRetriesFromFile(path, 10); err != nil {
-		t.Fatalf("BuildWithRetriesFromFile() error = %v", err)
+	stream := func(emit func([]byte) bool) error {
+		return ParseLineKeys(path, emit)
+	}
+
+	if err := rf.BuildWithRetriesFromKeyStream(stream, 10); err != nil {
+		t.Fatalf("BuildWithRetriesFromKeyStream() error = %v", err)
 	}
 
 	for _, key := range []string{"alpha", "beta", "gamma"} {
@@ -183,8 +187,12 @@ func TestRibbonFilterBuildFromFileWithCustomParser(t *testing.T) {
 		t.Fatalf("NewRibbonFilter() error = %v", err)
 	}
 
-	if err := rf.BuildWithRetriesFromFileWithParser(path, parser, 10); err != nil {
-		t.Fatalf("BuildWithRetriesFromFileWithParser() error = %v", err)
+	stream := func(emit func([]byte) bool) error {
+		return parser(path, emit)
+	}
+
+	if err := rf.BuildWithRetriesFromKeyStream(stream, 10); err != nil {
+		t.Fatalf("BuildWithRetriesFromKeyStream() error = %v", err)
 	}
 
 	for _, key := range []string{"alpha", "beta", "gamma"} {
