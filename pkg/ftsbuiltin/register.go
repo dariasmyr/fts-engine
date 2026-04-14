@@ -2,6 +2,8 @@ package ftsbuiltin
 
 import (
 	"fmt"
+	"io"
+	"sync"
 
 	"github.com/dariasmyr/fts-engine/pkg/filter"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
@@ -26,6 +28,65 @@ type FilterOptions struct {
 	RibbonWindowSize    uint32
 	RibbonSeed          uint64
 	RibbonMaxAttempts   uint32
+}
+
+var (
+	registerSnapshotCodecsOnce sync.Once
+	registerSnapshotCodecsErr  error
+)
+
+func RegisterSnapshotCodecs() error {
+	registerSnapshotCodecsOnce.Do(func() {
+		registerSnapshotCodecsErr = registerSnapshotCodecs()
+	})
+
+	return registerSnapshotCodecsErr
+}
+
+func registerSnapshotCodecs() error {
+	if err := RegisterIndexes(); err != nil {
+		return err
+	}
+
+	if err := RegisterFilters(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func RegisterIndexes() error {
+	if err := fts.RegisterIndexSnapshotCodec("radix", saveSerializableIndex, radix.Load); err != nil {
+		return err
+	}
+	if err := fts.RegisterIndexSnapshotCodec("slicedradix", saveSerializableIndex, slicedradix.Load); err != nil {
+		return err
+	}
+	if err := fts.RegisterIndexSnapshotCodec("hamt", saveSerializableIndex, hamt.Load); err != nil {
+		return err
+	}
+	if err := fts.RegisterIndexSnapshotCodec("hamtpointered", saveSerializableIndex, hamtpointered.Load); err != nil {
+		return err
+	}
+	if err := fts.RegisterIndexSnapshotCodec("trigram", saveSerializableIndex, trigram.Load); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func RegisterFilters() error {
+	if err := fts.RegisterFilterSnapshotCodec("bloom", saveSerializableFilter, loadBloomFilter); err != nil {
+		return err
+	}
+	if err := fts.RegisterFilterSnapshotCodec("cuckoo", saveSerializableFilter, loadCuckooFilter); err != nil {
+		return err
+	}
+	if err := fts.RegisterFilterSnapshotCodec("ribbon", saveSerializableFilter, loadRibbonFilter); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func BuildIndex(name string) (fts.Index, error) {
@@ -63,4 +124,44 @@ func BuildFilter(name string, opts FilterOptions) (fts.Filter, error) {
 	default:
 		return nil, fmt.Errorf("unknown filter %q", name)
 	}
+}
+
+func saveSerializableIndex(index fts.Index, w io.Writer) error {
+	serializable, ok := index.(fts.Serializable)
+	if !ok {
+		return fmt.Errorf("index does not support serialization")
+	}
+
+	return serializable.Serialize(w)
+}
+
+func saveSerializableFilter(searchFilter fts.Filter, w io.Writer) error {
+	serializable, ok := searchFilter.(fts.Serializable)
+	if !ok {
+		return fmt.Errorf("filter does not support serialization")
+	}
+
+	return serializable.Serialize(w)
+}
+
+func loadRibbonFilter(r io.Reader) (fts.Filter, error) {
+	rf, err := filter.LoadRibbonFilter(r)
+	if err != nil {
+		return nil, err
+	}
+
+	wrapped := fts.NewBufferedStaticFilter(rf)
+	if err = wrapped.Build(); err != nil {
+		return nil, err
+	}
+
+	return wrapped, nil
+}
+
+func loadBloomFilter(r io.Reader) (fts.Filter, error) {
+	return filter.LoadBloomFilter(r)
+}
+
+func loadCuckooFilter(r io.Reader) (fts.Filter, error) {
+	return filter.LoadCuckooFilter(r)
 }

@@ -32,19 +32,11 @@ replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
 
 ## Examples in this folder
 
-Recommended path first:
-
 - `default/main.go` — minimal setup with defaults.
-- `snapshot/main.go` — save/load one snapshot payload in library mode.
 - `preset/main.go` — language preset via `pkg/ftspreset`.
-
-Additional scenarios:
-
 - `custom-options/main.go` — custom pipeline and extra options.
-- `filters-dynamic/main.go` — built-in dynamic filters (`bloom`, `cuckoo`).
-- `filter-ribbon/main.go` — built-in static `ribbon` filter + explicit finalize.
-- `snapshot-buffer-filter/main.go` — in-memory snapshot (`io.Writer`/`io.Reader`) with Bloom filter.
-- `ribbon-file/main.go` — advanced ribbon flow with file parsing adapters.
+- `snapshot-save-files/main.go` — save split snapshot files (index + filter).
+- `snapshot-import-files/main.go` — restore from existing split snapshot files.
 
 Run each example from repository root:
 
@@ -52,9 +44,6 @@ Run each example from repository root:
 go run ./examples/client-library/default
 go run ./examples/client-library/preset
 go run ./examples/client-library/custom-options
-go run ./examples/client-library/snapshot
-go run ./examples/client-library/snapshot-buffer-filter
-go run ./examples/client-library/filters-dynamic
-go run ./examples/client-library/filter-ribbon
-go run ./examples/client-library/ribbon-file
+go run ./examples/client-library/snapshot-save-files
+go run ./examples/client-library/snapshot-import-files
 ```

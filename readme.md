@@ -60,7 +60,9 @@ func main() {
 
 ### 3) Snapshots
 
-Recommended library flow is one combined snapshot payload with explicit codec registration.
+Index and filter snapshots are always stored in separate files.
+
+Flow 1 (recommended): manual codec registration via `init()` + split files.
 
 ```go
 package main
@@ -92,21 +94,28 @@ func init() {
 func main() {
 	svc := fts.New(slicedradix.New(), keygen.Word)
 	_ = svc.IndexDocument(context.Background(), "doc-1", "snapshot demo")
+	idx, _ := svc.SnapshotComponents()
 
-	out, _ := os.Create("./data/segments/default.fidx")
-	defer out.Close()
-	_ = svc.SaveSnapshot(out, "slicedradix", "")
+	// export to file
+	idxOut, _ := os.Create("./data/segments/default.index.fidx")
+	defer idxOut.Close()
+	_ = fts.SaveIndexSnapshot(idxOut, "slicedradix", idx)
 
-	in, _ := os.Open("./data/segments/default.fidx")
-	defer in.Close()
-	restored, _ := fts.NewFromSnapshot(in, keygen.Word)
+	
+	// open from file
+	idxIn, _ := os.Open("./data/segments/default.index.fidx")
+	defer idxIn.Close()
+	loadedIndex, _ := fts.LoadIndexSnapshot(idxIn)
+	restored := fts.New(loadedIndex.Index, keygen.Word)
 
 	res, _ := restored.SearchDocuments(context.Background(), "snapshot", 10)
 	fmt.Println(res.TotalResultsCount)
 }
 ```
 
-If you prefer built-in name-based helpers (`radix`, `bloom`, `ribbon`, etc.), use `pkg/ftsbuiltin` examples in `examples/client-library/snapshot` and `examples/client-library/snapshot-buffer-filter`.
+Flow 2: ready-to-use built-in codecs and filters is now in examples:
+- `examples/client-library/snapshot-save-files/main.go`
+- `examples/client-library/snapshot-import-files/main.go`
 
 ### 4) Custom pipeline and language presets
 
@@ -164,9 +173,8 @@ fts:
   snapshot:
     enabled: true
     path: "./data/segments/default.fidx"
-    split_files: true
     index_path: "./data/segments/local.index.fidx"
-    filter_path: "./data/segments/loca.filter.fidx"
+    filter_path: "./data/segments/local.filter.fidx"
     load_on_start: true
     save_on_build: true
     buffer_size: 1048576
@@ -200,10 +208,9 @@ mode:
 Snapshot fields (`fts.snapshot`):
 
 - `enabled`: enable snapshot persistence flow in CLI prod mode.
-- `path`: final snapshot artifact path.
-- `split_files`: if true, save/load index and filter in separate files.
-- `index_path`: optional explicit path for index snapshot file in split mode.
-- `filter_path`: optional explicit path for filter snapshot file in split mode.
+- `path`: base path used to derive split files when explicit paths are not set (`*.index.*` and `*.filter.*`).
+- `index_path`: optional explicit path for index snapshot file.
+- `filter_path`: optional explicit path for filter snapshot file.
 - `load_on_start`: if true and snapshot exists, load it and skip rebuild.
 - `save_on_build`: if true, save snapshot after indexing finishes.
 - `buffer_size`: writer buffer size used during save.
@@ -227,19 +234,17 @@ Ribbon is a static filter. In `fts` it is used via `BufferedStaticFilter`.
 Preferred build API is stream-based (`BuildWithRetriesFromKeyStream`).
 
 ```go
-opts := ftsbuiltin.FilterOptions{
-	RibbonExpectedItems: 1_000_000, // estimated unique keys
-	RibbonExtraCells:    250_000,   
-	RibbonWindowSize:    16,       
-	RibbonSeed:          0,       
-	RibbonMaxAttempts:   5,
-}
+expectedItems := uint32(1_000_000) // estimated unique keys
+extraCells := uint32(250_000)
+windowSize := uint32(16)
+seed := uint64(0)
+maxAttempts := uint32(5)
 
 rf, _ := filter.NewRibbonFilter(
-	opts.RibbonExpectedItems,
-	opts.RibbonExtraCells,
-	opts.RibbonWindowSize,
-	opts.RibbonSeed,
+	expectedItems,
+	extraCells,
+	windowSize,
+	seed,
 )
 
 stream := func(emit func([]byte) bool) error {
@@ -252,7 +257,7 @@ stream := func(emit func([]byte) bool) error {
 	return nil
 }
 
-_ = rf.BuildWithRetriesFromKeyStream(stream, opts.RibbonMaxAttempts)
+_ = rf.BuildWithRetriesFromKeyStream(stream, maxAttempts)
 
 out, _ := os.Create("./data/segments/ribbon.filter.fidx")
 defer out.Close()
@@ -296,8 +301,6 @@ ribbonFilter, _ := filter.LoadRibbonFilter(in)
 
 fmt.Println(ribbonFilter.Contains([]byte("market")))
 ```
-
-Full runnable example (default parser save, custom parser save, load from file, normalized `Contains`) is in `examples/client-library/ribbon-file/main.go`.
 
 ### Standalone filter `Contains` with normalization
 
