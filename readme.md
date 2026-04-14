@@ -1,4 +1,4 @@
-# Full-Text Search Test Engine
+# Full-Text Search Engine
 
 Reusable full-text search engine in Go with configurable indexes, token pipeline, and snapshot support.
 
