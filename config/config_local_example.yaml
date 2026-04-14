@@ -9,7 +9,6 @@ fts:
   snapshot:
     enabled: true
     path: "./data/segments/local.fidx"
-    split_files: true
     index_path: "./data/segments/local.index.fidx"
     filter_path: "./data/segments/local.filter.fidx"
     load_on_start: false

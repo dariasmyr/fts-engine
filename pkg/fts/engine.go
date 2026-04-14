@@ -165,10 +165,6 @@ func (s *Service) Analyze() (Stats, bool) {
 	return analyzer.Analyze(), true
 }
 
-func (s *Service) SaveSnapshot(w io.Writer, indexName string, filterName string) error {
-	return SaveSegmentSnapshot(w, indexName, s.index, filterName, s.filter)
-}
-
 func (s *Service) SnapshotComponents() (Index, Filter) {
 	if s == nil {
 		return nil, nil

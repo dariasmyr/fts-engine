@@ -75,7 +75,7 @@ func loadSnapshotFilter(r io.Reader) (Filter, error) {
 	return out, nil
 }
 
-func TestSaveLoadSegmentSnapshotRoundTrip(t *testing.T) {
+func TestSaveLoadSplitSnapshotsRoundTrip(t *testing.T) {
 	indexCodecName := fmt.Sprintf("test-index-%s", t.Name())
 	if err := RegisterIndexSnapshotCodec(indexCodecName,
 		func(index Index, w io.Writer) error {
@@ -104,35 +104,49 @@ func TestSaveLoadSegmentSnapshotRoundTrip(t *testing.T) {
 		t.Fatalf("IndexDocument() error = %v", err)
 	}
 
-	var snap bytes.Buffer
-	if err := svc.SaveSnapshot(&snap, indexCodecName, filterCodecName); err != nil {
-		t.Fatalf("SaveSnapshot() error = %v", err)
+	index, searchFilter := svc.SnapshotComponents()
+
+	var indexSnap bytes.Buffer
+	if err := SaveIndexSnapshot(&indexSnap, indexCodecName, index); err != nil {
+		t.Fatalf("SaveIndexSnapshot() error = %v", err)
 	}
 
-	reloaded, err := NewFromSnapshot(bytes.NewReader(snap.Bytes()), WordKeys)
-	if err != nil {
-		t.Fatalf("NewFromSnapshot() error = %v", err)
+	var filterSnap bytes.Buffer
+	if err := SaveFilterSnapshot(&filterSnap, filterCodecName, searchFilter); err != nil {
+		t.Fatalf("SaveFilterSnapshot() error = %v", err)
 	}
+
+	loadedIndex, err := LoadIndexSnapshot(bytes.NewReader(indexSnap.Bytes()))
+	if err != nil {
+		t.Fatalf("LoadIndexSnapshot() error = %v", err)
+	}
+
+	loadedFilter, err := LoadFilterSnapshot(bytes.NewReader(filterSnap.Bytes()))
+	if err != nil {
+		t.Fatalf("LoadFilterSnapshot() error = %v", err)
+	}
+
+	reloaded := New(loadedIndex.Index, WordKeys, WithFilter(loadedFilter.Filter))
 
 	res, err := reloaded.SearchDocuments(context.Background(), "alpha", 10)
 	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}
 
-	if res.TotalResultsCount != 1 {
-		t.Fatalf("TotalResultsCount = %d, want 1", res.TotalResultsCount)
+	if got, want := res.TotalResultsCount, 1; got != want {
+		t.Fatalf("TotalResultsCount = %d, want %d", got, want)
 	}
 }
 
-func TestSaveSegmentSnapshotUnknownCodec(t *testing.T) {
+func TestSaveIndexSnapshotUnknownCodec(t *testing.T) {
 	var snap bytes.Buffer
-	err := SaveSegmentSnapshot(&snap, "unknown", newSnapshotIndex(), "", nil)
+	err := SaveIndexSnapshot(&snap, "unknown", newSnapshotIndex())
 	if err == nil {
-		t.Fatal("SaveSegmentSnapshot() error = nil, want non-nil")
+		t.Fatal("SaveIndexSnapshot() error = nil, want non-nil")
 	}
 }
 
-func TestSaveSnapshotWritesPayload(t *testing.T) {
+func TestSaveIndexSnapshotWritesPayload(t *testing.T) {
 	indexCodecName := fmt.Sprintf("test-index-%s", t.Name())
 	if err := RegisterIndexSnapshotCodec(indexCodecName,
 		func(index Index, w io.Writer) error { return index.(Serializable).Serialize(w) },
@@ -146,11 +160,13 @@ func TestSaveSnapshotWritesPayload(t *testing.T) {
 		t.Fatalf("IndexDocument() error = %v", err)
 	}
 
+	index, _ := svc.SnapshotComponents()
+
 	var out bytes.Buffer
-	if err := svc.SaveSnapshot(&out, indexCodecName, ""); err != nil {
-		t.Fatalf("SaveSnapshot() error = %v", err)
+	if err := SaveIndexSnapshot(&out, indexCodecName, index); err != nil {
+		t.Fatalf("SaveIndexSnapshot() error = %v", err)
 	}
 	if out.Len() == 0 {
-		t.Fatal("SaveSnapshot() wrote empty payload")
+		t.Fatal("SaveIndexSnapshot() wrote empty payload")
 	}
 }
