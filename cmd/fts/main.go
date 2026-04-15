@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/dariasmyr/fts-engine/internal/services/fts/kv"
 	ftspersist "github.com/dariasmyr/fts-engine/internal/services/fts/persist"
 	"github.com/dariasmyr/fts-engine/internal/utils"
 	"io"
@@ -15,14 +14,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/dariasmyr/fts-engine/config"
 	"github.com/dariasmyr/fts-engine/internal/adapters/cui"
 	"github.com/dariasmyr/fts-engine/internal/adapters/loader/wiki"
-	"github.com/dariasmyr/fts-engine/internal/adapters/storage/leveldb"
 	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/internal/lib/logger/sl"
 	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
@@ -46,11 +43,10 @@ func ensureDir(p string) {
 }
 
 func main() {
-	cfg := config.MustLoad()
+	cfg, cfgSource := config.MustLoad()
 
 	ensureDir("data")
-
-	var workerCount = runtime.NumCPU()
+	ensureDir("data/segments")
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -59,6 +55,11 @@ func main() {
 	defer cancel()
 
 	log := setupLogger(cfg.Env)
+	if cfgSource == "defaults" {
+		log.Warn("No config file found; using built-in defaults", "dump_path", cfg.DumpPath, "snapshot_path", cfg.FTS.Snapshot.Path)
+	} else {
+		log.Info("Loaded configuration", "source", cfgSource)
+	}
 	log.Info("fts", "env", cfg.Env)
 	log.Info("fts", "engine", cfg.FTS.Engine)
 	log.Info("fts", "index", cfg.FTS.Index)
@@ -70,12 +71,6 @@ func main() {
 		panic(err)
 	}
 
-	storage, err := leveldb.NewStorage(log, cfg.StoragePath)
-	if err != nil {
-		panic(err)
-	}
-	log.Info("Storage initialised")
-
 	go func() {
 		<-rootCtx.Done()
 		stop()
@@ -84,20 +79,14 @@ func main() {
 		time.Sleep(_readinessDrainDelay)
 		log.Info("Readiness check propagated, now waiting for ongoing processes to finish.")
 
-		closeStorageErr := storage.Close()
-		if closeStorageErr != nil {
-			log.Error("Failed to close database", "error", sl.Err(closeStorageErr))
-		}
-
 		cancel()
 	}()
+
+	documentsByID := make(map[string]models.Document)
 
 	var ftsEngine cui.SearchEngine
 
 	switch cfg.FTS.Engine {
-
-	case "kv":
-		ftsEngine = kv.New(log, storage, storage)
 	case "trie":
 		keyGen, err := selectKeyGenerator(cfg.FTS.KeyGen)
 		if err != nil {
@@ -112,6 +101,9 @@ func main() {
 			return
 		}
 		ftsEngine = &serviceAdapter{service: svc, snapshotLoaded: loadedFromSnapshot}
+	default:
+		log.Error("unknown fts engine", "engine", cfg.FTS.Engine)
+		return
 	}
 
 	log.Info("FTS engine initialised")
@@ -122,8 +114,13 @@ func main() {
 	startTime := time.Now()
 	documents, err := dumpLoader.LoadDocuments(ctx)
 	if err != nil {
-		log.Error("Failed to load documents", "error", sl.Err(err))
-		return
+		if errors.Is(err, os.ErrNotExist) {
+			log.Warn("Dump file not found; starting with an empty corpus", "path", cfg.DumpPath)
+			documents = nil
+		} else {
+			log.Error("Failed to load documents", "error", sl.Err(err))
+			return
+		}
 	}
 
 	duration := time.Since(startTime)
@@ -148,6 +145,20 @@ func main() {
 	}
 
 	startTime = time.Now()
+	for i := range documents {
+		doc := documents[i]
+		documentsByID[doc.ID] = doc
+
+		select {
+		case <-rootCtx.Done():
+			log.Info("Received shutdown signal, shutting down...")
+			return
+		default:
+			if indexErr := ftsEngine.IndexDocument(ctx, doc.ID, doc.Abstract); indexErr != nil {
+				log.Error("could not index document:", "error", indexErr)
+			}
+		}
+	}
 
 	adapter, ok := ftsEngine.(*serviceAdapter)
 	if !ok {
@@ -156,42 +167,6 @@ func main() {
 	}
 
 	if !adapter.snapshotLoaded {
-		log.Info("Initialize worker pool")
-		jobCh := make(chan models.Document)
-		var wg sync.WaitGroup
-		for range workerCount {
-			select {
-			case <-rootCtx.Done():
-				log.Info("Received shutdown signal, shutting down...")
-				return
-			default:
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					fmt.Println("Starting worker")
-					storage.BatchDocument(ctx, jobCh)
-				}()
-			}
-		}
-
-		for i := range documents {
-			select {
-			case <-rootCtx.Done():
-				log.Info("Received shutdown signal, shutting down...")
-				return
-			default:
-				indexErr := ftsEngine.IndexDocument(ctx, documents[i].ID, documents[i].Abstract)
-				if indexErr != nil {
-					log.Error("could not index document:", "error", indexErr)
-				}
-
-				jobCh <- documents[i]
-			}
-		}
-
-		close(jobCh)
-		wg.Wait()
-
 		if err := buildFilterIfNeeded(log, adapter.service); err != nil {
 			log.Error("Failed to finalize search filter", "error", sl.Err(err))
 			return
@@ -205,7 +180,7 @@ func main() {
 		log.Info("Skipping re-indexing: snapshot loaded", "path", cfg.FTS.Snapshot.Path)
 	}
 
-	appCUI := cui.New(ctx, log, ftsEngine, storage, 10)
+	appCUI := cui.New(ctx, log, ftsEngine, documentsByID, 10)
 
 	cuiErr := appCUI.Start()
 	if cuiErr != nil {
@@ -537,8 +512,6 @@ func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {
 	switch kind {
 	case "word":
 		return keygen.Word, nil
-	case "trigram":
-		return keygen.Trigram, nil
 	default:
 		return nil, fmt.Errorf("unknown keygen %q", kind)
 	}

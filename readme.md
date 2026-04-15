@@ -10,7 +10,6 @@ Reusable full-text search engine in Go with configurable indexes, token pipeline
 - Public index implementations in `pkg/index/*`:
   - `radix`
   - `slicedradix`
-  - `trigram`
   - `hamt`
   - `hamtpointered`
 - Public text processing pipeline in `pkg/textproc`.
@@ -150,6 +149,10 @@ engine := fts.New(radix.New(), keygen.Word, fts.WithPipeline(pipe))
 
 Use this only when you want to test the repository app itself (`cmd/fts`), not when embedding the library into your service.
 
+Download the Wikipedia dump from:
+
+`https://archive.org/download/enwiki-20210820`
+
 1) Create config from template:
 
 ```bash
@@ -166,9 +169,9 @@ Important config fields:
 
 ```yaml
 fts:
-  engine: "trie"       # trie|kv
-  index: "radix"       # radix|slicedradix|trigram|hamt|hamtpointered
-  keygen: "word"       # word|trigram
+  engine: "trie"
+  index: "radix"       # radix|slicedradix|hamt|hamtpointered
+  keygen: "word"
   filter: "none"       # none|bloom|cuckoo|ribbon
   snapshot:
     enabled: true

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/dariasmyr/fts-engine/internal/adapters/storage/leveldb"
 	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/internal/lib/logger/sl"
 	"log/slog"
@@ -33,12 +32,12 @@ type CUI struct {
 	ctx        context.Context
 	cui        *gocui.Gui
 	ftsService SearchEngine
-	storage    *leveldb.Storage
+	documents  map[string]models.Document
 	log        *slog.Logger
 	maxResults int
 }
 
-func New(ctx context.Context, log *slog.Logger, ftsService SearchEngine, storage *leveldb.Storage, maxResults int) *CUI {
+func New(ctx context.Context, log *slog.Logger, ftsService SearchEngine, documents map[string]models.Document, maxResults int) *CUI {
 	g, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
 		log.Error("Failed to create GUI:", "error", sl.Err(err))
@@ -48,7 +47,7 @@ func New(ctx context.Context, log *slog.Logger, ftsService SearchEngine, storage
 		ctx:        ctx,
 		cui:        g,
 		ftsService: ftsService,
-		storage:    storage,
+		documents:  documents,
 		log:        log,
 		maxResults: maxResults,
 	}
@@ -244,12 +243,9 @@ func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultD
 	}
 
 	for i, result := range searchResult.ResultData {
-		doc, getDocErr := c.storage.GetDocument(ctx, result.ID)
-		if getDocErr != nil {
-			c.log.Error("Failed to get document from storage:", "error", sl.Err(getDocErr))
-			continue
+		if doc, ok := c.documents[result.ID]; ok {
+			searchResult.ResultData[i].Document = doc
 		}
-		searchResult.ResultData[i].Document = doc
 	}
 
 	if err != nil {

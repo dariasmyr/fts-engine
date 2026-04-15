@@ -6,7 +6,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/filter"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/trigram"
+	"github.com/dariasmyr/fts-engine/pkg/index/radix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
@@ -21,13 +21,13 @@ func main() {
 	bloom := filter.NewBloomFilter(100_000, 10, 7)
 
 	engine := fts.New(
-		trigram.New(),
-		keygen.Trigram,
+		radix.New(),
+		keygen.Word,
 		fts.WithPipeline(pipe),
 		fts.WithFilter(bloom),
 	)
 
-	_ = engine.IndexDocument(context.Background(), "doc-1", "Search with trigram index")
+	_ = engine.IndexDocument(context.Background(), "doc-1", "Search with custom index")
 	_ = engine.IndexDocument(context.Background(), "doc-2", "Another searchable document")
 
 	res, err := engine.SearchDocuments(context.Background(), "searchable", 5)

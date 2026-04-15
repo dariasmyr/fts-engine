@@ -8,7 +8,7 @@ type TrieStats struct {
 	MaxDepth            int
 	AvgDepth            float64
 	TotalDocs           int
-	AvgChildrenPerLevel []float64 // average (not nil for trigram) children count per level
+	AvgChildrenPerLevel []float64 // average children count per level
 	TotalChildren       int
 }
 

@@ -11,7 +11,6 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/index/hamtpointered"
 	"github.com/dariasmyr/fts-engine/pkg/index/radix"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/index/trigram"
 )
 
 type FilterOptions struct {
@@ -68,9 +67,6 @@ func RegisterIndexes() error {
 	if err := fts.RegisterIndexSnapshotCodec("hamtpointered", saveSerializableIndex, hamtpointered.Load); err != nil {
 		return err
 	}
-	if err := fts.RegisterIndexSnapshotCodec("trigram", saveSerializableIndex, trigram.Load); err != nil {
-		return err
-	}
 
 	return nil
 }
@@ -99,8 +95,6 @@ func BuildIndex(name string) (fts.Index, error) {
 		return hamt.New(), nil
 	case "hamtpointered":
 		return hamtpointered.New(), nil
-	case "trigram":
-		return trigram.New(), nil
 	default:
 		return nil, fmt.Errorf("unknown index %q", name)
 	}

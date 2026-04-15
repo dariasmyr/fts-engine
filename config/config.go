@@ -2,18 +2,16 @@ package config
 
 import (
 	"flag"
-	"fmt"
 	"os"
 
 	"github.com/ilyakaznacheev/cleanenv"
 )
 
 type Config struct {
-	Env         string     `yaml:"env" env-default:"local"`
-	StoragePath string     `yaml:"storage_path" env-required:"true"`
-	DumpPath    string     `yaml:"dump_path" env-default:"./data/enwiki-latest-abstract10.xml.gz"`
-	FTS         FTSConfig  `yaml:"fts"`
-	Mode        ModeConfig `yaml:"mode"`
+	Env      string     `yaml:"env" env-default:"local"`
+	DumpPath string     `yaml:"dump_path" env-default:"./data/enwiki-latest-abstract10.xml.gz"`
+	FTS      FTSConfig  `yaml:"fts"`
+	Mode     ModeConfig `yaml:"mode"`
 }
 
 type FTSConfig struct {
@@ -73,56 +71,93 @@ type PipelineConfig struct {
 	MinLength   int  `yaml:"min_length" env-default:"3"`
 }
 
-func MustLoad() *Config {
+func MustLoad() (*Config, string) {
+	return mustLoad()
+}
+
+func mustLoad() (*Config, string) {
 	configPathFlag := flag.String("config", "", "Path to the config file")
-	storagePathFlag := flag.String("storage-path", "", "Path to the storage file")
 	flag.Parse()
 
+	cfg := defaultConfig()
 	configPath := *configPathFlag
 	if configPath == "" {
-		configPath = fetchConfigPath() // fallback to default method
+		configPath = fetchConfigPath()
 	}
 
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		panic("config file does not exist: " + configPath)
-	}
-
-	var cfg Config
-	if err := cleanenv.ReadConfig(configPath, &cfg); err != nil {
-		panic("error loading config file: " + err.Error())
-	}
-
-	if *storagePathFlag != "" {
-		cfg.StoragePath = *storagePathFlag
-	}
-
-	if _, err := os.Stat(cfg.DumpPath); os.IsNotExist(err) {
-		fmt.Printf("Error: DumpPath does not exist: %s", cfg.DumpPath)
+	if configPath != "" {
+		if _, err := os.Stat(configPath); err == nil {
+			if err := cleanenv.ReadConfig(configPath, &cfg); err != nil {
+				panic("error loading config file: " + err.Error())
+			}
+			validateConfig(&cfg)
+			return &cfg, configPath
+		}
 	}
 
 	validateConfig(&cfg)
-
-	return &cfg
+	return &cfg, "defaults"
 }
 
 // fetchConfigPath fetches domain path from environment variable or default if it was not set in command line flag.
 // Priority: flag > env > default.
 // Default value is empty string.
 func fetchConfigPath() string {
-	var res string
-
-	res = os.Getenv("CONFIG_PATH")
-	if res == "" {
-		cwd, _ := os.Getwd()
-		fmt.Println("Current working directory:", cwd)
+	if res := os.Getenv("CONFIG_PATH"); res != "" {
+		return res
 	}
 
-	if res == "" {
-		res = "./config/config_local.yaml" // default path
-	}
+	return "./config/config_local.yaml"
+}
 
-	fmt.Println("Config path:", res)
-	return res
+func defaultConfig() Config {
+	return Config{
+		Env:      "local",
+		DumpPath: "./data/enwiki-latest-abstract1.xml.gz",
+		FTS: FTSConfig{
+			Engine: "trie",
+			Index:  "slicedradix",
+			KeyGen: "word",
+			Filter: "ribbon",
+			Snapshot: SnapshotConfig{
+				Enabled:        true,
+				Path:           "./data/segments/local.fidx",
+				IndexPath:      "./data/segments/local.index.fidx",
+				FilterPath:     "./data/segments/local.filter.fidx",
+				LoadOnStart:    false,
+				SaveOnBuild:    true,
+				BufferSize:     1048576,
+				FlushThreshold: 262144,
+				SyncFile:       true,
+			},
+			Bloom: BloomConfig{
+				ExpectedItems: 1000000,
+				BitsPerItem:   20,
+				K:             14,
+			},
+			Cuckoo: CuckooConfig{
+				BucketCount: 327680,
+				BucketSize:  4,
+				MaxKicks:    500,
+			},
+			Ribbon: RibbonConfig{
+				ExpectedItems: 1000000,
+				ExtraCells:    250000,
+				WindowSize:    16,
+				Seed:          0,
+				MaxAttempts:   50,
+			},
+			Pipeline: PipelineConfig{
+				Lowercase:   true,
+				StopwordsEN: true,
+				StopwordsRU: false,
+				StemEN:      true,
+				StemRU:      false,
+				MinLength:   3,
+			},
+		},
+		Mode: ModeConfig{Type: "prod"},
+	}
 }
 
 func validateConfig(cfg *Config) {
@@ -131,11 +166,7 @@ func validateConfig(cfg *Config) {
 	}
 
 	if cfg.FTS.KeyGen == "" {
-		if cfg.FTS.Index == "trigram" {
-			cfg.FTS.KeyGen = "trigram"
-		} else {
-			cfg.FTS.KeyGen = "word"
-		}
+		cfg.FTS.KeyGen = "word"
 	}
 
 	if cfg.FTS.Filter == "" {
@@ -157,17 +188,16 @@ func validateConfig(cfg *Config) {
 	switch cfg.FTS.Engine {
 	case "trie":
 		switch cfg.FTS.Index {
-		case "radix", "slicedradix", "hamt", "hamtpointered", "trigram":
+		case "radix", "slicedradix", "hamt", "hamtpointered":
 		default:
 			panic("unknown index type: " + cfg.FTS.Index)
 		}
-	case "kv":
 	default:
 		panic("unknown fts engine: " + cfg.FTS.Engine)
 	}
 
 	switch cfg.FTS.KeyGen {
-	case "word", "trigram":
+	case "word":
 	default:
 		panic("unknown keygen type: " + cfg.FTS.KeyGen)
 	}
