@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.jpg" alt="Logo" width="50%"></p>
+
 # Full-Text Search Engine
 
 Reusable full-text search engine in Go with configurable indexes, token pipeline, and snapshot support.
@@ -115,8 +117,6 @@ func main() {
 Flow 2: ready-to-use built-in codecs and filters is now in examples:
 - `examples/client-library/snapshot-save-files/main.go`
 - `examples/client-library/snapshot-import-files/main.go`
-
-![Logo](docs/logo.jpg)
 
 ### 4) Custom pipeline and language presets
 
