@@ -1,8 +1,8 @@
-<p align="center"><img src="docs/logo.jpg" alt="Logo" width="50%"></p>
-
 # Full-Text Search Engine
 
-Reusable full-text search engine in Go with configurable indexes, token pipeline, and snapshot support.
+Reusable full-text search engine in Go with configurable indexes, filters, stemming pipeline, and snapshot support.
+
+<p align="center"><img src="docs/logo.jpg" alt="Logo" width="50%"></p>
 
 ![Demo](docs/demo.gif)
 
@@ -27,12 +27,6 @@ Reusable full-text search engine in Go with configurable indexes, token pipeline
 
 ```bash
 go get github.com/dariasmyr/fts-engine@latest
-```
-
-If you test against local source:
-
-```go
-replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
 ```
 
 ### 2) Quickstart
