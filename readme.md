@@ -4,6 +4,8 @@ Reusable full-text search engine in Go with configurable indexes, filters, stemm
 
 <p align="center"><img src="docs/logo.jpg" alt="Logo" width="50%"></p>
 
+### Demo Cast
+
 ![Demo](docs/demo.gif)
 
 ## What this repository provides
