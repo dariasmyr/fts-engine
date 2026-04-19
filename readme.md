@@ -116,6 +116,8 @@ Flow 2: ready-to-use built-in codecs and filters is now in examples:
 - `examples/client-library/snapshot-save-files/main.go`
 - `examples/client-library/snapshot-import-files/main.go`
 
+![Logo](docs/logo.jpg)
+
 ### 4) Custom pipeline and language presets
 
 Default preset shortcut:
