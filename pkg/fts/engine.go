@@ -53,8 +53,9 @@ func (s *Service) IndexDocument(ctx context.Context, docID DocID, content string
 		return err
 	}
 
+	positional, hasPositions := s.index.(PositionalIndex)
 	tokens := s.pipeline.Process(content)
-	for _, token := range tokens {
+	for pos, token := range tokens {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -69,6 +70,12 @@ func (s *Service) IndexDocument(ctx context.Context, docID DocID, content string
 				if ok := s.filter.Add([]byte(key)); !ok {
 					return fmt.Errorf("fts: index document: filter add failed for key %q", key)
 				}
+			}
+			if hasPositions {
+				if err := positional.InsertAt(key, docID, uint32(pos)); err != nil {
+					return fmt.Errorf("fts: index document: insert: %w", err)
+				}
+				continue
 			}
 			if err := s.index.Insert(key, docID); err != nil {
 				return fmt.Errorf("fts: index document: insert: %w", err)
@@ -155,6 +162,234 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 		TotalResultsCount: totalFound,
 		Timings:           timings,
 	}, nil
+}
+
+func (s *Service) SearchPhrase(ctx context.Context, phrase string, maxResults int) (*SearchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	start := time.Now()
+	timings := make(map[string]string, 3)
+
+	preStart := time.Now()
+	tokens := s.pipeline.Process(phrase)
+	timings["preprocess"] = formatDuration(time.Since(preStart))
+
+	if len(tokens) == 0 {
+		timings["search_tokens"] = formatDuration(0)
+		timings["total"] = formatDuration(time.Since(start))
+		return &SearchResult{Results: []Result{}, Timings: timings}, nil
+	}
+	if len(tokens) == 1 {
+		return s.SearchDocuments(ctx, phrase, maxResults)
+	}
+
+	positional, ok := s.index.(PositionalIndex)
+	if !ok {
+		timings["search_tokens"] = formatDuration(0)
+		timings["total"] = formatDuration(time.Since(start))
+		return &SearchResult{Results: []Result{}, Timings: timings}, nil
+	}
+
+	searchStart := time.Now()
+	tokenPostings := make([]map[DocID][]uint32, len(tokens))
+	for i, token := range tokens {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		keys, err := s.keyGen(token)
+		if err != nil {
+			return nil, fmt.Errorf("fts: phrase search: keygen: %w", err)
+		}
+
+		var merged map[DocID][]uint32
+		if len(keys) == 1 {
+			if s.filter != nil && !s.filter.Contains([]byte(keys[0])) {
+				merged = nil
+			} else {
+				refs, err := positional.SearchPositional(keys[0])
+				if err != nil {
+					return nil, fmt.Errorf("fts: phrase search: index search: %w", err)
+				}
+				merged = make(map[DocID][]uint32, len(refs))
+				for _, r := range refs {
+					if len(r.Positions) > 0 {
+						merged[r.ID] = r.Positions
+					}
+				}
+			}
+		} else {
+			merged = make(map[DocID][]uint32)
+			for _, key := range keys {
+				if s.filter != nil && !s.filter.Contains([]byte(key)) {
+					continue
+				}
+
+				refs, err := positional.SearchPositional(key)
+				if err != nil {
+					return nil, fmt.Errorf("fts: phrase search: index search: %w", err)
+				}
+				for _, r := range refs {
+					if len(r.Positions) == 0 {
+						continue
+					}
+					if existing, ok := merged[r.ID]; ok {
+						merged[r.ID] = mergeSortedPositions(existing, r.Positions)
+					} else {
+						merged[r.ID] = append([]uint32(nil), r.Positions...)
+					}
+				}
+			}
+		}
+
+		if len(merged) == 0 {
+			timings["search_tokens"] = formatDuration(time.Since(searchStart))
+			timings["total"] = formatDuration(time.Since(start))
+			return &SearchResult{Results: []Result{}, Timings: timings}, nil
+		}
+		tokenPostings[i] = merged
+	}
+
+	driverIdx := 0
+	for i := 1; i < len(tokenPostings); i++ {
+		if len(tokenPostings[i]) < len(tokenPostings[driverIdx]) {
+			driverIdx = i
+		}
+	}
+
+	phraseCounts := make(map[DocID]uint32)
+	for docID, driverPositions := range tokenPostings[driverIdx] {
+		missing := false
+		for i := 0; i < len(tokenPostings); i++ {
+			if i == driverIdx {
+				continue
+			}
+			if _, ok := tokenPostings[i][docID]; !ok {
+				missing = true
+				break
+			}
+		}
+		if missing {
+			continue
+		}
+
+		matches := phraseAlign(tokenPostings, docID, driverIdx, driverPositions)
+		if matches > 0 {
+			phraseCounts[docID] = matches
+		}
+	}
+
+	timings["search_tokens"] = formatDuration(time.Since(searchStart))
+
+	results := make([]Result, 0, len(phraseCounts))
+	for id, cnt := range phraseCounts {
+		results = append(results, Result{
+			ID:            id,
+			UniqueMatches: 1,
+			TotalMatches:  int(cnt),
+		})
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].TotalMatches != results[j].TotalMatches {
+			return results[i].TotalMatches > results[j].TotalMatches
+		}
+		return results[i].ID < results[j].ID
+	})
+
+	totalFound := len(results)
+	if maxResults <= 0 || maxResults > totalFound {
+		maxResults = totalFound
+	}
+
+	timings["total"] = formatDuration(time.Since(start))
+
+	return &SearchResult{
+		Results:           results[:maxResults],
+		TotalResultsCount: totalFound,
+		Timings:           timings,
+	}, nil
+}
+
+func phraseAlign(tokenPostings []map[DocID][]uint32, docID DocID, driverIdx int, driverPositions []uint32) uint32 {
+	n := len(tokenPostings)
+	if n == 0 || len(driverPositions) == 0 {
+		return 0
+	}
+
+	others := make([][]uint32, n)
+	ptrs := make([]int, n)
+	for i := 0; i < n; i++ {
+		if i == driverIdx {
+			continue
+		}
+		others[i] = tokenPostings[i][docID]
+		if len(others[i]) == 0 {
+			return 0
+		}
+	}
+
+	var matches uint32
+outer:
+	for _, p := range driverPositions {
+		for i := 0; i < n; i++ {
+			if i == driverIdx {
+				continue
+			}
+
+			var target uint32
+			if i < driverIdx {
+				delta := uint32(driverIdx - i)
+				if delta > p {
+					continue outer
+				}
+				target = p - delta
+			} else {
+				target = p + uint32(i-driverIdx)
+			}
+
+			pos := others[i]
+			j := ptrs[i]
+			for j < len(pos) && pos[j] < target {
+				j++
+			}
+			ptrs[i] = j
+
+			if j >= len(pos) {
+				return matches
+			}
+			if pos[j] != target {
+				continue outer
+			}
+		}
+		matches++
+	}
+
+	return matches
+}
+
+func mergeSortedPositions(a, b []uint32) []uint32 {
+	out := make([]uint32, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		switch {
+		case a[i] < b[j]:
+			out = append(out, a[i])
+			i++
+		case a[i] > b[j]:
+			out = append(out, b[j])
+			j++
+		default:
+			out = append(out, a[i])
+			i++
+			j++
+		}
+	}
+	out = append(out, a[i:]...)
+	out = append(out, b[j:]...)
+	return out
 }
 
 func (s *Service) Analyze() (Stats, bool) {

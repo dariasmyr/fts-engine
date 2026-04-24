@@ -75,3 +75,39 @@ func TestIndexAnalyze(t *testing.T) {
 		t.Fatalf("stats.Nodes = %d, want > 0", stats.Nodes)
 	}
 }
+
+func TestIndexSearchPositional(t *testing.T) {
+	idx := New()
+
+	_ = idx.InsertAt("hotel", "doc-1", 1)
+	_ = idx.InsertAt("hotel", "doc-1", 3)
+	_ = idx.InsertAt("hotel", "doc-2", 2)
+
+	docs, err := idx.SearchPositional("hotel")
+	if err != nil {
+		t.Fatalf("SearchPositional() error = %v", err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("len(docs) = %d, want 2", len(docs))
+	}
+	if docs[0].ID != "doc-1" {
+		t.Fatalf("docs[0].ID = %q, want %q", docs[0].ID, "doc-1")
+	}
+	if len(docs[0].Positions) != 2 || docs[0].Positions[0] != 1 || docs[0].Positions[1] != 3 {
+		t.Fatalf("docs[0].Positions = %v, want [1 3]", docs[0].Positions)
+	}
+	if docs[1].ID != "doc-2" {
+		t.Fatalf("docs[1].ID = %q, want %q", docs[1].ID, "doc-2")
+	}
+	if len(docs[1].Positions) != 1 || docs[1].Positions[0] != 2 {
+		t.Fatalf("docs[1].Positions = %v, want [2]", docs[1].Positions)
+	}
+
+	plain, err := idx.Search("hotel")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if plain[0].Count != 2 {
+		t.Fatalf("plain[0].Count = %d, want 2", plain[0].Count)
+	}
+}

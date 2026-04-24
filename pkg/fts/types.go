@@ -29,6 +29,18 @@ type Index interface {
 	Search(key string) ([]DocRef, error)
 }
 
+type PositionalDocRef struct {
+	ID DocID
+	// Positions may share backing storage with the index and must be treated as read-only.
+	Positions []uint32
+}
+
+type PositionalIndex interface {
+	Index
+	InsertAt(key string, id DocID, position uint32) error
+	SearchPositional(key string) ([]PositionalDocRef, error)
+}
+
 type Analyzer interface {
 	Analyze() Stats
 }

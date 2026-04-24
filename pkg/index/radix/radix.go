@@ -9,16 +9,18 @@ import (
 )
 
 type node struct {
-	terminal bool
-	prefix   string
-	children []*node
-	docs     map[fts.DocID]uint32
+	terminal  bool
+	prefix    string
+	children  []*node
+	docs      map[fts.DocID]uint32
+	positions map[fts.DocID][]uint32
 }
 
 func newNode(prefix string) *node {
 	return &node{
-		prefix: prefix,
-		docs:   make(map[fts.DocID]uint32),
+		prefix:    prefix,
+		docs:      make(map[fts.DocID]uint32),
+		positions: make(map[fts.DocID][]uint32),
 	}
 }
 
@@ -28,10 +30,11 @@ type Index struct {
 }
 
 type snapshotNode struct {
-	Terminal bool
-	Prefix   string
-	Docs     []fts.DocRef
-	Children []snapshotNode
+	Terminal  bool
+	Prefix    string
+	Docs      []fts.DocRef
+	Positions []fts.PositionalDocRef
+	Children  []snapshotNode
 }
 
 func New() *Index {
@@ -68,10 +71,11 @@ func encodeNode(n *node) snapshotNode {
 	}
 
 	snap := snapshotNode{
-		Terminal: n.terminal,
-		Prefix:   n.prefix,
-		Docs:     collectDocs(n.docs),
-		Children: make([]snapshotNode, 0, len(n.children)),
+		Terminal:  n.terminal,
+		Prefix:    n.prefix,
+		Docs:      collectDocs(n.docs),
+		Positions: collectPositionalDocs(n.positions),
+		Children:  make([]snapshotNode, 0, len(n.children)),
 	}
 
 	for _, child := range n.children {
@@ -86,6 +90,9 @@ func decodeNode(s snapshotNode) *node {
 	n.terminal = s.Terminal
 	for _, doc := range s.Docs {
 		n.docs[doc.ID] = doc.Count
+	}
+	for _, doc := range s.Positions {
+		n.positions[doc.ID] = append([]uint32(nil), doc.Positions...)
 	}
 
 	n.children = make([]*node, 0, len(s.Children))
@@ -105,6 +112,14 @@ func lcp(a, b string) int {
 }
 
 func (t *Index) Insert(word string, docID fts.DocID) error {
+	return t.insert(word, docID, false, 0)
+}
+
+func (t *Index) InsertAt(word string, docID fts.DocID, position uint32) error {
+	return t.insert(word, docID, true, position)
+}
+
+func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -123,8 +138,7 @@ func (t *Index) Insert(word string, docID fts.DocID) error {
 				current = child
 				rest = rest[p:]
 				if rest == "" {
-					current.terminal = true
-					current.docs[docID]++
+					t.recordDoc(current, docID, hasPos, pos)
 					return nil
 				}
 				goto NEXT
@@ -141,24 +155,29 @@ func (t *Index) Insert(word string, docID fts.DocID) error {
 
 			if newSuffix != "" {
 				n = newNode(newSuffix)
-				n.terminal = true
-				n.docs[docID]++
+				t.recordDoc(n, docID, hasPos, pos)
 				middle.children = append(middle.children, n)
 				return nil
 			}
 
-			middle.terminal = true
-			middle.docs[docID]++
+			t.recordDoc(middle, docID, hasPos, pos)
 			return nil
 		}
 
 		n = newNode(rest)
-		n.terminal = true
-		n.docs[docID]++
+		t.recordDoc(n, docID, hasPos, pos)
 		current.children = append(current.children, n)
 		return nil
 
 	NEXT:
+	}
+}
+
+func (t *Index) recordDoc(n *node, docID fts.DocID, hasPos bool, pos uint32) {
+	n.terminal = true
+	n.docs[docID]++
+	if hasPos {
+		n.positions[docID] = append(n.positions[docID], pos)
 	}
 }
 
@@ -182,10 +201,38 @@ func (t *Index) Search(word string) ([]fts.DocRef, error) {
 	}
 }
 
+func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	current := t.root
+	rest := word
+
+	for {
+		nextNode, nextRest, matched, exact := t.next(current, rest)
+		if !matched {
+			return nil, nil
+		}
+		if exact {
+			return collectPositionalDocs(nextNode.positions), nil
+		}
+		current = nextNode
+		rest = nextRest
+	}
+}
+
 func collectDocs(docs map[fts.DocID]uint32) []fts.DocRef {
 	res := make([]fts.DocRef, 0, len(docs))
 	for id, count := range docs {
 		res = append(res, fts.DocRef{ID: id, Count: count})
+	}
+	return res
+}
+
+func collectPositionalDocs(positions map[fts.DocID][]uint32) []fts.PositionalDocRef {
+	res := make([]fts.PositionalDocRef, 0, len(positions))
+	for id, pos := range positions {
+		res = append(res, fts.PositionalDocRef{ID: id, Positions: pos})
 	}
 	return res
 }
@@ -260,3 +307,4 @@ func (t *Index) Analyze() fts.Stats {
 }
 
 var _ fts.Index = (*Index)(nil)
+var _ fts.PositionalIndex = (*Index)(nil)
