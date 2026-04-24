@@ -26,8 +26,9 @@ type terminalNode struct {
 }
 
 type entry struct {
-	key  string
-	docs []fts.DocRef
+	key       string
+	docs      []fts.DocRef
+	positions [][]uint32
 }
 
 type Index struct {
@@ -142,51 +143,76 @@ func (n *node) appendChild(newChild any, mask uint32, pos int) {
 	n.children = append(n.children[:pos], append([]any{newChild}, n.children[pos:]...)...)
 }
 
-func (n *node) insertNode(hash uint32, key string, docID fts.DocID, level int) {
-	child, pos, mask := n.nextNode(hash, level)
+func (n *node) insertNode(hash uint32, key string, docID fts.DocID, level int, hasPos bool, tokenPos uint32) {
+	child, slot, mask := n.nextNode(hash, level)
 
 	if level == depth {
 		if child == nil {
-			tn := &terminalNode{entries: []entry{{key: key, docs: []fts.DocRef{{ID: docID, Count: 1}}}}}
-			n.appendChild(tn, mask, pos)
+			e := entry{key: key, docs: []fts.DocRef{{ID: docID, Count: 1}}}
+			if hasPos {
+				e.positions = [][]uint32{{tokenPos}}
+			}
+			tn := &terminalNode{entries: []entry{e}}
+			n.appendChild(tn, mask, slot)
 			return
 		}
 
 		t := child.(*terminalNode)
 		for i := range t.entries {
 			if key == t.entries[i].key {
-				addDoc(&t.entries[i].docs, docID)
+				addDoc(&t.entries[i].docs, &t.entries[i].positions, docID, hasPos, tokenPos)
 				return
 			}
 		}
 
-		t.entries = append(t.entries, entry{key: key, docs: []fts.DocRef{{ID: docID, Count: 1}}})
+		e := entry{key: key, docs: []fts.DocRef{{ID: docID, Count: 1}}}
+		if hasPos {
+			e.positions = [][]uint32{{tokenPos}}
+		}
+		t.entries = append(t.entries, e)
 		return
 	}
 
 	if child == nil {
 		newChild := newNode()
-		n.appendChild(newChild, mask, pos)
+		n.appendChild(newChild, mask, slot)
 		child = newChild
 	}
 
-	child.(*node).insertNode(hash, key, docID, level+1)
+	child.(*node).insertNode(hash, key, docID, level+1, hasPos, tokenPos)
 }
 
-func addDoc(docs *[]fts.DocRef, docID fts.DocID) {
+func addDoc(docs *[]fts.DocRef, positions *[][]uint32, docID fts.DocID, hasPos bool, pos uint32) {
 	for i := range *docs {
 		if (*docs)[i].ID == docID {
 			(*docs)[i].Count++
+			if hasPos {
+				*positions = growPositions(*positions, len(*docs))
+				(*positions)[i] = append((*positions)[i], pos)
+			}
 			return
 		}
 	}
 	*docs = append(*docs, fts.DocRef{ID: docID, Count: 1})
+	if hasPos {
+		*positions = growPositions(*positions, len(*docs))
+		last := len(*docs) - 1
+		(*positions)[last] = append((*positions)[last], pos)
+	}
 }
 
 func (t *Index) Insert(word string, docID fts.DocID) error {
+	return t.insert(word, docID, false, 0)
+}
+
+func (t *Index) InsertAt(word string, docID fts.DocID, position uint32) error {
+	return t.insert(word, docID, true, position)
+}
+
+func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.root.insertNode(hashKey(word), word, docID, 0)
+	t.root.insertNode(hashKey(word), word, docID, 0, hasPos, pos)
 	return nil
 }
 
@@ -217,6 +243,54 @@ func (t *Index) Search(word string) ([]fts.DocRef, error) {
 	}
 
 	return nil, nil
+}
+
+func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	hash := hashKey(word)
+	n := t.root
+
+	for level := 0; level <= depth; level++ {
+		child, _, _ := n.nextNode(hash, level)
+		if child == nil {
+			return nil, nil
+		}
+
+		if level == depth {
+			term := child.(*terminalNode)
+			for i := range term.entries {
+				if word == term.entries[i].key {
+					return collectPositionalDocs(term.entries[i].docs, term.entries[i].positions), nil
+				}
+			}
+			return nil, nil
+		}
+
+		n = child.(*node)
+	}
+
+	return nil, nil
+}
+
+func growPositions(positions [][]uint32, want int) [][]uint32 {
+	for len(positions) < want {
+		positions = append(positions, nil)
+	}
+	return positions
+}
+
+func collectPositionalDocs(docs []fts.DocRef, positions [][]uint32) []fts.PositionalDocRef {
+	out := make([]fts.PositionalDocRef, 0, len(docs))
+	for i := range docs {
+		var pos []uint32
+		if i < len(positions) {
+			pos = positions[i]
+		}
+		out = append(out, fts.PositionalDocRef{ID: docs[i].ID, Positions: pos})
+	}
+	return out
 }
 
 func (t *Index) Analyze() fts.Stats {
@@ -268,3 +342,4 @@ func (t *Index) Analyze() fts.Stats {
 }
 
 var _ fts.Index = (*Index)(nil)
+var _ fts.PositionalIndex = (*Index)(nil)
