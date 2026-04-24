@@ -10,6 +10,7 @@ type DocID string
 type DocRef struct {
 	ID    DocID
 	Count uint32
+	Seq   uint32
 }
 
 type Result struct {
@@ -27,6 +28,11 @@ type SearchResult struct {
 type Index interface {
 	Insert(key string, id DocID) error
 	Search(key string) ([]DocRef, error)
+}
+
+type PrefixIndex interface {
+	Index
+	SearchPrefix(prefix string) ([]DocRef, error)
 }
 
 type PositionalDocRef struct {

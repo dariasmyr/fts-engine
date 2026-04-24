@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"io"
+	"sort"
 	"sync"
 )
 
@@ -13,6 +14,7 @@ type node struct {
 	prefix    string
 	children  []*node
 	docs      map[fts.DocID]uint32
+	seqs      map[fts.DocID]uint32
 	positions map[fts.DocID][]uint32
 }
 
@@ -20,13 +22,15 @@ func newNode(prefix string) *node {
 	return &node{
 		prefix:    prefix,
 		docs:      make(map[fts.DocID]uint32),
+		seqs:      make(map[fts.DocID]uint32),
 		positions: make(map[fts.DocID][]uint32),
 	}
 }
 
 type Index struct {
-	root *node
-	mu   sync.RWMutex
+	root     *node
+	docToOrd map[fts.DocID]uint32
+	mu       sync.RWMutex
 }
 
 type snapshotNode struct {
@@ -38,7 +42,7 @@ type snapshotNode struct {
 }
 
 func New() *Index {
-	return &Index{root: newNode("")}
+	return &Index{root: newNode(""), docToOrd: make(map[fts.DocID]uint32)}
 }
 
 func (t *Index) Serialize(w io.Writer) error {
@@ -62,7 +66,9 @@ func Load(r io.Reader) (fts.Index, error) {
 		return nil, fmt.Errorf("radix: load: %w", err)
 	}
 
-	return &Index{root: decodeNode(snap)}, nil
+	idx := &Index{root: decodeNode(snap), docToOrd: make(map[fts.DocID]uint32)}
+	collectOrdinals(idx.docToOrd, idx.root)
+	return idx, nil
 }
 
 func encodeNode(n *node) snapshotNode {
@@ -73,8 +79,8 @@ func encodeNode(n *node) snapshotNode {
 	snap := snapshotNode{
 		Terminal:  n.terminal,
 		Prefix:    n.prefix,
-		Docs:      collectDocs(n.docs),
-		Positions: collectPositionalDocs(n.positions),
+		Docs:      collectDocs(n.docs, n.seqs),
+		Positions: collectPositionalDocs(n.positions, n.seqs),
 		Children:  make([]snapshotNode, 0, len(n.children)),
 	}
 
@@ -90,6 +96,7 @@ func decodeNode(s snapshotNode) *node {
 	n.terminal = s.Terminal
 	for _, doc := range s.Docs {
 		n.docs[doc.ID] = doc.Count
+		n.seqs[doc.ID] = doc.Seq
 	}
 	for _, doc := range s.Positions {
 		n.positions[doc.ID] = append([]uint32(nil), doc.Positions...)
@@ -101,6 +108,29 @@ func decodeNode(s snapshotNode) *node {
 	}
 
 	return n
+}
+
+func collectOrdinals(docToOrd map[fts.DocID]uint32, n *node) {
+	if n == nil {
+		return
+	}
+	for id, seq := range n.seqs {
+		if _, ok := docToOrd[id]; !ok {
+			docToOrd[id] = seq
+		}
+	}
+	for _, child := range n.children {
+		collectOrdinals(docToOrd, child)
+	}
+}
+
+func (t *Index) ordinalFor(id fts.DocID) uint32 {
+	if ord, ok := t.docToOrd[id]; ok {
+		return ord
+	}
+	ord := uint32(len(t.docToOrd))
+	t.docToOrd[id] = ord
+	return ord
 }
 
 func lcp(a, b string) int {
@@ -175,6 +205,9 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) er
 
 func (t *Index) recordDoc(n *node, docID fts.DocID, hasPos bool, pos uint32) {
 	n.terminal = true
+	if _, ok := n.docs[docID]; !ok {
+		n.seqs[docID] = t.ordinalFor(docID)
+	}
 	n.docs[docID]++
 	if hasPos {
 		n.positions[docID] = append(n.positions[docID], pos)
@@ -194,7 +227,7 @@ func (t *Index) Search(word string) ([]fts.DocRef, error) {
 			return nil, nil
 		}
 		if exact {
-			return collectDocs(nextNode.docs), nil
+			return collectDocs(nextNode.docs, nextNode.seqs), nil
 		}
 		current = nextNode
 		rest = nextRest
@@ -214,27 +247,37 @@ func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
 			return nil, nil
 		}
 		if exact {
-			return collectPositionalDocs(nextNode.positions), nil
+			return collectPositionalDocs(nextNode.positions, nextNode.seqs), nil
 		}
 		current = nextNode
 		rest = nextRest
 	}
 }
 
-func collectDocs(docs map[fts.DocID]uint32) []fts.DocRef {
+func collectDocs(docs map[fts.DocID]uint32, seqs map[fts.DocID]uint32) []fts.DocRef {
 	res := make([]fts.DocRef, 0, len(docs))
 	for id, count := range docs {
-		res = append(res, fts.DocRef{ID: id, Count: count})
+		res = append(res, fts.DocRef{ID: id, Count: count, Seq: seqs[id]})
 	}
+	sort.Slice(res, func(i, j int) bool { return res[i].Seq < res[j].Seq })
 	return res
 }
 
-func collectPositionalDocs(positions map[fts.DocID][]uint32) []fts.PositionalDocRef {
-	res := make([]fts.PositionalDocRef, 0, len(positions))
-	for id, pos := range positions {
-		res = append(res, fts.PositionalDocRef{ID: id, Positions: pos})
+func collectPositionalDocs(positions map[fts.DocID][]uint32, seqs map[fts.DocID]uint32) []fts.PositionalDocRef {
+	type positionalRef struct {
+		fts.PositionalDocRef
+		seq uint32
 	}
-	return res
+	res := make([]positionalRef, 0, len(positions))
+	for id, pos := range positions {
+		res = append(res, positionalRef{PositionalDocRef: fts.PositionalDocRef{ID: id, Positions: pos}, seq: seqs[id]})
+	}
+	sort.Slice(res, func(i, j int) bool { return res[i].seq < res[j].seq })
+	out := make([]fts.PositionalDocRef, 0, len(res))
+	for _, ref := range res {
+		out = append(out, ref.PositionalDocRef)
+	}
+	return out
 }
 
 func (t *Index) next(current *node, rest string) (*node, string, bool, bool) {

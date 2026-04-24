@@ -16,9 +16,10 @@ type node struct {
 }
 
 type Index struct {
-	root  int
-	nodes []node
-	mu    sync.RWMutex
+	root     int
+	nodes    []node
+	docToOrd map[fts.DocID]uint32
+	mu       sync.RWMutex
 }
 
 type snapshotNode struct {
@@ -35,6 +36,7 @@ type snapshotIndex struct {
 
 func New() *Index {
 	var t Index
+	t.docToOrd = make(map[fts.DocID]uint32)
 	t.root = t.newNode("")
 	return &t
 }
@@ -79,8 +81,9 @@ func Load(r io.Reader) (fts.Index, error) {
 	}
 
 	idx := &Index{
-		root:  snap.Root,
-		nodes: make([]node, 0, len(snap.Nodes)),
+		root:     snap.Root,
+		nodes:    make([]node, 0, len(snap.Nodes)),
+		docToOrd: make(map[fts.DocID]uint32),
 	}
 
 	for i := range snap.Nodes {
@@ -98,6 +101,11 @@ func Load(r io.Reader) (fts.Index, error) {
 			docs:      append([]fts.DocRef(nil), s.Docs...),
 			positions: positions,
 		})
+		for _, d := range s.Docs {
+			if _, ok := idx.docToOrd[d.ID]; !ok {
+				idx.docToOrd[d.ID] = d.Seq
+			}
+		}
 	}
 
 	return idx, nil
@@ -106,6 +114,15 @@ func Load(r io.Reader) (fts.Index, error) {
 func (t *Index) newNode(prefix string) int {
 	t.nodes = append(t.nodes, node{prefix: prefix})
 	return len(t.nodes) - 1
+}
+
+func (t *Index) ordinalFor(id fts.DocID) uint32 {
+	if ord, ok := t.docToOrd[id]; ok {
+		return ord
+	}
+	ord := uint32(len(t.docToOrd))
+	t.docToOrd[id] = ord
+	return ord
 }
 
 func lcp(a, b string) int {
@@ -201,7 +218,8 @@ func (t *Index) addDoc(nodeIdx int, docID fts.DocID, hasPos bool, pos uint32) {
 			return
 		}
 	}
-	n.docs = append(n.docs, fts.DocRef{ID: docID, Count: 1})
+	seq := t.ordinalFor(docID)
+	n.docs = append(n.docs, fts.DocRef{ID: docID, Count: 1, Seq: seq})
 	if hasPos {
 		t.growPositions(nodeIdx, len(n.docs))
 		last := len(n.docs) - 1

@@ -106,104 +106,20 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 	timings := make(map[string]string, 3)
 
 	preStart := time.Now()
-	tokens := s.pipeline.Process(query)
+	parsed, err := ParseQuery(query)
+	if err != nil {
+		return nil, err
+	}
 	timings["preprocess"] = formatDuration(time.Since(preStart))
 
-	searchStart := time.Now()
-	plan := make([]tokenGroup, 0, len(tokens))
-	totalCap := 0
-
-	for _, token := range tokens {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-
-		keys, err := s.keyGen(token)
-		if err != nil {
-			return nil, fmt.Errorf("fts: search: keygen: %w", err)
-		}
-
-		group := tokenGroup{expansions: make([][]DocRef, 0, len(keys))}
-		for _, key := range keys {
-			if s.filter != nil && !s.filter.Contains([]byte(key)) {
-				continue
-			}
-
-			docs, err := s.index.Search(key)
-			if err != nil {
-				return nil, fmt.Errorf("fts: search: index search: %w", err)
-			}
-			if len(docs) == 0 {
-				continue
-			}
-
-			group.expansions = append(group.expansions, docs)
-			group.totalDocs += len(docs)
-			totalCap += len(docs)
-		}
-
-		if len(group.expansions) == 0 {
-			continue
-		}
-		group.single = len(group.expansions) == 1
-		plan = append(plan, group)
+	res, err := s.Search(ctx, parsed, maxResults)
+	if err != nil {
+		return nil, err
 	}
-
-	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-
-	combined := make(map[DocID]docAccum, totalCap)
-	for _, group := range plan {
-		var seenInGroup map[DocID]struct{}
-		if !group.single {
-			seenInGroup = make(map[DocID]struct{}, group.totalDocs)
-		}
-
-		for _, docs := range group.expansions {
-			for _, doc := range docs {
-				accum := combined[doc.ID]
-				if group.single {
-					accum.UniqueMatches++
-				} else if _, seen := seenInGroup[doc.ID]; !seen {
-					accum.UniqueMatches++
-					seenInGroup[doc.ID] = struct{}{}
-				}
-				accum.TotalMatches += int(doc.Count)
-				combined[doc.ID] = accum
-			}
-		}
-	}
-
-	results := make([]Result, 0, len(combined))
-	for id, accum := range combined {
-		results = append(results, Result{
-			ID:            id,
-			UniqueMatches: accum.UniqueMatches,
-			TotalMatches:  accum.TotalMatches,
-		})
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].UniqueMatches != results[j].UniqueMatches {
-			return results[i].UniqueMatches > results[j].UniqueMatches
-		}
-		if results[i].TotalMatches != results[j].TotalMatches {
-			return results[i].TotalMatches > results[j].TotalMatches
-		}
-		return results[i].ID < results[j].ID
-	})
-
-	totalFound := len(results)
-	if maxResults <= 0 || maxResults > totalFound {
-		maxResults = totalFound
-	}
-
+	timings["search_tokens"] = res.Timings["search_tokens"]
 	timings["total"] = formatDuration(time.Since(start))
-
-	return &SearchResult{
-		Results:           results[:maxResults],
-		TotalResultsCount: totalFound,
-		Timings:           timings,
-	}, nil
+	res.Timings = timings
+	return res, nil
 }
 
 func (s *Service) SearchPhrase(ctx context.Context, phrase string, maxResults int) (*SearchResult, error) {

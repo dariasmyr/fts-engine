@@ -20,7 +20,7 @@ const (
 
 type documents []fts.DocRef
 
-func (d documents) Add(id fts.DocID, positions [][]uint32, hasPos bool, pos uint32) (documents, [][]uint32) {
+func (d documents) Add(id fts.DocID, seq uint32, positions [][]uint32, hasPos bool, pos uint32) (documents, [][]uint32) {
 	i := sort.Search(len(d), func(i int) bool { return d[i].ID >= id })
 	if i < len(d) && d[i].ID == id {
 		d[i].Count++
@@ -32,7 +32,7 @@ func (d documents) Add(id fts.DocID, positions [][]uint32, hasPos bool, pos uint
 	}
 	d = append(d, fts.DocRef{})
 	copy(d[i+1:], d[i:])
-	d[i] = fts.DocRef{ID: id, Count: 1}
+	d[i] = fts.DocRef{ID: id, Count: 1, Seq: seq}
 	if hasPos {
 		positions = growPositions(positions, len(d))
 		copy(positions[i+1:], positions[i:])
@@ -53,15 +53,15 @@ type terminal struct {
 	entries []entry
 }
 
-func (t *terminal) Append(word string, id fts.DocID, hasPos bool, pos uint32) {
+func (t *terminal) Append(word string, id fts.DocID, seq uint32, hasPos bool, pos uint32) {
 	i := sort.Search(len(t.entries), func(i int) bool { return t.entries[i].key >= word })
 	if i < len(t.entries) && t.entries[i].key == word {
-		t.entries[i].docs, t.entries[i].positions = t.entries[i].docs.Add(id, t.entries[i].positions, hasPos, pos)
+		t.entries[i].docs, t.entries[i].positions = t.entries[i].docs.Add(id, seq, t.entries[i].positions, hasPos, pos)
 		return
 	}
 	t.entries = append(t.entries, entry{})
 	copy(t.entries[i+1:], t.entries[i:])
-	e := entry{key: word, docs: documents{{ID: id, Count: 1}}}
+	e := entry{key: word, docs: documents{{ID: id, Count: 1, Seq: seq}}}
 	if hasPos {
 		e.positions = [][]uint32{{pos}}
 	}
@@ -98,9 +98,10 @@ func (n node) Append(idx uint32, branch nodeptr) node {
 }
 
 type Index struct {
-	mu    sync.RWMutex
-	nodes []node
-	terms []terminal
+	mu       sync.RWMutex
+	nodes    []node
+	terms    []terminal
+	docToOrd map[fts.DocID]uint32
 }
 
 type snapshotEntry struct {
@@ -124,7 +125,7 @@ type snapshotIndex struct {
 }
 
 func New() *Index {
-	return &Index{nodes: make([]node, 1)}
+	return &Index{nodes: make([]node, 1), docToOrd: make(map[fts.DocID]uint32)}
 }
 
 func (t *Index) Serialize(w io.Writer) error {
@@ -167,8 +168,9 @@ func Load(r io.Reader) (fts.Index, error) {
 	}
 
 	idx := &Index{
-		nodes: make([]node, 0, len(snap.Nodes)),
-		terms: make([]terminal, 0, len(snap.Terms)),
+		nodes:    make([]node, 0, len(snap.Nodes)),
+		terms:    make([]terminal, 0, len(snap.Terms)),
+		docToOrd: make(map[fts.DocID]uint32),
 	}
 
 	for i := range snap.Nodes {
@@ -183,6 +185,11 @@ func Load(r io.Reader) (fts.Index, error) {
 		s := snap.Terms[i]
 		entries := make([]entry, 0, len(s.Entries))
 		for _, e := range s.Entries {
+			for _, d := range e.Docs {
+				if _, ok := idx.docToOrd[d.ID]; !ok {
+					idx.docToOrd[d.ID] = d.Seq
+				}
+			}
 			entries = append(entries, entry{key: e.Key, docs: append([]fts.DocRef(nil), e.Docs...), positions: clonePositions(e.Positions)})
 		}
 		idx.terms = append(idx.terms, terminal{entries: entries})
@@ -220,7 +227,9 @@ func (t *Index) Search(key string) ([]fts.DocRef, error) {
 		return nil, nil
 	}
 
-	return docs, nil
+	out := append([]fts.DocRef(nil), docs...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	return out, nil
 }
 
 func (t *Index) SearchPositional(key string) ([]fts.PositionalDocRef, error) {
@@ -282,8 +291,18 @@ func (t *Index) insert(word string, id fts.DocID, hasPos bool, pos uint32) error
 		t.nodes[n] = t.nodes[n].Append(hash&lowerbits, termPtr)
 	}
 
-	t.terms[termPtr].Append(word, id, hasPos, pos)
+	seq := t.ordinalFor(id)
+	t.terms[termPtr].Append(word, id, seq, hasPos, pos)
 	return nil
+}
+
+func (t *Index) ordinalFor(id fts.DocID) uint32 {
+	if ord, ok := t.docToOrd[id]; ok {
+		return ord
+	}
+	ord := uint32(len(t.docToOrd))
+	t.docToOrd[id] = ord
+	return ord
 }
 
 func growPositions(positions [][]uint32, want int) [][]uint32 {

@@ -202,6 +202,61 @@ func TestSearchDocumentsCountsSeparateTokensIndependently(t *testing.T) {
 	}
 }
 
+func TestSearchDocumentsMustTermsIntersect(t *testing.T) {
+	idx := newMemoryIndex()
+	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 0}, {ID: "doc-c", Count: 1, Seq: 2}}
+	idx.entries["beta"] = []DocRef{{ID: "doc-b", Count: 1, Seq: 1}, {ID: "doc-c", Count: 3, Seq: 2}}
+
+	svc := New(idx, WordKeys)
+
+	res, err := svc.SearchDocuments(context.Background(), "+alpha +beta", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(res.Results))
+	}
+	if got := res.Results[0]; got.ID != "doc-c" || got.UniqueMatches != 2 || got.TotalMatches != 4 {
+		t.Fatalf("result = %+v, want doc-c UniqueMatches=2 TotalMatches=4", got)
+	}
+}
+
+func TestSearchDocumentsMustNotExcludesMatches(t *testing.T) {
+	idx := newMemoryIndex()
+	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 0}, {ID: "doc-b", Count: 1, Seq: 1}}
+	idx.entries["beta"] = []DocRef{{ID: "doc-b", Count: 1, Seq: 1}}
+
+	svc := New(idx, WordKeys)
+
+	res, err := svc.SearchDocuments(context.Background(), "alpha -beta", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 1 || res.Results[0].ID != "doc-a" {
+		t.Fatalf("unexpected results: %+v", res.Results)
+	}
+}
+
+func TestSearchDocumentsQuotedPhraseUsesPhraseQuery(t *testing.T) {
+	svc := New(newPositionalMemoryIndex(), WordKeys)
+
+	ctx := context.Background()
+	if err := svc.IndexDocument(ctx, "doc-a", "barack obama"); err != nil {
+		t.Fatalf("IndexDocument() error = %v", err)
+	}
+	if err := svc.IndexDocument(ctx, "doc-b", "obama barack"); err != nil {
+		t.Fatalf("IndexDocument() error = %v", err)
+	}
+
+	res, err := svc.SearchDocuments(ctx, `"barack obama"`, 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 1 || res.Results[0].ID != "doc-a" {
+		t.Fatalf("unexpected phrase results: %+v", res.Results)
+	}
+}
+
 func TestIndexDocumentReturnsErrorWhenFilterAddFails(t *testing.T) {
 	idx := newMemoryIndex()
 	svc := New(idx, WordKeys, WithFilter(rejectingFilter{}))

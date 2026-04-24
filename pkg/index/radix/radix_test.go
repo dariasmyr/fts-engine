@@ -147,3 +147,24 @@ func TestPhraseSearchWithRadix(t *testing.T) {
 		t.Fatalf("doc-c TotalMatches = %d, want 2", got)
 	}
 }
+
+func TestIndexSearchReturnsSeqOrder(t *testing.T) {
+	idx := New()
+
+	_ = idx.Insert("hotel", "doc-z")
+	_ = idx.Insert("hotel", "doc-a")
+
+	docs, err := idx.Search("hotel")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("len(docs) = %d, want 2", len(docs))
+	}
+	if docs[0].ID != "doc-z" || docs[0].Seq != 0 {
+		t.Fatalf("docs[0] = %+v, want doc-z seq=0", docs[0])
+	}
+	if docs[1].ID != "doc-a" || docs[1].Seq != 1 {
+		t.Fatalf("docs[1] = %+v, want doc-a seq=1", docs[1])
+	}
+}

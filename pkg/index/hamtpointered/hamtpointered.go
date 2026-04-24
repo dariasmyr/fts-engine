@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"io"
 	"math/bits"
+	"sort"
 	"sync"
 )
 
@@ -32,8 +33,9 @@ type entry struct {
 }
 
 type Index struct {
-	root *node
-	mu   sync.RWMutex
+	root     *node
+	docToOrd map[fts.DocID]uint32
+	mu       sync.RWMutex
 }
 
 type snapshotNode struct {
@@ -55,7 +57,7 @@ func newNode() *node {
 }
 
 func New() *Index {
-	return &Index{root: newNode()}
+	return &Index{root: newNode(), docToOrd: make(map[fts.DocID]uint32)}
 }
 
 func (t *Index) Serialize(w io.Writer) error {
@@ -79,7 +81,9 @@ func Load(r io.Reader) (fts.Index, error) {
 		return nil, fmt.Errorf("hamtpointered: load: %w", err)
 	}
 
-	return &Index{root: decodeNode(&snap)}, nil
+	idx := &Index{root: decodeNode(&snap), docToOrd: make(map[fts.DocID]uint32)}
+	collectOrdinals(idx.docToOrd, idx.root)
+	return idx, nil
 }
 
 func encodeNode(n *node) *snapshotNode {
@@ -122,6 +126,35 @@ func decodeNode(s *snapshotNode) *node {
 	return n
 }
 
+func collectOrdinals(docToOrd map[fts.DocID]uint32, n *node) {
+	if n == nil {
+		return
+	}
+	for _, child := range n.children {
+		switch v := child.(type) {
+		case *node:
+			collectOrdinals(docToOrd, v)
+		case *terminalNode:
+			for _, entry := range v.entries {
+				for _, d := range entry.docs {
+					if _, ok := docToOrd[d.ID]; !ok {
+						docToOrd[d.ID] = d.Seq
+					}
+				}
+			}
+		}
+	}
+}
+
+func (t *Index) ordinalFor(id fts.DocID) uint32 {
+	if ord, ok := t.docToOrd[id]; ok {
+		return ord
+	}
+	ord := uint32(len(t.docToOrd))
+	t.docToOrd[id] = ord
+	return ord
+}
+
 func hashKey(key string) uint32 {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(key))
@@ -143,12 +176,12 @@ func (n *node) appendChild(newChild any, mask uint32, pos int) {
 	n.children = append(n.children[:pos], append([]any{newChild}, n.children[pos:]...)...)
 }
 
-func (n *node) insertNode(hash uint32, key string, docID fts.DocID, level int, hasPos bool, tokenPos uint32) {
+func (n *node) insertNode(hash uint32, key string, docID fts.DocID, seq uint32, level int, hasPos bool, tokenPos uint32) {
 	child, slot, mask := n.nextNode(hash, level)
 
 	if level == depth {
 		if child == nil {
-			e := entry{key: key, docs: []fts.DocRef{{ID: docID, Count: 1}}}
+			e := entry{key: key, docs: []fts.DocRef{{ID: docID, Count: 1, Seq: seq}}}
 			if hasPos {
 				e.positions = [][]uint32{{tokenPos}}
 			}
@@ -160,12 +193,12 @@ func (n *node) insertNode(hash uint32, key string, docID fts.DocID, level int, h
 		t := child.(*terminalNode)
 		for i := range t.entries {
 			if key == t.entries[i].key {
-				addDoc(&t.entries[i].docs, &t.entries[i].positions, docID, hasPos, tokenPos)
+				addDoc(&t.entries[i].docs, &t.entries[i].positions, docID, seq, hasPos, tokenPos)
 				return
 			}
 		}
 
-		e := entry{key: key, docs: []fts.DocRef{{ID: docID, Count: 1}}}
+		e := entry{key: key, docs: []fts.DocRef{{ID: docID, Count: 1, Seq: seq}}}
 		if hasPos {
 			e.positions = [][]uint32{{tokenPos}}
 		}
@@ -179,10 +212,10 @@ func (n *node) insertNode(hash uint32, key string, docID fts.DocID, level int, h
 		child = newChild
 	}
 
-	child.(*node).insertNode(hash, key, docID, level+1, hasPos, tokenPos)
+	child.(*node).insertNode(hash, key, docID, seq, level+1, hasPos, tokenPos)
 }
 
-func addDoc(docs *[]fts.DocRef, positions *[][]uint32, docID fts.DocID, hasPos bool, pos uint32) {
+func addDoc(docs *[]fts.DocRef, positions *[][]uint32, docID fts.DocID, seq uint32, hasPos bool, pos uint32) {
 	for i := range *docs {
 		if (*docs)[i].ID == docID {
 			(*docs)[i].Count++
@@ -193,7 +226,7 @@ func addDoc(docs *[]fts.DocRef, positions *[][]uint32, docID fts.DocID, hasPos b
 			return
 		}
 	}
-	*docs = append(*docs, fts.DocRef{ID: docID, Count: 1})
+	*docs = append(*docs, fts.DocRef{ID: docID, Count: 1, Seq: seq})
 	if hasPos {
 		*positions = growPositions(*positions, len(*docs))
 		last := len(*docs) - 1
@@ -212,7 +245,8 @@ func (t *Index) InsertAt(word string, docID fts.DocID, position uint32) error {
 func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.root.insertNode(hashKey(word), word, docID, 0, hasPos, pos)
+	seq := t.ordinalFor(docID)
+	t.root.insertNode(hashKey(word), word, docID, seq, 0, hasPos, pos)
 	return nil
 }
 
@@ -233,7 +267,9 @@ func (t *Index) Search(word string) ([]fts.DocRef, error) {
 			term := child.(*terminalNode)
 			for i := range term.entries {
 				if word == term.entries[i].key {
-					return term.entries[i].docs, nil
+					out := append([]fts.DocRef(nil), term.entries[i].docs...)
+					sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+					return out, nil
 				}
 			}
 			return nil, nil
