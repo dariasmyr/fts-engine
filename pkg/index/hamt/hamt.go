@@ -36,7 +36,7 @@ func (d documents) Add(id fts.DocID, positions [][]uint32, hasPos bool, pos uint
 	if hasPos {
 		positions = growPositions(positions, len(d))
 		copy(positions[i+1:], positions[i:])
-		positions[i] = append(positions[i][:0], pos)
+		positions[i] = []uint32{pos}
 	}
 	return d, positions
 }
