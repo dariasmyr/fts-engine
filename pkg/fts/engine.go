@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+type docAccum struct {
+	UniqueMatches int
+	TotalMatches  int
+}
+
+type tokenGroup struct {
+	expansions [][]DocRef
+	totalDocs  int
+	single     bool
+}
+
 type Service struct {
 	index    Index
 	keyGen   KeyGenerator
@@ -99,8 +110,8 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 	timings["preprocess"] = formatDuration(time.Since(preStart))
 
 	searchStart := time.Now()
-	uniqueMatches := make(map[DocID]int)
-	totalMatches := make(map[DocID]int)
+	plan := make([]tokenGroup, 0, len(tokens))
+	totalCap := 0
 
 	for _, token := range tokens {
 		if err := ctx.Err(); err != nil {
@@ -112,6 +123,7 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 			return nil, fmt.Errorf("fts: search: keygen: %w", err)
 		}
 
+		group := tokenGroup{expansions: make([][]DocRef, 0, len(keys))}
 		for _, key := range keys {
 			if s.filter != nil && !s.filter.Contains([]byte(key)) {
 				continue
@@ -121,22 +133,52 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 			if err != nil {
 				return nil, fmt.Errorf("fts: search: index search: %w", err)
 			}
-
-			for _, doc := range docs {
-				uniqueMatches[doc.ID]++
-				totalMatches[doc.ID] += int(doc.Count)
+			if len(docs) == 0 {
+				continue
 			}
+
+			group.expansions = append(group.expansions, docs)
+			group.totalDocs += len(docs)
+			totalCap += len(docs)
 		}
+
+		if len(group.expansions) == 0 {
+			continue
+		}
+		group.single = len(group.expansions) == 1
+		plan = append(plan, group)
 	}
 
 	timings["search_tokens"] = formatDuration(time.Since(searchStart))
 
-	results := make([]Result, 0, len(uniqueMatches))
-	for id, unique := range uniqueMatches {
+	combined := make(map[DocID]docAccum, totalCap)
+	for _, group := range plan {
+		var seenInGroup map[DocID]struct{}
+		if !group.single {
+			seenInGroup = make(map[DocID]struct{}, group.totalDocs)
+		}
+
+		for _, docs := range group.expansions {
+			for _, doc := range docs {
+				accum := combined[doc.ID]
+				if group.single {
+					accum.UniqueMatches++
+				} else if _, seen := seenInGroup[doc.ID]; !seen {
+					accum.UniqueMatches++
+					seenInGroup[doc.ID] = struct{}{}
+				}
+				accum.TotalMatches += int(doc.Count)
+				combined[doc.ID] = accum
+			}
+		}
+	}
+
+	results := make([]Result, 0, len(combined))
+	for id, accum := range combined {
 		results = append(results, Result{
 			ID:            id,
-			UniqueMatches: unique,
-			TotalMatches:  totalMatches[id],
+			UniqueMatches: accum.UniqueMatches,
+			TotalMatches:  accum.TotalMatches,
 		})
 	}
 

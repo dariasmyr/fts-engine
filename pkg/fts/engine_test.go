@@ -144,6 +144,64 @@ func TestIndexDocumentUsesKeyGenerator(t *testing.T) {
 	}
 }
 
+func TestSearchDocumentsDedupsUniqueMatchesWithinTokenClause(t *testing.T) {
+	idx := newMemoryIndex()
+	idx.entries["alpha"] = []DocRef{{ID: "doc-1", Count: 1}, {ID: "doc-2", Count: 1}}
+	idx.entries["alpha-alt"] = []DocRef{{ID: "doc-1", Count: 2}, {ID: "doc-3", Count: 1}}
+
+	keyGen := func(token string) ([]string, error) {
+		return []string{token, token + "-alt"}, nil
+	}
+	svc := New(idx, keyGen)
+
+	res, err := svc.SearchDocuments(context.Background(), "alpha", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 3 {
+		t.Fatalf("len(Results) = %d, want 3", len(res.Results))
+	}
+
+	hits := map[DocID]Result{}
+	for _, item := range res.Results {
+		hits[item.ID] = item
+	}
+
+	if got := hits["doc-1"]; got.UniqueMatches != 1 || got.TotalMatches != 3 {
+		t.Fatalf("doc-1 = %+v, want UniqueMatches=1 TotalMatches=3", got)
+	}
+	if got := hits["doc-2"]; got.UniqueMatches != 1 || got.TotalMatches != 1 {
+		t.Fatalf("doc-2 = %+v, want UniqueMatches=1 TotalMatches=1", got)
+	}
+	if got := hits["doc-3"]; got.UniqueMatches != 1 || got.TotalMatches != 1 {
+		t.Fatalf("doc-3 = %+v, want UniqueMatches=1 TotalMatches=1", got)
+	}
+}
+
+func TestSearchDocumentsCountsSeparateTokensIndependently(t *testing.T) {
+	idx := newMemoryIndex()
+	idx.entries["alpha"] = []DocRef{{ID: "doc-1", Count: 1}}
+	idx.entries["alpha-alt"] = []DocRef{{ID: "doc-1", Count: 1}}
+	idx.entries["beta"] = []DocRef{{ID: "doc-1", Count: 2}}
+	idx.entries["beta-alt"] = []DocRef{{ID: "doc-1", Count: 3}}
+
+	keyGen := func(token string) ([]string, error) {
+		return []string{token, token + "-alt"}, nil
+	}
+	svc := New(idx, keyGen)
+
+	res, err := svc.SearchDocuments(context.Background(), "alpha beta", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(res.Results))
+	}
+	if got := res.Results[0]; got.UniqueMatches != 2 || got.TotalMatches != 7 {
+		t.Fatalf("result = %+v, want UniqueMatches=2 TotalMatches=7", got)
+	}
+}
+
 func TestIndexDocumentReturnsErrorWhenFilterAddFails(t *testing.T) {
 	idx := newMemoryIndex()
 	svc := New(idx, WordKeys, WithFilter(rejectingFilter{}))
