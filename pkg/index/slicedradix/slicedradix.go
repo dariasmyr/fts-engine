@@ -157,6 +157,10 @@ func (t *Index) Insert(word string, docID fts.DocID) error {
 
 func (t *Index) addDoc(nodeIdx int, docID fts.DocID) {
 	n := &t.nodes[nodeIdx]
+	if last := len(n.docs) - 1; last >= 0 && n.docs[last].ID == docID {
+		n.docs[last].Count++
+		return
+	}
 	for i := range n.docs {
 		if n.docs[i].ID == docID {
 			n.docs[i].Count++
