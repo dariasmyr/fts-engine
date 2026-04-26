@@ -157,9 +157,12 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) er
 			}
 
 			if p == len(t.nodes[child].prefix) {
+				// The current edge matches fully, so continue inserting the
+				// remaining suffix under this child.
 				current = child
 				rest = rest[p:]
 				if rest == "" {
+					// The word ends exactly on this node.
 					t.addDoc(current, docID, hasPos, pos)
 					return nil
 				}
@@ -167,6 +170,8 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) er
 				break
 			}
 
+			// Partial overlap: split the edge into a shared prefix plus two
+			// suffixes, one for the existing child and one for the new word.
 			common := t.nodes[child].prefix[:p]
 			childSuffix := t.nodes[child].prefix[p:]
 			newSuffix := rest[p:]
@@ -188,9 +193,11 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) er
 		}
 
 		if advanced {
+			// Continue from this child with the remaining suffix.
 			continue
 		}
 
+		// No child matches the remaining suffix, so attach it as a new edge.
 		newIdx := t.newNode(rest)
 		t.addDoc(newIdx, docID, hasPos, pos)
 		t.nodes[current].children = append(t.nodes[current].children, newIdx)
