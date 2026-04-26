@@ -54,6 +54,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 	var mustTerms []TermQuery
 	var shoulds []BoolClause
 	var mustNots []BoolClause
+	// Fast AND only handles term-based MUST clauses; SHOULD and MUST_NOT are applied around that core intersection.
 	for _, c := range q.Clauses {
 		if c.Query == nil {
 			continue
@@ -62,6 +63,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 		case Must:
 			tq, ok := termQueryOf(c.Query)
 			if !ok {
+				// Non-term MUST clauses fall back to the general boolean executor.
 				return nil, false, nil
 			}
 			mustTerms = append(mustTerms, tq)
@@ -75,6 +77,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 		return nil, false, nil
 	}
 
+	// Build one fastMust per MUST clause; any empty MUST makes the whole AND empty.
 	musts := make([]fastMust, 0, len(mustTerms))
 	for _, tq := range mustTerms {
 		if err := ctx.Err(); err != nil {
@@ -90,6 +93,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 		musts = append(musts, fm)
 	}
 
+	// Precompute docs excluded by MUST_NOT before intersecting MUST matches.
 	exclude := make(map[DocID]struct{})
 	for _, c := range mustNots {
 		child, err := s.executeQuery(ctx, c.Query, 0)
@@ -199,10 +203,12 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery) (ma
 		}
 		switch c.Occur {
 		case Must:
+			// Fast OR only handles SHOULD terms plus optional MUST_NOT filters.
 			return nil, false, nil
 		case Should:
 			tq, ok := termQueryOf(c.Query)
 			if !ok {
+				// Non-term SHOULD clauses fall back to the general boolean executor.
 				return nil, false, nil
 			}
 			shouldTerms = append(shouldTerms, tq)
@@ -214,6 +220,7 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery) (ma
 		return nil, false, nil
 	}
 
+	// Precompute docs excluded by MUST_NOT before unioning SHOULD matches.
 	exclude := make(map[DocID]struct{})
 	for _, c := range mustNots {
 		child, err := s.executeQuery(ctx, c.Query, 0)
@@ -245,11 +252,13 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery) (ma
 		return map[DocID]docAccum{}, true, nil
 	}
 
+	// Union all SHOULD matches into one result map keyed by DocID.
 	combined := make(map[DocID]docAccum, totalCap)
 	for _, group := range plan {
 		single := len(group.expansions) == 1
 		var seenInGroup map[DocID]struct{}
 		if !single {
+			// Count a logical SHOULD clause once even if it expands to multiple postings lists.
 			seenInGroup = make(map[DocID]struct{}, group.totalDocs)
 		}
 
@@ -265,6 +274,7 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery) (ma
 					accum.UniqueMatches++
 					seenInGroup[d.ID] = struct{}{}
 				}
+				// TotalMatches still sums TF from every matching expansion.
 				accum.TotalMatches += int(d.Count)
 				combined[d.ID] = accum
 			}
@@ -337,6 +347,7 @@ loop:
 				break loop
 			}
 		}
+		// Start from the next Seq in the first list; the other lists will catch up or move the candidate higher.
 		currentSeq = exps[0].docs[ptrs[0]].Seq
 	}
 
