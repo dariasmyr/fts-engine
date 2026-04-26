@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sort"
+	"sync"
 	"time"
 )
 
@@ -20,17 +20,53 @@ type tokenGroup struct {
 }
 
 type Service struct {
-	index    Index
-	keyGen   KeyGenerator
-	pipeline Pipeline
-	filter   Filter
+	index        Index
+	indexFactory IndexFactory
+	keyGen       KeyGenerator
+	pipeline     Pipeline
+	filter       Filter
+
+	mu      sync.RWMutex
+	indexes map[string]Index
 }
 
 func New(index Index, keyGen KeyGenerator, opts ...Option) *Service {
+	s := newService(keyGen, opts...)
+	s.index = index
+	s.indexFactory = func(name string) (Index, error) {
+		return nil, fmt.Errorf("fts: field %q is not available (service was built with fts.New; use fts.NewMultiField to index arbitrary fields)", name)
+	}
+	if index != nil {
+		s.indexes[DefaultField] = index
+	}
+	return s
+}
+
+func NewMultiField(factory IndexFactory, keyGen KeyGenerator, opts ...Option) *Service {
+	s := newService(keyGen, opts...)
+	s.indexFactory = factory
+	return s
+}
+
+func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opts ...Option) *Service {
+	s := newService(keyGen, opts...)
+	for name, idx := range indexes {
+		s.indexes[name] = idx
+	}
+	if idx, ok := s.indexes[DefaultField]; ok {
+		s.index = idx
+	}
+	s.indexFactory = func(name string) (Index, error) {
+		return nil, fmt.Errorf("fts: field %q was not present in the restored snapshot", name)
+	}
+	return s
+}
+
+func newService(keyGen KeyGenerator, opts ...Option) *Service {
 	s := &Service{
-		index:    index,
 		keyGen:   keyGen,
 		pipeline: defaultPipeline{},
+		indexes:  make(map[string]Index),
 	}
 
 	for _, opt := range opts {
@@ -63,38 +99,10 @@ func (s *Service) IndexDocument(ctx context.Context, docID DocID, content string
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
-	positional, hasPositions := s.index.(PositionalIndex)
-	tokens := s.pipeline.Process(content)
-	for pos, token := range tokens {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		keys, err := s.keyGen(token)
-		if err != nil {
-			return fmt.Errorf("fts: index document: keygen: %w", err)
-		}
-
-		for _, key := range keys {
-			if s.filter != nil {
-				if ok := s.filter.Add([]byte(key)); !ok {
-					return fmt.Errorf("fts: index document: filter add failed for key %q", key)
-				}
-			}
-			if hasPositions {
-				if err := positional.InsertAt(key, docID, uint32(pos)); err != nil {
-					return fmt.Errorf("fts: index document: insert: %w", err)
-				}
-				continue
-			}
-			if err := s.index.Insert(key, docID); err != nil {
-				return fmt.Errorf("fts: index document: insert: %w", err)
-			}
-		}
+	if docID == "" {
+		return fmt.Errorf("fts: document id is empty")
 	}
-
-	return nil
+	return s.indexField(ctx, docID, DefaultField, Field{Value: content})
 }
 
 func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults int) (*SearchResult, error) {
@@ -123,214 +131,11 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 }
 
 func (s *Service) SearchPhrase(ctx context.Context, phrase string, maxResults int) (*SearchResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	start := time.Now()
-	timings := make(map[string]string, 3)
-
-	preStart := time.Now()
-	tokens := s.pipeline.Process(phrase)
-	timings["preprocess"] = formatDuration(time.Since(preStart))
-
-	if len(tokens) == 0 {
-		timings["search_tokens"] = formatDuration(0)
-		timings["total"] = formatDuration(time.Since(start))
-		return &SearchResult{Results: []Result{}, Timings: timings}, nil
-	}
-	if len(tokens) == 1 {
-		return s.SearchDocuments(ctx, phrase, maxResults)
-	}
-
-	positional, ok := s.index.(PositionalIndex)
-	if !ok {
-		timings["search_tokens"] = formatDuration(0)
-		timings["total"] = formatDuration(time.Since(start))
-		return &SearchResult{Results: []Result{}, Timings: timings}, nil
-	}
-
-	searchStart := time.Now()
-	tokenPostings := make([]map[DocID][]uint32, len(tokens))
-	for i, token := range tokens {
-		merged, err := s.collectPositionalPostings(ctx, positional, token)
-		if err != nil {
-			return nil, err
-		}
-		if len(merged) == 0 {
-			timings["search_tokens"] = formatDuration(time.Since(searchStart))
-			timings["total"] = formatDuration(time.Since(start))
-			return &SearchResult{Results: []Result{}, Timings: timings}, nil
-		}
-		tokenPostings[i] = merged
-	}
-
-	driverIdx := 0
-	for i := 1; i < len(tokenPostings); i++ {
-		if len(tokenPostings[i]) < len(tokenPostings[driverIdx]) {
-			driverIdx = i
-		}
-	}
-
-	phraseCounts := make(map[DocID]uint32)
-	for docID, driverPositions := range tokenPostings[driverIdx] {
-		missing := false
-		for i := 0; i < len(tokenPostings); i++ {
-			if i == driverIdx {
-				continue
-			}
-			if _, ok := tokenPostings[i][docID]; !ok {
-				missing = true
-				break
-			}
-		}
-		if missing {
-			continue
-		}
-
-		matches := phraseAlign(tokenPostings, docID, driverIdx, driverPositions)
-		if matches > 0 {
-			phraseCounts[docID] = matches
-		}
-	}
-
-	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-
-	results := make([]Result, 0, len(phraseCounts))
-	for id, cnt := range phraseCounts {
-		results = append(results, Result{
-			ID:            id,
-			UniqueMatches: 1,
-			TotalMatches:  int(cnt),
-		})
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].TotalMatches != results[j].TotalMatches {
-			return results[i].TotalMatches > results[j].TotalMatches
-		}
-		return results[i].ID < results[j].ID
-	})
-
-	totalFound := len(results)
-	if maxResults <= 0 || maxResults > totalFound {
-		maxResults = totalFound
-	}
-
-	timings["total"] = formatDuration(time.Since(start))
-
-	return &SearchResult{
-		Results:           results[:maxResults],
-		TotalResultsCount: totalFound,
-		Timings:           timings,
-	}, nil
+	return s.searchPhraseFields(ctx, s.fieldNames(), phrase, maxResults)
 }
 
 func (s *Service) SearchPhraseNear(ctx context.Context, phrase string, distance int, maxResults int) (*SearchResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if distance < 0 {
-		return nil, fmt.Errorf("fts: phrase near search: negative distance %d", distance)
-	}
-
-	start := time.Now()
-	timings := make(map[string]string, 3)
-
-	preStart := time.Now()
-	tokens := s.pipeline.Process(phrase)
-	timings["preprocess"] = formatDuration(time.Since(preStart))
-
-	if len(tokens) == 0 {
-		timings["search_tokens"] = formatDuration(0)
-		timings["total"] = formatDuration(time.Since(start))
-		return &SearchResult{Results: []Result{}, Timings: timings}, nil
-	}
-	if len(tokens) == 1 {
-		return s.SearchDocuments(ctx, phrase, maxResults)
-	}
-
-	positional, ok := s.index.(PositionalIndex)
-	if !ok {
-		timings["search_tokens"] = formatDuration(0)
-		timings["total"] = formatDuration(time.Since(start))
-		return &SearchResult{Results: []Result{}, Timings: timings}, nil
-	}
-
-	searchStart := time.Now()
-	tokenPostings := make([]map[DocID][]uint32, len(tokens))
-	for i, token := range tokens {
-		merged, err := s.collectPositionalPostings(ctx, positional, token)
-		if err != nil {
-			return nil, err
-		}
-		if len(merged) == 0 {
-			timings["search_tokens"] = formatDuration(time.Since(searchStart))
-			timings["total"] = formatDuration(time.Since(start))
-			return &SearchResult{Results: []Result{}, Timings: timings}, nil
-		}
-		tokenPostings[i] = merged
-	}
-
-	driverIdx := 0
-	for i := 1; i < len(tokenPostings); i++ {
-		if len(tokenPostings[i]) < len(tokenPostings[driverIdx]) {
-			driverIdx = i
-		}
-	}
-
-	phraseCounts := make(map[DocID]uint32)
-	for docID := range tokenPostings[driverIdx] {
-		missing := false
-		for i := 0; i < len(tokenPostings); i++ {
-			if i == driverIdx {
-				continue
-			}
-			if _, ok := tokenPostings[i][docID]; !ok {
-				missing = true
-				break
-			}
-		}
-		if missing {
-			continue
-		}
-
-		matches := phraseNearAlign(tokenPostings, docID, uint32(distance))
-		if matches > 0 {
-			phraseCounts[docID] = matches
-		}
-	}
-
-	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-
-	results := make([]Result, 0, len(phraseCounts))
-	for id, cnt := range phraseCounts {
-		results = append(results, Result{
-			ID:            id,
-			UniqueMatches: 1,
-			TotalMatches:  int(cnt),
-		})
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].TotalMatches != results[j].TotalMatches {
-			return results[i].TotalMatches > results[j].TotalMatches
-		}
-		return results[i].ID < results[j].ID
-	})
-
-	totalFound := len(results)
-	if maxResults <= 0 || maxResults > totalFound {
-		maxResults = totalFound
-	}
-
-	timings["total"] = formatDuration(time.Since(start))
-
-	return &SearchResult{
-		Results:           results[:maxResults],
-		TotalResultsCount: totalFound,
-		Timings:           timings,
-	}, nil
+	return s.searchPhraseNearFields(ctx, s.fieldNames(), phrase, distance, maxResults)
 }
 
 func (s *Service) collectPositionalPostings(ctx context.Context, positional PositionalIndex, token string) (map[DocID][]uint32, error) {
@@ -518,11 +323,20 @@ func mergeSortedPositions(a, b []uint32) []uint32 {
 }
 
 func (s *Service) Analyze() (Stats, bool) {
-	analyzer, ok := s.index.(Analyzer)
-	if !ok {
-		return Stats{}, false
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var combined Stats
+	found := false
+	for _, idx := range s.indexes {
+		analyzer, ok := idx.(Analyzer)
+		if !ok {
+			continue
+		}
+		found = true
+		combined = mergeStats(combined, analyzer.Analyze())
 	}
-	return analyzer.Analyze(), true
+	return combined, found
 }
 
 func (s *Service) SnapshotComponents() (Index, Filter) {
@@ -530,7 +344,10 @@ func (s *Service) SnapshotComponents() (Index, Filter) {
 		return nil, nil
 	}
 
-	return s.index, s.filter
+	s.mu.RLock()
+	idx := s.indexes[DefaultField]
+	s.mu.RUnlock()
+	return idx, s.filter
 }
 
 func (s *Service) BuildFilter() error {

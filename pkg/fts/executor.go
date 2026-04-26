@@ -96,7 +96,7 @@ func (s *Service) executeQuery(ctx context.Context, q Query, topK int) (map[DocI
 }
 
 func (s *Service) execTerm(ctx context.Context, q TermQuery) (map[DocID]docAccum, error) {
-	if q.Field != "" || q.Term == "" {
+	if q.Term == "" {
 		return map[DocID]docAccum{}, nil
 	}
 
@@ -107,6 +107,7 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery) (map[DocID]docAccum
 
 	plan := make([]tokenGroup, 0, len(tokens))
 	totalCap := 0
+	fields := s.resolveFields(q.Field)
 	for _, token := range tokens {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -117,23 +118,30 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery) (map[DocID]docAccum
 			return nil, fmt.Errorf("fts: term query: keygen: %w", err)
 		}
 
-		group := tokenGroup{expansions: make([][]DocRef, 0, len(keys))}
-		for _, key := range keys {
-			if s.filter != nil && !s.filter.Contains([]byte(key)) {
+		group := tokenGroup{expansions: make([][]DocRef, 0, len(fields)*len(keys))}
+		for _, field := range fields {
+			index, ok := s.lookupIndex(field)
+			if !ok {
 				continue
 			}
 
-			docs, err := s.index.Search(key)
-			if err != nil {
-				return nil, fmt.Errorf("fts: term query: index search: %w", err)
-			}
-			if len(docs) == 0 {
-				continue
-			}
+			for _, key := range keys {
+				if s.filter != nil && !s.filter.Contains([]byte(key)) {
+					continue
+				}
 
-			group.expansions = append(group.expansions, docs)
-			group.totalDocs += len(docs)
-			totalCap += len(docs)
+				docs, err := index.Search(key)
+				if err != nil {
+					return nil, fmt.Errorf("fts: term query field %q: index search: %w", field, err)
+				}
+				if len(docs) == 0 {
+					continue
+				}
+
+				group.expansions = append(group.expansions, docs)
+				group.totalDocs += len(docs)
+				totalCap += len(docs)
+			}
 		}
 
 		if len(group.expansions) == 0 {
@@ -169,11 +177,7 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery) (map[DocID]docAccum
 }
 
 func (s *Service) execPhrase(ctx context.Context, q PhraseQuery) (map[DocID]docAccum, error) {
-	if q.Field != "" {
-		return map[DocID]docAccum{}, nil
-	}
-
-	res, err := s.SearchPhrase(ctx, q.Phrase, 0)
+	res, err := s.searchPhraseFields(ctx, s.resolveFields(q.Field), q.Phrase, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -185,24 +189,38 @@ func (s *Service) execPhrase(ctx context.Context, q PhraseQuery) (map[DocID]docA
 }
 
 func (s *Service) execPrefix(ctx context.Context, q PrefixQuery) (map[DocID]docAccum, error) {
-	if q.Field != "" || q.Prefix == "" {
-		return map[DocID]docAccum{}, nil
-	}
-	index, ok := s.index.(PrefixIndex)
-	if !ok {
+	if q.Prefix == "" {
 		return map[DocID]docAccum{}, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	docs, err := index.SearchPrefix(q.Prefix)
-	if err != nil {
-		return nil, fmt.Errorf("fts: prefix query: %w", err)
-	}
-	hits := make(map[DocID]docAccum, len(docs))
-	for _, doc := range docs {
-		hits[doc.ID] = docAccum{UniqueMatches: 1, TotalMatches: int(doc.Count)}
+	hits := make(map[DocID]docAccum)
+	seen := make(map[DocID]struct{})
+	for _, field := range s.resolveFields(q.Field) {
+		index, ok := s.lookupIndex(field)
+		if !ok {
+			continue
+		}
+		prefixer, ok := index.(PrefixIndex)
+		if !ok {
+			continue
+		}
+
+		docs, err := prefixer.SearchPrefix(q.Prefix)
+		if err != nil {
+			return nil, fmt.Errorf("fts: prefix query field %q: %w", field, err)
+		}
+		for _, doc := range docs {
+			accum := hits[doc.ID]
+			if _, ok := seen[doc.ID]; !ok {
+				accum.UniqueMatches++
+				seen[doc.ID] = struct{}{}
+			}
+			accum.TotalMatches += int(doc.Count)
+			hits[doc.ID] = accum
+		}
 	}
 	return hits, nil
 }

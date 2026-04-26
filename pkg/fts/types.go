@@ -25,6 +25,18 @@ type SearchResult struct {
 	Timings           map[string]string
 }
 
+const DefaultField = "_default"
+
+type Document struct {
+	ID     DocID
+	Fields map[string]Field
+}
+
+type Field struct {
+	Value    string
+	Pipeline Pipeline
+}
+
 type Index interface {
 	Insert(key string, id DocID) error
 	Search(key string) ([]DocRef, error)
@@ -46,6 +58,8 @@ type PositionalIndex interface {
 	InsertAt(key string, id DocID, position uint32) error
 	SearchPositional(key string) ([]PositionalDocRef, error)
 }
+
+type IndexFactory func(fieldName string) (Index, error)
 
 type Analyzer interface {
 	Analyze() Stats

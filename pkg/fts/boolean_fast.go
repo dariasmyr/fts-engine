@@ -369,7 +369,7 @@ loop:
 
 func (s *Service) collectTermPostings(q TermQuery) (fastMust, error) {
 	var out fastMust
-	if q.Field != "" || q.Term == "" {
+	if q.Term == "" {
 		return out, nil
 	}
 
@@ -378,24 +378,31 @@ func (s *Service) collectTermPostings(q TermQuery) (fastMust, error) {
 		return out, nil
 	}
 
+	fields := s.resolveFields(q.Field)
 	for _, token := range tokens {
 		keys, err := s.keyGen(token)
 		if err != nil {
 			return fastMust{}, err
 		}
-		for _, key := range keys {
-			if s.filter != nil && !s.filter.Contains([]byte(key)) {
+		for _, field := range fields {
+			index, ok := s.lookupIndex(field)
+			if !ok {
 				continue
 			}
-			docs, err := s.index.Search(key)
-			if err != nil {
-				return fastMust{}, err
+			for _, key := range keys {
+				if s.filter != nil && !s.filter.Contains([]byte(key)) {
+					continue
+				}
+				docs, err := index.Search(key)
+				if err != nil {
+					return fastMust{}, err
+				}
+				if len(docs) == 0 {
+					continue
+				}
+				out.expansions = append(out.expansions, termExpansion{term: token, docs: docs})
+				out.totalDocs += len(docs)
 			}
-			if len(docs) == 0 {
-				continue
-			}
-			out.expansions = append(out.expansions, termExpansion{term: token, docs: docs})
-			out.totalDocs += len(docs)
 		}
 	}
 	return out, nil
