@@ -170,3 +170,96 @@ func TestSaveIndexSnapshotWritesPayload(t *testing.T) {
 		t.Fatal("SaveIndexSnapshot() wrote empty payload")
 	}
 }
+
+func TestSaveLoadMultiIndexSnapshotRoundTrip(t *testing.T) {
+	codecName := fmt.Sprintf("test-multi-index-%s", t.Name())
+	if err := RegisterIndexSnapshotCodec(codecName,
+		func(index Index, w io.Writer) error { return index.(Serializable).Serialize(w) },
+		loadSnapshotIndex,
+	); err != nil {
+		t.Fatalf("RegisterIndexSnapshotCodec() error = %v", err)
+	}
+
+	svc := NewMultiField(
+		func(name string) (Index, error) { return newSnapshotIndex(), nil },
+		WordKeys,
+	)
+
+	ctx := context.Background()
+	if err := svc.Index(ctx, Document{ID: "doc-1", Fields: map[string]Field{
+		"title": {Value: "rosa barge"},
+		"body":  {Value: "french canal"},
+	}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	indexes, _ := svc.SnapshotFields()
+	if got := len(indexes); got != 2 {
+		t.Fatalf("len(SnapshotFields()) = %d, want 2", got)
+	}
+
+	codecs := map[string]string{"body": codecName, "title": codecName}
+
+	var snap bytes.Buffer
+	if err := SaveMultiIndexSnapshot(&snap, codecs, indexes); err != nil {
+		t.Fatalf("SaveMultiIndexSnapshot() error = %v", err)
+	}
+	if snap.Len() == 0 {
+		t.Fatal("SaveMultiIndexSnapshot() wrote empty payload")
+	}
+
+	loaded, err := LoadMultiIndexSnapshot(bytes.NewReader(snap.Bytes()))
+	if err != nil {
+		t.Fatalf("LoadMultiIndexSnapshot() error = %v", err)
+	}
+	if got := len(loaded.Fields); got != 2 {
+		t.Fatalf("len(loaded.Fields) = %d, want 2", got)
+	}
+
+	restoredIndexes := make(map[string]Index, len(loaded.Fields))
+	for fieldName, snapshot := range loaded.Fields {
+		if snapshot.IndexName != codecName {
+			t.Fatalf("loaded codec for field %q = %q, want %q", fieldName, snapshot.IndexName, codecName)
+		}
+		restoredIndexes[fieldName] = snapshot.Index
+	}
+
+	restored := NewMultiFieldFromIndexes(restoredIndexes, WordKeys)
+
+	titleRes, err := restored.Search(ctx, TermQuery{Field: "title", Term: "rosa"}, 10)
+	if err != nil {
+		t.Fatalf("Search(title:rosa) error = %v", err)
+	}
+	if titleRes.TotalResultsCount != 1 || len(titleRes.Results) != 1 || titleRes.Results[0].ID != "doc-1" {
+		t.Fatalf("restored title search = %+v, want doc-1", titleRes.Results)
+	}
+
+	bodyRes, err := restored.Search(ctx, TermQuery{Field: "body", Term: "french"}, 10)
+	if err != nil {
+		t.Fatalf("Search(body:french) error = %v", err)
+	}
+	if bodyRes.TotalResultsCount != 1 || len(bodyRes.Results) != 1 || bodyRes.Results[0].ID != "doc-1" {
+		t.Fatalf("restored body search = %+v, want doc-1", bodyRes.Results)
+	}
+}
+
+func TestSaveMultiIndexSnapshotUnknownCodec(t *testing.T) {
+	err := SaveMultiIndexSnapshot(&bytes.Buffer{}, map[string]string{"title": "unknown"}, map[string]Index{"title": newSnapshotIndex()})
+	if err == nil {
+		t.Fatal("SaveMultiIndexSnapshot() error = nil, want non-nil")
+	}
+}
+
+func TestLoadMultiIndexSnapshotRejectsEmptyFieldName(t *testing.T) {
+	var snap bytes.Buffer
+	if err := gob.NewEncoder(&snap).Encode(multiIndexEnvelope{
+		Version: multiIndexSnapshotVersion,
+		Fields:  []multiIndexField{{FieldName: "", IndexName: "codec", Payload: []byte("payload")}},
+	}); err != nil {
+		t.Fatalf("encode multiIndexEnvelope: %v", err)
+	}
+
+	if _, err := LoadMultiIndexSnapshot(bytes.NewReader(snap.Bytes())); err == nil {
+		t.Fatal("LoadMultiIndexSnapshot() error = nil, want non-nil")
+	}
+}

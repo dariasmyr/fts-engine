@@ -5,10 +5,12 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 )
 
 const snapshotVersion uint16 = 1
+const multiIndexSnapshotVersion uint16 = 2
 
 type IndexSnapshotSaver func(index Index, w io.Writer) error
 type IndexSnapshotLoader func(r io.Reader) (Index, error)
@@ -21,6 +23,10 @@ type LoadedIndexSnapshot struct {
 	Index     Index
 }
 
+type LoadedMultiIndexSnapshot struct {
+	Fields map[string]LoadedIndexSnapshot
+}
+
 type LoadedFilterSnapshot struct {
 	FilterName string
 	Filter     Filter
@@ -30,6 +36,17 @@ type indexEnvelope struct {
 	Version      uint16
 	IndexName    string
 	IndexPayload []byte
+}
+
+type multiIndexField struct {
+	FieldName string
+	IndexName string
+	Payload   []byte
+}
+
+type multiIndexEnvelope struct {
+	Version uint16
+	Fields  []multiIndexField
 }
 
 type filterEnvelope struct {
@@ -160,6 +177,104 @@ func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
 	}
 
 	return &LoadedIndexSnapshot{IndexName: envelope.IndexName, Index: index}, nil
+}
+
+func SaveMultiIndexSnapshot(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index) error {
+	if w == nil {
+		return fmt.Errorf("fts: save multi-index snapshot: nil writer")
+	}
+	if len(indexes) == 0 {
+		return fmt.Errorf("fts: save multi-index snapshot: no indexes")
+	}
+
+	fieldNames := make([]string, 0, len(indexes))
+	for fieldName := range indexes {
+		fieldNames = append(fieldNames, fieldName)
+	}
+	sort.Strings(fieldNames)
+
+	fields := make([]multiIndexField, 0, len(indexes))
+	for _, fieldName := range fieldNames {
+		if fieldName == "" {
+			return fmt.Errorf("fts: save multi-index snapshot: empty field name")
+		}
+
+		index := indexes[fieldName]
+		if index == nil {
+			return fmt.Errorf("fts: save multi-index snapshot: nil index for field %q", fieldName)
+		}
+
+		codecName, ok := fieldCodecs[fieldName]
+		if !ok || codecName == "" {
+			return fmt.Errorf("fts: save multi-index snapshot: no codec configured for field %q", fieldName)
+		}
+
+		indexCodec, ok := indexCodecByName(codecName)
+		if !ok {
+			return fmt.Errorf("fts: save multi-index snapshot: unknown index codec %q for field %q", codecName, fieldName)
+		}
+
+		var payload bytes.Buffer
+		if err := indexCodec.save(index, &payload); err != nil {
+			return fmt.Errorf("fts: save multi-index snapshot: encode field %q with codec %q: %w", fieldName, codecName, err)
+		}
+
+		fields = append(fields, multiIndexField{
+			FieldName: fieldName,
+			IndexName: codecName,
+			Payload:   payload.Bytes(),
+		})
+	}
+
+	envelope := multiIndexEnvelope{
+		Version: multiIndexSnapshotVersion,
+		Fields:  fields,
+	}
+
+	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
+		return fmt.Errorf("fts: save multi-index snapshot: encode envelope: %w", err)
+	}
+
+	return nil
+}
+
+func LoadMultiIndexSnapshot(r io.Reader) (*LoadedMultiIndexSnapshot, error) {
+	if r == nil {
+		return nil, fmt.Errorf("fts: load multi-index snapshot: nil reader")
+	}
+
+	var envelope multiIndexEnvelope
+	if err := gob.NewDecoder(r).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("fts: load multi-index snapshot: decode envelope: %w", err)
+	}
+
+	if envelope.Version != multiIndexSnapshotVersion {
+		return nil, fmt.Errorf("fts: load multi-index snapshot: unsupported version %d", envelope.Version)
+	}
+
+	loaded := &LoadedMultiIndexSnapshot{Fields: make(map[string]LoadedIndexSnapshot, len(envelope.Fields))}
+	for _, field := range envelope.Fields {
+		if field.FieldName == "" {
+			return nil, fmt.Errorf("fts: load multi-index snapshot: empty field name")
+		}
+		if field.IndexName == "" {
+			return nil, fmt.Errorf("fts: load multi-index snapshot: empty index codec name for field %q", field.FieldName)
+		}
+
+		indexCodec, ok := indexCodecByName(field.IndexName)
+		if !ok {
+			return nil, fmt.Errorf("fts: load multi-index snapshot: unknown index codec %q for field %q", field.IndexName, field.FieldName)
+		}
+
+		index, err := indexCodec.load(bytes.NewReader(field.Payload))
+		if err != nil {
+			return nil, fmt.Errorf("fts: load multi-index snapshot: decode field %q with codec %q: %w", field.FieldName, field.IndexName, err)
+		}
+
+		loaded.Fields[field.FieldName] = LoadedIndexSnapshot{IndexName: field.IndexName, Index: index}
+	}
+
+	return loaded, nil
 }
 
 func SaveFilterSnapshot(w io.Writer, filterName string, filter Filter) error {
