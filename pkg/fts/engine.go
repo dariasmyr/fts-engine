@@ -394,6 +394,7 @@ func phraseAlign(tokenPostings []map[DocID][]uint32, docID DocID, driverIdx int,
 	}
 
 	others := make([][]uint32, n)
+	// One monotonic pointer (only moves forward) per token postings list; all start at 0.
 	ptrs := make([]int, n)
 	for i := 0; i < n; i++ {
 		if i == driverIdx {
@@ -415,20 +416,25 @@ outer:
 
 			var target uint32
 			if i < driverIdx {
+				// Tokens to the left of the driver must appear delta positions earlier in the document.
 				delta := uint32(driverIdx - i)
 				if delta > p {
+					// p-delta would underflow uint32, so this driver position cannot anchor the full phrase.
 					continue outer
 				}
 				target = p - delta
 			} else {
+				// Tokens to the right of the driver must appear the same distance later in the document.
 				target = p + uint32(i-driverIdx)
 			}
 
 			pos := others[i]
 			j := ptrs[i]
+			// Advance to the first position >= target; exact phrase matching requires landing on target itself.
 			for j < len(pos) && pos[j] < target {
 				j++
 			}
+			// Remember how far this token advanced so later driver positions continue from here.
 			ptrs[i] = j
 
 			if j >= len(pos) {
