@@ -103,12 +103,15 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 
 	sort.Slice(musts, func(i, j int) bool { return musts[i].totalDocs < musts[j].totalDocs })
 	if allSingleExpansion(musts) {
+		// Fast path: each MUST clause maps to exactly one postings list, so we can intersect by Seq.
 		return s.execBooleanAndSortMerge(musts, shoulds, exclude, ctx)
 	}
 
+	// Fallback path: use the smallest MUST group as the candidate driver when clauses expand to multiple lists.
 	driver := &musts[0]
 	others := musts[1:]
 	if driver.totalDocs >= lookupMapThreshold {
+		// For larger candidate sets, prebuild lookup maps for the remaining MUST groups.
 		for i := range others {
 			for j := range others[i].expansions {
 				others[i].expansions[j].buildMap()
@@ -116,6 +119,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 		}
 	}
 
+	// Final AND matches keyed by DocID, with accumulated clause and term-frequency counts.
 	combined := make(map[DocID]docAccum, driver.totalDocs)
 	for di := range driver.expansions {
 		de := &driver.expansions[di]
@@ -127,6 +131,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 				continue
 			}
 
+			// Driver docs are only candidates; keep only docs that also match every other MUST clause.
 			survives := true
 			for i := range others {
 				if !others[i].contains(d.ID) {
@@ -138,6 +143,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 				continue
 			}
 
+			// Start with the current driver expansion; other expansions may add more TF for the same clause.
 			accum := docAccum{UniqueMatches: 1, TotalMatches: int(d.Count)}
 			for dj := range driver.expansions {
 				if dj == di {
@@ -148,6 +154,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 				}
 			}
 
+			// Count each remaining MUST clause once, but add TF from every matching expansion in that clause.
 			for i := range others {
 				matchedAny := false
 				for ej := range others[i].expansions {
@@ -167,6 +174,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 		}
 	}
 
+	// SHOULD clauses only enrich docs that already survived all MUST checks.
 	for _, c := range shoulds {
 		child, err := s.executeQuery(ctx, c.Query, 0)
 		if err != nil {
@@ -280,8 +288,10 @@ func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause
 	ptrs := make([]int, k)
 	exps := make([]*termExpansion, k)
 	for i := range musts {
+		// allSingleExpansion guarantees exactly one postings list per MUST clause here.
 		exps[i] = &musts[i].expansions[0]
 		if len(exps[i].docs) == 0 {
+			// One empty MUST list makes the whole AND empty.
 			return map[DocID]docAccum{}, true, nil
 		}
 	}
@@ -293,6 +303,7 @@ loop:
 	for {
 		for i := 0; i < k; i++ {
 			docs := exps[i].docs
+			// Advance each pointer up to the current candidate Seq.
 			for ptrs[i] < len(docs) && docs[ptrs[i]].Seq < currentSeq {
 				ptrs[i]++
 			}
@@ -300,12 +311,14 @@ loop:
 				break loop
 			}
 			if docs[ptrs[i]].Seq > currentSeq {
+				// This list moved past the candidate, so retry from the larger Seq.
 				currentSeq = docs[ptrs[i]].Seq
 				i = -1
 				continue
 			}
 		}
 
+		// All MUST lists are aligned on the same Seq, so we found an intersection hit.
 		docID := exps[0].docs[ptrs[0]].ID
 		if _, skip := exclude[docID]; !skip {
 			var accum docAccum
@@ -317,6 +330,7 @@ loop:
 			combined[docID] = accum
 		}
 
+		// Move every list forward past the matched document and continue the merge walk.
 		for i := 0; i < k; i++ {
 			ptrs[i]++
 			if ptrs[i] >= len(exps[i].docs) {
@@ -326,6 +340,7 @@ loop:
 		currentSeq = exps[0].docs[ptrs[0]].Seq
 	}
 
+	// SHOULD clauses only enrich docs that already survived all MUST intersections.
 	for _, c := range shoulds {
 		child, err := s.executeQuery(ctx, c.Query, 0)
 		if err != nil {
