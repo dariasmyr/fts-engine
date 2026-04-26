@@ -50,95 +50,159 @@ func (m *fastMust) contains(id DocID) bool {
 	return false
 }
 
-func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (map[DocID]docAccum, bool, error) {
+func parseFastAndClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, []BoolClause, bool) {
 	var mustTerms []TermQuery
 	var shoulds []BoolClause
 	var mustNots []BoolClause
-	// Fast AND only handles term-based MUST clauses; SHOULD and MUST_NOT are applied around that core intersection.
-	for _, c := range q.Clauses {
-		if c.Query == nil {
+	for _, clause := range q.Clauses {
+		if clause.Query == nil {
 			continue
 		}
-		switch c.Occur {
+		switch clause.Occur {
 		case Must:
-			tq, ok := termQueryOf(c.Query)
+			term, ok := termQueryOf(clause.Query)
 			if !ok {
-				// Non-term MUST clauses fall back to the general boolean executor.
-				return nil, false, nil
+				return nil, nil, nil, false
 			}
-			mustTerms = append(mustTerms, tq)
+			mustTerms = append(mustTerms, term)
 		case Should:
-			shoulds = append(shoulds, c)
+			shoulds = append(shoulds, clause)
 		case MustNot:
-			mustNots = append(mustNots, c)
+			mustNots = append(mustNots, clause)
 		}
 	}
 	if len(mustTerms) == 0 {
-		return nil, false, nil
+		return nil, nil, nil, false
 	}
+	return mustTerms, shoulds, mustNots, true
+}
 
-	// Build one fastMust per MUST clause; any empty MUST makes the whole AND empty.
-	musts := make([]fastMust, 0, len(mustTerms))
-	for _, tq := range mustTerms {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
+func parseFastOrClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, bool) {
+	var shouldTerms []TermQuery
+	var mustNots []BoolClause
+	for _, clause := range q.Clauses {
+		if clause.Query == nil {
+			continue
 		}
-		fm, err := s.collectTermPostings(tq)
-		if err != nil {
-			return nil, false, err
+		switch clause.Occur {
+		case Must:
+			return nil, nil, false
+		case Should:
+			term, ok := termQueryOf(clause.Query)
+			if !ok {
+				return nil, nil, false
+			}
+			shouldTerms = append(shouldTerms, term)
+		case MustNot:
+			mustNots = append(mustNots, clause)
 		}
-		if fm.totalDocs == 0 {
-			return map[DocID]docAccum{}, true, nil
-		}
-		musts = append(musts, fm)
 	}
+	if len(shouldTerms) == 0 {
+		return nil, nil, false
+	}
+	return shouldTerms, mustNots, true
+}
 
-	// Precompute docs excluded by MUST_NOT before intersecting MUST matches.
+func (s *Service) buildExcludeSet(ctx context.Context, clauses []BoolClause) (map[DocID]struct{}, error) {
 	exclude := make(map[DocID]struct{})
-	for _, c := range mustNots {
-		child, err := s.executeQuery(ctx, c.Query, 0)
+	for _, clause := range clauses {
+		child, err := s.executeQuery(ctx, clause.Query, 0)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		for id := range child {
 			exclude[id] = struct{}{}
 		}
 	}
+	return exclude, nil
+}
 
-	sort.Slice(musts, func(i, j int) bool { return musts[i].totalDocs < musts[j].totalDocs })
-	if allSingleExpansion(musts) {
+func (s *Service) collectFastMustGroups(ctx context.Context, terms []TermQuery) ([]fastMust, bool, error) {
+	groups := make([]fastMust, 0, len(terms))
+	for _, term := range terms {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		group, err := s.collectTermPostings(ctx, term)
+		if err != nil {
+			return nil, false, err
+		}
+		if group.totalDocs == 0 {
+			return nil, true, nil
+		}
+		groups = append(groups, group)
+	}
+	return groups, false, nil
+}
+
+func (s *Service) applyShouldClauseBoosts(ctx context.Context, combined map[DocID]docAccum, shoulds []BoolClause) error {
+	for _, clause := range shoulds {
+		child, err := s.executeQuery(ctx, clause.Query, 0)
+		if err != nil {
+			return err
+		}
+		for id, hit := range child {
+			if existing, ok := combined[id]; ok {
+				combined[id] = addAccum(existing, hit)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (map[DocID]docAccum, bool, error) {
+	mustTerms, shoulds, mustNots, ok := parseFastAndClauses(q)
+	if !ok {
+		return nil, false, nil
+	}
+
+	mustGroups, exhausted, err := s.collectFastMustGroups(ctx, mustTerms)
+	if err != nil {
+		return nil, false, err
+	}
+	if exhausted {
+		return map[DocID]docAccum{}, true, nil
+	}
+
+	exclude, err := s.buildExcludeSet(ctx, mustNots)
+	if err != nil {
+		return nil, false, err
+	}
+
+	sort.Slice(mustGroups, func(i, j int) bool { return mustGroups[i].totalDocs < mustGroups[j].totalDocs })
+	if allSingleExpansion(mustGroups) {
 		// Fast path: each MUST clause maps to exactly one postings list, so we can intersect by Seq.
-		return s.execBooleanAndSortMerge(musts, shoulds, exclude, ctx)
+		return s.execBooleanAndSortMerge(mustGroups, shoulds, exclude, ctx)
 	}
 
 	// Fallback path: use the smallest MUST group as the candidate driver when clauses expand to multiple lists.
-	driver := &musts[0]
-	others := musts[1:]
-	if driver.totalDocs >= lookupMapThreshold {
+	driverGroup := &mustGroups[0]
+	otherGroups := mustGroups[1:]
+	if driverGroup.totalDocs >= lookupMapThreshold {
 		// For larger candidate sets, prebuild lookup maps for the remaining MUST groups.
-		for i := range others {
-			for j := range others[i].expansions {
-				others[i].expansions[j].buildMap()
+		for i := range otherGroups {
+			for j := range otherGroups[i].expansions {
+				otherGroups[i].expansions[j].buildMap()
 			}
 		}
 	}
 
 	// Final AND matches keyed by DocID, with accumulated clause and term-frequency counts.
-	combined := make(map[DocID]docAccum, driver.totalDocs)
-	for di := range driver.expansions {
-		de := &driver.expansions[di]
-		for _, d := range de.docs {
-			if _, already := combined[d.ID]; already {
+	combined := make(map[DocID]docAccum, driverGroup.totalDocs)
+	for driverExpansionIdx := range driverGroup.expansions {
+		driverExpansion := &driverGroup.expansions[driverExpansionIdx]
+		for _, driverDoc := range driverExpansion.docs {
+			if _, already := combined[driverDoc.ID]; already {
 				continue
 			}
-			if _, skip := exclude[d.ID]; skip {
+			if _, skip := exclude[driverDoc.ID]; skip {
 				continue
 			}
 
 			// Driver docs are only candidates; keep only docs that also match every other MUST clause.
 			survives := true
-			for i := range others {
-				if !others[i].contains(d.ID) {
+			for i := range otherGroups {
+				if !otherGroups[i].contains(driverDoc.ID) {
 					survives = false
 					break
 				}
@@ -148,21 +212,21 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 			}
 
 			// Start with the current driver expansion; other expansions may add more TF for the same clause.
-			accum := docAccum{UniqueMatches: 1, TotalMatches: int(d.Count)}
-			for dj := range driver.expansions {
-				if dj == di {
+			accum := docAccum{UniqueMatches: 1, TotalMatches: int(driverDoc.Count)}
+			for siblingExpansionIdx := range driverGroup.expansions {
+				if siblingExpansionIdx == driverExpansionIdx {
 					continue
 				}
-				if tf, ok := driver.expansions[dj].lookup(d.ID); ok {
+				if tf, ok := driverGroup.expansions[siblingExpansionIdx].lookup(driverDoc.ID); ok {
 					accum.TotalMatches += int(tf)
 				}
 			}
 
 			// Count each remaining MUST clause once, but add TF from every matching expansion in that clause.
-			for i := range others {
+			for i := range otherGroups {
 				matchedAny := false
-				for ej := range others[i].expansions {
-					tf, ok := others[i].expansions[ej].lookup(d.ID)
+				for expansionIdx := range otherGroups[i].expansions {
+					tf, ok := otherGroups[i].expansions[expansionIdx].lookup(driverDoc.ID)
 					if !ok {
 						continue
 					}
@@ -174,79 +238,43 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 				}
 			}
 
-			combined[d.ID] = accum
+			combined[driverDoc.ID] = accum
 		}
 	}
 
-	// SHOULD clauses only enrich docs that already survived all MUST checks.
-	for _, c := range shoulds {
-		child, err := s.executeQuery(ctx, c.Query, 0)
-		if err != nil {
-			return nil, false, err
-		}
-		for id, h := range child {
-			if existing, ok := combined[id]; ok {
-				combined[id] = addAccum(existing, h)
-			}
-		}
+	if err := s.applyShouldClauseBoosts(ctx, combined, shoulds); err != nil {
+		return nil, false, err
 	}
 
 	return combined, true, nil
 }
 
 func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery) (map[DocID]docAccum, bool, error) {
-	var shouldTerms []TermQuery
-	var mustNots []BoolClause
-	for _, c := range q.Clauses {
-		if c.Query == nil {
-			continue
-		}
-		switch c.Occur {
-		case Must:
-			// Fast OR only handles SHOULD terms plus optional MUST_NOT filters.
-			return nil, false, nil
-		case Should:
-			tq, ok := termQueryOf(c.Query)
-			if !ok {
-				// Non-term SHOULD clauses fall back to the general boolean executor.
-				return nil, false, nil
-			}
-			shouldTerms = append(shouldTerms, tq)
-		case MustNot:
-			mustNots = append(mustNots, c)
-		}
-	}
-	if len(shouldTerms) == 0 {
+	shouldTerms, mustNots, ok := parseFastOrClauses(q)
+	if !ok {
 		return nil, false, nil
 	}
 
-	// Precompute docs excluded by MUST_NOT before unioning SHOULD matches.
-	exclude := make(map[DocID]struct{})
-	for _, c := range mustNots {
-		child, err := s.executeQuery(ctx, c.Query, 0)
-		if err != nil {
-			return nil, false, err
-		}
-		for id := range child {
-			exclude[id] = struct{}{}
-		}
+	exclude, err := s.buildExcludeSet(ctx, mustNots)
+	if err != nil {
+		return nil, false, err
 	}
 
 	plan := make([]fastMust, 0, len(shouldTerms))
 	totalCap := 0
-	for _, tq := range shouldTerms {
+	for _, term := range shouldTerms {
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		fm, err := s.collectTermPostings(tq)
+		group, err := s.collectTermPostings(ctx, term)
 		if err != nil {
 			return nil, false, err
 		}
-		if fm.totalDocs == 0 {
+		if group.totalDocs == 0 {
 			continue
 		}
-		plan = append(plan, fm)
-		totalCap += fm.totalDocs
+		plan = append(plan, group)
+		totalCap += group.totalDocs
 	}
 	if len(plan) == 0 {
 		return map[DocID]docAccum{}, true, nil
@@ -254,29 +282,29 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery) (ma
 
 	// Union all SHOULD matches into one result map keyed by DocID.
 	combined := make(map[DocID]docAccum, totalCap)
-	for _, group := range plan {
-		single := len(group.expansions) == 1
+	for _, shouldGroup := range plan {
+		singleExpansion := len(shouldGroup.expansions) == 1
 		var seenInGroup map[DocID]struct{}
-		if !single {
+		if !singleExpansion {
 			// Count a logical SHOULD clause once even if it expands to multiple postings lists.
-			seenInGroup = make(map[DocID]struct{}, group.totalDocs)
+			seenInGroup = make(map[DocID]struct{}, shouldGroup.totalDocs)
 		}
 
-		for _, expansion := range group.expansions {
-			for _, d := range expansion.docs {
-				if _, skip := exclude[d.ID]; skip {
+		for _, expansion := range shouldGroup.expansions {
+			for _, doc := range expansion.docs {
+				if _, skip := exclude[doc.ID]; skip {
 					continue
 				}
-				accum := combined[d.ID]
-				if single {
+				accum := combined[doc.ID]
+				if singleExpansion {
 					accum.UniqueMatches++
-				} else if _, seen := seenInGroup[d.ID]; !seen {
+				} else if _, seen := seenInGroup[doc.ID]; !seen {
 					accum.UniqueMatches++
-					seenInGroup[d.ID] = struct{}{}
+					seenInGroup[doc.ID] = struct{}{}
 				}
 				// TotalMatches still sums TF from every matching expansion.
-				accum.TotalMatches += int(d.Count)
-				combined[d.ID] = accum
+				accum.TotalMatches += int(doc.Count)
+				combined[doc.ID] = accum
 			}
 		}
 	}
@@ -351,23 +379,14 @@ loop:
 		currentSeq = exps[0].docs[ptrs[0]].Seq
 	}
 
-	// SHOULD clauses only enrich docs that already survived all MUST intersections.
-	for _, c := range shoulds {
-		child, err := s.executeQuery(ctx, c.Query, 0)
-		if err != nil {
-			return nil, false, err
-		}
-		for id, h := range child {
-			if existing, ok := combined[id]; ok {
-				combined[id] = addAccum(existing, h)
-			}
-		}
+	if err := s.applyShouldClauseBoosts(ctx, combined, shoulds); err != nil {
+		return nil, false, err
 	}
 
 	return combined, true, nil
 }
 
-func (s *Service) collectTermPostings(q TermQuery) (fastMust, error) {
+func (s *Service) collectTermPostings(ctx context.Context, q TermQuery) (fastMust, error) {
 	var out fastMust
 	if q.Term == "" {
 		return out, nil
@@ -384,26 +403,17 @@ func (s *Service) collectTermPostings(q TermQuery) (fastMust, error) {
 		if err != nil {
 			return fastMust{}, err
 		}
-		for _, field := range fields {
-			index, ok := s.lookupIndex(field)
-			if !ok {
-				continue
-			}
-			for _, key := range keys {
-				if s.filter != nil && !s.filter.Contains([]byte(key)) {
-					continue
-				}
-				docs, err := index.Search(key)
-				if err != nil {
-					return fastMust{}, err
-				}
-				if len(docs) == 0 {
-					continue
-				}
-				out.expansions = append(out.expansions, termExpansion{term: token, docs: docs})
-				out.totalDocs += len(docs)
-			}
+
+		// Boolean fast paths reuse the same multi-field term fan-out layer as
+		// ordinary term queries, then wrap each expansion into fastMust groups.
+		expansions, totalDocs, err := s.collectTermFieldExpansions(ctx, fields, keys)
+		if err != nil {
+			return fastMust{}, err
 		}
+		for _, docs := range expansions {
+			out.expansions = append(out.expansions, termExpansion{term: token, docs: docs})
+		}
+		out.totalDocs += totalDocs
 	}
 	return out, nil
 }

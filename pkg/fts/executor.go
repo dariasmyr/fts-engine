@@ -104,46 +104,29 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery) (map[DocID]docAccum
 	if len(tokens) == 0 {
 		return map[DocID]docAccum{}, nil
 	}
-
-	plan := make([]tokenGroup, 0, len(tokens))
-	totalCap := 0
 	fields := s.resolveFields(q.Field)
-	for _, token := range tokens {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-
+	keyGroups := make([][]string, len(tokens))
+	for i, token := range tokens {
 		keys, err := s.keyGen(token)
 		if err != nil {
 			return nil, fmt.Errorf("fts: term query: keygen: %w", err)
 		}
+		keyGroups[i] = keys
+	}
 
-		group := tokenGroup{expansions: make([][]DocRef, 0, len(fields)*len(keys))}
-		for _, field := range fields {
-			index, ok := s.lookupIndex(field)
-			if !ok {
-				continue
-			}
-
-			for _, key := range keys {
-				if s.filter != nil && !s.filter.Contains([]byte(key)) {
-					continue
-				}
-
-				docs, err := index.Search(key)
-				if err != nil {
-					return nil, fmt.Errorf("fts: term query field %q: index search: %w", field, err)
-				}
-				if len(docs) == 0 {
-					continue
-				}
-
-				group.expansions = append(group.expansions, docs)
-				group.totalDocs += len(docs)
-				totalCap += len(docs)
-			}
+	plan := make([]tokenGroup, 0, len(tokens))
+	totalCap := 0
+	for i := range tokens {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 
+		expansions, groupTotalDocs, err := s.collectTermFieldExpansions(ctx, fields, keyGroups[i])
+		if err != nil {
+			return nil, err
+		}
+		group := tokenGroup{expansions: expansions, totalDocs: groupTotalDocs}
+		totalCap += groupTotalDocs
 		if len(group.expansions) == 0 {
 			continue
 		}
@@ -196,31 +179,22 @@ func (s *Service) execPrefix(ctx context.Context, q PrefixQuery) (map[DocID]docA
 		return nil, err
 	}
 
+	fields := s.resolveFields(q.Field)
+	docs, err := s.collectPrefixFieldDocs(ctx, fields, q.Prefix)
+	if err != nil {
+		return nil, err
+	}
+
 	hits := make(map[DocID]docAccum)
 	seen := make(map[DocID]struct{})
-	for _, field := range s.resolveFields(q.Field) {
-		index, ok := s.lookupIndex(field)
-		if !ok {
-			continue
+	for _, doc := range docs {
+		accum := hits[doc.ID]
+		if _, ok := seen[doc.ID]; !ok {
+			accum.UniqueMatches++
+			seen[doc.ID] = struct{}{}
 		}
-		prefixer, ok := index.(PrefixIndex)
-		if !ok {
-			continue
-		}
-
-		docs, err := prefixer.SearchPrefix(q.Prefix)
-		if err != nil {
-			return nil, fmt.Errorf("fts: prefix query field %q: %w", field, err)
-		}
-		for _, doc := range docs {
-			accum := hits[doc.ID]
-			if _, ok := seen[doc.ID]; !ok {
-				accum.UniqueMatches++
-				seen[doc.ID] = struct{}{}
-			}
-			accum.TotalMatches += int(doc.Count)
-			hits[doc.ID] = accum
-		}
+		accum.TotalMatches += int(doc.Count)
+		hits[doc.ID] = accum
 	}
 	return hits, nil
 }

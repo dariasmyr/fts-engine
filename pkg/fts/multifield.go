@@ -160,83 +160,15 @@ func (s *Service) searchPhraseFields(ctx context.Context, fields []string, phras
 	}
 
 	searchStart := time.Now()
-	phraseCounts := make(map[DocID]uint32)
-	for _, field := range fields {
-		index, ok := s.lookupIndex(field)
-		if !ok {
-			continue
-		}
-
-		positional, ok := index.(PositionalIndex)
-		if !ok {
-			continue
-		}
-
-		tokenPostings := make([]map[DocID][]uint32, len(tokens))
-		skipField := false
-		for i, token := range tokens {
-			merged, err := s.collectPositionalPostings(ctx, positional, token)
-			if err != nil {
-				return nil, err
-			}
-			if len(merged) == 0 {
-				skipField = true
-				break
-			}
-			tokenPostings[i] = merged
-		}
-		if skipField {
-			continue
-		}
-
-		driverIdx := 0
-		for i := 1; i < len(tokenPostings); i++ {
-			if len(tokenPostings[i]) < len(tokenPostings[driverIdx]) {
-				driverIdx = i
-			}
-		}
-
-		for docID, driverPositions := range tokenPostings[driverIdx] {
-			missing := false
-			for i := 0; i < len(tokenPostings); i++ {
-				if i == driverIdx {
-					continue
-				}
-				if _, ok := tokenPostings[i][docID]; !ok {
-					missing = true
-					break
-				}
-			}
-			if missing {
-				continue
-			}
-
-			matches := phraseAlign(tokenPostings, docID, driverIdx, driverPositions)
-			if matches > 0 {
-				phraseCounts[docID] += matches
-			}
-		}
+	phraseCounts, err := s.collectPositionalFieldCounts(ctx, fields, func(positional PositionalIndex) (map[DocID]uint32, error) {
+		return s.countExactPhraseInField(ctx, positional, tokens)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-
-	results := make([]Result, 0, len(phraseCounts))
-	for id, cnt := range phraseCounts {
-		results = append(results, Result{
-			ID:            id,
-			UniqueMatches: 1,
-			TotalMatches:  int(cnt),
-		})
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].TotalMatches != results[j].TotalMatches {
-			return results[i].TotalMatches > results[j].TotalMatches
-		}
-		return results[i].ID < results[j].ID
-	})
-
-	totalFound := len(results)
+	results, totalFound := resultsFromCounts(phraseCounts)
 	if maxResults <= 0 || maxResults > totalFound {
 		maxResults = totalFound
 	}
@@ -278,73 +210,15 @@ func (s *Service) searchPhraseNearFields(ctx context.Context, fields []string, p
 	}
 
 	searchStart := time.Now()
-	phraseCounts := make(map[DocID]uint32)
-	for _, field := range fields {
-		index, ok := s.lookupIndex(field)
-		if !ok {
-			continue
-		}
-
-		positional, ok := index.(PositionalIndex)
-		if !ok {
-			continue
-		}
-
-		tokenPostings := make([]map[DocID][]uint32, len(tokens))
-		skipField := false
-		for i, token := range tokens {
-			merged, err := s.collectPositionalPostings(ctx, positional, token)
-			if err != nil {
-				return nil, err
-			}
-			if len(merged) == 0 {
-				skipField = true
-				break
-			}
-			tokenPostings[i] = merged
-		}
-		if skipField {
-			continue
-		}
-
-		for docID := range tokenPostings[0] {
-			missing := false
-			for i := 1; i < len(tokenPostings); i++ {
-				if _, ok := tokenPostings[i][docID]; !ok {
-					missing = true
-					break
-				}
-			}
-			if missing {
-				continue
-			}
-
-			matches := phraseNearAlign(tokenPostings, docID, uint32(distance))
-			if matches > 0 {
-				phraseCounts[docID] += matches
-			}
-		}
+	phraseCounts, err := s.collectPositionalFieldCounts(ctx, fields, func(positional PositionalIndex) (map[DocID]uint32, error) {
+		return s.countNearPhraseInField(ctx, positional, tokens, uint32(distance))
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-
-	results := make([]Result, 0, len(phraseCounts))
-	for id, cnt := range phraseCounts {
-		results = append(results, Result{
-			ID:            id,
-			UniqueMatches: 1,
-			TotalMatches:  int(cnt),
-		})
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].TotalMatches != results[j].TotalMatches {
-			return results[i].TotalMatches > results[j].TotalMatches
-		}
-		return results[i].ID < results[j].ID
-	})
-
-	totalFound := len(results)
+	results, totalFound := resultsFromCounts(phraseCounts)
 	if maxResults <= 0 || maxResults > totalFound {
 		maxResults = totalFound
 	}

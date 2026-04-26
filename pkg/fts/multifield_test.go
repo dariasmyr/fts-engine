@@ -131,6 +131,29 @@ func TestSearchDocumentsAcrossFields(t *testing.T) {
 	}
 }
 
+func TestSearchDocumentsDedupsSameTokenAcrossFields(t *testing.T) {
+	title := newMemoryIndex()
+	title.entries["alpha"] = []DocRef{{ID: "doc-1", Count: 1}}
+	body := newMemoryIndex()
+	body.entries["alpha"] = []DocRef{{ID: "doc-1", Count: 2}}
+
+	svc := NewMultiFieldFromIndexes(map[string]Index{
+		"title": title,
+		"body":  body,
+	}, WordKeys)
+
+	res, err := svc.SearchDocuments(context.Background(), "alpha", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected one result, got %+v", res.Results)
+	}
+	if got := res.Results[0]; got.ID != "doc-1" || got.UniqueMatches != 1 || got.TotalMatches != 3 {
+		t.Fatalf("result = %+v, want doc-1 UniqueMatches=1 TotalMatches=3", got)
+	}
+}
+
 func TestSearchDocumentsFieldScopedTerm(t *testing.T) {
 	title := newMemoryIndex()
 	title.entries["alpha"] = []DocRef{{ID: "a", Count: 1}}
@@ -169,5 +192,26 @@ func TestSearchDocumentsQuotedPhraseAcrossFields(t *testing.T) {
 	}
 	if len(res.Results) != 2 {
 		t.Fatalf("expected phrase matches in both fields, got %+v", res.Results)
+	}
+}
+
+func TestSearchPhraseNearAcrossFields(t *testing.T) {
+	factory := func(name string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	svc := NewMultiField(factory, WordKeys)
+
+	ctx := context.Background()
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "barack x obama"}}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "barack x obama"}}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	res, err := svc.SearchPhraseNear(ctx, "barack obama", 1, 10)
+	if err != nil {
+		t.Fatalf("SearchPhraseNear() error = %v", err)
+	}
+	if len(res.Results) != 2 {
+		t.Fatalf("expected near matches in both fields, got %+v", res.Results)
 	}
 }
