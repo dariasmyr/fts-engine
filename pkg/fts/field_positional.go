@@ -7,17 +7,18 @@ import (
 	"sync"
 )
 
-type positionalFieldResult struct {
-	counts map[DocID]uint32
-	err    error
+type positionalFieldMatchResult struct {
+	field        string
+	matchesByDoc map[DocID]uint32
+	err          error
 }
 
-func (s *Service) collectPositionalFieldCounts(
+func (s *Service) collectPositionalFieldMatches(
 	ctx context.Context,
 	fields []string,
-	countInField func(PositionalIndex) (map[DocID]uint32, error),
-) (map[DocID]uint32, error) {
-	counts := make(map[DocID]uint32)
+	searchInField func(PositionalIndex) (map[DocID]uint32, error),
+) ([]positionalFieldMatchResult, error) {
+	resultsByField := make([]positionalFieldMatchResult, 0, len(fields))
 	if len(fields) <= 1 {
 		for _, field := range fields {
 			index, ok := s.lookupIndex(field)
@@ -28,18 +29,19 @@ func (s *Service) collectPositionalFieldCounts(
 			if !ok {
 				continue
 			}
-			fieldCounts, err := countInField(positional)
+			matchesByDoc, err := searchInField(positional)
 			if err != nil {
 				return nil, err
 			}
-			for docID, cnt := range fieldCounts {
-				counts[docID] += cnt
+			if len(matchesByDoc) == 0 {
+				continue
 			}
+			resultsByField = append(resultsByField, positionalFieldMatchResult{field: field, matchesByDoc: matchesByDoc})
 		}
-		return counts, nil
+		return resultsByField, nil
 	}
 
-	results := make(chan positionalFieldResult, len(fields))
+	results := make(chan positionalFieldMatchResult, len(fields))
 	var wg sync.WaitGroup
 	for _, field := range fields {
 		index, ok := s.lookupIndex(field)
@@ -50,19 +52,24 @@ func (s *Service) collectPositionalFieldCounts(
 		if !ok {
 			continue
 		}
+		fieldName := field
+		positionalIndex := positional
 
 		wg.Go(func() {
 			if err := ctx.Err(); err != nil {
-				results <- positionalFieldResult{err: err}
+				results <- positionalFieldMatchResult{err: err}
 				return
 			}
 
-			fieldCounts, err := countInField(positional)
+			matchesByDoc, err := searchInField(positionalIndex)
 			if err != nil {
-				results <- positionalFieldResult{err: err}
+				results <- positionalFieldMatchResult{err: err}
 				return
 			}
-			results <- positionalFieldResult{counts: fieldCounts}
+			if len(matchesByDoc) == 0 {
+				return
+			}
+			results <- positionalFieldMatchResult{field: fieldName, matchesByDoc: matchesByDoc}
 		})
 	}
 
@@ -72,21 +79,19 @@ func (s *Service) collectPositionalFieldCounts(
 		if res.err != nil {
 			return nil, res.err
 		}
-		for docID, cnt := range res.counts {
-			counts[docID] += cnt
-		}
+		resultsByField = append(resultsByField, res)
 	}
-	return counts, nil
+	return resultsByField, nil
 }
 
-func (s *Service) countExactPhraseInField(ctx context.Context, positional PositionalIndex, tokens []string) (map[DocID]uint32, error) {
+func (s *Service) searchExactPhraseCountsInField(ctx context.Context, positional PositionalIndex, tokens []string) (map[DocID]uint32, error) {
 	tokenPostings, err := s.searchTokenPostingsInField(ctx, positional, tokens)
 	if err != nil || tokenPostings == nil {
 		return map[DocID]uint32{}, err
 	}
 
 	driverIdx := smallestPostingMapIndex(tokenPostings)
-	counts := make(map[DocID]uint32)
+	matchesByDoc := make(map[DocID]uint32)
 	for docID, driverPositions := range tokenPostings[driverIdx] {
 		if !docPresentInAllPostings(tokenPostings, docID, driverIdx) {
 			continue
@@ -94,19 +99,19 @@ func (s *Service) countExactPhraseInField(ctx context.Context, positional Positi
 
 		matches := phraseAlign(tokenPostings, docID, driverIdx, driverPositions)
 		if matches > 0 {
-			counts[docID] = matches
+			matchesByDoc[docID] = matches
 		}
 	}
-	return counts, nil
+	return matchesByDoc, nil
 }
 
-func (s *Service) countNearPhraseInField(ctx context.Context, positional PositionalIndex, tokens []string, maxGap uint32) (map[DocID]uint32, error) {
+func (s *Service) searchNearPhraseCountsInField(ctx context.Context, positional PositionalIndex, tokens []string, maxGap uint32) (map[DocID]uint32, error) {
 	tokenPostings, err := s.searchTokenPostingsInField(ctx, positional, tokens)
 	if err != nil || tokenPostings == nil {
 		return map[DocID]uint32{}, err
 	}
 
-	counts := make(map[DocID]uint32)
+	matchesByDoc := make(map[DocID]uint32)
 	for docID := range tokenPostings[0] {
 		if !docPresentInAllPostings(tokenPostings, docID, 0) {
 			continue
@@ -114,10 +119,10 @@ func (s *Service) countNearPhraseInField(ctx context.Context, positional Positio
 
 		matches := phraseNearAlign(tokenPostings, docID, maxGap)
 		if matches > 0 {
-			counts[docID] = matches
+			matchesByDoc[docID] = matches
 		}
 	}
-	return counts, nil
+	return matchesByDoc, nil
 }
 
 func (s *Service) searchTokenPostingsInField(ctx context.Context, positional PositionalIndex, tokens []string) ([]map[DocID][]uint32, error) {
@@ -211,17 +216,21 @@ func docPresentInAllPostings(tokenPostings []map[DocID][]uint32, docID DocID, sk
 	return true
 }
 
-func resultsFromCounts(counts map[DocID]uint32) ([]Result, int) {
+func resultsFromCounts(counts map[DocID]uint32, scores map[DocID]float64, useScore bool) ([]Result, int) {
 	results := make([]Result, 0, len(counts))
 	for id, cnt := range counts {
 		results = append(results, Result{
 			ID:            id,
 			UniqueMatches: 1,
 			TotalMatches:  int(cnt),
+			Score:         scores[id],
 		})
 	}
 
 	sort.Slice(results, func(i, j int) bool {
+		if useScore && results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
 		if results[i].TotalMatches != results[j].TotalMatches {
 			return results[i].TotalMatches > results[j].TotalMatches
 		}

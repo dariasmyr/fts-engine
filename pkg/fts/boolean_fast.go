@@ -10,8 +10,11 @@ const lookupMapThreshold = 50
 type termExpansion struct {
 	field string
 	term  string
-	docs  []DocRef
-	byDoc map[DocID]uint32
+	df    uint32
+
+	fieldStats FieldStats
+	docs       []DocRef
+	byDoc      map[DocID]uint32
 }
 
 func (e *termExpansion) buildMap() {
@@ -213,13 +216,14 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 			}
 
 			// Start with the current driver expansion; other expansions may add more TF for the same clause.
-			accum := docAccum{UniqueMatches: 1, TotalMatches: int(driverDoc.Count)}
+			accum := docAccum{UniqueMatches: 1, TotalMatches: int(driverDoc.Count), Score: s.scoreTermExpansionDoc(*driverExpansion, driverDoc)}
 			for siblingExpansionIdx := range driverGroup.expansions {
 				if siblingExpansionIdx == driverExpansionIdx {
 					continue
 				}
 				if tf, ok := driverGroup.expansions[siblingExpansionIdx].lookup(driverDoc.ID); ok {
 					accum.TotalMatches += int(tf)
+					accum.Score += s.scoreTermExpansionTF(driverGroup.expansions[siblingExpansionIdx], driverDoc.ID, tf)
 				}
 			}
 
@@ -233,6 +237,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 					}
 					matchedAny = true
 					accum.TotalMatches += int(tf)
+					accum.Score += s.scoreTermExpansionTF(otherGroups[i].expansions[expansionIdx], driverDoc.ID, tf)
 				}
 				if matchedAny {
 					accum.UniqueMatches++
@@ -305,6 +310,7 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery) (ma
 				}
 				// TotalMatches still sums TF from every matching expansion.
 				accum.TotalMatches += int(doc.Count)
+				accum.Score += s.scoreTermExpansionDoc(expansion, doc)
 				combined[doc.ID] = accum
 			}
 		}
@@ -374,6 +380,7 @@ loop:
 				d := exps[i].docs[ptrs[i]]
 				accum.UniqueMatches++
 				accum.TotalMatches += int(d.Count)
+				accum.Score += s.scoreTermExpansionDoc(*exps[i], d)
 			}
 			combined[docID] = accum
 		}
@@ -420,13 +427,11 @@ func (s *Service) collectTermPostings(ctx context.Context, q TermQuery) (fastMus
 				continue
 			}
 
-			res, err := s.searchKeysInField(ctx, field, index, keys)
+			res, err := s.searchKeysInField(ctx, field, index, token, keys)
 			if err != nil {
 				return fastMust{}, err
 			}
-			for _, docs := range res.expansions {
-				out.expansions = append(out.expansions, termExpansion{field: field, term: token, docs: docs})
-			}
+			out.expansions = append(out.expansions, res.expansions...)
 			out.totalDocs += res.totalDocs
 		}
 	}

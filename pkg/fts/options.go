@@ -15,3 +15,15 @@ func WithFilter(f Filter) Option {
 		s.filter = f
 	}
 }
+
+func WithScorer(scorer Scorer) Option {
+	return func(s *Service) {
+		s.scorer = scorer
+	}
+}
+
+func WithCollectionStatsSnapshot(snapshot *CollectionStatsSnapshot) Option {
+	return func(s *Service) {
+		s.collection = newCollectionStatsFromSnapshot(snapshot)
+	}
+}

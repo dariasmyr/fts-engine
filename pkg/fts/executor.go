@@ -11,6 +11,7 @@ func addAccum(a, b docAccum) docAccum {
 	return docAccum{
 		UniqueMatches: a.UniqueMatches + b.UniqueMatches,
 		TotalMatches:  a.TotalMatches + b.TotalMatches,
+		Score:         a.Score + b.Score,
 	}
 }
 
@@ -38,18 +39,34 @@ func (s *Service) Search(ctx context.Context, q Query, maxResults int) (*SearchR
 			ID:            id,
 			UniqueMatches: h.UniqueMatches,
 			TotalMatches:  h.TotalMatches,
+			Score:         h.Score,
 		})
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].UniqueMatches != results[j].UniqueMatches {
-			return results[i].UniqueMatches > results[j].UniqueMatches
-		}
-		if results[i].TotalMatches != results[j].TotalMatches {
-			return results[i].TotalMatches > results[j].TotalMatches
-		}
-		return results[i].ID < results[j].ID
-	})
+	if s.scorer != nil {
+		sort.Slice(results, func(i, j int) bool {
+			if results[i].Score != results[j].Score {
+				return results[i].Score > results[j].Score
+			}
+			if results[i].UniqueMatches != results[j].UniqueMatches {
+				return results[i].UniqueMatches > results[j].UniqueMatches
+			}
+			if results[i].TotalMatches != results[j].TotalMatches {
+				return results[i].TotalMatches > results[j].TotalMatches
+			}
+			return results[i].ID < results[j].ID
+		})
+	} else {
+		sort.Slice(results, func(i, j int) bool {
+			if results[i].UniqueMatches != results[j].UniqueMatches {
+				return results[i].UniqueMatches > results[j].UniqueMatches
+			}
+			if results[i].TotalMatches != results[j].TotalMatches {
+				return results[i].TotalMatches > results[j].TotalMatches
+			}
+			return results[i].ID < results[j].ID
+		})
+	}
 
 	totalFound := len(results)
 	if maxResults <= 0 || maxResults > totalFound {
@@ -121,7 +138,7 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery) (map[DocID]docAccum
 			return nil, err
 		}
 
-		expansions, groupTotalDocs, err := s.collectTermFieldExpansions(ctx, fields, keyGroups[i])
+		expansions, groupTotalDocs, err := s.collectTermFieldExpansions(ctx, fields, tokens[i], keyGroups[i])
 		if err != nil {
 			return nil, err
 		}
@@ -141,8 +158,8 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery) (map[DocID]docAccum
 			seenInGroup = make(map[DocID]struct{}, group.totalDocs)
 		}
 
-		for _, docs := range group.expansions {
-			for _, doc := range docs {
+		for _, expansion := range group.expansions {
+			for _, doc := range expansion.docs {
 				accum := hits[doc.ID]
 				if group.single {
 					accum.UniqueMatches++
@@ -151,6 +168,7 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery) (map[DocID]docAccum
 					seenInGroup[doc.ID] = struct{}{}
 				}
 				accum.TotalMatches += int(doc.Count)
+				accum.Score += s.scoreTermExpansionDoc(expansion, doc)
 				hits[doc.ID] = accum
 			}
 		}
@@ -166,7 +184,7 @@ func (s *Service) execPhrase(ctx context.Context, q PhraseQuery) (map[DocID]docA
 	}
 	hits := make(map[DocID]docAccum, len(res.Results))
 	for _, r := range res.Results {
-		hits[r.ID] = docAccum{UniqueMatches: r.UniqueMatches, TotalMatches: r.TotalMatches}
+		hits[r.ID] = docAccum{UniqueMatches: r.UniqueMatches, TotalMatches: r.TotalMatches, Score: r.Score}
 	}
 	return hits, nil
 }
@@ -180,21 +198,24 @@ func (s *Service) execPrefix(ctx context.Context, q PrefixQuery) (map[DocID]docA
 	}
 
 	fields := s.resolveFields(q.Field)
-	docs, err := s.collectPrefixFieldDocs(ctx, fields, q.Prefix)
+	expansions, err := s.collectPrefixFieldDocs(ctx, fields, q.Prefix)
 	if err != nil {
 		return nil, err
 	}
 
 	hits := make(map[DocID]docAccum)
 	seen := make(map[DocID]struct{})
-	for _, doc := range docs {
-		accum := hits[doc.ID]
-		if _, ok := seen[doc.ID]; !ok {
-			accum.UniqueMatches++
-			seen[doc.ID] = struct{}{}
+	for _, expansion := range expansions {
+		for _, doc := range expansion.docs {
+			accum := hits[doc.ID]
+			if _, ok := seen[doc.ID]; !ok {
+				accum.UniqueMatches++
+				seen[doc.ID] = struct{}{}
+			}
+			accum.TotalMatches += int(doc.Count)
+			accum.Score += s.scoreTermExpansionDoc(expansion, doc)
+			hits[doc.ID] = accum
 		}
-		accum.TotalMatches += int(doc.Count)
-		hits[doc.ID] = accum
 	}
 	return hits, nil
 }

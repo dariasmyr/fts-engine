@@ -59,7 +59,7 @@ func main() {
 
 Index and filter snapshots are always stored in separate files.
 
-Flow 1 (recommended): manual codec registration via `init()` + split files.
+Flow 1 (recommended): manual codec registration via `init()` + split files. If you enable scorer-aware ranking, prefer `SaveIndexSnapshotWithStats(...)` so restore can recover collection stats.
 
 ```go
 package main
@@ -89,26 +89,34 @@ func init() {
 }
 
 func main() {
-	svc := fts.New(slicedradix.New(), keygen.Word)
+	svc := fts.New(slicedradix.New(), keygen.Word, fts.WithScorer(fts.BM25()))
 	_ = svc.IndexDocument(context.Background(), "doc-1", "snapshot demo")
 	idx, _ := svc.SnapshotComponents()
+	stats := svc.SnapshotCollectionStats()
 
 	// export to file
 	idxOut, _ := os.Create("./data/segments/default.index.fidx")
 	defer idxOut.Close()
-	_ = fts.SaveIndexSnapshot(idxOut, "slicedradix", idx)
+	_ = fts.SaveIndexSnapshotWithStats(idxOut, "slicedradix", idx, stats)
 
 	
 	// open from file
 	idxIn, _ := os.Open("./data/segments/default.index.fidx")
 	defer idxIn.Close()
 	loadedIndex, _ := fts.LoadIndexSnapshot(idxIn)
-	restored := fts.New(loadedIndex.Index, keygen.Word)
+	restored := fts.New(
+		loadedIndex.Index,
+		keygen.Word,
+		fts.WithScorer(fts.BM25()),
+		fts.WithCollectionStatsSnapshot(loadedIndex.CollectionStats),
+	)
 
 	res, _ := restored.SearchDocuments(context.Background(), "snapshot", 10)
 	fmt.Println(res.TotalResultsCount)
 }
 ```
+
+The old `SaveIndexSnapshot(...)` and `SaveMultiIndexSnapshot(...)` wrappers are still available for backward compatibility, but they do not persist `CollectionStats`. Use `SaveIndexSnapshotWithStats(...)` / `SaveMultiIndexSnapshotWithStats(...)` for scorer-aware restore.
 
 Flow 2: ready-to-use built-in codecs and filters is now in examples:
 - `examples/client-library/snapshot-save-files/main.go`

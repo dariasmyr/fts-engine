@@ -17,6 +17,7 @@ type Result struct {
 	ID            DocID
 	UniqueMatches int
 	TotalMatches  int
+	Score         float64
 }
 
 type SearchResult struct {

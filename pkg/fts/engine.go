@@ -11,10 +11,11 @@ import (
 type docAccum struct {
 	UniqueMatches int
 	TotalMatches  int
+	Score         float64
 }
 
 type tokenGroup struct {
-	expansions [][]DocRef
+	expansions []termExpansion
 	totalDocs  int
 	single     bool
 }
@@ -24,6 +25,8 @@ type Service struct {
 	keyGen       KeyGenerator
 	pipeline     Pipeline
 	filter       Filter
+	scorer       Scorer
+	collection   *collectionStats
 	singleField  bool
 
 	mu      sync.RWMutex
@@ -61,9 +64,10 @@ func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opt
 
 func newService(keyGen KeyGenerator, opts ...Option) *Service {
 	s := &Service{
-		keyGen:   keyGen,
-		pipeline: defaultPipeline{},
-		indexes:  make(map[string]Index),
+		keyGen:     keyGen,
+		pipeline:   defaultPipeline{},
+		indexes:    make(map[string]Index),
+		collection: newCollectionStats(),
 	}
 
 	for _, opt := range opts {
@@ -161,6 +165,13 @@ func (s *Service) SnapshotComponents() (Index, Filter) {
 	idx := s.indexes[DefaultField]
 	s.mu.RUnlock()
 	return idx, s.filter
+}
+
+func (s *Service) SnapshotCollectionStats() *CollectionStatsSnapshot {
+	if s == nil || s.collection == nil {
+		return nil
+	}
+	return s.collection.snapshot()
 }
 
 func (s *Service) BuildFilter() error {

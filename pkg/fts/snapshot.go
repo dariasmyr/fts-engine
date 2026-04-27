@@ -19,12 +19,14 @@ type FilterSnapshotSaver func(filter Filter, w io.Writer) error
 type FilterSnapshotLoader func(r io.Reader) (Filter, error)
 
 type LoadedIndexSnapshot struct {
-	IndexName string
-	Index     Index
+	IndexName       string
+	Index           Index
+	CollectionStats *CollectionStatsSnapshot
 }
 
 type LoadedMultiIndexSnapshot struct {
-	Fields map[string]LoadedIndexSnapshot
+	Fields          map[string]LoadedIndexSnapshot
+	CollectionStats *CollectionStatsSnapshot
 }
 
 type LoadedFilterSnapshot struct {
@@ -33,9 +35,10 @@ type LoadedFilterSnapshot struct {
 }
 
 type indexEnvelope struct {
-	Version      uint16
-	IndexName    string
-	IndexPayload []byte
+	Version         uint16
+	IndexName       string
+	IndexPayload    []byte
+	CollectionStats *CollectionStatsSnapshot
 }
 
 type multiIndexField struct {
@@ -45,8 +48,9 @@ type multiIndexField struct {
 }
 
 type multiIndexEnvelope struct {
-	Version uint16
-	Fields  []multiIndexField
+	Version         uint16
+	Fields          []multiIndexField
+	CollectionStats *CollectionStatsSnapshot
 }
 
 type filterEnvelope struct {
@@ -115,7 +119,13 @@ func RegisterFilterSnapshotCodec(name string, saver FilterSnapshotSaver, loader 
 	return nil
 }
 
+// SaveIndexSnapshot saves an index snapshot without collection stats.
+// Deprecated: use SaveIndexSnapshotWithStats so scorer-aware restores can recover collection stats.
 func SaveIndexSnapshot(w io.Writer, indexName string, index Index) error {
+	return SaveIndexSnapshotWithStats(w, indexName, index, nil)
+}
+
+func SaveIndexSnapshotWithStats(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot) error {
 	if w == nil {
 		return fmt.Errorf("fts: save index snapshot: nil writer")
 	}
@@ -137,9 +147,10 @@ func SaveIndexSnapshot(w io.Writer, indexName string, index Index) error {
 	}
 
 	envelope := indexEnvelope{
-		Version:      snapshotVersion,
-		IndexName:    indexName,
-		IndexPayload: indexPayload.Bytes(),
+		Version:         snapshotVersion,
+		IndexName:       indexName,
+		IndexPayload:    indexPayload.Bytes(),
+		CollectionStats: stats,
 	}
 
 	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
@@ -176,10 +187,16 @@ func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
 		return nil, fmt.Errorf("fts: load index snapshot: decode index %q: %w", envelope.IndexName, err)
 	}
 
-	return &LoadedIndexSnapshot{IndexName: envelope.IndexName, Index: index}, nil
+	return &LoadedIndexSnapshot{IndexName: envelope.IndexName, Index: index, CollectionStats: envelope.CollectionStats}, nil
 }
 
+// SaveMultiIndexSnapshot saves a multi-index snapshot without collection stats.
+// Deprecated: use SaveMultiIndexSnapshotWithStats so scorer-aware restores can recover collection stats.
 func SaveMultiIndexSnapshot(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index) error {
+	return SaveMultiIndexSnapshotWithStats(w, fieldCodecs, indexes, nil)
+}
+
+func SaveMultiIndexSnapshotWithStats(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot) error {
 	if w == nil {
 		return fmt.Errorf("fts: save multi-index snapshot: nil writer")
 	}
@@ -227,8 +244,9 @@ func SaveMultiIndexSnapshot(w io.Writer, fieldCodecs map[string]string, indexes 
 	}
 
 	envelope := multiIndexEnvelope{
-		Version: multiIndexSnapshotVersion,
-		Fields:  fields,
+		Version:         multiIndexSnapshotVersion,
+		Fields:          fields,
+		CollectionStats: stats,
 	}
 
 	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
@@ -252,7 +270,7 @@ func LoadMultiIndexSnapshot(r io.Reader) (*LoadedMultiIndexSnapshot, error) {
 		return nil, fmt.Errorf("fts: load multi-index snapshot: unsupported version %d", envelope.Version)
 	}
 
-	loaded := &LoadedMultiIndexSnapshot{Fields: make(map[string]LoadedIndexSnapshot, len(envelope.Fields))}
+	loaded := &LoadedMultiIndexSnapshot{Fields: make(map[string]LoadedIndexSnapshot, len(envelope.Fields)), CollectionStats: envelope.CollectionStats}
 	for _, field := range envelope.Fields {
 		if field.FieldName == "" {
 			return nil, fmt.Errorf("fts: load multi-index snapshot: empty field name")

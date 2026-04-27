@@ -335,6 +335,9 @@ func tryLoadSplitSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.Ke
 	}
 
 	builtOpts := []pkgfts.Option{pkgfts.WithPipeline(pipeline)}
+	if loadedIndex.CollectionStats != nil {
+		builtOpts = append(builtOpts, pkgfts.WithCollectionStatsSnapshot(loadedIndex.CollectionStats))
+	}
 
 	if expectedFilter != "" {
 		if filterPath == "" {
@@ -435,6 +438,7 @@ func saveSplitSnapshots(log *slog.Logger, cfg *config.Config, svc *pkgfts.Servic
 	}
 
 	index, searchFilter := svc.SnapshotComponents()
+	stats := svc.SnapshotCollectionStats()
 
 	opts := ftspersist.SaveOptions{
 		BufferSize:     cfg.FTS.Snapshot.BufferSize,
@@ -443,7 +447,7 @@ func saveSplitSnapshots(log *slog.Logger, cfg *config.Config, svc *pkgfts.Servic
 	}
 
 	if err := ftspersist.SaveAtomicWithOptions(indexPath, opts, func(w io.Writer) error {
-		return pkgfts.SaveIndexSnapshot(w, indexName, index)
+		return pkgfts.SaveIndexSnapshotWithStats(w, indexName, index, stats)
 	}); err != nil {
 		return err
 	}

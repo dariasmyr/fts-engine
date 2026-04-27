@@ -107,8 +107,8 @@ func TestSaveLoadSplitSnapshotsRoundTrip(t *testing.T) {
 	index, searchFilter := svc.SnapshotComponents()
 
 	var indexSnap bytes.Buffer
-	if err := SaveIndexSnapshot(&indexSnap, indexCodecName, index); err != nil {
-		t.Fatalf("SaveIndexSnapshot() error = %v", err)
+	if err := SaveIndexSnapshotWithStats(&indexSnap, indexCodecName, index, nil); err != nil {
+		t.Fatalf("SaveIndexSnapshotWithStats() error = %v", err)
 	}
 
 	var filterSnap bytes.Buffer
@@ -138,11 +138,61 @@ func TestSaveLoadSplitSnapshotsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSaveLoadIndexSnapshotWithCollectionStatsRoundTrip(t *testing.T) {
+	indexCodecName := fmt.Sprintf("test-index-stats-%s", t.Name())
+	if err := RegisterIndexSnapshotCodec(indexCodecName,
+		func(index Index, w io.Writer) error { return index.(Serializable).Serialize(w) },
+		loadSnapshotIndex,
+	); err != nil {
+		t.Fatalf("RegisterIndexSnapshotCodec() error = %v", err)
+	}
+
+	svc := New(newSnapshotIndex(), WordKeys, WithScorer(BM25()))
+	ctx := context.Background()
+	if err := svc.IndexDocument(ctx, "doc-a", "rosa barge"); err != nil {
+		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	}
+	if err := svc.IndexDocument(ctx, "doc-b", "barge barge"); err != nil {
+		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	}
+
+	index, _ := svc.SnapshotComponents()
+	stats := svc.SnapshotCollectionStats()
+
+	var snap bytes.Buffer
+	if err := SaveIndexSnapshotWithStats(&snap, indexCodecName, index, stats); err != nil {
+		t.Fatalf("SaveIndexSnapshotWithStats() error = %v", err)
+	}
+
+	loaded, err := LoadIndexSnapshot(bytes.NewReader(snap.Bytes()))
+	if err != nil {
+		t.Fatalf("LoadIndexSnapshot() error = %v", err)
+	}
+	if loaded.CollectionStats == nil {
+		t.Fatal("LoadIndexSnapshot() returned nil collection stats")
+	}
+	if got := loaded.CollectionStats.DocLen[DefaultField]["doc-a"]; got != 2 {
+		t.Fatalf("loaded doc length = %d, want 2", got)
+	}
+
+	restored := New(loaded.Index, WordKeys, WithScorer(BM25()), WithCollectionStatsSnapshot(loaded.CollectionStats))
+	res, err := restored.SearchDocuments(ctx, "rosa barge", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() after restore error = %v", err)
+	}
+	if len(res.Results) < 2 || res.Results[0].ID != "doc-a" {
+		t.Fatalf("expected doc-a to rank first after restore, got %+v", res.Results)
+	}
+	if res.Results[0].Score <= 0 {
+		t.Fatalf("expected positive score after restore, got %+v", res.Results[0])
+	}
+}
+
 func TestSaveIndexSnapshotUnknownCodec(t *testing.T) {
 	var snap bytes.Buffer
-	err := SaveIndexSnapshot(&snap, "unknown", newSnapshotIndex())
+	err := SaveIndexSnapshotWithStats(&snap, "unknown", newSnapshotIndex(), nil)
 	if err == nil {
-		t.Fatal("SaveIndexSnapshot() error = nil, want non-nil")
+		t.Fatal("SaveIndexSnapshotWithStats() error = nil, want non-nil")
 	}
 }
 
@@ -163,11 +213,11 @@ func TestSaveIndexSnapshotWritesPayload(t *testing.T) {
 	index, _ := svc.SnapshotComponents()
 
 	var out bytes.Buffer
-	if err := SaveIndexSnapshot(&out, indexCodecName, index); err != nil {
-		t.Fatalf("SaveIndexSnapshot() error = %v", err)
+	if err := SaveIndexSnapshotWithStats(&out, indexCodecName, index, nil); err != nil {
+		t.Fatalf("SaveIndexSnapshotWithStats() error = %v", err)
 	}
 	if out.Len() == 0 {
-		t.Fatal("SaveIndexSnapshot() wrote empty payload")
+		t.Fatal("SaveIndexSnapshotWithStats() wrote empty payload")
 	}
 }
 
@@ -201,11 +251,11 @@ func TestSaveLoadMultiIndexSnapshotRoundTrip(t *testing.T) {
 	codecs := map[string]string{"body": codecName, "title": codecName}
 
 	var snap bytes.Buffer
-	if err := SaveMultiIndexSnapshot(&snap, codecs, indexes); err != nil {
-		t.Fatalf("SaveMultiIndexSnapshot() error = %v", err)
+	if err := SaveMultiIndexSnapshotWithStats(&snap, codecs, indexes, nil); err != nil {
+		t.Fatalf("SaveMultiIndexSnapshotWithStats() error = %v", err)
 	}
 	if snap.Len() == 0 {
-		t.Fatal("SaveMultiIndexSnapshot() wrote empty payload")
+		t.Fatal("SaveMultiIndexSnapshotWithStats() wrote empty payload")
 	}
 
 	loaded, err := LoadMultiIndexSnapshot(bytes.NewReader(snap.Bytes()))
@@ -243,10 +293,79 @@ func TestSaveLoadMultiIndexSnapshotRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSaveLoadMultiIndexSnapshotWithCollectionStatsRoundTrip(t *testing.T) {
+	codecName := fmt.Sprintf("test-multi-index-stats-%s", t.Name())
+	if err := RegisterIndexSnapshotCodec(codecName,
+		func(index Index, w io.Writer) error { return index.(Serializable).Serialize(w) },
+		loadSnapshotIndex,
+	); err != nil {
+		t.Fatalf("RegisterIndexSnapshotCodec() error = %v", err)
+	}
+
+	svc := NewMultiField(
+		func(name string) (Index, error) { return newSnapshotIndex(), nil },
+		WordKeys,
+		WithScorer(BM25()),
+	)
+
+	ctx := context.Background()
+	if err := svc.Index(ctx, Document{ID: "doc-1", Fields: map[string]Field{
+		"title": {Value: "rosa barge"},
+		"body":  {Value: "french canal"},
+	}}); err != nil {
+		t.Fatalf("Index(doc-1) error = %v", err)
+	}
+	if err := svc.Index(ctx, Document{ID: "doc-2", Fields: map[string]Field{
+		"title": {Value: "barge"},
+	}}); err != nil {
+		t.Fatalf("Index(doc-2) error = %v", err)
+	}
+
+	indexes, _ := svc.SnapshotFields()
+	stats := svc.SnapshotCollectionStats()
+	codecs := map[string]string{"body": codecName, "title": codecName}
+
+	var snap bytes.Buffer
+	if err := SaveMultiIndexSnapshotWithStats(&snap, codecs, indexes, stats); err != nil {
+		t.Fatalf("SaveMultiIndexSnapshotWithStats() error = %v", err)
+	}
+
+	loaded, err := LoadMultiIndexSnapshot(bytes.NewReader(snap.Bytes()))
+	if err != nil {
+		t.Fatalf("LoadMultiIndexSnapshot() error = %v", err)
+	}
+	if loaded.CollectionStats == nil {
+		t.Fatal("LoadMultiIndexSnapshot() returned nil collection stats")
+	}
+	if got := loaded.CollectionStats.DocLen["title"]["doc-1"]; got != 2 {
+		t.Fatalf("loaded title doc length = %d, want 2", got)
+	}
+	if got := len(loaded.CollectionStats.DocLen["body"]); got != 1 {
+		t.Fatalf("loaded body doc count = %d, want 1", got)
+	}
+
+	restoredIndexes := make(map[string]Index, len(loaded.Fields))
+	for fieldName, snapshot := range loaded.Fields {
+		restoredIndexes[fieldName] = snapshot.Index
+	}
+
+	restored := NewMultiFieldFromIndexes(restoredIndexes, WordKeys, WithScorer(BM25()), WithCollectionStatsSnapshot(loaded.CollectionStats))
+	res, err := restored.Search(ctx, TermQuery{Field: "title", Term: "rosa barge"}, 10)
+	if err != nil {
+		t.Fatalf("Search(title:rosa barge) error = %v", err)
+	}
+	if len(res.Results) < 2 || res.Results[0].ID != "doc-1" {
+		t.Fatalf("expected doc-1 to rank first after multi-field restore, got %+v", res.Results)
+	}
+	if res.Results[0].Score <= 0 {
+		t.Fatalf("expected positive score after multi-field restore, got %+v", res.Results[0])
+	}
+}
+
 func TestSaveMultiIndexSnapshotUnknownCodec(t *testing.T) {
-	err := SaveMultiIndexSnapshot(&bytes.Buffer{}, map[string]string{"title": "unknown"}, map[string]Index{"title": newSnapshotIndex()})
+	err := SaveMultiIndexSnapshotWithStats(&bytes.Buffer{}, map[string]string{"title": "unknown"}, map[string]Index{"title": newSnapshotIndex()}, nil)
 	if err == nil {
-		t.Fatal("SaveMultiIndexSnapshot() error = nil, want non-nil")
+		t.Fatal("SaveMultiIndexSnapshotWithStats() error = nil, want non-nil")
 	}
 }
 

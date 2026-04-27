@@ -7,12 +7,12 @@ import (
 )
 
 type prefixFieldDocsResult struct {
-	docs []DocRef
-	err  error
+	expansion termExpansion
+	err       error
 }
 
-func (s *Service) collectPrefixFieldDocs(ctx context.Context, fields []string, prefix string) ([]DocRef, error) {
-	docs := make([]DocRef, 0)
+func (s *Service) collectPrefixFieldDocs(ctx context.Context, fields []string, prefix string) ([]termExpansion, error) {
+	expansions := make([]termExpansion, 0, len(fields))
 	if len(fields) <= 1 {
 		for _, field := range fields {
 			index, ok := s.lookupIndex(field)
@@ -24,13 +24,15 @@ func (s *Service) collectPrefixFieldDocs(ctx context.Context, fields []string, p
 				continue
 			}
 
-			fieldDocs, err := s.searchPrefixInField(ctx, field, prefixer, prefix)
+			expansion, err := s.searchPrefixInField(ctx, field, prefixer, prefix)
 			if err != nil {
 				return nil, err
 			}
-			docs = append(docs, fieldDocs...)
+			if len(expansion.docs) > 0 {
+				expansions = append(expansions, expansion)
+			}
 		}
-		return docs, nil
+		return expansions, nil
 	}
 
 	results := make(chan prefixFieldDocsResult, len(fields))
@@ -46,12 +48,12 @@ func (s *Service) collectPrefixFieldDocs(ctx context.Context, fields []string, p
 		}
 
 		wg.Go(func() {
-			fieldDocs, err := s.searchPrefixInField(ctx, field, prefixer, prefix)
+			expansion, err := s.searchPrefixInField(ctx, field, prefixer, prefix)
 			if err != nil {
 				results <- prefixFieldDocsResult{err: err}
 				return
 			}
-			results <- prefixFieldDocsResult{docs: fieldDocs}
+			results <- prefixFieldDocsResult{expansion: expansion}
 		})
 	}
 
@@ -61,20 +63,28 @@ func (s *Service) collectPrefixFieldDocs(ctx context.Context, fields []string, p
 		if res.err != nil {
 			return nil, res.err
 		}
-		docs = append(docs, res.docs...)
+		if len(res.expansion.docs) > 0 {
+			expansions = append(expansions, res.expansion)
+		}
 	}
 
-	return docs, nil
+	return expansions, nil
 }
 
-func (s *Service) searchPrefixInField(ctx context.Context, field string, prefixer PrefixIndex, prefix string) ([]DocRef, error) {
+func (s *Service) searchPrefixInField(ctx context.Context, field string, prefixer PrefixIndex, prefix string) (termExpansion, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return termExpansion{}, err
 	}
 
 	docs, err := prefixer.SearchPrefix(prefix)
 	if err != nil {
-		return nil, fmt.Errorf("fts: prefix query field %q: %w", field, err)
+		return termExpansion{}, fmt.Errorf("fts: prefix query field %q: %w", field, err)
 	}
-	return docs, nil
+	return termExpansion{
+		field:      field,
+		term:       prefix + "*",
+		df:         uint32(len(docs)),
+		fieldStats: s.fieldStatsFor(field),
+		docs:       docs,
+	}, nil
 }

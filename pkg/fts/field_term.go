@@ -7,13 +7,13 @@ import (
 )
 
 type termFieldDocsResult struct {
-	expansions [][]DocRef
+	expansions []termExpansion
 	totalDocs  int
 	err        error
 }
 
-func (s *Service) collectTermFieldExpansions(ctx context.Context, fields []string, keys []string) ([][]DocRef, int, error) {
-	expansions := make([][]DocRef, 0, len(fields)*len(keys))
+func (s *Service) collectTermFieldExpansions(ctx context.Context, fields []string, term string, keys []string) ([]termExpansion, int, error) {
+	expansions := make([]termExpansion, 0, len(fields)*len(keys))
 	totalDocs := 0
 	if len(fields) <= 1 {
 		for _, field := range fields {
@@ -22,7 +22,7 @@ func (s *Service) collectTermFieldExpansions(ctx context.Context, fields []strin
 				continue
 			}
 
-			res, err := s.searchKeysInField(ctx, field, index, keys)
+			res, err := s.searchKeysInField(ctx, field, index, term, keys)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -41,7 +41,7 @@ func (s *Service) collectTermFieldExpansions(ctx context.Context, fields []strin
 		}
 
 		wg.Go(func() {
-			res, err := s.searchKeysInField(ctx, field, index, keys)
+			res, err := s.searchKeysInField(ctx, field, index, term, keys)
 			if err != nil {
 				results <- termFieldDocsResult{err: err}
 				return
@@ -63,12 +63,13 @@ func (s *Service) collectTermFieldExpansions(ctx context.Context, fields []strin
 	return expansions, totalDocs, nil
 }
 
-func (s *Service) searchKeysInField(ctx context.Context, field string, index Index, keys []string) (termFieldDocsResult, error) {
+func (s *Service) searchKeysInField(ctx context.Context, field string, index Index, term string, keys []string) (termFieldDocsResult, error) {
 	if err := ctx.Err(); err != nil {
 		return termFieldDocsResult{}, err
 	}
 
-	res := termFieldDocsResult{expansions: make([][]DocRef, 0, len(keys))}
+	res := termFieldDocsResult{expansions: make([]termExpansion, 0, len(keys))}
+	fieldStats := s.fieldStatsFor(field)
 	for _, key := range keys {
 		if s.filter != nil && !s.filter.Contains([]byte(key)) {
 			continue
@@ -82,7 +83,13 @@ func (s *Service) searchKeysInField(ctx context.Context, field string, index Ind
 			continue
 		}
 
-		res.expansions = append(res.expansions, docs)
+		res.expansions = append(res.expansions, termExpansion{
+			field:      field,
+			term:       term,
+			df:         uint32(len(docs)),
+			fieldStats: fieldStats,
+			docs:       docs,
+		})
 		res.totalDocs += len(docs)
 	}
 	return res, nil

@@ -32,12 +32,14 @@ func main() {
 		panic(err)
 	}
 
-	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt))
+	// Enable scorer so collection stats are populated and can be persisted with the snapshot.
+	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
 	if err := svc.IndexDocument(context.Background(), "doc-1", "snapshot with bloom filter"); err != nil {
 		panic(err)
 	}
 
 	index, searchFilter := svc.SnapshotComponents()
+	stats := svc.SnapshotCollectionStats()
 
 	indexFile, err := os.Create("./data/segments/default.index.fidx")
 	if err != nil {
@@ -51,7 +53,7 @@ func main() {
 	}
 	defer filterFile.Close()
 
-	if err := fts.SaveIndexSnapshot(indexFile, "radix", index); err != nil {
+	if err := fts.SaveIndexSnapshotWithStats(indexFile, "radix", index, stats); err != nil {
 		panic(err)
 	}
 	if err := fts.SaveFilterSnapshot(filterFile, "bloom", searchFilter); err != nil {

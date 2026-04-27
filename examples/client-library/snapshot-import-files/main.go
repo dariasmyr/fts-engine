@@ -37,7 +37,13 @@ func main() {
 		panic(err)
 	}
 
-	restored := fts.New(loadedIndex.Index, keygen.Word, fts.WithFilter(loadedFilter.Filter))
+	restored := fts.New(
+		loadedIndex.Index,
+		keygen.Word,
+		fts.WithFilter(loadedFilter.Filter),
+		fts.WithScorer(fts.BM25()),
+		fts.WithCollectionStatsSnapshot(loadedIndex.CollectionStats),
+	)
 	res, err := restored.SearchDocuments(context.Background(), "snapshot", 10)
 	if err != nil {
 		panic(err)

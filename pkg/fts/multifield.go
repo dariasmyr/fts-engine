@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -47,6 +48,9 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 
 	positional, hasPositions := index.(PositionalIndex)
 	tokens := pipeline.Process(field.Value)
+	if s.scorer != nil {
+		s.collection.observe(name, docID, uint32(len(tokens)))
+	}
 	for pos, token := range tokens {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -160,15 +164,27 @@ func (s *Service) searchPhraseFields(ctx context.Context, fields []string, phras
 	}
 
 	searchStart := time.Now()
-	phraseCounts, err := s.collectPositionalFieldCounts(ctx, fields, func(positional PositionalIndex) (map[DocID]uint32, error) {
-		return s.countExactPhraseInField(ctx, positional, tokens)
+	phraseTerm := strings.Join(tokens, " ")
+	phraseCounts := make(map[DocID]uint32)
+	scores := make(map[DocID]float64)
+	fieldMatches, err := s.collectPositionalFieldMatches(ctx, fields, func(positional PositionalIndex) (map[DocID]uint32, error) {
+		return s.searchExactPhraseCountsInField(ctx, positional, tokens)
 	})
 	if err != nil {
 		return nil, err
 	}
+	for _, fieldMatch := range fieldMatches {
+		fieldStats := s.fieldStatsFor(fieldMatch.field)
+		// For phrase scoring, treat the whole phrase as one term: df is docs with the phrase, cnt is that phrase TF in one doc.
+		df := uint32(len(fieldMatch.matchesByDoc))
+		for docID, cnt := range fieldMatch.matchesByDoc {
+			phraseCounts[docID] += cnt
+			scores[docID] += s.scoreTermHit(fieldMatch.field, phraseTerm, docID, cnt, df, fieldStats)
+		}
+	}
 
 	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-	results, totalFound := resultsFromCounts(phraseCounts)
+	results, totalFound := resultsFromCounts(phraseCounts, scores, s.scorer != nil)
 	if maxResults <= 0 || maxResults > totalFound {
 		maxResults = totalFound
 	}
@@ -210,15 +226,27 @@ func (s *Service) searchPhraseNearFields(ctx context.Context, fields []string, p
 	}
 
 	searchStart := time.Now()
-	phraseCounts, err := s.collectPositionalFieldCounts(ctx, fields, func(positional PositionalIndex) (map[DocID]uint32, error) {
-		return s.countNearPhraseInField(ctx, positional, tokens, uint32(distance))
+	phraseTerm := strings.Join(tokens, " ")
+	phraseCounts := make(map[DocID]uint32)
+	scores := make(map[DocID]float64)
+	fieldMatches, err := s.collectPositionalFieldMatches(ctx, fields, func(positional PositionalIndex) (map[DocID]uint32, error) {
+		return s.searchNearPhraseCountsInField(ctx, positional, tokens, uint32(distance))
 	})
 	if err != nil {
 		return nil, err
 	}
+	for _, fieldMatch := range fieldMatches {
+		fieldStats := s.fieldStatsFor(fieldMatch.field)
+		// For phrase-near scoring, treat the whole phrase as one term: df is docs with the phrase, cnt is that phrase TF in one doc.
+		df := uint32(len(fieldMatch.matchesByDoc))
+		for docID, cnt := range fieldMatch.matchesByDoc {
+			phraseCounts[docID] += cnt
+			scores[docID] += s.scoreTermHit(fieldMatch.field, phraseTerm, docID, cnt, df, fieldStats)
+		}
+	}
 
 	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-	results, totalFound := resultsFromCounts(phraseCounts)
+	results, totalFound := resultsFromCounts(phraseCounts, scores, s.scorer != nil)
 	if maxResults <= 0 || maxResults > totalFound {
 		maxResults = totalFound
 	}
