@@ -31,6 +31,9 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if s.singleField && name != DefaultField {
+		return fmt.Errorf("fts: index document %q: field %q is not available in single-field mode; use %q or fts.NewMultiField", docID, name, DefaultField)
+	}
 
 	index, err := s.getOrCreateIndex(name)
 	if err != nil {
@@ -129,9 +132,6 @@ func (s *Service) getOrCreateIndex(name string) (Index, error) {
 	}
 
 	s.indexes[name] = idx
-	if name == DefaultField {
-		s.index = idx
-	}
 	return idx, nil
 }
 

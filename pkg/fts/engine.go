@@ -20,11 +20,11 @@ type tokenGroup struct {
 }
 
 type Service struct {
-	index        Index
 	indexFactory IndexFactory
 	keyGen       KeyGenerator
 	pipeline     Pipeline
 	filter       Filter
+	singleField  bool
 
 	mu      sync.RWMutex
 	indexes map[string]Index
@@ -32,7 +32,7 @@ type Service struct {
 
 func New(index Index, keyGen KeyGenerator, opts ...Option) *Service {
 	s := newService(keyGen, opts...)
-	s.index = index
+	s.singleField = true
 	s.indexFactory = func(name string) (Index, error) {
 		return nil, fmt.Errorf("fts: field %q is not available (service was built with fts.New; use fts.NewMultiField to index arbitrary fields)", name)
 	}
@@ -52,9 +52,6 @@ func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opt
 	s := newService(keyGen, opts...)
 	for name, idx := range indexes {
 		s.indexes[name] = idx
-	}
-	if idx, ok := s.indexes[DefaultField]; ok {
-		s.index = idx
 	}
 	s.indexFactory = func(name string) (Index, error) {
 		return nil, fmt.Errorf("fts: field %q was not present in the restored snapshot", name)

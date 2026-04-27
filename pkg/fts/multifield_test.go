@@ -65,6 +65,10 @@ func TestSingleFieldServiceRejectsOtherFields(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown field on single-field service")
 	}
+	want := "fts: index document \"doc-1\": field \"title\" is not available in single-field mode; use \"_default\" or fts.NewMultiField"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err.Error(), want)
+	}
 }
 
 type uppercasePipeline struct{}
