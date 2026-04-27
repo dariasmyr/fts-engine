@@ -8,6 +8,7 @@ import (
 const lookupMapThreshold = 50
 
 type termExpansion struct {
+	field string
 	term  string
 	docs  []DocRef
 	byDoc map[DocID]uint32
@@ -170,8 +171,8 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 	}
 
 	sort.Slice(mustGroups, func(i, j int) bool { return mustGroups[i].totalDocs < mustGroups[j].totalDocs })
-	if allSingleExpansion(mustGroups) {
-		// Fast path: each MUST clause maps to exactly one postings list, so we can intersect by Seq.
+	if allSingleExpansionInSameField(mustGroups) {
+		// Fast path: Seq ordinals are only comparable within one field index.
 		return s.execBooleanAndSortMerge(mustGroups, shoulds, exclude, ctx)
 	}
 
@@ -312,9 +313,18 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery) (ma
 	return combined, true, nil
 }
 
-func allSingleExpansion(musts []fastMust) bool {
+func allSingleExpansionInSameField(musts []fastMust) bool {
+	field := ""
 	for i := range musts {
 		if len(musts[i].expansions) != 1 {
+			return false
+		}
+		expField := musts[i].expansions[0].field
+		if field == "" {
+			field = expField
+			continue
+		}
+		if expField != field {
 			return false
 		}
 	}
@@ -404,16 +414,21 @@ func (s *Service) collectTermPostings(ctx context.Context, q TermQuery) (fastMus
 			return fastMust{}, err
 		}
 
-		// Boolean fast paths reuse the same multi-field term fan-out layer as
-		// ordinary term queries, then wrap each expansion into fastMust groups.
-		expansions, totalDocs, err := s.collectTermFieldExpansions(ctx, fields, keys)
-		if err != nil {
-			return fastMust{}, err
+		for _, field := range fields {
+			index, ok := s.lookupIndex(field)
+			if !ok {
+				continue
+			}
+
+			res, err := s.searchKeysInField(ctx, field, index, keys)
+			if err != nil {
+				return fastMust{}, err
+			}
+			for _, docs := range res.expansions {
+				out.expansions = append(out.expansions, termExpansion{field: field, term: token, docs: docs})
+			}
+			out.totalDocs += res.totalDocs
 		}
-		for _, docs := range expansions {
-			out.expansions = append(out.expansions, termExpansion{term: token, docs: docs})
-		}
-		out.totalDocs += totalDocs
 	}
 	return out, nil
 }

@@ -174,6 +174,26 @@ func TestSearchDocumentsFieldScopedTerm(t *testing.T) {
 	}
 }
 
+func TestSearchDocumentsMustAcrossFieldsIntersectsByDocID(t *testing.T) {
+	title := newMemoryIndex()
+	title.entries["barack"] = []DocRef{{ID: "doc-1", Count: 1, Seq: 0}, {ID: "doc-2", Count: 1, Seq: 1}}
+	body := newMemoryIndex()
+	body.entries["obama"] = []DocRef{{ID: "doc-3", Count: 1, Seq: 0}, {ID: "doc-2", Count: 1, Seq: 1}}
+
+	svc := NewMultiFieldFromIndexes(map[string]Index{
+		"title": title,
+		"body":  body,
+	}, WordKeys)
+
+	res, err := svc.SearchDocuments(context.Background(), "+title:barack +body:obama", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if res.TotalResultsCount != 1 || len(res.Results) != 1 || res.Results[0].ID != "doc-2" {
+		t.Fatalf("expected only doc-2 after cross-field MUST intersection, got %+v", res.Results)
+	}
+}
+
 func TestSearchDocumentsQuotedPhraseAcrossFields(t *testing.T) {
 	factory := func(name string) (Index, error) { return newPositionalMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys)
