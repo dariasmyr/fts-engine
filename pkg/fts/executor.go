@@ -231,6 +231,12 @@ func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, topK int) (m
 		return res, nil
 	}
 
+	if res, ok, err := s.tryExecBooleanOrWand(ctx, q, topK); err != nil {
+		return nil, err
+	} else if ok {
+		return res, nil
+	}
+
 	if res, ok, err := s.tryExecBooleanOrFast(ctx, q); err != nil {
 		return nil, err
 	} else if ok {
