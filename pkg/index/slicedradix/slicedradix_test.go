@@ -1,6 +1,10 @@
 package slicedradix
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+)
 
 func TestIndexInsertAndSearch(t *testing.T) {
 	idx := New()
@@ -130,5 +134,71 @@ func TestIndexSearchReturnsSeqOrder(t *testing.T) {
 	}
 	if docs[1].ID != "doc-a" || docs[1].Seq != 1 {
 		t.Fatalf("docs[1] = %+v, want doc-a seq=1", docs[1])
+	}
+}
+
+func TestSearchPrefix(t *testing.T) {
+	idx := New()
+	inserts := map[string][]string{
+		"barack": {"doc-a", "doc-a"},
+		"banana": {"doc-b"},
+		"barge":  {"doc-c"},
+		"obama":  {"doc-a"},
+		"russia": {"doc-d"},
+	}
+	for word, docs := range inserts {
+		for _, docID := range docs {
+			if err := idx.Insert(word, fts.DocID(docID)); err != nil {
+				t.Fatalf("Insert(%q, %q) error = %v", word, docID, err)
+			}
+		}
+	}
+
+	refs, err := idx.SearchPrefix("ba")
+	if err != nil {
+		t.Fatalf("SearchPrefix() error = %v", err)
+	}
+
+	got := make(map[fts.DocID]uint32, len(refs))
+	for _, ref := range refs {
+		got[ref.ID] = ref.Count
+	}
+	if got["doc-a"] != 2 {
+		t.Fatalf("doc-a count = %d, want 2", got["doc-a"])
+	}
+	if got["doc-b"] != 1 {
+		t.Fatalf("doc-b count = %d, want 1", got["doc-b"])
+	}
+	if got["doc-c"] != 1 {
+		t.Fatalf("doc-c count = %d, want 1", got["doc-c"])
+	}
+	if _, ok := got["doc-d"]; ok {
+		t.Fatalf("doc-d should not match ba*: %+v", got)
+	}
+}
+
+func TestSearchPrefixNoMatch(t *testing.T) {
+	idx := New()
+	_ = idx.Insert("hello", "doc-1")
+
+	refs, err := idx.SearchPrefix("zzz")
+	if err != nil {
+		t.Fatalf("SearchPrefix() error = %v", err)
+	}
+	if len(refs) != 0 {
+		t.Fatalf("len(refs) = %d, want 0", len(refs))
+	}
+}
+
+func TestSearchPrefixExactKey(t *testing.T) {
+	idx := New()
+	_ = idx.Insert("barack", "doc-1")
+
+	refs, err := idx.SearchPrefix("barack")
+	if err != nil {
+		t.Fatalf("SearchPrefix() error = %v", err)
+	}
+	if len(refs) != 1 || refs[0].ID != "doc-1" {
+		t.Fatalf("refs = %+v, want exact-key match", refs)
 	}
 }

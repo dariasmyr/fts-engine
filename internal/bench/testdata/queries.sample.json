@@ -1,0 +1,16 @@
+{
+  "queries": [
+    {
+      "query": "french hotel barge canal",
+      "relevant_titles": ["Wikipedia: Rosa (barge)"]
+    },
+    {
+      "query": "barack obama speech",
+      "relevant_titles": ["Wikipedia: Barack Obama"]
+    },
+    {
+      "query": "climate change policy",
+      "relevant_titles": ["Wikipedia: Climate change"]
+    }
+  ]
+}

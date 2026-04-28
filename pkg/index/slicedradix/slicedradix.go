@@ -293,6 +293,72 @@ func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
 	}
 }
 
+func (t *Index) SearchPrefix(prefix string) ([]fts.DocRef, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if prefix == "" {
+		return t.collectSubtree(t.root), nil
+	}
+
+	current := t.root
+	rest := prefix
+	for {
+		nextNode, nextRest, matched, spansPrefix := t.prefixDescend(current, rest)
+		if !matched {
+			return nil, nil
+		}
+		if spansPrefix {
+			return t.collectSubtree(nextNode), nil
+		}
+		current = nextNode
+		rest = nextRest
+	}
+}
+
+func (t *Index) prefixDescend(current int, rest string) (int, string, bool, bool) {
+	for _, child := range t.nodes[current].children {
+		childPrefix := t.nodes[child].prefix
+		p := lcp(rest, childPrefix)
+		if p == 0 {
+			continue
+		}
+		if p == len(rest) {
+			return child, "", true, true
+		}
+		if p == len(childPrefix) {
+			return child, rest[p:], true, false
+		}
+		return 0, "", false, false
+	}
+	return 0, "", false, false
+}
+
+func (t *Index) collectSubtree(start int) []fts.DocRef {
+	aggregated := make(map[fts.DocID]uint32)
+	order := make([]fts.DocID, 0)
+
+	var dfs func(int)
+	dfs = func(nodeIdx int) {
+		for _, d := range t.nodes[nodeIdx].docs {
+			if _, seen := aggregated[d.ID]; !seen {
+				order = append(order, d.ID)
+			}
+			aggregated[d.ID] += d.Count
+		}
+		for _, child := range t.nodes[nodeIdx].children {
+			dfs(child)
+		}
+	}
+	dfs(start)
+
+	out := make([]fts.DocRef, 0, len(order))
+	for _, id := range order {
+		out = append(out, fts.DocRef{ID: id, Count: aggregated[id]})
+	}
+	return out
+}
+
 func (t *Index) next(current int, rest string) (int, string, bool, bool) {
 	for _, child := range t.nodes[current].children {
 		p := lcp(rest, t.nodes[child].prefix)
@@ -364,5 +430,5 @@ func (t *Index) Analyze() fts.Stats {
 }
 
 var _ fts.PositionalIndex = (*Index)(nil)
-
+var _ fts.PrefixIndex = (*Index)(nil)
 var _ fts.Index = (*Index)(nil)
