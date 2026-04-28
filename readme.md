@@ -12,16 +12,17 @@ Reusable full-text search engine in Go with configurable indexes, filters, stemm
 
 - Public library API in `pkg/fts`.
 - Public index implementations in `pkg/index/*`:
-  - `radix`
-  - `slicedradix`
-  - `hamt`
-  - `hamtpointered`
+  - `radix` (exact + positional)
+  - `slicedradix` (exact + positional + prefix)
+  - `hamt` (exact + positional)
+  - `hamtpointered` (exact + positional)
 - Public text processing pipeline in `pkg/textproc`.
 - Public key generators in `pkg/keygen`.
 - Public probabilistic filters in `pkg/filter`.
 - CLI entrypoint in `cmd/fts` with:
   - `prod` mode (run with configurable filters and interactive CUI)
   - `experiment` mode (collect indexing metrics)
+- Benchmark/evaluation CLI in `cmd/bench` for indexing throughput, latency, `nDCG`, `MRR`, and `Recall`.
 
 ## Library usage
 
@@ -151,6 +152,34 @@ pipe := textproc.NewPipeline(
 engine := fts.New(radix.New(), keygen.Word, fts.WithPipeline(pipe))
 ```
 
+### 5) Query types
+
+String query parsing via `SearchDocuments(...)` supports:
+
+- term query: `hotel`
+- phrase query: `"hotel barge"`
+- required term: `+hotel`
+- excluded term: `-market`
+- field-scoped term: `title:hotel`
+- field-scoped phrase: `title:"hotel barge"`
+- prefix query: `bar*`
+
+If you want to build queries programmatically, use the AST API:
+
+```go
+q := &fts.BooleanQuery{Clauses: []fts.BoolClause{
+	fts.MustClause(fts.TermQuery{Term: "hotel"}),
+	fts.ShouldClause(fts.PhraseQuery{Phrase: "french barge"}),
+	fts.MustNotClause(fts.TermQuery{Term: "market"}),
+}}
+
+res, _ := engine.Search(context.Background(), q, 10)
+fmt.Println(res.TotalResultsCount)
+```
+
+Prefix queries require an index that implements `fts.PrefixIndex`.
+Among the built-in public indexes, `slicedradix` currently supports prefix search.
+
 ## Run main app (local testing via config)
 
 Use this only when you want to test the repository app itself (`cmd/fts`), not when embedding the library into your service.
@@ -235,6 +264,33 @@ Snapshot fields (`fts.snapshot`):
 - `experiment`:
   - always indexes current input and prints memory/index stats,
   - does not run CUI snapshot restore flow.
+
+## Bench CLI
+
+Use `cmd/bench` when you want to compare index/scorer/pipeline combinations on a corpus with labeled queries.
+
+Example:
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-latest-abstract.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.sample.json \
+  -index slicedradix \
+  -lang en \
+  -field abstract \
+  -scorer bm25 \
+  -k 10
+```
+
+Useful flags:
+
+- `-index`: `radix|slicedradix|hamt|hamtpointered`
+- `-lang`: `en|ru|multi|none`
+- `-field`: `abstract|extract|title`
+- `-scorer`: `simple|bm25|tfidf`
+- `-k`: top-k used for `nDCG` and `Recall`
+- `-limit`: cap the number of indexed documents for quick experiments
+- `-worst`: print worst queries by `nDCG`
 
 ## Ribbon filter usage
 
@@ -365,4 +421,10 @@ Run only public packages:
 
 ```bash
 go test ./pkg/...
+```
+
+Run microbenchmarks for the FTS engine and prefix-capable sliced radix index:
+
+```bash
+go test -bench=. ./pkg/fts ./pkg/index/slicedradix
 ```
