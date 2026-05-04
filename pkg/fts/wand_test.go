@@ -49,7 +49,7 @@ func observeDefaultFieldLengths(svc *Service, lengths map[DocID]uint32) {
 	}
 }
 
-func TestTryExecBooleanOrWandMatchesFullScoringTopK(t *testing.T) {
+func TestTryExecBooleanOrWandMatchesFullScoringCandidateLimit(t *testing.T) {
 	idx := newMemoryIndex()
 	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 2, Seq: 1}, {ID: "doc-b", Count: 1, Seq: 2}, {ID: "doc-c", Count: 1, Seq: 3}, {ID: "doc-e", Count: 1, Seq: 5}}
 	idx.entries["beta"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}, {ID: "doc-c", Count: 2, Seq: 3}, {ID: "doc-d", Count: 1, Seq: 4}}
@@ -115,7 +115,7 @@ func TestTryExecBooleanOrWandPreservesTieBreakers(t *testing.T) {
 	requireSameScoredResults(t, got, want)
 }
 
-func TestTryExecBooleanOrWandSkipsWithoutTopK(t *testing.T) {
+func TestTryExecBooleanOrWandSkipsWithoutCandidateLimit(t *testing.T) {
 	idx := newMemoryIndex()
 	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}}
 
@@ -128,7 +128,7 @@ func TestTryExecBooleanOrWandSkipsWithoutTopK(t *testing.T) {
 		t.Fatalf("tryExecBooleanOrWand() error = %v", err)
 	}
 	if ok {
-		t.Fatal("tryExecBooleanOrWand() unexpectedly activated without topK")
+		t.Fatal("tryExecBooleanOrWand() unexpectedly activated without candidateLimit")
 	}
 }
 

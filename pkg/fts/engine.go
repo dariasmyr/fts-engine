@@ -132,11 +132,11 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 }
 
 func (s *Service) SearchPhrase(ctx context.Context, phrase string, maxResults int) (*SearchResult, error) {
-	return s.searchPhraseFields(ctx, s.fieldNames(), phrase, maxResults)
+	return s.searchPhraseFieldsResult(ctx, s.fieldNames(), phrase, maxResults)
 }
 
 func (s *Service) SearchPhraseNear(ctx context.Context, phrase string, distance int, maxResults int) (*SearchResult, error) {
-	return s.searchPhraseNearFields(ctx, s.fieldNames(), phrase, distance, maxResults)
+	return s.searchPhraseNearFieldsResult(ctx, s.fieldNames(), phrase, distance, maxResults)
 }
 
 func (s *Service) Analyze() (Stats, bool) {

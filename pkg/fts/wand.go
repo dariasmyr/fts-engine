@@ -7,8 +7,8 @@ import (
 	"sort"
 )
 
-func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, topK int) (map[DocID]docAccum, bool, error) {
-	if topK <= 0 || s.scorer == nil {
+func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, candidateLimit int) (map[DocID]docAccum, bool, error) {
+	if candidateLimit <= 0 || s.scorer == nil {
 		return nil, false, nil
 	}
 
@@ -53,7 +53,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, top
 		})
 	}
 
-	h := &topKHeap{}
+	h := &candidateHeap{}
 	heap.Init(h)
 	var theta float64
 
@@ -100,9 +100,9 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, top
 
 			if _, skip := exclude[matchedDocID]; !skip {
 				hit := wandHit{id: matchedDocID, accum: accum}
-				if h.Len() < topK {
+				if h.Len() < candidateLimit {
 					heap.Push(h, hit)
-					if h.Len() == topK {
+					if h.Len() == candidateLimit {
 						theta = (*h)[0].accum.Score
 					}
 				} else if betterWandHit(hit, (*h)[0]) {
@@ -208,21 +208,21 @@ func betterWandHit(a, b wandHit) bool {
 	return a.id < b.id
 }
 
-type topKHeap []wandHit
+type candidateHeap []wandHit
 
-func (h topKHeap) Len() int { return len(h) }
+func (h candidateHeap) Len() int { return len(h) }
 
-func (h topKHeap) Less(i, j int) bool {
+func (h candidateHeap) Less(i, j int) bool {
 	return betterWandHit(h[j], h[i])
 }
 
-func (h topKHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h candidateHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
 
-func (h *topKHeap) Push(x any) {
+func (h *candidateHeap) Push(x any) {
 	*h = append(*h, x.(wandHit))
 }
 
-func (h *topKHeap) Pop() any {
+func (h *candidateHeap) Pop() any {
 	old := *h
 	n := len(old)
 	x := old[n-1]

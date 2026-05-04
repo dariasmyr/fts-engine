@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -139,7 +138,7 @@ func (s *Service) getOrCreateIndex(name string) (Index, error) {
 	return idx, nil
 }
 
-func (s *Service) searchPhraseFields(ctx context.Context, fields []string, phrase string, maxResults int) (*SearchResult, error) {
+func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string, phrase string, maxResults int) (*SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -148,57 +147,31 @@ func (s *Service) searchPhraseFields(ctx context.Context, fields []string, phras
 	timings := make(map[string]string, 3)
 
 	preStart := time.Now()
-	tokens := s.pipeline.Process(phrase)
+	plan := s.preparePhrase(fields, phrase)
 	timings["preprocess"] = formatDuration(time.Since(preStart))
 
-	if len(tokens) == 0 {
+	if len(plan.tokens) == 0 {
 		timings["search_tokens"] = formatDuration(0)
 		timings["total"] = formatDuration(time.Since(start))
 		return &SearchResult{Results: []Result{}, Timings: timings}, nil
 	}
-	if len(tokens) == 1 {
-		if len(fields) == 1 {
-			return s.Search(ctx, TermQuery{Field: fields[0], Term: phrase}, maxResults)
-		}
-		return s.Search(ctx, TermQuery{Term: phrase}, maxResults)
+	if plan.fallback != nil {
+		return s.Search(ctx, *plan.fallback, maxResults)
 	}
 
 	searchStart := time.Now()
-	phraseTerm := strings.Join(tokens, " ")
-	phraseCounts := make(map[DocID]uint32)
-	scores := make(map[DocID]float64)
-	fieldMatches, err := s.collectPositionalFieldMatches(ctx, fields, func(positional PositionalIndex) (map[DocID]uint32, error) {
-		return s.searchExactPhraseCountsInField(ctx, positional, tokens)
-	})
+	hits, err := s.evalExactPhraseTokenHits(ctx, fields, plan.tokens)
 	if err != nil {
 		return nil, err
 	}
-	for _, fieldMatch := range fieldMatches {
-		fieldStats := s.fieldStatsFor(fieldMatch.field)
-		// For phrase scoring, treat the whole phrase as one term: df is docs with the phrase, cnt is that phrase TF in one doc.
-		df := uint32(len(fieldMatch.matchesByDoc))
-		for docID, cnt := range fieldMatch.matchesByDoc {
-			phraseCounts[docID] += cnt
-			scores[docID] += s.scoreTermHit(fieldMatch.field, phraseTerm, docID, cnt, df, fieldStats)
-		}
-	}
 
 	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-	results, totalFound := resultsFromCounts(phraseCounts, scores, s.scorer != nil)
-	if maxResults <= 0 || maxResults > totalFound {
-		maxResults = totalFound
-	}
 
 	timings["total"] = formatDuration(time.Since(start))
-
-	return &SearchResult{
-		Results:           results[:maxResults],
-		TotalResultsCount: totalFound,
-		Timings:           timings,
-	}, nil
+	return searchResultFromHits(hits, maxResults, timings, s.scorer != nil), nil
 }
 
-func (s *Service) searchPhraseNearFields(ctx context.Context, fields []string, phrase string, distance int, maxResults int) (*SearchResult, error) {
+func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []string, phrase string, distance int, maxResults int) (*SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -210,54 +183,28 @@ func (s *Service) searchPhraseNearFields(ctx context.Context, fields []string, p
 	timings := make(map[string]string, 3)
 
 	preStart := time.Now()
-	tokens := s.pipeline.Process(phrase)
+	plan := s.preparePhrase(fields, phrase)
 	timings["preprocess"] = formatDuration(time.Since(preStart))
 
-	if len(tokens) == 0 {
+	if len(plan.tokens) == 0 {
 		timings["search_tokens"] = formatDuration(0)
 		timings["total"] = formatDuration(time.Since(start))
 		return &SearchResult{Results: []Result{}, Timings: timings}, nil
 	}
-	if len(tokens) == 1 {
-		if len(fields) == 1 {
-			return s.Search(ctx, TermQuery{Field: fields[0], Term: phrase}, maxResults)
-		}
-		return s.Search(ctx, TermQuery{Term: phrase}, maxResults)
+	if plan.fallback != nil {
+		return s.Search(ctx, *plan.fallback, maxResults)
 	}
 
 	searchStart := time.Now()
-	phraseTerm := strings.Join(tokens, " ")
-	phraseCounts := make(map[DocID]uint32)
-	scores := make(map[DocID]float64)
-	fieldMatches, err := s.collectPositionalFieldMatches(ctx, fields, func(positional PositionalIndex) (map[DocID]uint32, error) {
-		return s.searchNearPhraseCountsInField(ctx, positional, tokens, uint32(distance))
-	})
+	hits, err := s.evalNearPhraseTokenHits(ctx, fields, plan.tokens, uint32(distance))
 	if err != nil {
 		return nil, err
 	}
-	for _, fieldMatch := range fieldMatches {
-		fieldStats := s.fieldStatsFor(fieldMatch.field)
-		// For phrase-near scoring, treat the whole phrase as one term: df is docs with the phrase, cnt is that phrase TF in one doc.
-		df := uint32(len(fieldMatch.matchesByDoc))
-		for docID, cnt := range fieldMatch.matchesByDoc {
-			phraseCounts[docID] += cnt
-			scores[docID] += s.scoreTermHit(fieldMatch.field, phraseTerm, docID, cnt, df, fieldStats)
-		}
-	}
 
 	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-	results, totalFound := resultsFromCounts(phraseCounts, scores, s.scorer != nil)
-	if maxResults <= 0 || maxResults > totalFound {
-		maxResults = totalFound
-	}
 
 	timings["total"] = formatDuration(time.Since(start))
-
-	return &SearchResult{
-		Results:           results[:maxResults],
-		TotalResultsCount: totalFound,
-		Timings:           timings,
-	}, nil
+	return searchResultFromHits(hits, maxResults, timings, s.scorer != nil), nil
 }
 
 func (s *Service) SnapshotFields() (map[string]Index, Filter) {
