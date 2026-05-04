@@ -178,6 +178,49 @@ func TestSearchDocumentsFieldScopedTerm(t *testing.T) {
 	}
 }
 
+func TestSearchFieldRestrictsUnscopedQueryToOneField(t *testing.T) {
+	title := newMemoryIndex()
+	title.entries["alpha"] = []DocRef{{ID: "a", Count: 1}}
+	body := newMemoryIndex()
+	body.entries["alpha"] = []DocRef{{ID: "b", Count: 1}}
+
+	svc := NewMultiFieldFromIndexes(map[string]Index{
+		"title": title,
+		"body":  body,
+	}, WordKeys)
+
+	res, err := svc.SearchField(context.Background(), "title", "alpha", 10)
+	if err != nil {
+		t.Fatalf("SearchField() error = %v", err)
+	}
+	if res.TotalResultsCount != 1 || len(res.Results) != 1 || res.Results[0].ID != "a" {
+		t.Fatalf("expected only title hit, got %+v", res.Results)
+	}
+}
+
+func TestSearchFieldPreservesExplicitFieldScope(t *testing.T) {
+	title := newMemoryIndex()
+	title.entries["alpha"] = []DocRef{{ID: "a", Count: 1}}
+	body := newMemoryIndex()
+	body.entries["alpha"] = []DocRef{{ID: "b", Count: 1}}
+
+	svc := NewMultiFieldFromIndexes(map[string]Index{
+		"title": title,
+		"body":  body,
+	}, WordKeys)
+
+	res, err := svc.SearchField(context.Background(), "title", "body:alpha", 10)
+	if err != nil {
+		t.Fatalf("SearchField() error = %v", err)
+	}
+	if res.TotalResultsCount != 1 || len(res.Results) != 1 || res.Results[0].ID != "b" {
+		t.Fatalf("expected explicit body scope to be preserved, got %+v", res.Results)
+	}
+	if res.Results[0].ID == "a" {
+		t.Fatalf("default field binding overwrote explicit scope: %+v", res.Results)
+	}
+}
+
 func TestSearchDocumentsMustAcrossFieldsIntersectsByDocID(t *testing.T) {
 	title := newMemoryIndex()
 	title.entries["barack"] = []DocRef{{ID: "doc-1", Count: 1, Seq: 0}, {ID: "doc-2", Count: 1, Seq: 1}}
@@ -237,5 +280,47 @@ func TestSearchPhraseNearAcrossFields(t *testing.T) {
 	}
 	if len(res.Results) != 2 {
 		t.Fatalf("expected near matches in both fields, got %+v", res.Results)
+	}
+}
+
+func TestSearchPhraseFieldRestrictsToOneField(t *testing.T) {
+	factory := func(name string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	svc := NewMultiField(factory, WordKeys)
+
+	ctx := context.Background()
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "barack obama"}}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "barack obama"}}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	res, err := svc.SearchPhraseField(ctx, "title", "barack obama", 10)
+	if err != nil {
+		t.Fatalf("SearchPhraseField() error = %v", err)
+	}
+	if len(res.Results) != 1 || res.Results[0].ID != "doc-a" {
+		t.Fatalf("expected only title phrase hit, got %+v", res.Results)
+	}
+}
+
+func TestSearchPhraseNearFieldRestrictsToOneField(t *testing.T) {
+	factory := func(name string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	svc := NewMultiField(factory, WordKeys)
+
+	ctx := context.Background()
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "barack x obama"}}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "barack x obama"}}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	res, err := svc.SearchPhraseNearField(ctx, "title", "barack obama", 1, 10)
+	if err != nil {
+		t.Fatalf("SearchPhraseNearField() error = %v", err)
+	}
+	if len(res.Results) != 1 || res.Results[0].ID != "doc-a" {
+		t.Fatalf("expected only title near-phrase hit, got %+v", res.Results)
 	}
 }

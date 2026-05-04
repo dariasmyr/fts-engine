@@ -177,6 +177,14 @@ res, _ := engine.Search(context.Background(), q, 10)
 fmt.Println(res.TotalResultsCount)
 ```
 
+Field-scoped helpers are also available when you want to restrict search to one field without building the AST manually:
+
+```go
+res, _ := engine.SearchField(context.Background(), "title", "hotel", 10)
+res, _ = engine.SearchPhraseField(context.Background(), "title", "hotel barge", 10)
+res, _ = engine.SearchPhraseNearField(context.Background(), "body", "barack obama", 1, 10)
+```
+
 Prefix queries require an index that implements `fts.PrefixIndex`.
 Among the built-in public indexes, `slicedradix` currently supports prefix search.
 
