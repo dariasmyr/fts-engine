@@ -12,8 +12,8 @@ type phrasePlan struct {
 	fallback *TermQuery
 }
 
-func (s *Service) execPhrase(ctx context.Context, q PhraseQuery) (map[DocID]docAccum, error) {
-	return s.evalPhraseHits(ctx, s.resolveFields(q.Field), q.Phrase)
+func (s *Service) execPhrase(ctx context.Context, q PhraseQuery, scope queryFieldScope) (map[DocID]docAccum, error) {
+	return s.evalPhraseHits(ctx, s.resolveScopedFields(q.Field, scope), q.Phrase, scope)
 }
 
 func (s *Service) preparePhrase(fields []string, phrase string) phrasePlan {
@@ -30,13 +30,13 @@ func (s *Service) preparePhrase(fields []string, phrase string) phrasePlan {
 	return plan
 }
 
-func (s *Service) evalPhraseHits(ctx context.Context, fields []string, phrase string) (map[DocID]docAccum, error) {
+func (s *Service) evalPhraseHits(ctx context.Context, fields []string, phrase string, scope queryFieldScope) (map[DocID]docAccum, error) {
 	plan := s.preparePhrase(fields, phrase)
 	if len(plan.tokens) == 0 {
 		return map[DocID]docAccum{}, nil
 	}
 	if plan.fallback != nil {
-		return s.executeQuery(ctx, *plan.fallback, 0)
+		return s.executeQuery(ctx, *plan.fallback, 0, scope)
 	}
 	return s.evalExactPhraseTokenHits(ctx, fields, plan.tokens)
 }

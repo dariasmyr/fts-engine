@@ -98,10 +98,7 @@ func (s *Service) fieldNames() []string {
 }
 
 func (s *Service) resolveFields(explicit string) []string {
-	if explicit != "" {
-		return []string{explicit}
-	}
-	return s.fieldNames()
+	return s.resolveScopedFields(explicit, queryFieldScope{})
 }
 
 func (s *Service) lookupIndex(name string) (Index, bool) {
@@ -156,7 +153,7 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 		return &SearchResult{Results: []Result{}, Timings: timings}, nil
 	}
 	if plan.fallback != nil {
-		return s.Search(ctx, *plan.fallback, maxResults)
+		return s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
 	}
 
 	searchStart := time.Now()
@@ -192,7 +189,7 @@ func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []str
 		return &SearchResult{Results: []Result{}, Timings: timings}, nil
 	}
 	if plan.fallback != nil {
-		return s.Search(ctx, *plan.fallback, maxResults)
+		return s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
 	}
 
 	searchStart := time.Now()

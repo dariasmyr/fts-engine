@@ -107,10 +107,10 @@ func parseFastOrClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, bool) {
 	return shouldTerms, mustNots, true
 }
 
-func (s *Service) buildExcludeSet(ctx context.Context, clauses []BoolClause) (map[DocID]struct{}, error) {
+func (s *Service) buildExcludeSet(ctx context.Context, clauses []BoolClause, scope queryFieldScope) (map[DocID]struct{}, error) {
 	exclude := make(map[DocID]struct{})
 	for _, clause := range clauses {
-		child, err := s.executeQuery(ctx, clause.Query, 0)
+		child, err := s.executeQuery(ctx, clause.Query, 0, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -121,13 +121,13 @@ func (s *Service) buildExcludeSet(ctx context.Context, clauses []BoolClause) (ma
 	return exclude, nil
 }
 
-func (s *Service) collectFastMustGroups(ctx context.Context, terms []TermQuery) ([]fastMust, bool, error) {
+func (s *Service) collectFastMustGroups(ctx context.Context, terms []TermQuery, scope queryFieldScope) ([]fastMust, bool, error) {
 	groups := make([]fastMust, 0, len(terms))
 	for _, term := range terms {
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		group, err := s.collectTermPostings(ctx, term)
+		group, err := s.collectTermPostings(ctx, term, scope)
 		if err != nil {
 			return nil, false, err
 		}
@@ -139,9 +139,9 @@ func (s *Service) collectFastMustGroups(ctx context.Context, terms []TermQuery) 
 	return groups, false, nil
 }
 
-func (s *Service) applyShouldClauseBoosts(ctx context.Context, combined map[DocID]docAccum, shoulds []BoolClause) error {
+func (s *Service) applyShouldClauseBoosts(ctx context.Context, combined map[DocID]docAccum, shoulds []BoolClause, scope queryFieldScope) error {
 	for _, clause := range shoulds {
-		child, err := s.executeQuery(ctx, clause.Query, 0)
+		child, err := s.executeQuery(ctx, clause.Query, 0, scope)
 		if err != nil {
 			return err
 		}
@@ -154,13 +154,13 @@ func (s *Service) applyShouldClauseBoosts(ctx context.Context, combined map[DocI
 	return nil
 }
 
-func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (map[DocID]docAccum, bool, error) {
+func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
 	mustTerms, shoulds, mustNots, ok := parseFastAndClauses(q)
 	if !ok {
 		return nil, false, nil
 	}
 
-	mustGroups, exhausted, err := s.collectFastMustGroups(ctx, mustTerms)
+	mustGroups, exhausted, err := s.collectFastMustGroups(ctx, mustTerms, scope)
 	if err != nil {
 		return nil, false, err
 	}
@@ -168,7 +168,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 		return map[DocID]docAccum{}, true, nil
 	}
 
-	exclude, err := s.buildExcludeSet(ctx, mustNots)
+	exclude, err := s.buildExcludeSet(ctx, mustNots, scope)
 	if err != nil {
 		return nil, false, err
 	}
@@ -176,7 +176,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 	sort.Slice(mustGroups, func(i, j int) bool { return mustGroups[i].totalDocs < mustGroups[j].totalDocs })
 	if allSingleExpansionInSameField(mustGroups) {
 		// Fast path: Seq ordinals are only comparable within one field index.
-		return s.execBooleanAndSortMerge(mustGroups, shoulds, exclude, ctx)
+		return s.execBooleanAndSortMerge(mustGroups, shoulds, exclude, ctx, scope)
 	}
 
 	// Fallback path: use the smallest MUST group as the candidate driver when clauses expand to multiple lists.
@@ -248,20 +248,20 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery) (m
 		}
 	}
 
-	if err := s.applyShouldClauseBoosts(ctx, combined, shoulds); err != nil {
+	if err := s.applyShouldClauseBoosts(ctx, combined, shoulds, scope); err != nil {
 		return nil, false, err
 	}
 
 	return combined, true, nil
 }
 
-func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery) (map[DocID]docAccum, bool, error) {
+func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
 	shouldTerms, mustNots, ok := parseFastOrClauses(q)
 	if !ok {
 		return nil, false, nil
 	}
 
-	exclude, err := s.buildExcludeSet(ctx, mustNots)
+	exclude, err := s.buildExcludeSet(ctx, mustNots, scope)
 	if err != nil {
 		return nil, false, err
 	}
@@ -272,7 +272,7 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery) (ma
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		group, err := s.collectTermPostings(ctx, term)
+		group, err := s.collectTermPostings(ctx, term, scope)
 		if err != nil {
 			return nil, false, err
 		}
@@ -337,7 +337,7 @@ func allSingleExpansionInSameField(musts []fastMust) bool {
 	return true
 }
 
-func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause, exclude map[DocID]struct{}, ctx context.Context) (map[DocID]docAccum, bool, error) {
+func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause, exclude map[DocID]struct{}, ctx context.Context, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
 	k := len(musts)
 	ptrs := make([]int, k)
 	exps := make([]*termExpansion, k)
@@ -396,14 +396,14 @@ loop:
 		currentSeq = exps[0].docs[ptrs[0]].Seq
 	}
 
-	if err := s.applyShouldClauseBoosts(ctx, combined, shoulds); err != nil {
+	if err := s.applyShouldClauseBoosts(ctx, combined, shoulds, scope); err != nil {
 		return nil, false, err
 	}
 
 	return combined, true, nil
 }
 
-func (s *Service) collectTermPostings(ctx context.Context, q TermQuery) (fastMust, error) {
+func (s *Service) collectTermPostings(ctx context.Context, q TermQuery, scope queryFieldScope) (fastMust, error) {
 	var out fastMust
 	if q.Term == "" {
 		return out, nil
@@ -414,7 +414,7 @@ func (s *Service) collectTermPostings(ctx context.Context, q TermQuery) (fastMus
 		return out, nil
 	}
 
-	fields := s.resolveFields(q.Field)
+	fields := s.resolveScopedFields(q.Field, scope)
 	for _, token := range tokens {
 		keys, err := s.keyGen(token)
 		if err != nil {

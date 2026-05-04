@@ -107,14 +107,18 @@ func (s *Service) IndexDocument(ctx context.Context, docID DocID, content string
 }
 
 func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults int) (*SearchResult, error) {
-	return s.searchQueryString(ctx, query, "", maxResults)
+	return s.searchQueryString(ctx, query, "", queryFieldScope{}, maxResults)
 }
 
 func (s *Service) SearchField(ctx context.Context, field string, query string, maxResults int) (*SearchResult, error) {
-	return s.searchQueryString(ctx, query, field, maxResults)
+	return s.searchQueryString(ctx, query, field, queryFieldScope{}, maxResults)
 }
 
-func (s *Service) searchQueryString(ctx context.Context, query string, defaultField string, maxResults int) (*SearchResult, error) {
+func (s *Service) SearchFields(ctx context.Context, fields []string, query string, maxResults int) (*SearchResult, error) {
+	return s.searchQueryString(ctx, query, "", newQueryFieldScope(fields), maxResults)
+}
+
+func (s *Service) searchQueryString(ctx context.Context, query string, defaultField string, scope queryFieldScope, maxResults int) (*SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -130,7 +134,7 @@ func (s *Service) searchQueryString(ctx context.Context, query string, defaultFi
 	parsed = bindDefaultField(parsed, defaultField)
 	timings["preprocess"] = formatDuration(time.Since(preStart))
 
-	res, err := s.Search(ctx, parsed, maxResults)
+	res, err := s.searchResultForQuery(ctx, parsed, maxResults, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +149,11 @@ func (s *Service) SearchPhrase(ctx context.Context, phrase string, maxResults in
 }
 
 func (s *Service) SearchPhraseField(ctx context.Context, field string, phrase string, maxResults int) (*SearchResult, error) {
-	return s.searchPhraseFieldsResult(ctx, []string{field}, phrase, maxResults)
+	return s.SearchPhraseFields(ctx, []string{field}, phrase, maxResults)
+}
+
+func (s *Service) SearchPhraseFields(ctx context.Context, fields []string, phrase string, maxResults int) (*SearchResult, error) {
+	return s.searchPhraseFieldsResult(ctx, fields, phrase, maxResults)
 }
 
 func (s *Service) SearchPhraseNear(ctx context.Context, phrase string, distance int, maxResults int) (*SearchResult, error) {
@@ -153,7 +161,11 @@ func (s *Service) SearchPhraseNear(ctx context.Context, phrase string, distance 
 }
 
 func (s *Service) SearchPhraseNearField(ctx context.Context, field string, phrase string, distance int, maxResults int) (*SearchResult, error) {
-	return s.searchPhraseNearFieldsResult(ctx, []string{field}, phrase, distance, maxResults)
+	return s.SearchPhraseNearFields(ctx, []string{field}, phrase, distance, maxResults)
+}
+
+func (s *Service) SearchPhraseNearFields(ctx context.Context, fields []string, phrase string, distance int, maxResults int) (*SearchResult, error) {
+	return s.searchPhraseNearFieldsResult(ctx, fields, phrase, distance, maxResults)
 }
 
 func (s *Service) Analyze() (Stats, bool) {

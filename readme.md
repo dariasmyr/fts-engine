@@ -185,6 +185,14 @@ res, _ = engine.SearchPhraseField(context.Background(), "title", "hotel barge", 
 res, _ = engine.SearchPhraseNearField(context.Background(), "body", "barack obama", 1, 10)
 ```
 
+If you want to search across a specific subset of fields, use the `...Fields` variants:
+
+```go
+res, _ := engine.SearchFields(context.Background(), []string{"title", "body"}, "hotel", 10)
+res, _ = engine.SearchPhraseFields(context.Background(), []string{"title", "body"}, "hotel barge", 10)
+res, _ = engine.SearchPhraseNearFields(context.Background(), []string{"title", "body"}, "barack obama", 1, 10)
+```
+
 Prefix queries require an index that implements `fts.PrefixIndex`.
 Among the built-in public indexes, `slicedradix` currently supports prefix search.
 

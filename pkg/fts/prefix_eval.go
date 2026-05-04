@@ -2,7 +2,7 @@ package fts
 
 import "context"
 
-func (s *Service) execPrefix(ctx context.Context, q PrefixQuery) (map[DocID]docAccum, error) {
+func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFieldScope) (map[DocID]docAccum, error) {
 	if q.Prefix == "" {
 		return map[DocID]docAccum{}, nil
 	}
@@ -10,7 +10,7 @@ func (s *Service) execPrefix(ctx context.Context, q PrefixQuery) (map[DocID]docA
 		return nil, err
 	}
 
-	fields := s.resolveFields(q.Field)
+	fields := s.resolveScopedFields(q.Field, scope)
 	expansions, err := s.collectPrefixFieldDocs(ctx, fields, q.Prefix)
 	if err != nil {
 		return nil, err

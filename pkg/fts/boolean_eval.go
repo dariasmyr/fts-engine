@@ -5,24 +5,24 @@ import (
 	"sort"
 )
 
-func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLimit int) (map[DocID]docAccum, error) {
+func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocID]docAccum, error) {
 	if q == nil || len(q.Clauses) == 0 {
 		return map[DocID]docAccum{}, nil
 	}
 
-	if res, ok, err := s.tryExecBooleanAndFast(ctx, q); err != nil {
+	if res, ok, err := s.tryExecBooleanAndFast(ctx, q, scope); err != nil {
 		return nil, err
 	} else if ok {
 		return res, nil
 	}
 
-	if res, ok, err := s.tryExecBooleanOrWand(ctx, q, candidateLimit); err != nil {
+	if res, ok, err := s.tryExecBooleanOrWand(ctx, q, candidateLimit, scope); err != nil {
 		return nil, err
 	} else if ok {
 		return res, nil
 	}
 
-	if res, ok, err := s.tryExecBooleanOrFast(ctx, q); err != nil {
+	if res, ok, err := s.tryExecBooleanOrFast(ctx, q, scope); err != nil {
 		return nil, err
 	} else if ok {
 		return res, nil
@@ -39,7 +39,7 @@ func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLim
 		if clause.Query == nil {
 			continue
 		}
-		childHits, err := s.executeQuery(ctx, clause.Query, 0)
+		childHits, err := s.executeQuery(ctx, clause.Query, 0, scope)
 		if err != nil {
 			return nil, err
 		}

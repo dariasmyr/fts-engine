@@ -7,7 +7,7 @@ import (
 	"sort"
 )
 
-func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, candidateLimit int) (map[DocID]docAccum, bool, error) {
+func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
 	if candidateLimit <= 0 || s.scorer == nil {
 		return nil, false, nil
 	}
@@ -17,7 +17,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		return nil, false, nil
 	}
 
-	exclude, err := s.buildExcludeSet(ctx, mustNots)
+	exclude, err := s.buildExcludeSet(ctx, mustNots, scope)
 	if err != nil {
 		return nil, false, err
 	}
@@ -27,7 +27,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		group, err := s.collectTermPostings(ctx, term)
+		group, err := s.collectTermPostings(ctx, term, scope)
 		if err != nil {
 			return nil, false, err
 		}

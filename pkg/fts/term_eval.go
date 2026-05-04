@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-func (s *Service) execTerm(ctx context.Context, q TermQuery) (map[DocID]docAccum, error) {
+func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldScope) (map[DocID]docAccum, error) {
 	if q.Term == "" {
 		return map[DocID]docAccum{}, nil
 	}
@@ -14,7 +14,7 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery) (map[DocID]docAccum
 	if len(tokens) == 0 {
 		return map[DocID]docAccum{}, nil
 	}
-	fields := s.resolveFields(q.Field)
+	fields := s.resolveScopedFields(q.Field, scope)
 	keyGroups := make([][]string, len(tokens))
 	for i, token := range tokens {
 		keys, err := s.keyGen(token)

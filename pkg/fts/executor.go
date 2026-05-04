@@ -15,6 +15,14 @@ func addAccum(a, b docAccum) docAccum {
 }
 
 func (s *Service) Search(ctx context.Context, q Query, maxResults int) (*SearchResult, error) {
+	return s.searchResultForQuery(ctx, q, maxResults, queryFieldScope{})
+}
+
+func (s *Service) SearchQueryFields(ctx context.Context, fields []string, q Query, maxResults int) (*SearchResult, error) {
+	return s.searchResultForQuery(ctx, q, maxResults, newQueryFieldScope(fields))
+}
+
+func (s *Service) searchResultForQuery(ctx context.Context, q Query, maxResults int, scope queryFieldScope) (*SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -26,7 +34,7 @@ func (s *Service) Search(ctx context.Context, q Query, maxResults int) (*SearchR
 	timings := make(map[string]string, 2)
 
 	searchStart := time.Now()
-	hits, err := s.executeQuery(ctx, q, maxResults)
+	hits, err := s.executeQuery(ctx, q, maxResults, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -36,31 +44,31 @@ func (s *Service) Search(ctx context.Context, q Query, maxResults int) (*SearchR
 	return searchResultFromHits(hits, maxResults, timings, s.scorer != nil), nil
 }
 
-func (s *Service) executeQuery(ctx context.Context, q Query, candidateLimit int) (map[DocID]docAccum, error) {
+func (s *Service) executeQuery(ctx context.Context, q Query, candidateLimit int, scope queryFieldScope) (map[DocID]docAccum, error) {
 	switch t := q.(type) {
 	case TermQuery:
-		return s.execTerm(ctx, t)
+		return s.execTerm(ctx, t, scope)
 	case *TermQuery:
 		if t == nil {
 			return map[DocID]docAccum{}, nil
 		}
-		return s.execTerm(ctx, *t)
+		return s.execTerm(ctx, *t, scope)
 	case PhraseQuery:
-		return s.execPhrase(ctx, t)
+		return s.execPhrase(ctx, t, scope)
 	case *PhraseQuery:
 		if t == nil {
 			return map[DocID]docAccum{}, nil
 		}
-		return s.execPhrase(ctx, *t)
+		return s.execPhrase(ctx, *t, scope)
 	case PrefixQuery:
-		return s.execPrefix(ctx, t)
+		return s.execPrefix(ctx, t, scope)
 	case *PrefixQuery:
 		if t == nil {
 			return map[DocID]docAccum{}, nil
 		}
-		return s.execPrefix(ctx, *t)
+		return s.execPrefix(ctx, *t, scope)
 	case *BooleanQuery:
-		return s.execBoolean(ctx, t, candidateLimit)
+		return s.execBoolean(ctx, t, candidateLimit, scope)
 	default:
 		return nil, fmt.Errorf("fts: unsupported query type %T", q)
 	}
