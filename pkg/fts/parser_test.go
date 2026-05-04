@@ -47,3 +47,48 @@ func TestParseQueryUnterminatedQuoteFails(t *testing.T) {
 		t.Fatal("expected parse error for unterminated quote")
 	}
 }
+
+func TestParseQueryNestedGroup(t *testing.T) {
+	got, err := ParseQuery(`+(alpha beta) -gamma`)
+	if err != nil {
+		t.Fatalf("ParseQuery() error = %v", err)
+	}
+	b, ok := got.(*BooleanQuery)
+	if !ok {
+		t.Fatalf("want BooleanQuery, got %T", got)
+	}
+	if len(b.Clauses) != 2 {
+		t.Fatalf("len(Clauses) = %d, want 2", len(b.Clauses))
+	}
+	if b.Clauses[0].Occur != Must {
+		t.Fatalf("first occur = %v, want Must", b.Clauses[0].Occur)
+	}
+	group, ok := b.Clauses[0].Query.(*BooleanQuery)
+	if !ok {
+		t.Fatalf("first query type = %T, want *BooleanQuery", b.Clauses[0].Query)
+	}
+	if len(group.Clauses) != 2 {
+		t.Fatalf("len(group.Clauses) = %d, want 2", len(group.Clauses))
+	}
+	if group.Clauses[0].Occur != Should || group.Clauses[1].Occur != Should {
+		t.Fatalf("unexpected grouped occurs: %+v", group.Clauses)
+	}
+	if _, ok := group.Clauses[0].Query.(TermQuery); !ok {
+		t.Fatalf("group first query type = %T, want TermQuery", group.Clauses[0].Query)
+	}
+	if b.Clauses[1].Occur != MustNot {
+		t.Fatalf("second occur = %v, want MustNot", b.Clauses[1].Occur)
+	}
+}
+
+func TestParseQueryUnterminatedGroupFails(t *testing.T) {
+	if _, err := ParseQuery(`+(alpha beta`); err == nil {
+		t.Fatal("expected parse error for unterminated group")
+	}
+}
+
+func TestParseQueryUnexpectedClosingParenFails(t *testing.T) {
+	if _, err := ParseQuery(`alpha ) beta`); err == nil {
+		t.Fatal("expected parse error for unexpected closing paren")
+	}
+}

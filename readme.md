@@ -157,12 +157,27 @@ engine := fts.New(radix.New(), keygen.Word, fts.WithPipeline(pipe))
 String query parsing via `SearchDocuments(...)` supports:
 
 - term query: `hotel`
+- multiple terms as independent SHOULD clauses: `french hotel`
 - phrase query: `"hotel barge"`
 - required term: `+hotel`
 - excluded term: `-market`
 - field-scoped term: `title:hotel`
 - field-scoped phrase: `title:"hotel barge"`
 - prefix query: `bar*`
+- grouped boolean clauses: `+(title:barack title:russia) -market`
+
+Examples:
+
+```go
+// Two independent SHOULD terms.
+res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
+
+// Exact phrase search.
+res, _ = engine.SearchDocuments(context.Background(), `"french hotel"`, 10)
+
+// Boolean syntax with required, excluded, and grouped clauses.
+res, _ = engine.SearchDocuments(context.Background(), `+(title:barack title:french) -market`, 10)
+```
 
 If you want to build queries programmatically, use the AST API:
 

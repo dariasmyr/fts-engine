@@ -177,3 +177,19 @@ func TestSearchAPIParsedQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchAPIParsedNestedQuery(t *testing.T) {
+	svc := buildExecService(t)
+	q, err := ParseQuery(`+(title:barack title:russia) +body:visited`)
+	if err != nil {
+		t.Fatalf("ParseQuery() error = %v", err)
+	}
+
+	res, err := svc.Search(context.Background(), q, 10)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(res.Results) != 1 || res.Results[0].ID != "doc-c" {
+		t.Fatalf("results = %+v, want only doc-c", res.Results)
+	}
+}

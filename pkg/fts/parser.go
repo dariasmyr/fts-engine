@@ -8,17 +8,21 @@ import (
 
 func ParseQuery(input string) (Query, error) {
 	p := &queryParser{input: input}
-	clauses, err := p.parse()
+	q, err := p.parseQuery(false, -1)
 	if err != nil {
 		return nil, err
 	}
+	return q, nil
+}
+
+func clausesToQuery(clauses []BoolClause) Query {
 	if len(clauses) == 0 {
-		return &BooleanQuery{}, nil
+		return &BooleanQuery{}
 	}
 	if len(clauses) == 1 && clauses[0].Occur == Should {
-		return clauses[0].Query, nil
+		return clauses[0].Query
 	}
-	return &BooleanQuery{Clauses: clauses}, nil
+	return &BooleanQuery{Clauses: clauses}
 }
 
 type queryParser struct {
@@ -26,11 +30,32 @@ type queryParser struct {
 	pos   int
 }
 
-func (p *queryParser) parse() ([]BoolClause, error) {
+func (p *queryParser) parseQuery(grouped bool, groupStart int) (Query, error) {
+	clauses, err := p.parseClauses(grouped, groupStart)
+	if err != nil {
+		return nil, err
+	}
+	return clausesToQuery(clauses), nil
+}
+
+func (p *queryParser) parseClauses(grouped bool, groupStart int) ([]BoolClause, error) {
 	var clauses []BoolClause
 	for {
 		p.skipSpaces()
 		if p.pos >= len(p.input) {
+			if grouped {
+				return nil, fmt.Errorf("fts: parse query: unterminated group starting at %d", groupStart)
+			}
+			return clauses, nil
+		}
+		if p.input[p.pos] == ')' {
+			if !grouped {
+				return nil, fmt.Errorf("fts: parse query: unexpected ')' at %d", p.pos)
+			}
+			p.pos++
+			if len(clauses) == 0 {
+				return nil, fmt.Errorf("fts: parse query: empty group at %d", groupStart)
+			}
 			return clauses, nil
 		}
 
@@ -54,13 +79,25 @@ func (p *queryParser) parse() ([]BoolClause, error) {
 		}
 
 		var q Query
-		if p.input[p.pos] == '"' {
+		switch p.input[p.pos] {
+		case '(':
+			if field != "" {
+				return nil, fmt.Errorf("fts: parse query: grouped field scopes are not supported at %d", p.pos)
+			}
+			groupStart := p.pos
+			p.pos++
+			groupQuery, err := p.parseQuery(true, groupStart)
+			if err != nil {
+				return nil, err
+			}
+			q = groupQuery
+		case '"':
 			phrase, err := p.readQuoted()
 			if err != nil {
 				return nil, err
 			}
 			q = PhraseQuery{Field: field, Phrase: phrase}
-		} else {
+		default:
 			word := p.readWord()
 			if word == "" {
 				return nil, fmt.Errorf("fts: parse query: empty term at %d", p.pos)
@@ -90,7 +127,7 @@ func (p *queryParser) maybeField() (string, error) {
 			p.pos++
 			return name, nil
 		}
-		if unicode.IsSpace(rune(c)) || c == '"' || c == '+' || c == '-' {
+		if unicode.IsSpace(rune(c)) || c == '"' || c == '+' || c == '-' || c == '(' || c == ')' {
 			p.pos = save
 			return "", nil
 		}
@@ -117,7 +154,7 @@ func (p *queryParser) readQuoted() (string, error) {
 
 func (p *queryParser) readWord() string {
 	start := p.pos
-	for p.pos < len(p.input) && !unicode.IsSpace(rune(p.input[p.pos])) {
+	for p.pos < len(p.input) && !unicode.IsSpace(rune(p.input[p.pos])) && p.input[p.pos] != '(' && p.input[p.pos] != ')' {
 		p.pos++
 	}
 	return p.input[start:p.pos]
