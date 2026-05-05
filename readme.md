@@ -208,6 +208,16 @@ res, _ = engine.SearchPhraseFields(context.Background(), []string{"title", "body
 res, _ = engine.SearchPhraseNearFields(context.Background(), []string{"title", "body"}, "barack obama", 1, 10)
 ```
 
+If you want different subqueries for different fields without building the AST manually, use field clauses:
+
+```go
+res, _ := engine.SearchFieldClauses(context.Background(), []fts.FieldQueryClause{
+	fts.MustFieldQuery("title", "barack"),
+	fts.MustFieldQuery("body", `"french hotel"`),
+	fts.MustNotFieldQuery("body", "market"),
+}, 10)
+```
+
 Prefix queries require an index that implements `fts.PrefixIndex`.
 Among the built-in public indexes, `slicedradix` currently supports prefix search.
 

@@ -296,6 +296,60 @@ func TestSearchQueryFieldsRestrictsASTQueryToSubset(t *testing.T) {
 	}
 }
 
+func TestSearchFieldClausesCombinesDifferentQueriesAcrossFields(t *testing.T) {
+	title := newMemoryIndex()
+	title.entries["barack"] = []DocRef{{ID: "doc-1", Count: 1, Seq: 0}, {ID: "doc-2", Count: 1, Seq: 1}}
+	body := newMemoryIndex()
+	body.entries["obama"] = []DocRef{{ID: "doc-3", Count: 1, Seq: 0}, {ID: "doc-2", Count: 1, Seq: 1}}
+
+	svc := NewMultiFieldFromIndexes(map[string]Index{
+		"title": title,
+		"body":  body,
+	}, WordKeys)
+
+	res, err := svc.SearchFieldClauses(context.Background(), []FieldQueryClause{
+		MustFieldQuery("title", "barack"),
+		MustFieldQuery("body", "obama"),
+	}, 10)
+	if err != nil {
+		t.Fatalf("SearchFieldClauses() error = %v", err)
+	}
+	if res.TotalResultsCount != 1 || len(res.Results) != 1 || res.Results[0].ID != "doc-2" {
+		t.Fatalf("expected only doc-2 after field-specific MUST clauses, got %+v", res.Results)
+	}
+}
+
+func TestSearchFieldClausesSupportsFieldSpecificPhraseAndExclusion(t *testing.T) {
+	factory := func(name string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	svc := NewMultiField(factory, WordKeys)
+
+	ctx := context.Background()
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{
+		"title": {Value: "barack"},
+		"body":  {Value: "french hotel"},
+	}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{
+		"title": {Value: "barack"},
+		"body":  {Value: "market hotel"},
+	}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	res, err := svc.SearchFieldClauses(ctx, []FieldQueryClause{
+		MustFieldQuery("title", "barack"),
+		MustFieldQuery("body", `"french hotel"`),
+		MustNotFieldQuery("body", "market"),
+	}, 10)
+	if err != nil {
+		t.Fatalf("SearchFieldClauses() error = %v", err)
+	}
+	if len(res.Results) != 1 || res.Results[0].ID != "doc-a" {
+		t.Fatalf("expected only doc-a after field-specific phrase and exclusion, got %+v", res.Results)
+	}
+}
+
 func TestSearchDocumentsMustAcrossFieldsIntersectsByDocID(t *testing.T) {
 	title := newMemoryIndex()
 	title.entries["barack"] = []DocRef{{ID: "doc-1", Count: 1, Seq: 0}, {ID: "doc-2", Count: 1, Seq: 1}}
