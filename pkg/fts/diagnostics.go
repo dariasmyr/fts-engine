@@ -11,8 +11,10 @@ type QueryDiagnostics struct {
 	LogicalQueryType string
 	// ExecutionStrategy describes the physical execution path that was selected.
 	ExecutionStrategy string
-	// StrategyReason stores the first useful reason for strategy selection or fast-path skip.
-	StrategyReason string
+	// StrategySkipReason stores the first useful reason why an earlier strategy or fast path was skipped.
+	StrategySkipReason string
+	// Boolean stores strategy-specific diagnostics for boolean execution paths.
+	Boolean *BooleanDiagnostics
 
 	// ProcessedTokens is the total number of tokens processed across the executed query path.
 	ProcessedTokens int
@@ -37,6 +39,37 @@ type QueryDiagnostics struct {
 
 	// Timings stores per-stage durations for this query execution.
 	Timings map[string]time.Duration
+}
+
+type BooleanDiagnostics struct {
+	FastPathSkips       int
+	FastPathSkipReasons []string
+	WAND                WANDDiagnostics
+	AndFast             AndFastDiagnostics
+}
+
+type WANDDiagnostics struct {
+	Eligible           bool
+	Used               bool
+	SkipReason         string
+	ClauseCount        int
+	PostingsPerClause  []int
+	PostingsConsidered int
+	CandidateDocs      int
+	HeapSize           int
+	TopK               int
+	FinalTheta         float64
+}
+
+type AndFastDiagnostics struct {
+	Eligible        bool
+	Used            bool
+	SkipReason      string
+	DriverGroupSize int
+	OtherGroupCount int
+	CandidateDocs   int
+	UsedSortMerge   bool
+	BuiltLookupMaps bool
 }
 
 type diagnosticsContextKey struct{}
@@ -81,8 +114,19 @@ func (q *queryExecContext) snapshot() *QueryDiagnostics {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	copyD := q.d
+	copyD.Boolean = copyBooleanDiagnostics(q.d.Boolean)
 	copyD.Timings = copyDurationMap(q.d.Timings)
 	return &copyD
+}
+
+func copyBooleanDiagnostics(src *BooleanDiagnostics) *BooleanDiagnostics {
+	if src == nil {
+		return nil
+	}
+	out := *src
+	out.FastPathSkipReasons = append([]string(nil), src.FastPathSkipReasons...)
+	out.WAND.PostingsPerClause = append([]int(nil), src.WAND.PostingsPerClause...)
+	return &out
 }
 
 func copyDurationMap(src map[string]time.Duration) map[string]time.Duration {
@@ -118,14 +162,14 @@ func (q *queryExecContext) setStrategy(v string) {
 	}
 }
 
-func (q *queryExecContext) setReasonIfEmpty(v string) {
+func (q *queryExecContext) setSkipReasonIfEmpty(v string) {
 	if q == nil || v == "" {
 		return
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.d.StrategyReason == "" {
-		q.d.StrategyReason = v
+	if q.d.StrategySkipReason == "" {
+		q.d.StrategySkipReason = v
 	}
 }
 
@@ -220,6 +264,27 @@ func (q *queryExecContext) addTiming(name string, d time.Duration) {
 	q.mu.Lock()
 	q.d.Timings[name] = d
 	q.mu.Unlock()
+}
+
+func (q *queryExecContext) updateBooleanDiagnostics(fn func(*BooleanDiagnostics)) {
+	if q == nil || fn == nil {
+		return
+	}
+	q.mu.Lock()
+	if q.d.Boolean == nil {
+		q.d.Boolean = &BooleanDiagnostics{}
+	}
+	fn(q.d.Boolean)
+	q.mu.Unlock()
+}
+
+func (q *queryExecContext) recordFastPathSkip(reason string) {
+	q.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+		b.FastPathSkips++
+		if reason != "" {
+			b.FastPathSkipReasons = append(b.FastPathSkipReasons, reason)
+		}
+	})
 }
 
 func queryTypeOf(q Query) string {
