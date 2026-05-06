@@ -54,7 +54,7 @@ func (m *fastMust) contains(id DocID) bool {
 	return false
 }
 
-func parseFastAndClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, []BoolClause, bool) {
+func parseFastAndClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, []BoolClause, bool, string) {
 	var mustTerms []TermQuery
 	var shoulds []BoolClause
 	var mustNots []BoolClause
@@ -66,7 +66,7 @@ func parseFastAndClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, []BoolClau
 		case Must:
 			term, ok := termQueryOf(clause.Query)
 			if !ok {
-				return nil, nil, nil, false
+				return nil, nil, nil, false, "and_fast_non_term_clause"
 			}
 			mustTerms = append(mustTerms, term)
 		case Should:
@@ -76,12 +76,12 @@ func parseFastAndClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, []BoolClau
 		}
 	}
 	if len(mustTerms) == 0 {
-		return nil, nil, nil, false
+		return nil, nil, nil, false, "and_fast_no_must_terms"
 	}
-	return mustTerms, shoulds, mustNots, true
+	return mustTerms, shoulds, mustNots, true, ""
 }
 
-func parseFastOrClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, bool) {
+func parseFastOrClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, bool, string) {
 	var shouldTerms []TermQuery
 	var mustNots []BoolClause
 	for _, clause := range q.Clauses {
@@ -90,11 +90,11 @@ func parseFastOrClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, bool) {
 		}
 		switch clause.Occur {
 		case Must:
-			return nil, nil, false
+			return nil, nil, false, "or_fast_has_must_clause"
 		case Should:
 			term, ok := termQueryOf(clause.Query)
 			if !ok {
-				return nil, nil, false
+				return nil, nil, false, "or_fast_non_term_clause"
 			}
 			shouldTerms = append(shouldTerms, term)
 		case MustNot:
@@ -102,9 +102,9 @@ func parseFastOrClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, bool) {
 		}
 	}
 	if len(shouldTerms) == 0 {
-		return nil, nil, false
+		return nil, nil, false, "or_fast_no_should_terms"
 	}
-	return shouldTerms, mustNots, true
+	return shouldTerms, mustNots, true, ""
 }
 
 func (s *Service) buildExcludeSet(ctx context.Context, clauses []BoolClause, scope queryFieldScope) (map[DocID]struct{}, error) {
@@ -155,9 +155,20 @@ func (s *Service) applyShouldClauseBoosts(ctx context.Context, combined map[DocI
 }
 
 func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
-	mustTerms, shoulds, mustNots, ok := parseFastAndClauses(q)
+	mustTerms, shoulds, mustNots, ok, reason := parseFastAndClauses(q)
 	if !ok {
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			exec.recordFastPathSkip(reason)
+			exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+				b.AndFast.SkipReason = reason
+			})
+		}
 		return nil, false, nil
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.AndFast.Eligible = true
+		})
 	}
 
 	mustGroups, exhausted, err := s.collectFastMustGroups(ctx, mustTerms, scope)
@@ -178,16 +189,28 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 		// Fast path: Seq ordinals are only comparable within one field index.
 		if exec := diagnosticsFromContext(ctx); exec != nil {
 			exec.setStrategy("bool_and_fast_sort_merge")
+			exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+				b.AndFast.Used = true
+				b.AndFast.UsedSortMerge = true
+				b.AndFast.DriverGroupSize = mustGroups[0].totalDocs
+				b.AndFast.OtherGroupCount = len(mustGroups) - 1
+			})
 		}
 		return s.execBooleanAndSortMerge(mustGroups, shoulds, exclude, ctx, scope)
 	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.setStrategy("bool_and_fast_driver")
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.AndFast.Used = true
+			b.AndFast.DriverGroupSize = mustGroups[0].totalDocs
+			b.AndFast.OtherGroupCount = len(mustGroups) - 1
+		})
 	}
 
 	// Fallback path: use the smallest MUST group as the candidate driver when clauses expand to multiple lists.
 	driverGroup := &mustGroups[0]
 	otherGroups := mustGroups[1:]
+	builtLookupMaps := false
 	if driverGroup.totalDocs >= lookupMapThreshold {
 		// For larger candidate sets, prebuild lookup maps for the remaining MUST groups.
 		for i := range otherGroups {
@@ -195,6 +218,12 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 				otherGroups[i].expansions[j].buildMap()
 			}
 		}
+		builtLookupMaps = len(otherGroups) > 0
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.AndFast.BuiltLookupMaps = builtLookupMaps
+		})
 	}
 
 	// Final AND matches keyed by DocID, with accumulated clause and term-frequency counts.
@@ -257,13 +286,21 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 	if err := s.applyShouldClauseBoosts(ctx, combined, shoulds, scope); err != nil {
 		return nil, false, err
 	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.AndFast.CandidateDocs = len(combined)
+		})
+	}
 
 	return combined, true, nil
 }
 
 func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
-	shouldTerms, mustNots, ok := parseFastOrClauses(q)
+	shouldTerms, mustNots, ok, reason := parseFastOrClauses(q)
 	if !ok {
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			exec.recordFastPathSkip(reason)
+		}
 		return nil, false, nil
 	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
@@ -407,6 +444,11 @@ loop:
 
 	if err := s.applyShouldClauseBoosts(ctx, combined, shoulds, scope); err != nil {
 		return nil, false, err
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.AndFast.CandidateDocs = len(combined)
+		})
 	}
 
 	return combined, true, nil

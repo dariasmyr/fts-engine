@@ -2,6 +2,7 @@ package fts
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -105,6 +106,30 @@ func TestSearchDiagnosticsBooleanOrWandStrategy(t *testing.T) {
 	if d.ReturnedDocs != 2 {
 		t.Fatalf("ReturnedDocs = %d, want 2", d.ReturnedDocs)
 	}
+	if d.Boolean == nil {
+		t.Fatal("expected boolean diagnostics")
+	}
+	if d.Boolean.FastPathSkips != 1 {
+		t.Fatalf("FastPathSkips = %d, want 1", d.Boolean.FastPathSkips)
+	}
+	if len(d.Boolean.FastPathSkipReasons) != 1 || d.Boolean.FastPathSkipReasons[0] != "and_fast_no_must_terms" {
+		t.Fatalf("FastPathSkipReasons = %v, want [and_fast_no_must_terms]", d.Boolean.FastPathSkipReasons)
+	}
+	if !d.Boolean.WAND.Eligible || !d.Boolean.WAND.Used {
+		t.Fatalf("unexpected WAND diagnostics: %+v", d.Boolean.WAND)
+	}
+	if d.Boolean.WAND.ClauseCount != 3 {
+		t.Fatalf("WAND ClauseCount = %d, want 3", d.Boolean.WAND.ClauseCount)
+	}
+	if d.Boolean.WAND.TopK != 2 || d.Boolean.WAND.HeapSize != 2 {
+		t.Fatalf("unexpected WAND topK/heap diagnostics: %+v", d.Boolean.WAND)
+	}
+	if len(d.Boolean.WAND.PostingsPerClause) != 3 {
+		t.Fatalf("WAND PostingsPerClause len = %d, want 3", len(d.Boolean.WAND.PostingsPerClause))
+	}
+	if d.Boolean.WAND.CandidateDocs <= 0 || d.Boolean.WAND.PostingsConsidered <= 0 {
+		t.Fatalf("expected positive WAND work counters, got %+v", d.Boolean.WAND)
+	}
 }
 
 func TestSearchDiagnosticsPhraseStrategy(t *testing.T) {
@@ -145,8 +170,8 @@ func TestSearchDiagnosticsBooleanFallbackStrategy(t *testing.T) {
 	if d.ExecutionStrategy != "bool_fallback" {
 		t.Fatalf("ExecutionStrategy = %q, want bool_fallback", d.ExecutionStrategy)
 	}
-	if d.StrategyReason != "wand_not_or_terms_only" {
-		t.Fatalf("StrategyReason = %q, want wand_not_or_terms_only", d.StrategyReason)
+	if d.StrategySkipReason != "wand_not_or_terms_only" {
+		t.Fatalf("StrategySkipReason = %q, want wand_not_or_terms_only", d.StrategySkipReason)
 	}
 }
 
@@ -167,6 +192,69 @@ func TestSearchDiagnosticsBooleanAndFastStrategy(t *testing.T) {
 	}
 	if d.ExecutionStrategy != "bool_and_fast_sort_merge" {
 		t.Fatalf("ExecutionStrategy = %q, want bool_and_fast_sort_merge", d.ExecutionStrategy)
+	}
+	if d.Boolean == nil {
+		t.Fatal("expected boolean diagnostics")
+	}
+	if !d.Boolean.AndFast.Eligible || !d.Boolean.AndFast.Used || !d.Boolean.AndFast.UsedSortMerge {
+		t.Fatalf("unexpected AND fast diagnostics: %+v", d.Boolean.AndFast)
+	}
+	if d.Boolean.AndFast.DriverGroupSize != 1 || d.Boolean.AndFast.OtherGroupCount != 1 {
+		t.Fatalf("unexpected AND fast group diagnostics: %+v", d.Boolean.AndFast)
+	}
+	if d.Boolean.AndFast.BuiltLookupMaps {
+		t.Fatalf("sort-merge path should not build lookup maps: %+v", d.Boolean.AndFast)
+	}
+	if d.Boolean.AndFast.CandidateDocs != 1 {
+		t.Fatalf("AndFast CandidateDocs = %d, want 1", d.Boolean.AndFast.CandidateDocs)
+	}
+}
+
+func TestSearchDiagnosticsBooleanAndFastDriverInstrumentation(t *testing.T) {
+	title := newMemoryIndex()
+	body := newMemoryIndex()
+	alphaDocs := make([]DocRef, 0, 60)
+	betaDocs := make([]DocRef, 0, 60)
+	for i := 0; i < 60; i++ {
+		id := DocID(fmt.Sprintf("doc-%d", i))
+		alphaDocs = append(alphaDocs, DocRef{ID: id, Count: 1, Seq: uint32(i + 1)})
+		betaDocs = append(betaDocs, DocRef{ID: id, Count: 1, Seq: uint32(i + 1)})
+	}
+	title.entries["alpha"] = alphaDocs
+	body.entries["beta"] = betaDocs
+
+	svc := NewMultiFieldFromIndexes(map[string]Index{
+		"title": title,
+		"body":  body,
+	}, WordKeys)
+
+	q := &BooleanQuery{Clauses: []BoolClause{
+		MustClause(TermQuery{Field: "title", Term: "alpha"}),
+		MustClause(TermQuery{Field: "body", Term: "beta"}),
+	}}
+
+	res, err := svc.Search(context.Background(), q, 10)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	d := requireDiagnostics(t, res)
+	if d.ExecutionStrategy != "bool_and_fast_driver" {
+		t.Fatalf("ExecutionStrategy = %q, want bool_and_fast_driver", d.ExecutionStrategy)
+	}
+	if d.Boolean == nil {
+		t.Fatal("expected boolean diagnostics")
+	}
+	if !d.Boolean.AndFast.Eligible || !d.Boolean.AndFast.Used || d.Boolean.AndFast.UsedSortMerge {
+		t.Fatalf("unexpected AND fast driver diagnostics: %+v", d.Boolean.AndFast)
+	}
+	if !d.Boolean.AndFast.BuiltLookupMaps {
+		t.Fatalf("expected lookup maps to be built: %+v", d.Boolean.AndFast)
+	}
+	if d.Boolean.AndFast.DriverGroupSize != 60 || d.Boolean.AndFast.OtherGroupCount != 1 {
+		t.Fatalf("unexpected AND fast driver groups: %+v", d.Boolean.AndFast)
+	}
+	if d.Boolean.AndFast.CandidateDocs != 60 {
+		t.Fatalf("AndFast CandidateDocs = %d, want 60", d.Boolean.AndFast.CandidateDocs)
 	}
 }
 
@@ -192,8 +280,20 @@ func TestSearchDiagnosticsWandSkipReasonWithoutScorer(t *testing.T) {
 	if d.ExecutionStrategy != "bool_or_fast" {
 		t.Fatalf("ExecutionStrategy = %q, want bool_or_fast", d.ExecutionStrategy)
 	}
-	if d.StrategyReason != "wand_disabled_no_scorer" {
-		t.Fatalf("StrategyReason = %q, want wand_disabled_no_scorer", d.StrategyReason)
+	if d.StrategySkipReason != "wand_disabled_no_scorer" {
+		t.Fatalf("StrategySkipReason = %q, want wand_disabled_no_scorer", d.StrategySkipReason)
+	}
+	if d.Boolean == nil {
+		t.Fatal("expected boolean diagnostics")
+	}
+	if d.Boolean.FastPathSkips != 2 {
+		t.Fatalf("FastPathSkips = %d, want 2", d.Boolean.FastPathSkips)
+	}
+	if len(d.Boolean.FastPathSkipReasons) != 2 || d.Boolean.FastPathSkipReasons[1] != "wand_disabled_no_scorer" {
+		t.Fatalf("unexpected FastPathSkipReasons: %v", d.Boolean.FastPathSkipReasons)
+	}
+	if d.Boolean.WAND.Eligible || d.Boolean.WAND.Used || d.Boolean.WAND.SkipReason != "wand_disabled_no_scorer" {
+		t.Fatalf("unexpected WAND skip diagnostics: %+v", d.Boolean.WAND)
 	}
 }
 

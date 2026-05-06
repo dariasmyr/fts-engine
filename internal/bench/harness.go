@@ -48,7 +48,7 @@ type QueryReport struct {
 	Recall                  float64
 	Latency                 time.Duration
 	ExecutionStrategy       string
-	StrategyReason          string
+	StrategySkipReason      string
 	IndexSearches           int
 	PostingEntriesRead      int
 	DiagnosticsTotal        time.Duration
@@ -170,7 +170,7 @@ func RunQueries(ctx context.Context, svc *pkgfts.Service, gt *GroundTruth, title
 		}
 		if diag := res.Diagnostics; diag != nil {
 			queryReport.ExecutionStrategy = diag.ExecutionStrategy
-			queryReport.StrategyReason = diag.StrategyReason
+			queryReport.StrategySkipReason = diag.StrategySkipReason
 			queryReport.IndexSearches = diag.IndexSearches
 			queryReport.PostingEntriesRead = diag.PostingEntriesRead
 			queryReport.DiagnosticsTotal = diag.Timings["total"]
