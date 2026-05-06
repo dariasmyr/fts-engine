@@ -23,7 +23,6 @@ type Result struct {
 type SearchResult struct {
 	Results           []Result
 	TotalResultsCount int
-	Timings           map[string]string
 	Diagnostics       *QueryDiagnostics
 }
 

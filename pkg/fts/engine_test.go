@@ -105,7 +105,7 @@ func TestSearchDocumentsTieBreakerByID(t *testing.T) {
 	}
 }
 
-func TestSearchDocumentsReturnsTimings(t *testing.T) {
+func TestSearchDocumentsReturnsDiagnosticsTimings(t *testing.T) {
 	idx := newMemoryIndex()
 	idx.entries["one"] = []DocRef{{ID: "x", Count: 1}}
 
@@ -115,13 +115,16 @@ func TestSearchDocumentsReturnsTimings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}
+	if res.Diagnostics == nil {
+		t.Fatal("expected non-nil diagnostics")
+	}
 
 	for _, key := range []string{"preprocess", "search_tokens", "total"} {
-		if _, ok := res.Timings[key]; !ok {
+		if _, ok := res.Diagnostics.Timings[key]; !ok {
 			t.Fatalf("timings key %q missing", key)
 		}
-		if res.Timings[key] == "" {
-			t.Fatalf("timings key %q is empty", key)
+		if res.Diagnostics.Timings[key] <= 0 {
+			t.Fatalf("timings key %q is not positive", key)
 		}
 	}
 }

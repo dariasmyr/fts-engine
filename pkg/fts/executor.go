@@ -41,11 +41,10 @@ func (s *Service) searchResultForQuery(ctx context.Context, q Query, maxResults 
 		exec.setQueryTypeIfEmpty("empty")
 		exec.setStrategy("empty")
 		exec.addTiming("total", 0)
-		return &SearchResult{Results: []Result{}, Timings: map[string]string{}}, nil
+		return &SearchResult{Results: []Result{}}, nil
 	}
 
 	start := time.Now()
-	timings := make(map[string]string, 2)
 
 	searchStart := time.Now()
 	hits, err := s.executeQuery(ctx, q, maxResults, scope)
@@ -53,13 +52,11 @@ func (s *Service) searchResultForQuery(ctx context.Context, q Query, maxResults 
 		return nil, err
 	}
 	searchTokens := time.Since(searchStart)
-	timings["search_tokens"] = formatDuration(searchTokens)
 	exec.addTiming("search_tokens", searchTokens)
 
 	total := time.Since(start)
-	timings["total"] = formatDuration(total)
 	exec.addTiming("total", total)
-	return searchResultFromHits(hits, maxResults, timings, s.scorer != nil), nil
+	return searchResultFromHits(hits, maxResults, s.scorer != nil), nil
 }
 
 func (s *Service) executeQuery(ctx context.Context, q Query, candidateLimit int, scope queryFieldScope) (map[DocID]docAccum, error) {

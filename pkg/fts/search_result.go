@@ -2,7 +2,7 @@ package fts
 
 import "sort"
 
-func searchResultFromHits(hits map[DocID]docAccum, maxResults int, timings map[string]string, useScore bool) *SearchResult {
+func searchResultFromHits(hits map[DocID]docAccum, maxResults int, useScore bool) *SearchResult {
 	results, totalFound := resultsFromHits(hits, useScore)
 	if maxResults <= 0 || maxResults > totalFound {
 		maxResults = totalFound
@@ -10,7 +10,6 @@ func searchResultFromHits(hits map[DocID]docAccum, maxResults int, timings map[s
 	return &SearchResult{
 		Results:           results[:maxResults],
 		TotalResultsCount: totalFound,
-		Timings:           timings,
 	}
 }
 

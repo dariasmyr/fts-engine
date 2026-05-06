@@ -38,11 +38,10 @@ func (s *Service) SearchFieldClauses(ctx context.Context, clauses []FieldQueryCl
 	if len(clauses) == 0 {
 		exec.setQueryTypeIfEmpty("empty")
 		exec.setStrategy("empty")
-		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}, Timings: map[string]string{}}), nil
+		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
 	}
 
 	start := time.Now()
-	timings := make(map[string]string, 3)
 
 	preStart := time.Now()
 
@@ -63,17 +62,13 @@ func (s *Service) SearchFieldClauses(ctx context.Context, clauses []FieldQueryCl
 		})
 	}
 	preprocess := time.Since(preStart)
-	timings["preprocess"] = formatDuration(preprocess)
 	exec.addTiming("preprocess", preprocess)
 
 	res, err := s.searchResultForQuery(ctx, clausesToQuery(boolClauses), maxResults, queryFieldScope{})
 	if err != nil {
 		return nil, err
 	}
-	timings["search_tokens"] = res.Timings["search_tokens"]
 	total := time.Since(start)
-	timings["total"] = formatDuration(total)
 	exec.addTiming("total", total)
-	res.Timings = timings
 	return attachDiagnostics(ctx, res), nil
 }

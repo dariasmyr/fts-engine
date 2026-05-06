@@ -268,7 +268,7 @@ func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxR
 	return &models.SearchResult{
 		ResultData:        out,
 		TotalResultsCount: result.TotalResultsCount,
-		Timings:           result.Timings,
+		Timings:           formatDiagnosticsTimings(result.Diagnostics),
 	}, nil
 }
 
@@ -299,6 +299,24 @@ func logSearchStats(log *slog.Logger, snapshot ftsstats.Snapshot) {
 			"avg_postings", stats.AvgPostings(),
 		)
 	}
+}
+
+func formatDiagnosticsTimings(diag *pkgfts.QueryDiagnostics) map[string]string {
+	if diag == nil || len(diag.Timings) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(diag.Timings))
+	for key, d := range diag.Timings {
+		out[key] = formatAppDuration(d)
+	}
+	return out
+}
+
+func formatAppDuration(d time.Duration) string {
+	if d < time.Millisecond {
+		return fmt.Sprintf("%dus", d.Microseconds())
+	}
+	return fmt.Sprintf("%dms", d.Milliseconds())
 }
 
 func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
