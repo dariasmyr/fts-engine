@@ -20,6 +20,7 @@ import (
 	"github.com/dariasmyr/fts-engine/config"
 	"github.com/dariasmyr/fts-engine/internal/adapters/cui"
 	"github.com/dariasmyr/fts-engine/internal/adapters/loader/wiki"
+	"github.com/dariasmyr/fts-engine/internal/adapters/observability"
 	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/internal/lib/logger/sl"
 	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
@@ -100,7 +101,7 @@ func main() {
 			log.Error("Failed to initialize trie service", "error", sl.Err(err))
 			return
 		}
-		ftsEngine = &serviceAdapter{service: svc, snapshotLoaded: loadedFromSnapshot}
+		ftsEngine = &serviceAdapter{service: svc, snapshotLoaded: loadedFromSnapshot, searchStats: observability.NewSearchStats(64)}
 	default:
 		log.Error("unknown fts engine", "engine", cfg.FTS.Engine)
 		return
@@ -187,6 +188,9 @@ func main() {
 		log.Error("Failed to start appCUI", "error", sl.Err(cuiErr))
 		return
 	}
+	if snapshot, ok := adapter.SearchStatsSnapshot(); ok && snapshot.TotalSearches > 0 {
+		logSearchStats(log, snapshot)
+	}
 }
 
 func analyzeTrie(
@@ -232,6 +236,7 @@ func analyzeTrie(
 type serviceAdapter struct {
 	service        *pkgfts.Service
 	snapshotLoaded bool
+	searchStats    *observability.SearchStats
 }
 
 func (s *serviceAdapter) IndexDocument(ctx context.Context, docID string, content string) error {
@@ -240,6 +245,13 @@ func (s *serviceAdapter) IndexDocument(ctx context.Context, docID string, conten
 
 func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
 	result, err := s.service.SearchDocuments(ctx, query, maxResults)
+	if s.searchStats != nil {
+		var diag *pkgfts.QueryDiagnostics
+		if result != nil {
+			diag = result.Diagnostics
+		}
+		s.searchStats.ObserveSearch(query, diag, err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -262,6 +274,31 @@ func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxR
 
 func (s *serviceAdapter) AnalyzeStats() (pkgfts.Stats, bool) {
 	return s.service.Analyze()
+}
+
+func (s *serviceAdapter) SearchStatsSnapshot() (observability.Snapshot, bool) {
+	if s.searchStats == nil {
+		return observability.Snapshot{}, false
+	}
+	return s.searchStats.Snapshot(), true
+}
+
+func logSearchStats(log *slog.Logger, snapshot observability.Snapshot) {
+	log.Info("search diagnostics summary",
+		"total_searches", snapshot.TotalSearches,
+		"errors_total", snapshot.ErrorsTotal,
+		"zero_results", snapshot.ZeroResults,
+		"strategies", len(snapshot.ByStrategy),
+	)
+	for strategy, stats := range snapshot.ByStrategy {
+		log.Info("search diagnostics strategy",
+			"strategy", strategy,
+			"count", stats.Count,
+			"avg_duration", stats.AvgDuration(),
+			"max_duration", stats.MaxDuration,
+			"avg_postings", stats.AvgPostings(),
+		)
+	}
 }
 
 func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
