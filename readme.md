@@ -19,6 +19,7 @@ Reusable full-text search engine in Go with configurable indexes, filters, stemm
 - Public text processing pipeline in `pkg/textproc`.
 - Public key generators in `pkg/keygen`.
 - Public probabilistic filters in `pkg/filter`.
+- Public diagnostics observer in `pkg/ftsstats`.
 - CLI entrypoint in `cmd/fts` with:
   - `prod` mode (run with configurable filters and interactive CUI)
   - `experiment` mode (collect indexing metrics)
@@ -220,6 +221,74 @@ res, _ := engine.SearchFieldClauses(context.Background(), []fts.FieldQueryClause
 
 Prefix queries require an index that implements `fts.PrefixIndex`.
 Among the built-in public indexes, `slicedradix` currently supports prefix search.
+
+### 6) Diagnostics and aggregated stats
+
+All regular search methods already return structured per-request diagnostics via `SearchResult.Diagnostics`.
+
+Useful methods include:
+
+- `Search(...)`
+- `SearchDocuments(...)`
+- `SearchField(...)`
+- `SearchFields(...)`
+- `SearchFieldClauses(...)`
+- `SearchPhrase(...)`
+- `SearchPhraseNear(...)`
+
+Example:
+
+```go
+res, _ := engine.SearchDocuments(context.Background(), "postgres wal checkpoint", 10)
+
+fmt.Println(res.Diagnostics.LogicalQueryType)
+fmt.Println(res.Diagnostics.ExecutionStrategy)
+fmt.Println(res.Diagnostics.StrategySkipReason)
+fmt.Println(res.Diagnostics.Timings["total"])
+fmt.Println(res.Diagnostics.PostingEntriesRead)
+```
+
+If you want aggregated observability across many requests, use `pkg/ftsstats`.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
+	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/keygen"
+)
+
+func main() {
+	engine := fts.New(radix.New(), keygen.Word)
+	stats := ftsstats.NewSearchStats(64)
+
+	_ = engine.IndexDocument(context.Background(), "doc-1", "postgres wal checkpoint tuning")
+	_ = engine.IndexDocument(context.Background(), "doc-2", "checkpoint and recovery internals")
+
+	res, err := engine.SearchDocuments(context.Background(), "postgres checkpoint", 10)
+	stats.ObserveSearch("postgres checkpoint", res.Diagnostics, err)
+
+	snap := stats.Snapshot()
+	for strategy, st := range snap.ByStrategy {
+		fmt.Println(strategy, st.Count, st.AvgDuration(), st.MaxDuration)
+	}
+
+	for _, ev := range stats.Recent(5) {
+		fmt.Println(ev.QueryHash, ev.ExecutionStrategy, ev.TotalDuration)
+	}
+}
+```
+
+`pkg/ftsstats` is the recommended programmatic surface for agents and library consumers that need:
+
+- recent search events without storing raw query text by default;
+- aggregated stats by execution strategy;
+- structured observability without depending on `cmd/fts` or any HTTP/debug transport layer.
 
 ## Run main app (local testing via config)
 
