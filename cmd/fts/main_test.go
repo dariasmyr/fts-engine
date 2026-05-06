@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/internal/adapters/observability"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
 	"github.com/dariasmyr/fts-engine/pkg/index/radix"
 )
 
@@ -19,7 +19,7 @@ func TestServiceAdapterObservesSearchDiagnostics(t *testing.T) {
 		t.Fatalf("IndexDocument() error = %v", err)
 	}
 
-	adapter := &serviceAdapter{service: svc, searchStats: observability.NewSearchStats(8)}
+	adapter := &serviceAdapter{service: svc, searchStats: ftsstats.NewSearchStats(8)}
 	if _, err := adapter.SearchDocuments(ctx, "alpha", 10); err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}

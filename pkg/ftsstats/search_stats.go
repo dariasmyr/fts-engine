@@ -1,4 +1,4 @@
-package observability
+package ftsstats
 
 import (
 	"crypto/sha256"

@@ -20,11 +20,11 @@ import (
 	"github.com/dariasmyr/fts-engine/config"
 	"github.com/dariasmyr/fts-engine/internal/adapters/cui"
 	"github.com/dariasmyr/fts-engine/internal/adapters/loader/wiki"
-	"github.com/dariasmyr/fts-engine/internal/adapters/observability"
 	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/internal/lib/logger/sl"
 	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
@@ -101,7 +101,7 @@ func main() {
 			log.Error("Failed to initialize trie service", "error", sl.Err(err))
 			return
 		}
-		ftsEngine = &serviceAdapter{service: svc, snapshotLoaded: loadedFromSnapshot, searchStats: observability.NewSearchStats(64)}
+		ftsEngine = &serviceAdapter{service: svc, snapshotLoaded: loadedFromSnapshot, searchStats: ftsstats.NewSearchStats(64)}
 	default:
 		log.Error("unknown fts engine", "engine", cfg.FTS.Engine)
 		return
@@ -236,7 +236,7 @@ func analyzeTrie(
 type serviceAdapter struct {
 	service        *pkgfts.Service
 	snapshotLoaded bool
-	searchStats    *observability.SearchStats
+	searchStats    *ftsstats.SearchStats
 }
 
 func (s *serviceAdapter) IndexDocument(ctx context.Context, docID string, content string) error {
@@ -276,14 +276,14 @@ func (s *serviceAdapter) AnalyzeStats() (pkgfts.Stats, bool) {
 	return s.service.Analyze()
 }
 
-func (s *serviceAdapter) SearchStatsSnapshot() (observability.Snapshot, bool) {
+func (s *serviceAdapter) SearchStatsSnapshot() (ftsstats.Snapshot, bool) {
 	if s.searchStats == nil {
-		return observability.Snapshot{}, false
+		return ftsstats.Snapshot{}, false
 	}
 	return s.searchStats.Snapshot(), true
 }
 
-func logSearchStats(log *slog.Logger, snapshot observability.Snapshot) {
+func logSearchStats(log *slog.Logger, snapshot ftsstats.Snapshot) {
 	log.Info("search diagnostics summary",
 		"total_searches", snapshot.TotalSearches,
 		"errors_total", snapshot.ErrorsTotal,
