@@ -268,7 +268,7 @@ func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxR
 	return &models.SearchResult{
 		ResultData:        out,
 		TotalResultsCount: result.TotalResultsCount,
-		Timings:           formatDiagnosticsTimings(result.Diagnostics),
+		Diagnostics:       projectDiagnostics(result.Diagnostics),
 	}, nil
 }
 
@@ -310,6 +310,28 @@ func formatDiagnosticsTimings(diag *pkgfts.QueryDiagnostics) map[string]string {
 		out[key] = formatAppDuration(d)
 	}
 	return out
+}
+
+func projectDiagnostics(diag *pkgfts.QueryDiagnostics) *models.SearchDiagnostics {
+	if diag == nil {
+		return nil
+	}
+	return &models.SearchDiagnostics{
+		LogicalQueryType:   diag.LogicalQueryType,
+		ExecutionStrategy:  diag.ExecutionStrategy,
+		StrategySkipReason: diag.StrategySkipReason,
+		Timings:            formatDiagnosticsTimings(diag),
+		ProcessedTokens:    diag.ProcessedTokens,
+		FieldsVisited:      diag.FieldsVisited,
+		GeneratedKeys:      diag.GeneratedKeys,
+		IndexSearches:      diag.IndexSearches,
+		FilterChecks:       diag.FilterChecks,
+		FilterRejects:      diag.FilterRejects,
+		PostingEntriesRead: diag.PostingEntriesRead,
+		CandidateDocs:      diag.CandidateDocs,
+		MatchedDocs:        diag.MatchedDocs,
+		ReturnedDocs:       diag.ReturnedDocs,
+	}
 }
 
 func formatAppDuration(d time.Duration) string {

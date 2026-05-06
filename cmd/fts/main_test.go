@@ -20,8 +20,18 @@ func TestServiceAdapterObservesSearchDiagnostics(t *testing.T) {
 	}
 
 	adapter := &serviceAdapter{service: svc, searchStats: ftsstats.NewSearchStats(8)}
-	if _, err := adapter.SearchDocuments(ctx, "alpha", 10); err != nil {
+	res, err := adapter.SearchDocuments(ctx, "alpha", 10)
+	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if res.Diagnostics == nil {
+		t.Fatal("expected projected diagnostics in models.SearchResult")
+	}
+	if res.Diagnostics.ExecutionStrategy == "" {
+		t.Fatalf("expected execution strategy, got %+v", res.Diagnostics)
+	}
+	if res.Diagnostics.Timings["total"] == "" {
+		t.Fatalf("expected formatted total timing, got %+v", res.Diagnostics.Timings)
 	}
 
 	snap, ok := adapter.SearchStatsSnapshot()
