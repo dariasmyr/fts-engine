@@ -310,6 +310,8 @@ Snapshot fields (`fts.snapshot`):
 
 Use `cmd/bench` when you want to compare index/scorer/pipeline combinations on a corpus with labeled queries.
 
+In addition to indexing time and search quality metrics, `cmd/bench` now also reports aggregated search diagnostics such as strategy distribution, diagnostics timings, posting reads, and index lookups.
+
 Example:
 
 ```bash
@@ -332,6 +334,141 @@ Useful flags:
 - `-k`: top-k used for `nDCG` and `Recall`
 - `-limit`: cap the number of indexed documents for quick experiments
 - `-worst`: print worst queries by `nDCG`
+
+### Benchmark baselines
+
+For fair before/after comparisons keep these flags unchanged between runs:
+
+- `-limit`
+- `-index`
+- `-lang`
+- `-field`
+- `-scorer`
+- `-k`
+
+Engine microbench:
+
+```bash
+go test -run '^$' -bench . -benchmem -count=5 ./pkg/fts | tee before-engine.txt
+```
+
+Index microbench:
+
+```bash
+go test -run '^$' -bench . -benchmem -count=5 \
+  ./pkg/index/radix \
+  ./pkg/index/slicedradix \
+  ./pkg/index/hamt \
+  ./pkg/index/hamtpointered | tee before-indexes.txt
+```
+
+Full microbench run:
+
+```bash
+go test -run '^$' -bench . -benchmem -count=5 \
+  ./pkg/fts \
+  ./pkg/index/radix \
+  ./pkg/index/slicedradix \
+  ./pkg/index/hamt \
+  ./pkg/index/hamtpointered | tee before-micro-all.txt
+```
+
+Fast end-to-end bench on a local dump, for example `./data/enwiki-latest-abstract1.xml.gz`:
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-latest-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.sample.json \
+  -index slicedradix \
+  -lang en \
+  -field abstract \
+  -scorer bm25 \
+  -k 10 \
+  -limit 5000 \
+  -worst 5 | tee before-e2e-fast.txt
+```
+
+Medium end-to-end bench:
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-latest-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.sample.json \
+  -index slicedradix \
+  -lang en \
+  -field abstract \
+  -scorer bm25 \
+  -k 10 \
+  -limit 20000 \
+  -worst 10 | tee before-e2e-medium.txt
+```
+
+To compare index implementations on the same corpus, rerun `cmd/bench` with the same flags and vary only `-index`:
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-latest-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.sample.json \
+  -index radix \
+  -lang en \
+  -field abstract \
+  -scorer bm25 \
+  -k 10 \
+  -limit 10000 \
+  -worst 5 | tee before-radix.txt
+```
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-latest-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.sample.json \
+  -index slicedradix \
+  -lang en \
+  -field abstract \
+  -scorer bm25 \
+  -k 10 \
+  -limit 10000 \
+  -worst 5 | tee before-slicedradix.txt
+```
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-latest-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.sample.json \
+  -index hamt \
+  -lang en \
+  -field abstract \
+  -scorer bm25 \
+  -k 10 \
+  -limit 10000 \
+  -worst 5 | tee before-hamt.txt
+```
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-latest-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.sample.json \
+  -index hamtpointered \
+  -lang en \
+  -field abstract \
+  -scorer bm25 \
+  -k 10 \
+  -limit 10000 \
+  -worst 5 | tee before-hamtpointered.txt
+```
+
+Recommended minimum baseline before a feature branch:
+
+1. Run the engine microbench.
+2. Run the index microbench.
+3. Run the fast end-to-end bench.
+
+After the change, rerun the same commands and save results into `after-*` files.
+
+Compare these outputs:
+
+- microbench: `ns/op`, `B/op`, `allocs/op`
+- `cmd/bench`: indexing duration, latency `p50/p95/p99`, `diag.total`, `diag.search_tokens`, `avg postings`, `avg index_lookups`, strategy distribution, `nDCG`, `MRR`, `Recall`
 
 ## Ribbon filter usage
 
@@ -464,8 +601,8 @@ Run only public packages:
 go test ./pkg/...
 ```
 
-Run microbenchmarks for the FTS engine and prefix-capable sliced radix index:
+Run microbenchmarks for the FTS engine and all current index implementations:
 
 ```bash
-go test -bench=. ./pkg/fts ./pkg/index/slicedradix
+go test -run '^$' -bench . -benchmem ./pkg/fts ./pkg/index/radix ./pkg/index/slicedradix ./pkg/index/hamt ./pkg/index/hamtpointered
 ```

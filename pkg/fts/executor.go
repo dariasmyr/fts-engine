@@ -15,18 +15,32 @@ func addAccum(a, b docAccum) docAccum {
 }
 
 func (s *Service) Search(ctx context.Context, q Query, maxResults int) (*SearchResult, error) {
-	return s.searchResultForQuery(ctx, q, maxResults, queryFieldScope{})
+	ctx, _ = ensureDiagnosticsContext(ctx)
+	res, err := s.searchResultForQuery(ctx, q, maxResults, queryFieldScope{})
+	if err != nil {
+		return nil, err
+	}
+	return attachDiagnostics(ctx, res), nil
 }
 
 func (s *Service) SearchQueryFields(ctx context.Context, fields []string, q Query, maxResults int) (*SearchResult, error) {
-	return s.searchResultForQuery(ctx, q, maxResults, newQueryFieldScope(fields))
+	ctx, _ = ensureDiagnosticsContext(ctx)
+	res, err := s.searchResultForQuery(ctx, q, maxResults, newQueryFieldScope(fields))
+	if err != nil {
+		return nil, err
+	}
+	return attachDiagnostics(ctx, res), nil
 }
 
 func (s *Service) searchResultForQuery(ctx context.Context, q Query, maxResults int, scope queryFieldScope) (*SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, exec := ensureDiagnosticsContext(ctx)
 	if q == nil {
+		exec.setQueryTypeIfEmpty("empty")
+		exec.setStrategy("empty")
+		exec.addTiming("total", 0)
 		return &SearchResult{Results: []Result{}, Timings: map[string]string{}}, nil
 	}
 
@@ -38,13 +52,20 @@ func (s *Service) searchResultForQuery(ctx context.Context, q Query, maxResults 
 	if err != nil {
 		return nil, err
 	}
-	timings["search_tokens"] = formatDuration(time.Since(searchStart))
+	searchTokens := time.Since(searchStart)
+	timings["search_tokens"] = formatDuration(searchTokens)
+	exec.addTiming("search_tokens", searchTokens)
 
-	timings["total"] = formatDuration(time.Since(start))
+	total := time.Since(start)
+	timings["total"] = formatDuration(total)
+	exec.addTiming("total", total)
 	return searchResultFromHits(hits, maxResults, timings, s.scorer != nil), nil
 }
 
 func (s *Service) executeQuery(ctx context.Context, q Query, candidateLimit int, scope queryFieldScope) (map[DocID]docAccum, error) {
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.setQueryTypeIfEmpty(queryTypeOf(q))
+	}
 	switch t := q.(type) {
 	case TermQuery:
 		return s.execTerm(ctx, t, scope)

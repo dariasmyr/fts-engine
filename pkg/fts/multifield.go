@@ -139,22 +139,41 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, exec := ensureDiagnosticsContext(ctx)
+	exec.setQueryTypeIfEmpty("phrase")
 
 	start := time.Now()
 	timings := make(map[string]string, 3)
 
 	preStart := time.Now()
 	plan := s.preparePhrase(fields, phrase)
-	timings["preprocess"] = formatDuration(time.Since(preStart))
+	preprocess := time.Since(preStart)
+	timings["preprocess"] = formatDuration(preprocess)
+	exec.addTiming("preprocess", preprocess)
+	exec.addFields(len(fields))
+	exec.addTokens(len(plan.tokens))
 
 	if len(plan.tokens) == 0 {
 		timings["search_tokens"] = formatDuration(0)
-		timings["total"] = formatDuration(time.Since(start))
-		return &SearchResult{Results: []Result{}, Timings: timings}, nil
+		exec.addTiming("search_tokens", 0)
+		total := time.Since(start)
+		timings["total"] = formatDuration(total)
+		exec.addTiming("total", total)
+		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}, Timings: timings}), nil
 	}
 	if plan.fallback != nil {
-		return s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
+		res, err := s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
+		if err != nil {
+			return nil, err
+		}
+		timings["search_tokens"] = res.Timings["search_tokens"]
+		total := time.Since(start)
+		timings["total"] = formatDuration(total)
+		exec.addTiming("total", total)
+		res.Timings = timings
+		return attachDiagnostics(ctx, res), nil
 	}
+	exec.setStrategy("phrase_exact")
 
 	searchStart := time.Now()
 	hits, err := s.evalExactPhraseTokenHits(ctx, fields, plan.tokens)
@@ -162,16 +181,22 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 		return nil, err
 	}
 
-	timings["search_tokens"] = formatDuration(time.Since(searchStart))
+	searchTokens := time.Since(searchStart)
+	timings["search_tokens"] = formatDuration(searchTokens)
+	exec.addTiming("search_tokens", searchTokens)
 
-	timings["total"] = formatDuration(time.Since(start))
-	return searchResultFromHits(hits, maxResults, timings, s.scorer != nil), nil
+	total := time.Since(start)
+	timings["total"] = formatDuration(total)
+	exec.addTiming("total", total)
+	return attachDiagnostics(ctx, searchResultFromHits(hits, maxResults, timings, s.scorer != nil)), nil
 }
 
 func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []string, phrase string, distance int, maxResults int) (*SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, exec := ensureDiagnosticsContext(ctx)
+	exec.setQueryTypeIfEmpty("phrase_near")
 	if distance < 0 {
 		return nil, fmt.Errorf("fts: phrase near search: negative distance %d", distance)
 	}
@@ -181,16 +206,33 @@ func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []str
 
 	preStart := time.Now()
 	plan := s.preparePhrase(fields, phrase)
-	timings["preprocess"] = formatDuration(time.Since(preStart))
+	preprocess := time.Since(preStart)
+	timings["preprocess"] = formatDuration(preprocess)
+	exec.addTiming("preprocess", preprocess)
+	exec.addFields(len(fields))
+	exec.addTokens(len(plan.tokens))
 
 	if len(plan.tokens) == 0 {
 		timings["search_tokens"] = formatDuration(0)
-		timings["total"] = formatDuration(time.Since(start))
-		return &SearchResult{Results: []Result{}, Timings: timings}, nil
+		exec.addTiming("search_tokens", 0)
+		total := time.Since(start)
+		timings["total"] = formatDuration(total)
+		exec.addTiming("total", total)
+		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}, Timings: timings}), nil
 	}
 	if plan.fallback != nil {
-		return s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
+		res, err := s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
+		if err != nil {
+			return nil, err
+		}
+		timings["search_tokens"] = res.Timings["search_tokens"]
+		total := time.Since(start)
+		timings["total"] = formatDuration(total)
+		exec.addTiming("total", total)
+		res.Timings = timings
+		return attachDiagnostics(ctx, res), nil
 	}
+	exec.setStrategy("phrase_near")
 
 	searchStart := time.Now()
 	hits, err := s.evalNearPhraseTokenHits(ctx, fields, plan.tokens, uint32(distance))
@@ -198,10 +240,14 @@ func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []str
 		return nil, err
 	}
 
-	timings["search_tokens"] = formatDuration(time.Since(searchStart))
+	searchTokens := time.Since(searchStart)
+	timings["search_tokens"] = formatDuration(searchTokens)
+	exec.addTiming("search_tokens", searchTokens)
 
-	timings["total"] = formatDuration(time.Since(start))
-	return searchResultFromHits(hits, maxResults, timings, s.scorer != nil), nil
+	total := time.Since(start)
+	timings["total"] = formatDuration(total)
+	exec.addTiming("total", total)
+	return attachDiagnostics(ctx, searchResultFromHits(hits, maxResults, timings, s.scorer != nil)), nil
 }
 
 func (s *Service) SnapshotFields() (map[string]Index, Filter) {

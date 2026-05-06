@@ -34,8 +34,11 @@ func (s *Service) SearchFieldClauses(ctx context.Context, clauses []FieldQueryCl
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, exec := ensureDiagnosticsContext(ctx)
 	if len(clauses) == 0 {
-		return &SearchResult{Results: []Result{}, Timings: map[string]string{}}, nil
+		exec.setQueryTypeIfEmpty("empty")
+		exec.setStrategy("empty")
+		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}, Timings: map[string]string{}}), nil
 	}
 
 	start := time.Now()
@@ -59,14 +62,18 @@ func (s *Service) SearchFieldClauses(ctx context.Context, clauses []FieldQueryCl
 			Query: bindDefaultField(parsed, clause.Field),
 		})
 	}
-	timings["preprocess"] = formatDuration(time.Since(preStart))
+	preprocess := time.Since(preStart)
+	timings["preprocess"] = formatDuration(preprocess)
+	exec.addTiming("preprocess", preprocess)
 
 	res, err := s.searchResultForQuery(ctx, clausesToQuery(boolClauses), maxResults, queryFieldScope{})
 	if err != nil {
 		return nil, err
 	}
 	timings["search_tokens"] = res.Timings["search_tokens"]
-	timings["total"] = formatDuration(time.Since(start))
+	total := time.Since(start)
+	timings["total"] = formatDuration(total)
+	exec.addTiming("total", total)
 	res.Timings = timings
-	return res, nil
+	return attachDiagnostics(ctx, res), nil
 }

@@ -9,11 +9,21 @@ import (
 
 func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
 	if candidateLimit <= 0 || s.scorer == nil {
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			if candidateLimit <= 0 {
+				exec.setReasonIfEmpty("wand_disabled_no_topk")
+			} else {
+				exec.setReasonIfEmpty("wand_disabled_no_scorer")
+			}
+		}
 		return nil, false, nil
 	}
 
 	shouldTerms, mustNots, ok := parseFastOrClauses(q)
 	if !ok || len(shouldTerms) == 0 {
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			exec.setReasonIfEmpty("wand_not_or_terms_only")
+		}
 		return nil, false, nil
 	}
 
@@ -37,10 +47,23 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		plan = append(plan, group)
 	}
 	if len(plan) == 0 {
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			exec.setStrategy("bool_or_wand")
+		}
 		return map[DocID]docAccum{}, true, nil
 	}
 	if !allSingleExpansionInSameField(plan) || !allClausesHaveStrictSeq(plan) {
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			if !allSingleExpansionInSameField(plan) {
+				exec.setReasonIfEmpty("wand_multiple_expansions_or_fields")
+			} else {
+				exec.setReasonIfEmpty("wand_non_strict_seq")
+			}
+		}
 		return nil, false, nil
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.setStrategy("bool_or_wand")
 	}
 
 	clauses := make([]*wandClause, 0, len(plan))

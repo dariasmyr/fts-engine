@@ -24,6 +24,7 @@ type SearchResult struct {
 	Results           []Result
 	TotalResultsCount int
 	Timings           map[string]string
+	Diagnostics       *QueryDiagnostics
 }
 
 const DefaultField = "_default"

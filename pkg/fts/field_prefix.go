@@ -76,9 +76,15 @@ func (s *Service) searchPrefixInField(ctx context.Context, field string, prefixe
 		return termExpansion{}, err
 	}
 
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.addIndexLookups(1)
+	}
 	docs, err := prefixer.SearchPrefix(prefix)
 	if err != nil {
 		return termExpansion{}, fmt.Errorf("fts: prefix query field %q: %w", field, err)
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.addPostingsRead(len(docs))
 	}
 	return termExpansion{
 		field:      field,

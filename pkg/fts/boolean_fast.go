@@ -176,7 +176,13 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 	sort.Slice(mustGroups, func(i, j int) bool { return mustGroups[i].totalDocs < mustGroups[j].totalDocs })
 	if allSingleExpansionInSameField(mustGroups) {
 		// Fast path: Seq ordinals are only comparable within one field index.
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			exec.setStrategy("bool_and_fast_sort_merge")
+		}
 		return s.execBooleanAndSortMerge(mustGroups, shoulds, exclude, ctx, scope)
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.setStrategy("bool_and_fast_driver")
 	}
 
 	// Fallback path: use the smallest MUST group as the candidate driver when clauses expand to multiple lists.
@@ -259,6 +265,9 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, sco
 	shouldTerms, mustNots, ok := parseFastOrClauses(q)
 	if !ok {
 		return nil, false, nil
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.setStrategy("bool_or_fast")
 	}
 
 	exclude, err := s.buildExcludeSet(ctx, mustNots, scope)
@@ -415,10 +424,17 @@ func (s *Service) collectTermPostings(ctx context.Context, q TermQuery, scope qu
 	}
 
 	fields := s.resolveScopedFields(q.Field, scope)
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.addTokens(len(tokens))
+		exec.addFields(len(fields))
+	}
 	for _, token := range tokens {
 		keys, err := s.keyGen(token)
 		if err != nil {
 			return fastMust{}, err
+		}
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			exec.addKeys(len(keys))
 		}
 
 		for _, field := range fields {
