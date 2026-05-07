@@ -224,7 +224,7 @@ Among the built-in public indexes, `slicedradix` currently supports prefix searc
 
 ### 6) Diagnostics and aggregated stats
 
-All regular search methods already return structured per-request diagnostics via `SearchResult.Diagnostics`.
+Per-request diagnostics are opt-in. Regular search methods return `SearchResult.Diagnostics == nil` unless you enable diagnostics for the request context with `fts.WithDiagnostics(ctx)`.
 
 Useful methods include:
 
@@ -239,12 +239,13 @@ Useful methods include:
 Example:
 
 ```go
-res, _ := engine.SearchDocuments(context.Background(), "postgres wal checkpoint", 10)
+ctx := fts.WithDiagnostics(context.Background())
+res, _ := engine.SearchDocuments(ctx, "postgres wal checkpoint", 10)
 
 fmt.Println(res.Diagnostics.LogicalQueryType)
 fmt.Println(res.Diagnostics.ExecutionStrategy)
 fmt.Println(res.Diagnostics.StrategySkipReason)
-fmt.Println(res.Diagnostics.Timings["total"])
+fmt.Println(res.Diagnostics.Timings.Total)
 fmt.Println(res.Diagnostics.PostingEntriesRead)
 ```
 
@@ -270,8 +271,9 @@ func main() {
 	_ = engine.IndexDocument(context.Background(), "doc-1", "postgres wal checkpoint tuning")
 	_ = engine.IndexDocument(context.Background(), "doc-2", "checkpoint and recovery internals")
 
-	res, err := engine.SearchDocuments(context.Background(), "postgres checkpoint", 10)
-	stats.ObserveSearch("postgres checkpoint", res.Diagnostics, err)
+	ctx := fts.WithDiagnostics(context.Background())
+	res, err := engine.SearchDocuments(ctx, "postgres checkpoint", 10)
+	stats.ObserveResult("postgres checkpoint", res, err)
 
 	snap := stats.Snapshot()
 	for strategy, st := range snap.ByStrategy {
@@ -289,6 +291,8 @@ func main() {
 - recent search events without storing raw query text by default;
 - aggregated stats by execution strategy;
 - structured observability without depending on `cmd/fts` or any HTTP/debug transport layer.
+
+`ObserveResult(...)` is tolerant: it always records base request/error information, uses `SearchResult` fields like `TotalResultsCount` and returned hit count even when diagnostics are disabled, and fills diagnostics-dependent fields only when `res.Diagnostics` is non-nil.
 
 ## Run main app (local testing via config)
 

@@ -10,22 +10,30 @@ import (
 
 func TestSearchStatsObserveAggregatesByStrategy(t *testing.T) {
 	stats := NewSearchStats(4)
-	stats.ObserveSearch("alpha beta", &fts.QueryDiagnostics{
-		LogicalQueryType:   "boolean",
-		ExecutionStrategy:  "bool_or_wand",
-		StrategySkipReason: "and_fast_no_must_terms",
-		PostingEntriesRead: 12,
-		MatchedDocs:        3,
-		ReturnedDocs:       2,
-		Timings:            fts.QueryTimings{Total: 8 * time.Millisecond},
+	stats.ObserveResult("alpha beta", &fts.SearchResult{
+		Results:           []fts.Result{{ID: "doc-1"}, {ID: "doc-2"}},
+		TotalResultsCount: 3,
+		Diagnostics: &fts.QueryDiagnostics{
+			LogicalQueryType:   "boolean",
+			ExecutionStrategy:  "bool_or_wand",
+			StrategySkipReason: "and_fast_no_must_terms",
+			PostingEntriesRead: 12,
+			MatchedDocs:        3,
+			ReturnedDocs:       2,
+			Timings:            fts.QueryTimings{Total: 8 * time.Millisecond},
+		},
 	}, nil)
-	stats.ObserveSearch("alpha", &fts.QueryDiagnostics{
-		LogicalQueryType:   "term",
-		ExecutionStrategy:  "term",
-		PostingEntriesRead: 4,
-		MatchedDocs:        0,
-		ReturnedDocs:       0,
-		Timings:            fts.QueryTimings{Total: 2 * time.Millisecond},
+	stats.ObserveResult("alpha", &fts.SearchResult{
+		Results:           nil,
+		TotalResultsCount: 0,
+		Diagnostics: &fts.QueryDiagnostics{
+			LogicalQueryType:   "term",
+			ExecutionStrategy:  "term",
+			PostingEntriesRead: 4,
+			MatchedDocs:        0,
+			ReturnedDocs:       0,
+			Timings:            fts.QueryTimings{Total: 2 * time.Millisecond},
+		},
 	}, nil)
 
 	snap := stats.Snapshot()
@@ -58,9 +66,31 @@ func TestSearchStatsObserveAggregatesByStrategy(t *testing.T) {
 	}
 }
 
+func TestSearchStatsObserveResultWithoutDiagnostics(t *testing.T) {
+	stats := NewSearchStats(2)
+	stats.ObserveResult("alpha", &fts.SearchResult{Results: []fts.Result{{ID: "doc-1"}}, TotalResultsCount: 2}, nil)
+
+	snap := stats.Snapshot()
+	if snap.TotalSearches != 1 || snap.ErrorsTotal != 0 || snap.ZeroResults != 0 {
+		t.Fatalf("unexpected snapshot totals: %+v", snap)
+	}
+	if len(snap.ByStrategy) != 0 {
+		t.Fatalf("ByStrategy = %+v, want empty", snap.ByStrategy)
+	}
+	if len(snap.Recent) != 1 {
+		t.Fatalf("Recent len = %d, want 1", len(snap.Recent))
+	}
+	if snap.Recent[0].MatchedDocs != 2 || snap.Recent[0].ReturnedDocs != 1 {
+		t.Fatalf("unexpected recent event: %+v", snap.Recent[0])
+	}
+	if snap.Recent[0].ExecutionStrategy != "" || snap.Recent[0].TotalDuration != 0 {
+		t.Fatalf("expected no diagnostics-derived fields, got %+v", snap.Recent[0])
+	}
+}
+
 func TestSearchStatsObserveErrorWithoutDiagnostics(t *testing.T) {
 	stats := NewSearchStats(2)
-	stats.ObserveSearch("broken", nil, errors.New("boom"))
+	stats.ObserveResult("broken", nil, errors.New("boom"))
 
 	snap := stats.Snapshot()
 	if snap.TotalSearches != 1 || snap.ErrorsTotal != 1 {
@@ -76,9 +106,9 @@ func TestSearchStatsObserveErrorWithoutDiagnostics(t *testing.T) {
 
 func TestSearchStatsRecentLimit(t *testing.T) {
 	stats := NewSearchStats(2)
-	stats.ObserveSearch("one", &fts.QueryDiagnostics{Timings: fts.QueryTimings{}}, nil)
-	stats.ObserveSearch("two", &fts.QueryDiagnostics{Timings: fts.QueryTimings{}}, nil)
-	stats.ObserveSearch("three", &fts.QueryDiagnostics{Timings: fts.QueryTimings{}}, nil)
+	stats.ObserveResult("one", &fts.SearchResult{}, nil)
+	stats.ObserveResult("two", &fts.SearchResult{}, nil)
+	stats.ObserveResult("three", &fts.SearchResult{}, nil)
 
 	recent := stats.Recent(2)
 	if len(recent) != 2 {

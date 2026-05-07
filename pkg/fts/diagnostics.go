@@ -69,6 +69,23 @@ func (t QueryTimings) HasTotal() bool {
 	return t.set&queryTimingTotal != 0
 }
 
+type diagnosticsEnabledContextKey struct{}
+
+func WithDiagnostics(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, diagnosticsEnabledContextKey{}, true)
+}
+
+func diagnosticsRequested(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	enabled, _ := ctx.Value(diagnosticsEnabledContextKey{}).(bool)
+	return enabled
+}
+
 type BooleanDiagnostics struct {
 	FastPathSkips       int
 	FastPathSkipReasons []string
@@ -110,6 +127,9 @@ type queryExecContext struct {
 func ensureDiagnosticsContext(ctx context.Context) (context.Context, *queryExecContext) {
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		return ctx, exec
+	}
+	if !diagnosticsRequested(ctx) {
+		return ctx, nil
 	}
 	exec := &queryExecContext{}
 	return context.WithValue(ctx, diagnosticsContextKey{}, exec), exec
@@ -301,6 +321,34 @@ func (q *queryExecContext) setTotalTiming(d time.Duration) {
 	q.d.Timings.Total = d
 	q.d.Timings.set |= queryTimingTotal
 	q.mu.Unlock()
+}
+
+func (q *queryExecContext) startTimer() time.Time {
+	if q == nil {
+		return time.Time{}
+	}
+	return time.Now()
+}
+
+func (q *queryExecContext) observePreprocess(start time.Time) {
+	if q == nil || start.IsZero() {
+		return
+	}
+	q.setPreprocessTiming(time.Since(start))
+}
+
+func (q *queryExecContext) observeSearchTokens(start time.Time) {
+	if q == nil || start.IsZero() {
+		return
+	}
+	q.setSearchTokensTiming(time.Since(start))
+}
+
+func (q *queryExecContext) observeTotal(start time.Time) {
+	if q == nil || start.IsZero() {
+		return
+	}
+	q.setTotalTiming(time.Since(start))
 }
 
 func (q *queryExecContext) updateBooleanDiagnostics(fn func(*BooleanDiagnostics)) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // FieldQueryClause binds a string subquery to a specific field and top-level boolean occur.
@@ -41,9 +40,9 @@ func (s *Service) SearchFieldClauses(ctx context.Context, clauses []FieldQueryCl
 		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
 	}
 
-	start := time.Now()
+	start := exec.startTimer()
 
-	preStart := time.Now()
+	preStart := exec.startTimer()
 
 	boolClauses := make([]BoolClause, 0, len(clauses))
 	for i, clause := range clauses {
@@ -61,14 +60,12 @@ func (s *Service) SearchFieldClauses(ctx context.Context, clauses []FieldQueryCl
 			Query: bindDefaultField(parsed, clause.Field),
 		})
 	}
-	preprocess := time.Since(preStart)
-	exec.setPreprocessTiming(preprocess)
+	exec.observePreprocess(preStart)
 
 	res, err := s.searchResultForQuery(ctx, clausesToQuery(boolClauses), maxResults, queryFieldScope{})
 	if err != nil {
 		return nil, err
 	}
-	total := time.Since(start)
-	exec.setTotalTiming(total)
+	exec.observeTotal(start)
 	return attachDiagnostics(ctx, res), nil
 }

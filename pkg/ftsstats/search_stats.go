@@ -73,12 +73,21 @@ func NewSearchStats(recentLimit int) *SearchStats {
 	}
 }
 
-func (s *SearchStats) ObserveSearch(query string, d *fts.QueryDiagnostics, err error) {
+func (s *SearchStats) ObserveResult(query string, res *fts.SearchResult, err error) {
 	if s == nil {
 		return
 	}
 
 	event := SearchEvent{At: time.Now(), QueryHash: queryHash(query)}
+	if res != nil {
+		event.MatchedDocs = res.TotalResultsCount
+		event.ReturnedDocs = len(res.Results)
+	}
+
+	var d *fts.QueryDiagnostics
+	if res != nil {
+		d = res.Diagnostics
+	}
 	if d != nil {
 		event.LogicalQueryType = d.LogicalQueryType
 		event.ExecutionStrategy = d.ExecutionStrategy
@@ -99,7 +108,7 @@ func (s *SearchStats) ObserveSearch(query string, d *fts.QueryDiagnostics, err e
 	if err != nil {
 		s.errorsTotal++
 	}
-	if d != nil && d.MatchedDocs == 0 {
+	if res != nil && res.TotalResultsCount == 0 {
 		s.zeroResults++
 	}
 	if d != nil {

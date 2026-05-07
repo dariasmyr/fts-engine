@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+func diagnosticsContext() context.Context {
+	return WithDiagnostics(context.Background())
+}
+
 func requireDiagnostics(t *testing.T, res *SearchResult) *QueryDiagnostics {
 	t.Helper()
 	if res == nil {
@@ -24,7 +28,7 @@ func requireDiagnostics(t *testing.T, res *SearchResult) *QueryDiagnostics {
 func TestSearchDiagnosticsTermStrategy(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), TermQuery{Term: "barack"}, 10)
+	res, err := svc.Search(diagnosticsContext(), TermQuery{Term: "barack"}, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -55,7 +59,7 @@ func TestSearchDiagnosticsTermStrategy(t *testing.T) {
 func TestSearchDiagnosticsPrefixStrategy(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), PrefixQuery{Field: "title", Prefix: "ba"}, 10)
+	res, err := svc.Search(diagnosticsContext(), PrefixQuery{Field: "title", Prefix: "ba"}, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -92,7 +96,7 @@ func TestSearchDiagnosticsBooleanOrWandStrategy(t *testing.T) {
 		ShouldClause(TermQuery{Term: "gamma"}),
 	}}
 
-	res, err := svc.Search(context.Background(), q, 2)
+	res, err := svc.Search(diagnosticsContext(), q, 2)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -135,7 +139,7 @@ func TestSearchDiagnosticsBooleanOrWandStrategy(t *testing.T) {
 func TestSearchDiagnosticsPhraseStrategy(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), PhraseQuery{Phrase: "barack obama"}, 10)
+	res, err := svc.Search(diagnosticsContext(), PhraseQuery{Phrase: "barack obama"}, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -159,7 +163,7 @@ func TestSearchDiagnosticsBooleanFallbackStrategy(t *testing.T) {
 		ShouldClause(TermQuery{Term: "banana"}),
 	}}
 
-	res, err := svc.Search(context.Background(), q, 10)
+	res, err := svc.Search(diagnosticsContext(), q, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -182,7 +186,7 @@ func TestSearchDiagnosticsBooleanAndFastStrategy(t *testing.T) {
 		MustClause(TermQuery{Field: "body", Term: "mars"}),
 	}}
 
-	res, err := svc.Search(context.Background(), q, 10)
+	res, err := svc.Search(diagnosticsContext(), q, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -233,7 +237,7 @@ func TestSearchDiagnosticsBooleanAndFastDriverInstrumentation(t *testing.T) {
 		MustClause(TermQuery{Field: "body", Term: "beta"}),
 	}}
 
-	res, err := svc.Search(context.Background(), q, 10)
+	res, err := svc.Search(diagnosticsContext(), q, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -269,7 +273,7 @@ func TestSearchDiagnosticsWandSkipReasonWithoutScorer(t *testing.T) {
 		ShouldClause(TermQuery{Term: "beta"}),
 	}}
 
-	res, err := svc.Search(context.Background(), q, 1)
+	res, err := svc.Search(diagnosticsContext(), q, 1)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -300,7 +304,7 @@ func TestSearchDiagnosticsWandSkipReasonWithoutScorer(t *testing.T) {
 func TestSearchDocumentsDiagnosticsNonNil(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.SearchDocuments(context.Background(), "barack", 10)
+	res, err := svc.SearchDocuments(diagnosticsContext(), "barack", 10)
 	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}
@@ -316,7 +320,7 @@ func TestSearchDocumentsDiagnosticsNonNil(t *testing.T) {
 func TestSearchFieldClausesDiagnosticsNonNil(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.SearchFieldClauses(context.Background(), []FieldQueryClause{
+	res, err := svc.SearchFieldClauses(diagnosticsContext(), []FieldQueryClause{
 		MustFieldQuery("title", "barack"),
 		MustNotFieldQuery("body", "russia"),
 	}, 10)
@@ -334,7 +338,7 @@ func TestSearchFieldClausesDiagnosticsNonNil(t *testing.T) {
 
 func TestSearchPhrasePublicMethodsDiagnosticsNonNil(t *testing.T) {
 	svc := buildExecService(t)
-	ctx := context.Background()
+	ctx := diagnosticsContext()
 
 	cases := []struct {
 		name string
@@ -365,7 +369,7 @@ func TestSearchPhrasePublicMethodsDiagnosticsNonNil(t *testing.T) {
 
 func TestSearchPhraseNearPublicMethodsDiagnosticsNonNil(t *testing.T) {
 	svc := buildExecService(t)
-	ctx := context.Background()
+	ctx := diagnosticsContext()
 
 	cases := []struct {
 		name string

@@ -244,13 +244,10 @@ func (s *serviceAdapter) IndexDocument(ctx context.Context, docID string, conten
 }
 
 func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
+	ctx = pkgfts.WithDiagnostics(ctx)
 	result, err := s.service.SearchDocuments(ctx, query, maxResults)
 	if s.searchStats != nil {
-		var diag *pkgfts.QueryDiagnostics
-		if result != nil {
-			diag = result.Diagnostics
-		}
-		s.searchStats.ObserveSearch(query, diag, err)
+		s.searchStats.ObserveResult(query, result, err)
 	}
 	if err != nil {
 		return nil, err

@@ -3,7 +3,6 @@ package fts
 import (
 	"context"
 	"fmt"
-	"time"
 )
 
 func addAccum(a, b docAccum) docAccum {
@@ -44,18 +43,16 @@ func (s *Service) searchResultForQuery(ctx context.Context, q Query, maxResults 
 		return &SearchResult{Results: []Result{}}, nil
 	}
 
-	start := time.Now()
+	start := exec.startTimer()
 
-	searchStart := time.Now()
+	searchStart := exec.startTimer()
 	hits, err := s.executeQuery(ctx, q, maxResults, scope)
 	if err != nil {
 		return nil, err
 	}
-	searchTokens := time.Since(searchStart)
-	exec.setSearchTokensTiming(searchTokens)
+	exec.observeSearchTokens(searchStart)
+	exec.observeTotal(start)
 
-	total := time.Since(start)
-	exec.setTotalTiming(total)
 	return searchResultFromHits(hits, maxResults, s.scorer != nil), nil
 }
 

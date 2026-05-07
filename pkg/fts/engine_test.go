@@ -105,13 +105,28 @@ func TestSearchDocumentsTieBreakerByID(t *testing.T) {
 	}
 }
 
-func TestSearchDocumentsReturnsDiagnosticsTimings(t *testing.T) {
+func TestSearchDocumentsDiagnosticsDisabledByDefault(t *testing.T) {
 	idx := newMemoryIndex()
 	idx.entries["one"] = []DocRef{{ID: "x", Count: 1}}
 
 	svc := New(idx, WordKeys)
 
 	res, err := svc.SearchDocuments(context.Background(), "one", 1)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if res.Diagnostics != nil {
+		t.Fatalf("expected nil diagnostics by default, got %+v", res.Diagnostics)
+	}
+}
+
+func TestSearchDocumentsReturnsDiagnosticsTimings(t *testing.T) {
+	idx := newMemoryIndex()
+	idx.entries["one"] = []DocRef{{ID: "x", Count: 1}}
+
+	svc := New(idx, WordKeys)
+
+	res, err := svc.SearchDocuments(WithDiagnostics(context.Background()), "one", 1)
 	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}

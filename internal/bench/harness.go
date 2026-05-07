@@ -141,6 +141,7 @@ func CountMissingTitles(gt *GroundTruth, titleIdx map[string]string) int {
 
 func RunQueries(ctx context.Context, svc *pkgfts.Service, gt *GroundTruth, titleIdx map[string]string, k int) ([]QueryReport, error) {
 	reports := make([]QueryReport, 0, len(gt.Queries))
+	searchCtx := pkgfts.WithDiagnostics(ctx)
 	for _, q := range gt.Queries {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -148,7 +149,7 @@ func RunQueries(ctx context.Context, svc *pkgfts.Service, gt *GroundTruth, title
 
 		relevant := NewRelevanceSet(ResolveRelevant(q, titleIdx))
 		start := time.Now()
-		res, err := svc.SearchDocuments(ctx, q.Query, k)
+		res, err := svc.SearchDocuments(searchCtx, q.Query, k)
 		elapsed := time.Since(start)
 		if err != nil {
 			return nil, fmt.Errorf("search %q: %w", q.Query, err)

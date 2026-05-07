@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 )
 
 func (s *Service) Index(ctx context.Context, doc Document) error {
@@ -142,19 +141,17 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 	ctx, exec := ensureDiagnosticsContext(ctx)
 	exec.setQueryTypeIfEmpty("phrase")
 
-	start := time.Now()
+	start := exec.startTimer()
 
-	preStart := time.Now()
+	preStart := exec.startTimer()
 	plan := s.preparePhrase(fields, phrase)
-	preprocess := time.Since(preStart)
-	exec.setPreprocessTiming(preprocess)
+	exec.observePreprocess(preStart)
 	exec.addFields(len(fields))
 	exec.addTokens(len(plan.tokens))
 
 	if len(plan.tokens) == 0 {
 		exec.setSearchTokensTiming(0)
-		total := time.Since(start)
-		exec.setTotalTiming(total)
+		exec.observeTotal(start)
 		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
 	}
 	if plan.fallback != nil {
@@ -162,23 +159,19 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 		if err != nil {
 			return nil, err
 		}
-		total := time.Since(start)
-		exec.setTotalTiming(total)
+		exec.observeTotal(start)
 		return attachDiagnostics(ctx, res), nil
 	}
 	exec.setStrategy("phrase_exact")
 
-	searchStart := time.Now()
+	searchStart := exec.startTimer()
 	hits, err := s.evalExactPhraseTokenHits(ctx, fields, plan.tokens)
 	if err != nil {
 		return nil, err
 	}
 
-	searchTokens := time.Since(searchStart)
-	exec.setSearchTokensTiming(searchTokens)
-
-	total := time.Since(start)
-	exec.setTotalTiming(total)
+	exec.observeSearchTokens(searchStart)
+	exec.observeTotal(start)
 	return attachDiagnostics(ctx, searchResultFromHits(hits, maxResults, s.scorer != nil)), nil
 }
 
@@ -192,19 +185,17 @@ func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []str
 		return nil, fmt.Errorf("fts: phrase near search: negative distance %d", distance)
 	}
 
-	start := time.Now()
+	start := exec.startTimer()
 
-	preStart := time.Now()
+	preStart := exec.startTimer()
 	plan := s.preparePhrase(fields, phrase)
-	preprocess := time.Since(preStart)
-	exec.setPreprocessTiming(preprocess)
+	exec.observePreprocess(preStart)
 	exec.addFields(len(fields))
 	exec.addTokens(len(plan.tokens))
 
 	if len(plan.tokens) == 0 {
 		exec.setSearchTokensTiming(0)
-		total := time.Since(start)
-		exec.setTotalTiming(total)
+		exec.observeTotal(start)
 		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
 	}
 	if plan.fallback != nil {
@@ -212,23 +203,19 @@ func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []str
 		if err != nil {
 			return nil, err
 		}
-		total := time.Since(start)
-		exec.setTotalTiming(total)
+		exec.observeTotal(start)
 		return attachDiagnostics(ctx, res), nil
 	}
 	exec.setStrategy("phrase_near")
 
-	searchStart := time.Now()
+	searchStart := exec.startTimer()
 	hits, err := s.evalNearPhraseTokenHits(ctx, fields, plan.tokens, uint32(distance))
 	if err != nil {
 		return nil, err
 	}
 
-	searchTokens := time.Since(searchStart)
-	exec.setSearchTokensTiming(searchTokens)
-
-	total := time.Since(start)
-	exec.setTotalTiming(total)
+	exec.observeSearchTokens(searchStart)
+	exec.observeTotal(start)
 	return attachDiagnostics(ctx, searchResultFromHits(hits, maxResults, s.scorer != nil)), nil
 }
 
