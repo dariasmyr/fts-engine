@@ -383,7 +383,7 @@ Snapshot fields (`fts.snapshot`):
 
 Use `cmd/bench` when you want to compare index/scorer/pipeline combinations on a corpus with labeled queries.
 
-In addition to indexing time and search quality metrics, `cmd/bench` now also reports aggregated search diagnostics such as strategy distribution, diagnostics timings, posting reads, and index lookups.
+In addition to indexing time and search quality metrics, `cmd/bench` can also report aggregated search diagnostics such as strategy distribution, diagnostics timings, posting reads, and index lookups. It also supports repeated runs with warmup and shuffled query order for more stable latency comparisons.
 
 Example:
 
@@ -395,7 +395,12 @@ go run ./cmd/bench \
   -lang en \
   -field abstract \
   -scorer bm25 \
-  -k 10
+  -k 10 \
+  -diagnostics true \
+  -observer false \
+  -warmup 20 \
+  -repeat 5 \
+  -shuffle true
 ```
 
 Useful flags:
@@ -407,6 +412,87 @@ Useful flags:
 - `-k`: top-k used for `nDCG` and `Recall`
 - `-limit`: cap the number of indexed documents for quick experiments
 - `-worst`: print worst queries by `nDCG`
+- `-diagnostics`: enable per-query `SearchResult.Diagnostics`
+- `-observer`: enable `ftsstats.SearchStats` aggregation during the benchmark run
+- `-warmup`: run N warmup searches before measured runs; warmup does not affect reported metrics
+- `-repeat`: repeat the full query set N times for measured runs
+- `-shuffle`: shuffle query order for warmup and each measured repeat with a fixed seed
+
+Local shard workloads checked in under `internal/bench/testdata/`:
+
+- `queries.abstract1.title.json`: tiny sanity-check workload for `-field title`
+- `queries.abstract1.abstract.json`: tiny sanity-check workload for `-field abstract`
+- `queries.abstract1.abstract.50.json`: curated 50-query `abstract` workload for repeated latency comparisons
+
+For local instrumentation comparisons on `./data/enwiki-20210820-abstract1.xml.gz`, use the curated 50-query abstract set:
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-20210820-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
+  -index radix \
+  -lang en \
+  -field abstract \
+  -scorer simple \
+  -k 10 \
+  -warmup 50 \
+  -repeat 20 \
+  -shuffle true \
+  -diagnostics false \
+  -observer false
+```
+
+To compare instrumentation overhead, rerun the same command and vary only `-diagnostics` and `-observer`:
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-20210820-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
+  -index radix \
+  -lang en \
+  -field abstract \
+  -scorer simple \
+  -k 10 \
+  -warmup 50 \
+  -repeat 20 \
+  -shuffle true \
+  -diagnostics true \
+  -observer false
+```
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-20210820-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
+  -index radix \
+  -lang en \
+  -field abstract \
+  -scorer simple \
+  -k 10 \
+  -warmup 50 \
+  -repeat 20 \
+  -shuffle true \
+  -diagnostics false \
+  -observer true
+```
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-20210820-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
+  -index radix \
+  -lang en \
+  -field abstract \
+  -scorer simple \
+  -k 10 \
+  -warmup 50 \
+  -repeat 20 \
+  -shuffle true \
+  -diagnostics true \
+  -observer true
+```
+
+Current latency numbers are measured around `SearchDocuments(...)`. `-observer` still exercises the observer path and prints observer summary, but observer work is not included in the reported `latency p50/p95/p99` yet.
 
 ### Benchmark baselines
 
@@ -418,6 +504,9 @@ For fair before/after comparisons keep these flags unchanged between runs:
 - `-field`
 - `-scorer`
 - `-k`
+- `-warmup`
+- `-repeat`
+- `-shuffle`
 
 Engine microbench:
 
