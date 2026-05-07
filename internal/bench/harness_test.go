@@ -2,12 +2,14 @@ package bench
 
 import (
 	"context"
+	"math/rand"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
 	"github.com/dariasmyr/fts-engine/pkg/index/radix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
@@ -84,7 +86,7 @@ func TestIndexAndRunQueriesEndToEnd(t *testing.T) {
 	}}
 
 	titleIdx := corpus.TitleIndex()
-	queryReports, err := RunQueries(ctx, svc, gt, titleIdx, 10)
+	queryReports, err := RunQueries(ctx, svc, gt, titleIdx, 10, RunQueryOptions{Diagnostics: true})
 	if err != nil {
 		t.Fatalf("RunQueries() error = %v", err)
 	}
@@ -100,7 +102,7 @@ func TestIndexAndRunQueriesEndToEnd(t *testing.T) {
 		}
 	}
 
-	report := Aggregate(10, idxReport, queryReports)
+	report := Aggregate(10, idxReport, queryReports, true)
 	if report.MeanNDCG <= 0 {
 		t.Fatalf("MeanNDCG = %v, want > 0", report.MeanNDCG)
 	}
@@ -116,6 +118,142 @@ func TestIndexAndRunQueriesEndToEnd(t *testing.T) {
 	}
 	if strategyCount != len(queryReports) {
 		t.Fatalf("strategy counts sum = %d, want %d (strategies=%+v)", strategyCount, len(queryReports), report.Strategies)
+	}
+}
+
+func TestRunQueriesWithoutDiagnosticsLeavesInstrumentationFieldsEmpty(t *testing.T) {
+	ctx := context.Background()
+	corpus := Corpus{mkDoc("1", "Rosa Barge", "Rosa is a French hotel barge on the Canal du Midi")}
+
+	svc := fts.New(radix.New(), keygen.Word)
+	if _, err := IndexCorpus(ctx, svc, corpus, SelectAbstract); err != nil {
+		t.Fatalf("IndexCorpus() error = %v", err)
+	}
+
+	gt := &GroundTruth{Queries: []Query{{Query: "french hotel barge", RelevantTitles: []string{"Rosa Barge"}}}}
+	queryReports, err := RunQueries(ctx, svc, gt, corpus.TitleIndex(), 10, RunQueryOptions{})
+	if err != nil {
+		t.Fatalf("RunQueries() error = %v", err)
+	}
+	if len(queryReports) != 1 {
+		t.Fatalf("len(queryReports) = %d, want 1", len(queryReports))
+	}
+	qr := queryReports[0]
+	if qr.ExecutionStrategy != "" || qr.DiagnosticsTotal != 0 || qr.DiagnosticsSearchTokens != 0 || qr.IndexSearches != 0 || qr.PostingEntriesRead != 0 {
+		t.Fatalf("expected empty diagnostics fields, got %+v", qr)
+	}
+
+	report := Aggregate(10, IndexReport{}, queryReports, false)
+	if report.DiagnosticsEnabled {
+		t.Fatal("expected DiagnosticsEnabled to be false")
+	}
+	if len(report.Strategies) != 0 {
+		t.Fatalf("expected no strategy breakdown without diagnostics, got %+v", report.Strategies)
+	}
+}
+
+func TestRunQueriesObserverTracksQueriesWithoutDiagnostics(t *testing.T) {
+	ctx := context.Background()
+	corpus := Corpus{mkDoc("1", "Rosa Barge", "Rosa is a French hotel barge on the Canal du Midi")}
+
+	svc := fts.New(radix.New(), keygen.Word)
+	if _, err := IndexCorpus(ctx, svc, corpus, SelectAbstract); err != nil {
+		t.Fatalf("IndexCorpus() error = %v", err)
+	}
+
+	gt := &GroundTruth{Queries: []Query{{Query: "french hotel barge", RelevantTitles: []string{"Rosa Barge"}}}}
+	stats := ftsstats.NewSearchStats(8)
+	if _, err := RunQueries(ctx, svc, gt, corpus.TitleIndex(), 10, RunQueryOptions{Observer: stats}); err != nil {
+		t.Fatalf("RunQueries() error = %v", err)
+	}
+
+	snap := stats.Snapshot()
+	if snap.TotalSearches != 1 {
+		t.Fatalf("TotalSearches = %d, want 1", snap.TotalSearches)
+	}
+	if len(snap.ByStrategy) != 0 {
+		t.Fatalf("expected no strategy stats without diagnostics, got %+v", snap.ByStrategy)
+	}
+	if len(snap.Recent) != 1 {
+		t.Fatalf("Recent size = %d, want 1", len(snap.Recent))
+	}
+}
+
+func TestRunQueriesRepeatMultipliesMeasuredRuns(t *testing.T) {
+	ctx := context.Background()
+	corpus := Corpus{mkDoc("1", "Rosa Barge", "Rosa is a French hotel barge on the Canal du Midi")}
+
+	svc := fts.New(radix.New(), keygen.Word)
+	if _, err := IndexCorpus(ctx, svc, corpus, SelectAbstract); err != nil {
+		t.Fatalf("IndexCorpus() error = %v", err)
+	}
+
+	gt := &GroundTruth{Queries: []Query{{Query: "french hotel barge", RelevantTitles: []string{"Rosa Barge"}}}}
+	stats := ftsstats.NewSearchStats(8)
+	queryReports, err := RunQueries(ctx, svc, gt, corpus.TitleIndex(), 10, RunQueryOptions{Observer: stats, Repeat: 3})
+	if err != nil {
+		t.Fatalf("RunQueries() error = %v", err)
+	}
+	if len(queryReports) != 3 {
+		t.Fatalf("len(queryReports) = %d, want 3", len(queryReports))
+	}
+	snap := stats.Snapshot()
+	if snap.TotalSearches != 3 {
+		t.Fatalf("TotalSearches = %d, want 3", snap.TotalSearches)
+	}
+}
+
+func TestRunQueriesWarmupDoesNotAffectMeasuredReportsOrObserver(t *testing.T) {
+	ctx := context.Background()
+	corpus := Corpus{mkDoc("1", "Rosa Barge", "Rosa is a French hotel barge on the Canal du Midi")}
+
+	svc := fts.New(radix.New(), keygen.Word)
+	if _, err := IndexCorpus(ctx, svc, corpus, SelectAbstract); err != nil {
+		t.Fatalf("IndexCorpus() error = %v", err)
+	}
+
+	gt := &GroundTruth{Queries: []Query{{Query: "french hotel barge", RelevantTitles: []string{"Rosa Barge"}}}}
+	stats := ftsstats.NewSearchStats(8)
+	queryReports, err := RunQueries(ctx, svc, gt, corpus.TitleIndex(), 10, RunQueryOptions{Observer: stats, Repeat: 2, Warmup: 5})
+	if err != nil {
+		t.Fatalf("RunQueries() error = %v", err)
+	}
+	if len(queryReports) != 2 {
+		t.Fatalf("len(queryReports) = %d, want 2", len(queryReports))
+	}
+	snap := stats.Snapshot()
+	if snap.TotalSearches != 2 {
+		t.Fatalf("TotalSearches = %d, want 2", snap.TotalSearches)
+	}
+	if len(snap.Recent) != 2 {
+		t.Fatalf("Recent size = %d, want 2", len(snap.Recent))
+	}
+}
+
+func TestOrderedQueriesShufflePreservesMembersAndCanChangeOrder(t *testing.T) {
+	in := []Query{{Query: "one"}, {Query: "two"}, {Query: "three"}, {Query: "four"}, {Query: "five"}}
+	out := orderedQueries(in, true, rand.New(rand.NewSource(1)))
+	if len(out) != len(in) {
+		t.Fatalf("len(out) = %d, want %d", len(out), len(in))
+	}
+	seen := make(map[string]int, len(out))
+	for _, q := range out {
+		seen[q.Query]++
+	}
+	for _, q := range in {
+		if seen[q.Query] != 1 {
+			t.Fatalf("query %q count = %d, want 1", q.Query, seen[q.Query])
+		}
+	}
+	sameOrder := true
+	for i := range in {
+		if in[i].Query != out[i].Query {
+			sameOrder = false
+			break
+		}
+	}
+	if sameOrder {
+		t.Fatal("expected shuffled order to differ from input order")
 	}
 }
 
@@ -147,7 +285,7 @@ func TestAggregateIncludesDiagnosticsAndStrategies(t *testing.T) {
 		},
 	}
 
-	report := Aggregate(10, IndexReport{}, queries)
+	report := Aggregate(10, IndexReport{}, queries, true)
 	if report.DiagnosticsTotalP50 != 12*time.Millisecond {
 		t.Fatalf("DiagnosticsTotalP50 = %v, want 12ms", report.DiagnosticsTotalP50)
 	}

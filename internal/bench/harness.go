@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"runtime"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
 )
 
 type Corpus []models.Document
@@ -63,7 +65,16 @@ type StrategyReport struct {
 	TotalIndexSearch  int
 }
 
+type RunQueryOptions struct {
+	Diagnostics bool
+	Observer    *ftsstats.SearchStats
+	Repeat      int
+	Warmup      int
+	Shuffle     bool
+}
+
 type Report struct {
+	DiagnosticsEnabled     bool
 	K                      int
 	Index                  IndexReport
 	Queries                []QueryReport
@@ -139,52 +150,101 @@ func CountMissingTitles(gt *GroundTruth, titleIdx map[string]string) int {
 	return missing
 }
 
-func RunQueries(ctx context.Context, svc *pkgfts.Service, gt *GroundTruth, titleIdx map[string]string, k int) ([]QueryReport, error) {
-	reports := make([]QueryReport, 0, len(gt.Queries))
-	searchCtx := pkgfts.WithDiagnostics(ctx)
-	for _, q := range gt.Queries {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
+func RunQueries(ctx context.Context, svc *pkgfts.Service, gt *GroundTruth, titleIdx map[string]string, k int, opts RunQueryOptions) ([]QueryReport, error) {
+	if opts.Repeat <= 0 {
+		opts.Repeat = 1
+	}
+	if opts.Warmup < 0 {
+		opts.Warmup = 0
+	}
+	rng := rand.New(rand.NewSource(1))
 
-		relevant := NewRelevanceSet(ResolveRelevant(q, titleIdx))
-		start := time.Now()
-		res, err := svc.SearchDocuments(searchCtx, q.Query, k)
-		elapsed := time.Since(start)
-		if err != nil {
-			return nil, fmt.Errorf("search %q: %w", q.Query, err)
+	reports := make([]QueryReport, 0, len(gt.Queries)*opts.Repeat)
+	for remaining := opts.Warmup; remaining > 0 && len(gt.Queries) > 0; {
+		batch := orderedQueries(gt.Queries, opts.Shuffle, rng)
+		if remaining < len(batch) {
+			batch = batch[:remaining]
 		}
+		for _, q := range batch {
+			if _, err := runQuery(ctx, svc, q, titleIdx, k, opts.Diagnostics, nil); err != nil {
+				return nil, fmt.Errorf("warmup search %q: %w", q.Query, err)
+			}
+		}
+		remaining -= len(batch)
+	}
 
-		ranked := make([]string, 0, len(res.Results))
-		for _, item := range res.Results {
-			ranked = append(ranked, string(item.ID))
+	for run := 0; run < opts.Repeat; run++ {
+		for _, q := range orderedQueries(gt.Queries, opts.Shuffle, rng) {
+			queryReport, err := runQuery(ctx, svc, q, titleIdx, k, opts.Diagnostics, opts.Observer)
+			if err != nil {
+				return nil, fmt.Errorf("search %q: %w", q.Query, err)
+			}
+			reports = append(reports, queryReport)
 		}
-
-		queryReport := QueryReport{
-			Query:    q.Query,
-			Returned: len(ranked),
-			Relevant: relevant.Size(),
-			NDCG:     NDCG(ranked, relevant, k),
-			MRR:      MRR(ranked, relevant),
-			Recall:   Recall(ranked, relevant, k),
-			Latency:  elapsed,
-		}
-		if diag := res.Diagnostics; diag != nil {
-			queryReport.ExecutionStrategy = diag.ExecutionStrategy
-			queryReport.StrategySkipReason = diag.StrategySkipReason
-			queryReport.IndexSearches = diag.IndexSearches
-			queryReport.PostingEntriesRead = diag.PostingEntriesRead
-			queryReport.DiagnosticsTotal = diag.Timings.Total
-			queryReport.DiagnosticsSearchTokens = diag.Timings.SearchTokens
-		}
-
-		reports = append(reports, queryReport)
 	}
 	return reports, nil
 }
 
-func Aggregate(k int, idx IndexReport, queries []QueryReport) Report {
-	report := Report{K: k, Index: idx, Queries: queries, Strategies: make(map[string]StrategyReport)}
+func orderedQueries(in []Query, shuffle bool, rng *rand.Rand) []Query {
+	out := append([]Query(nil), in...)
+	if !shuffle || len(out) < 2 {
+		return out
+	}
+	rng.Shuffle(len(out), func(i, j int) {
+		out[i], out[j] = out[j], out[i]
+	})
+	return out
+}
+
+func runQuery(ctx context.Context, svc *pkgfts.Service, q Query, titleIdx map[string]string, k int, diagnostics bool, observer *ftsstats.SearchStats) (QueryReport, error) {
+	if err := ctx.Err(); err != nil {
+		return QueryReport{}, err
+	}
+
+	searchCtx := ctx
+	if diagnostics {
+		searchCtx = pkgfts.WithDiagnostics(searchCtx)
+	}
+
+	relevant := NewRelevanceSet(ResolveRelevant(q, titleIdx))
+	start := time.Now()
+	res, err := svc.SearchDocuments(searchCtx, q.Query, k)
+	elapsed := time.Since(start)
+	if observer != nil {
+		observer.ObserveResult(q.Query, res, err)
+	}
+	if err != nil {
+		return QueryReport{}, err
+	}
+
+	ranked := make([]string, 0, len(res.Results))
+	for _, item := range res.Results {
+		ranked = append(ranked, string(item.ID))
+	}
+
+	queryReport := QueryReport{
+		Query:    q.Query,
+		Returned: len(ranked),
+		Relevant: relevant.Size(),
+		NDCG:     NDCG(ranked, relevant, k),
+		MRR:      MRR(ranked, relevant),
+		Recall:   Recall(ranked, relevant, k),
+		Latency:  elapsed,
+	}
+	if diag := res.Diagnostics; diag != nil {
+		queryReport.ExecutionStrategy = diag.ExecutionStrategy
+		queryReport.StrategySkipReason = diag.StrategySkipReason
+		queryReport.IndexSearches = diag.IndexSearches
+		queryReport.PostingEntriesRead = diag.PostingEntriesRead
+		queryReport.DiagnosticsTotal = diag.Timings.Total
+		queryReport.DiagnosticsSearchTokens = diag.Timings.SearchTokens
+	}
+
+	return queryReport, nil
+}
+
+func Aggregate(k int, idx IndexReport, queries []QueryReport, diagnosticsEnabled bool) Report {
+	report := Report{DiagnosticsEnabled: diagnosticsEnabled, K: k, Index: idx, Queries: queries, Strategies: make(map[string]StrategyReport)}
 	if len(queries) == 0 {
 		return report
 	}
@@ -196,42 +256,50 @@ func Aggregate(k int, idx IndexReport, queries []QueryReport) Report {
 	var totalPostingsRead, totalIndexSearches int
 	for _, q := range queries {
 		latencies = append(latencies, q.Latency)
-		diagnosticsTotals = append(diagnosticsTotals, q.DiagnosticsTotal)
-		searchTimings = append(searchTimings, q.DiagnosticsSearchTokens)
+		if diagnosticsEnabled {
+			diagnosticsTotals = append(diagnosticsTotals, q.DiagnosticsTotal)
+			searchTimings = append(searchTimings, q.DiagnosticsSearchTokens)
+		}
 		sumNDCG += q.NDCG
 		sumMRR += q.MRR
 		sumRecall += q.Recall
-		totalPostingsRead += q.PostingEntriesRead
-		totalIndexSearches += q.IndexSearches
-
-		strategy := q.ExecutionStrategy
-		if strategy == "" {
-			strategy = "unknown"
+		if diagnosticsEnabled {
+			totalPostingsRead += q.PostingEntriesRead
+			totalIndexSearches += q.IndexSearches
 		}
-		st := report.Strategies[strategy]
-		st.Count++
-		st.TotalDuration += q.DiagnosticsTotal
-		st.TotalSearchTokens += q.DiagnosticsSearchTokens
-		st.TotalPostingsRead += q.PostingEntriesRead
-		st.TotalIndexSearch += q.IndexSearches
-		report.Strategies[strategy] = st
+
+		if diagnosticsEnabled {
+			strategy := q.ExecutionStrategy
+			if strategy == "" {
+				strategy = "unknown"
+			}
+			st := report.Strategies[strategy]
+			st.Count++
+			st.TotalDuration += q.DiagnosticsTotal
+			st.TotalSearchTokens += q.DiagnosticsSearchTokens
+			st.TotalPostingsRead += q.PostingEntriesRead
+			st.TotalIndexSearch += q.IndexSearches
+			report.Strategies[strategy] = st
+		}
 	}
 
 	n := float64(len(queries))
 	report.MeanNDCG = sumNDCG / n
 	report.MeanMRR = sumMRR / n
 	report.MeanRecall = sumRecall / n
-	report.MeanPostingEntriesRead = float64(totalPostingsRead) / n
-	report.MeanIndexSearches = float64(totalIndexSearches) / n
 	report.LatencyP50 = Percentile(latencies, 0.50)
 	report.LatencyP95 = Percentile(latencies, 0.95)
 	report.LatencyP99 = Percentile(latencies, 0.99)
-	report.DiagnosticsTotalP50 = Percentile(diagnosticsTotals, 0.50)
-	report.DiagnosticsTotalP95 = Percentile(diagnosticsTotals, 0.95)
-	report.DiagnosticsTotalP99 = Percentile(diagnosticsTotals, 0.99)
-	report.DiagnosticsSearchP50 = Percentile(searchTimings, 0.50)
-	report.DiagnosticsSearchP95 = Percentile(searchTimings, 0.95)
-	report.DiagnosticsSearchP99 = Percentile(searchTimings, 0.99)
+	if diagnosticsEnabled {
+		report.MeanPostingEntriesRead = float64(totalPostingsRead) / n
+		report.MeanIndexSearches = float64(totalIndexSearches) / n
+		report.DiagnosticsTotalP50 = Percentile(diagnosticsTotals, 0.50)
+		report.DiagnosticsTotalP95 = Percentile(diagnosticsTotals, 0.95)
+		report.DiagnosticsTotalP99 = Percentile(diagnosticsTotals, 0.99)
+		report.DiagnosticsSearchP50 = Percentile(searchTimings, 0.50)
+		report.DiagnosticsSearchP95 = Percentile(searchTimings, 0.95)
+		report.DiagnosticsSearchP99 = Percentile(searchTimings, 0.99)
+	}
 
 	sort.SliceStable(report.Queries, func(i, j int) bool {
 		return report.Queries[i].NDCG < report.Queries[j].NDCG
@@ -246,11 +314,13 @@ func WriteReport(w io.Writer, r Report, topWorst int) {
 	fmt.Fprintf(w, "  MRR:       %.4f\n", r.MeanMRR)
 	fmt.Fprintf(w, "  Recall@%d: %.4f\n", r.K, r.MeanRecall)
 	fmt.Fprintf(w, "  latency:   p50=%s p95=%s p99=%s\n", r.LatencyP50, r.LatencyP95, r.LatencyP99)
-	fmt.Fprintf(w, "  diag.total: p50=%s p95=%s p99=%s\n", r.DiagnosticsTotalP50, r.DiagnosticsTotalP95, r.DiagnosticsTotalP99)
-	fmt.Fprintf(w, "  diag.search_tokens: p50=%s p95=%s p99=%s\n", r.DiagnosticsSearchP50, r.DiagnosticsSearchP95, r.DiagnosticsSearchP99)
-	fmt.Fprintf(w, "  avg internal work: postings=%.1f index_lookups=%.1f\n", r.MeanPostingEntriesRead, r.MeanIndexSearches)
+	if r.DiagnosticsEnabled {
+		fmt.Fprintf(w, "  diag.total: p50=%s p95=%s p99=%s\n", r.DiagnosticsTotalP50, r.DiagnosticsTotalP95, r.DiagnosticsTotalP99)
+		fmt.Fprintf(w, "  diag.search_tokens: p50=%s p95=%s p99=%s\n", r.DiagnosticsSearchP50, r.DiagnosticsSearchP95, r.DiagnosticsSearchP99)
+		fmt.Fprintf(w, "  avg internal work: postings=%.1f index_lookups=%.1f\n", r.MeanPostingEntriesRead, r.MeanIndexSearches)
+	}
 
-	if len(r.Strategies) > 0 {
+	if r.DiagnosticsEnabled && len(r.Strategies) > 0 {
 		keys := make([]string, 0, len(r.Strategies))
 		for key := range r.Strategies {
 			keys = append(keys, key)
@@ -283,6 +353,10 @@ func WriteReport(w io.Writer, r Report, topWorst int) {
 	fmt.Fprintf(w, "\nWorst %d queries by nDCG@%d:\n", topWorst, r.K)
 	for i := 0; i < topWorst; i++ {
 		q := r.Queries[i]
-		fmt.Fprintf(w, "  ndcg=%.3f mrr=%.3f recall=%.3f lat=%s strategy=%s postings=%d lookups=%d  %q\n", q.NDCG, q.MRR, q.Recall, q.Latency, q.ExecutionStrategy, q.PostingEntriesRead, q.IndexSearches, q.Query)
+		if r.DiagnosticsEnabled {
+			fmt.Fprintf(w, "  ndcg=%.3f mrr=%.3f recall=%.3f lat=%s strategy=%s postings=%d lookups=%d  %q\n", q.NDCG, q.MRR, q.Recall, q.Latency, q.ExecutionStrategy, q.PostingEntriesRead, q.IndexSearches, q.Query)
+			continue
+		}
+		fmt.Fprintf(w, "  ndcg=%.3f mrr=%.3f recall=%.3f lat=%s  %q\n", q.NDCG, q.MRR, q.Recall, q.Latency, q.Query)
 	}
 }

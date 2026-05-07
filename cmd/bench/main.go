@@ -15,6 +15,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/ftspreset"
+	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
@@ -32,6 +33,11 @@ func main() {
 		scorer      = flag.String("scorer", "simple", "ranking: simple | bm25 | tfidf")
 		bm25K1      = flag.Float64("bm25-k1", 1.2, "BM25 k1 parameter (only with -scorer=bm25)")
 		bm25B       = flag.Float64("bm25-b", 0.75, "BM25 b parameter (only with -scorer=bm25)")
+		diagnostics = flag.Bool("diagnostics", true, "enable per-query diagnostics collection during benchmark runs")
+		observer    = flag.Bool("observer", false, "enable search observer aggregation during benchmark runs")
+		repeat      = flag.Int("repeat", 1, "repeat the full query set N times for measured runs")
+		warmup      = flag.Int("warmup", 0, "run N warmup searches before measured runs (not included in metrics)")
+		shuffle     = flag.Bool("shuffle", false, "shuffle query order for warmup and each measured repeat using a fixed seed")
 	)
 	flag.Parse()
 
@@ -58,6 +64,11 @@ func main() {
 		scorer:      *scorer,
 		bm25K1:      *bm25K1,
 		bm25B:       *bm25B,
+		diagnostics: *diagnostics,
+		observer:    *observer,
+		repeat:      *repeat,
+		warmup:      *warmup,
+		shuffle:     *shuffle,
 	})
 	if err != nil {
 		log.Error("bench failed", "error", err)
@@ -78,6 +89,11 @@ type runOpts struct {
 	scorer      string
 	bm25K1      float64
 	bm25B       float64
+	diagnostics bool
+	observer    bool
+	repeat      int
+	warmup      int
+	shuffle     bool
 }
 
 func run(ctx context.Context, log *slog.Logger, o runOpts) error {
@@ -135,6 +151,12 @@ func run(ctx context.Context, log *slog.Logger, o runOpts) error {
 			log.Warn("ground truth has unresolved titles", "missing", missing, "note", "check spelling or increase -limit")
 		}
 	}
+	if o.repeat <= 0 {
+		return fmt.Errorf("repeat must be >= 1, got %d", o.repeat)
+	}
+	if o.warmup < 0 {
+		return fmt.Errorf("warmup must be >= 0, got %d", o.warmup)
+	}
 
 	idxReport, err := bench.IndexCorpus(ctx, svc, corpus, selector)
 	if err != nil {
@@ -142,14 +164,29 @@ func run(ctx context.Context, log *slog.Logger, o runOpts) error {
 	}
 	log.Info("indexing done", "documents", idxReport.DocumentCount, "duration", idxReport.Duration, "heap_mb", idxReport.HeapAllocMB)
 
-	queryReports, err := bench.RunQueries(ctx, svc, gt, titleIdx, o.k)
+	var observerStats *ftsstats.SearchStats
+	if o.observer {
+		observerStats = ftsstats.NewSearchStats(64)
+	}
+
+	queryReports, err := bench.RunQueries(ctx, svc, gt, titleIdx, o.k, bench.RunQueryOptions{
+		Diagnostics: o.diagnostics,
+		Observer:    observerStats,
+		Repeat:      o.repeat,
+		Warmup:      o.warmup,
+		Shuffle:     o.shuffle,
+	})
 	if err != nil {
 		return fmt.Errorf("run queries: %w", err)
 	}
 
-	report := bench.Aggregate(o.k, idxReport, queryReports)
-	fmt.Fprintf(os.Stdout, "\n=== bench result: index=%s lang=%s field=%s scorer=%s ===\n", o.indexKind, o.lang, o.field, o.scorer)
+	report := bench.Aggregate(o.k, idxReport, queryReports, o.diagnostics)
+	fmt.Fprintf(os.Stdout, "\n=== bench result: index=%s lang=%s field=%s scorer=%s diagnostics=%t observer=%t repeat=%d warmup=%d shuffle=%t ===\n", o.indexKind, o.lang, o.field, o.scorer, o.diagnostics, o.observer, o.repeat, o.warmup, o.shuffle)
 	bench.WriteReport(os.Stdout, report, o.worst)
+	if observerStats != nil {
+		snap := observerStats.Snapshot()
+		fmt.Fprintf(os.Stdout, "\nObserver: total=%d errors=%d zero_results=%d strategies=%d\n", snap.TotalSearches, snap.ErrorsTotal, snap.ZeroResults, len(snap.ByStrategy))
+	}
 	return nil
 }
 

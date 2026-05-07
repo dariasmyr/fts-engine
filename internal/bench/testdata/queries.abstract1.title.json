@@ -1,0 +1,16 @@
+{
+  "queries": [
+    {
+      "query": "canal du midi",
+      "relevant_titles": ["Wikipedia: Canal du Midi"]
+    },
+    {
+      "query": "barack obama",
+      "relevant_titles": ["Wikipedia: Barack Obama"]
+    },
+    {
+      "query": "climate change mitigation",
+      "relevant_titles": ["Wikipedia: Climate change mitigation"]
+    }
+  ]
+}
