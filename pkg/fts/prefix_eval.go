@@ -4,7 +4,7 @@ import "context"
 
 func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFieldScope) (map[DocID]docAccum, error) {
 	if exec := diagnosticsFromContext(ctx); exec != nil {
-		exec.setStrategy("prefix")
+		exec.setStrategy(strategyPrefix)
 	}
 	if q.Prefix == "" {
 		return map[DocID]docAccum{}, nil

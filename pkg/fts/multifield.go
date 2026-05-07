@@ -162,7 +162,7 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 		exec.observeTotal(start)
 		return attachDiagnostics(ctx, res), nil
 	}
-	exec.setStrategy("phrase_exact")
+	exec.setStrategy(strategyPhraseExact)
 
 	searchStart := exec.startTimer()
 	hits, err := s.evalExactPhraseTokenHits(ctx, fields, plan.tokens)
@@ -206,7 +206,7 @@ func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []str
 		exec.observeTotal(start)
 		return attachDiagnostics(ctx, res), nil
 	}
-	exec.setStrategy("phrase_near")
+	exec.setStrategy(strategyPhraseNear)
 
 	searchStart := exec.startTimer()
 	hits, err := s.evalNearPhraseTokenHits(ctx, fields, plan.tokens, uint32(distance))

@@ -188,7 +188,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 	if allSingleExpansionInSameField(mustGroups) {
 		// Fast path: Seq ordinals are only comparable within one field index.
 		if exec := diagnosticsFromContext(ctx); exec != nil {
-			exec.setStrategy("bool_and_fast_sort_merge")
+			exec.setStrategy(strategyBoolAndFastSortMerge)
 			exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
 				b.AndFast.Used = true
 				b.AndFast.UsedSortMerge = true
@@ -199,7 +199,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 		return s.execBooleanAndSortMerge(mustGroups, shoulds, exclude, ctx, scope)
 	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
-		exec.setStrategy("bool_and_fast_driver")
+		exec.setStrategy(strategyBoolAndFastDriver)
 		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
 			b.AndFast.Used = true
 			b.AndFast.DriverGroupSize = mustGroups[0].totalDocs
@@ -304,7 +304,7 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, sco
 		return nil, false, nil
 	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
-		exec.setStrategy("bool_or_fast")
+		exec.setStrategy(strategyBoolOrFast)
 	}
 
 	exclude, err := s.buildExcludeSet(ctx, mustNots, scope)

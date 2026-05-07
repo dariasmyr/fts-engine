@@ -57,6 +57,19 @@ const (
 	queryTimingTotal
 )
 
+const (
+	strategyEmpty                = "empty"
+	strategyTerm                 = "term"
+	strategyPrefix               = "prefix"
+	strategyPhraseExact          = "phrase_exact"
+	strategyPhraseNear           = "phrase_near"
+	strategyBoolFallback         = "bool_fallback"
+	strategyBoolOrWAND           = "bool_or_wand"
+	strategyBoolOrFast           = "bool_or_fast"
+	strategyBoolAndFastDriver    = "bool_and_fast_driver"
+	strategyBoolAndFastSortMerge = "bool_and_fast_sort_merge"
+)
+
 func (t QueryTimings) HasPreprocess() bool {
 	return t.set&queryTimingPreprocess != 0
 }

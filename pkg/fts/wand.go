@@ -76,7 +76,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 	}
 	if len(plan) == 0 {
 		if exec := diagnosticsFromContext(ctx); exec != nil {
-			exec.setStrategy("bool_or_wand")
+			exec.setStrategy(strategyBoolOrWAND)
 			exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
 				b.WAND.Eligible = true
 				b.WAND.Used = true
@@ -102,7 +102,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		return nil, false, nil
 	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
-		exec.setStrategy("bool_or_wand")
+		exec.setStrategy(strategyBoolOrWAND)
 		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
 			b.WAND.Eligible = true
 			b.WAND.Used = true

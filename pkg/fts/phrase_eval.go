@@ -43,7 +43,7 @@ func (s *Service) evalPhraseHits(ctx context.Context, fields []string, phrase st
 		return s.executeQuery(ctx, *plan.fallback, 0, scope)
 	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
-		exec.setStrategy("phrase_exact")
+		exec.setStrategy(strategyPhraseExact)
 	}
 	return s.evalExactPhraseTokenHits(ctx, fields, plan.tokens)
 }

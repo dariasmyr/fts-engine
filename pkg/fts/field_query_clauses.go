@@ -36,7 +36,7 @@ func (s *Service) SearchFieldClauses(ctx context.Context, clauses []FieldQueryCl
 	ctx, exec := ensureDiagnosticsContext(ctx)
 	if len(clauses) == 0 {
 		exec.setQueryTypeIfEmpty("empty")
-		exec.setStrategy("empty")
+		exec.setStrategy(strategyEmpty)
 		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
 	}
 

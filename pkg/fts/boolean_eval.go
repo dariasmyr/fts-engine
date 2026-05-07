@@ -8,7 +8,7 @@ import (
 func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocID]docAccum, error) {
 	if q == nil || len(q.Clauses) == 0 {
 		if exec := diagnosticsFromContext(ctx); exec != nil {
-			exec.setStrategy("empty")
+			exec.setStrategy(strategyEmpty)
 		}
 		return map[DocID]docAccum{}, nil
 	}
@@ -35,7 +35,7 @@ func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLim
 	var shoulds []map[DocID]docAccum
 	exclude := make(map[DocID]struct{})
 	if exec := diagnosticsFromContext(ctx); exec != nil {
-		exec.setStrategy("bool_fallback")
+		exec.setStrategy(strategyBoolFallback)
 	}
 
 	for _, clause := range q.Clauses {

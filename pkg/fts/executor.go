@@ -38,7 +38,7 @@ func (s *Service) searchResultForQuery(ctx context.Context, q Query, maxResults 
 	ctx, exec := ensureDiagnosticsContext(ctx)
 	if q == nil {
 		exec.setQueryTypeIfEmpty("empty")
-		exec.setStrategy("empty")
+		exec.setStrategy(strategyEmpty)
 		exec.setTotalTiming(0)
 		return &SearchResult{Results: []Result{}}, nil
 	}

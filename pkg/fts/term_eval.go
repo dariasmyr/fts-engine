@@ -7,7 +7,7 @@ import (
 
 func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldScope) (map[DocID]docAccum, error) {
 	if exec := diagnosticsFromContext(ctx); exec != nil {
-		exec.setStrategy("term")
+		exec.setStrategy(strategyTerm)
 	}
 	if q.Term == "" {
 		return map[DocID]docAccum{}, nil
