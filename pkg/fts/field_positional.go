@@ -145,37 +145,44 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 		return nil, err
 	}
 
+	exec := diagnosticsFromContext(ctx)
 	keys, err := s.keyGen(token)
 	if err != nil {
 		return nil, fmt.Errorf("fts: positional search: keygen: %w", err)
 	}
-	if exec := diagnosticsFromContext(ctx); exec != nil {
+	if exec != nil {
 		exec.addKeys(len(keys))
 		exec.addTokens(1)
 	}
+	var filterChecks, filterRejects, indexLookups, postingsRead int
+	defer func() {
+		if exec == nil {
+			return
+		}
+		exec.addFilterChecks(filterChecks, filterRejects)
+		exec.addIndexLookups(indexLookups)
+		exec.addPostingsRead(postingsRead)
+	}()
 
 	var merged map[DocID][]uint32
 	if len(keys) == 1 {
 		if s.filter != nil {
 			miss := !s.filter.Contains([]byte(keys[0]))
-			if exec := diagnosticsFromContext(ctx); exec != nil {
-				exec.addFilterCheck(miss)
+			filterChecks++
+			if miss {
+				filterRejects++
 			}
 			if miss {
 				return nil, nil
 			}
 		}
 
-		if exec := diagnosticsFromContext(ctx); exec != nil {
-			exec.addIndexLookups(1)
-		}
+		indexLookups++
 		refs, err := positional.SearchPositional(keys[0])
 		if err != nil {
 			return nil, fmt.Errorf("fts: positional search: index search: %w", err)
 		}
-		if exec := diagnosticsFromContext(ctx); exec != nil {
-			exec.addPostingsRead(len(refs))
-		}
+		postingsRead += len(refs)
 		merged = make(map[DocID][]uint32, len(refs))
 		for _, r := range refs {
 			if len(r.Positions) > 0 {
@@ -189,24 +196,21 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 	for _, key := range keys {
 		if s.filter != nil {
 			miss := !s.filter.Contains([]byte(key))
-			if exec := diagnosticsFromContext(ctx); exec != nil {
-				exec.addFilterCheck(miss)
+			filterChecks++
+			if miss {
+				filterRejects++
 			}
 			if miss {
 				continue
 			}
 		}
 
-		if exec := diagnosticsFromContext(ctx); exec != nil {
-			exec.addIndexLookups(1)
-		}
+		indexLookups++
 		refs, err := positional.SearchPositional(key)
 		if err != nil {
 			return nil, fmt.Errorf("fts: positional search: index search: %w", err)
 		}
-		if exec := diagnosticsFromContext(ctx); exec != nil {
-			exec.addPostingsRead(len(refs))
-		}
+		postingsRead += len(refs)
 		for _, r := range refs {
 			if len(r.Positions) == 0 {
 				continue

@@ -246,14 +246,20 @@ func (q *queryExecContext) addIndexLookups(n int) {
 }
 
 func (q *queryExecContext) addFilterCheck(missed bool) {
-	if q == nil {
+	rejects := 0
+	if missed {
+		rejects = 1
+	}
+	q.addFilterChecks(1, rejects)
+}
+
+func (q *queryExecContext) addFilterChecks(total, rejects int) {
+	if q == nil || total == 0 {
 		return
 	}
 	q.mu.Lock()
-	q.d.FilterChecks++
-	if missed {
-		q.d.FilterRejects++
-	}
+	q.d.FilterChecks += total
+	q.d.FilterRejects += rejects
 	q.mu.Unlock()
 }
 
