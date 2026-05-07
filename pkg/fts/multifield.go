@@ -147,14 +147,14 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 	preStart := time.Now()
 	plan := s.preparePhrase(fields, phrase)
 	preprocess := time.Since(preStart)
-	exec.addTiming("preprocess", preprocess)
+	exec.setPreprocessTiming(preprocess)
 	exec.addFields(len(fields))
 	exec.addTokens(len(plan.tokens))
 
 	if len(plan.tokens) == 0 {
-		exec.addTiming("search_tokens", 0)
+		exec.setSearchTokensTiming(0)
 		total := time.Since(start)
-		exec.addTiming("total", total)
+		exec.setTotalTiming(total)
 		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
 	}
 	if plan.fallback != nil {
@@ -163,7 +163,7 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 			return nil, err
 		}
 		total := time.Since(start)
-		exec.addTiming("total", total)
+		exec.setTotalTiming(total)
 		return attachDiagnostics(ctx, res), nil
 	}
 	exec.setStrategy("phrase_exact")
@@ -175,10 +175,10 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 	}
 
 	searchTokens := time.Since(searchStart)
-	exec.addTiming("search_tokens", searchTokens)
+	exec.setSearchTokensTiming(searchTokens)
 
 	total := time.Since(start)
-	exec.addTiming("total", total)
+	exec.setTotalTiming(total)
 	return attachDiagnostics(ctx, searchResultFromHits(hits, maxResults, s.scorer != nil)), nil
 }
 
@@ -197,14 +197,14 @@ func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []str
 	preStart := time.Now()
 	plan := s.preparePhrase(fields, phrase)
 	preprocess := time.Since(preStart)
-	exec.addTiming("preprocess", preprocess)
+	exec.setPreprocessTiming(preprocess)
 	exec.addFields(len(fields))
 	exec.addTokens(len(plan.tokens))
 
 	if len(plan.tokens) == 0 {
-		exec.addTiming("search_tokens", 0)
+		exec.setSearchTokensTiming(0)
 		total := time.Since(start)
-		exec.addTiming("total", total)
+		exec.setTotalTiming(total)
 		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
 	}
 	if plan.fallback != nil {
@@ -213,7 +213,7 @@ func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []str
 			return nil, err
 		}
 		total := time.Since(start)
-		exec.addTiming("total", total)
+		exec.setTotalTiming(total)
 		return attachDiagnostics(ctx, res), nil
 	}
 	exec.setStrategy("phrase_near")
@@ -225,10 +225,10 @@ func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []str
 	}
 
 	searchTokens := time.Since(searchStart)
-	exec.addTiming("search_tokens", searchTokens)
+	exec.setSearchTokensTiming(searchTokens)
 
 	total := time.Since(start)
-	exec.addTiming("total", total)
+	exec.setTotalTiming(total)
 	return attachDiagnostics(ctx, searchResultFromHits(hits, maxResults, s.scorer != nil)), nil
 }
 

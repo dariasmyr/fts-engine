@@ -83,7 +83,7 @@ func (s *SearchStats) ObserveSearch(query string, d *fts.QueryDiagnostics, err e
 		event.LogicalQueryType = d.LogicalQueryType
 		event.ExecutionStrategy = d.ExecutionStrategy
 		event.StrategySkipReason = d.StrategySkipReason
-		event.TotalDuration = d.Timings["total"]
+		event.TotalDuration = d.Timings.Total
 		event.PostingEntriesRead = d.PostingEntriesRead
 		event.MatchedDocs = d.MatchedDocs
 		event.ReturnedDocs = d.ReturnedDocs
@@ -109,10 +109,10 @@ func (s *SearchStats) ObserveSearch(query string, d *fts.QueryDiagnostics, err e
 		}
 		st := s.byStrategy[strategy]
 		st.Count++
-		st.CumulativeDuration += d.Timings["total"]
+		st.CumulativeDuration += d.Timings.Total
 		st.TotalPostings += d.PostingEntriesRead
-		if d.Timings["total"] > st.MaxDuration {
-			st.MaxDuration = d.Timings["total"]
+		if d.Timings.Total > st.MaxDuration {
+			st.MaxDuration = d.Timings.Total
 		}
 		s.byStrategy[strategy] = st
 	}

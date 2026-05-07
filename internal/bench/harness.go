@@ -173,8 +173,8 @@ func RunQueries(ctx context.Context, svc *pkgfts.Service, gt *GroundTruth, title
 			queryReport.StrategySkipReason = diag.StrategySkipReason
 			queryReport.IndexSearches = diag.IndexSearches
 			queryReport.PostingEntriesRead = diag.PostingEntriesRead
-			queryReport.DiagnosticsTotal = diag.Timings["total"]
-			queryReport.DiagnosticsSearchTokens = diag.Timings["search_tokens"]
+			queryReport.DiagnosticsTotal = diag.Timings.Total
+			queryReport.DiagnosticsSearchTokens = diag.Timings.SearchTokens
 		}
 
 		reports = append(reports, queryReport)

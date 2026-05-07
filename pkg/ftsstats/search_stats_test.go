@@ -17,7 +17,7 @@ func TestSearchStatsObserveAggregatesByStrategy(t *testing.T) {
 		PostingEntriesRead: 12,
 		MatchedDocs:        3,
 		ReturnedDocs:       2,
-		Timings:            map[string]time.Duration{"total": 8 * time.Millisecond},
+		Timings:            fts.QueryTimings{Total: 8 * time.Millisecond},
 	}, nil)
 	stats.ObserveSearch("alpha", &fts.QueryDiagnostics{
 		LogicalQueryType:   "term",
@@ -25,7 +25,7 @@ func TestSearchStatsObserveAggregatesByStrategy(t *testing.T) {
 		PostingEntriesRead: 4,
 		MatchedDocs:        0,
 		ReturnedDocs:       0,
-		Timings:            map[string]time.Duration{"total": 2 * time.Millisecond},
+		Timings:            fts.QueryTimings{Total: 2 * time.Millisecond},
 	}, nil)
 
 	snap := stats.Snapshot()
@@ -76,9 +76,9 @@ func TestSearchStatsObserveErrorWithoutDiagnostics(t *testing.T) {
 
 func TestSearchStatsRecentLimit(t *testing.T) {
 	stats := NewSearchStats(2)
-	stats.ObserveSearch("one", &fts.QueryDiagnostics{Timings: map[string]time.Duration{}}, nil)
-	stats.ObserveSearch("two", &fts.QueryDiagnostics{Timings: map[string]time.Duration{}}, nil)
-	stats.ObserveSearch("three", &fts.QueryDiagnostics{Timings: map[string]time.Duration{}}, nil)
+	stats.ObserveSearch("one", &fts.QueryDiagnostics{Timings: fts.QueryTimings{}}, nil)
+	stats.ObserveSearch("two", &fts.QueryDiagnostics{Timings: fts.QueryTimings{}}, nil)
+	stats.ObserveSearch("three", &fts.QueryDiagnostics{Timings: fts.QueryTimings{}}, nil)
 
 	recent := stats.Recent(2)
 	if len(recent) != 2 {

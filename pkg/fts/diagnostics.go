@@ -38,7 +38,35 @@ type QueryDiagnostics struct {
 	ReturnedDocs int
 
 	// Timings stores per-stage durations for this query execution.
-	Timings map[string]time.Duration
+	Timings QueryTimings
+}
+
+type QueryTimings struct {
+	Preprocess   time.Duration
+	SearchTokens time.Duration
+	Total        time.Duration
+
+	set queryTimingMask
+}
+
+type queryTimingMask uint8
+
+const (
+	queryTimingPreprocess queryTimingMask = 1 << iota
+	queryTimingSearchTokens
+	queryTimingTotal
+)
+
+func (t QueryTimings) HasPreprocess() bool {
+	return t.set&queryTimingPreprocess != 0
+}
+
+func (t QueryTimings) HasSearchTokens() bool {
+	return t.set&queryTimingSearchTokens != 0
+}
+
+func (t QueryTimings) HasTotal() bool {
+	return t.set&queryTimingTotal != 0
 }
 
 type BooleanDiagnostics struct {
@@ -83,7 +111,7 @@ func ensureDiagnosticsContext(ctx context.Context) (context.Context, *queryExecC
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		return ctx, exec
 	}
-	exec := &queryExecContext{d: QueryDiagnostics{Timings: make(map[string]time.Duration)}}
+	exec := &queryExecContext{}
 	return context.WithValue(ctx, diagnosticsContextKey{}, exec), exec
 }
 
@@ -115,7 +143,6 @@ func (q *queryExecContext) snapshot() *QueryDiagnostics {
 	defer q.mu.Unlock()
 	copyD := q.d
 	copyD.Boolean = copyBooleanDiagnostics(q.d.Boolean)
-	copyD.Timings = copyDurationMap(q.d.Timings)
 	return &copyD
 }
 
@@ -127,17 +154,6 @@ func copyBooleanDiagnostics(src *BooleanDiagnostics) *BooleanDiagnostics {
 	out.FastPathSkipReasons = append([]string(nil), src.FastPathSkipReasons...)
 	out.WAND.PostingsPerClause = append([]int(nil), src.WAND.PostingsPerClause...)
 	return &out
-}
-
-func copyDurationMap(src map[string]time.Duration) map[string]time.Duration {
-	if len(src) == 0 {
-		return map[string]time.Duration{}
-	}
-	out := make(map[string]time.Duration, len(src))
-	for k, v := range src {
-		out[k] = v
-	}
-	return out
 }
 
 func (q *queryExecContext) setQueryTypeIfEmpty(v string) {
@@ -257,12 +273,33 @@ func (q *queryExecContext) setReturnedDocs(n int) {
 	q.mu.Unlock()
 }
 
-func (q *queryExecContext) addTiming(name string, d time.Duration) {
-	if q == nil || name == "" {
+func (q *queryExecContext) setPreprocessTiming(d time.Duration) {
+	if q == nil {
 		return
 	}
 	q.mu.Lock()
-	q.d.Timings[name] = d
+	q.d.Timings.Preprocess = d
+	q.d.Timings.set |= queryTimingPreprocess
+	q.mu.Unlock()
+}
+
+func (q *queryExecContext) setSearchTokensTiming(d time.Duration) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	q.d.Timings.SearchTokens = d
+	q.d.Timings.set |= queryTimingSearchTokens
+	q.mu.Unlock()
+}
+
+func (q *queryExecContext) setTotalTiming(d time.Duration) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	q.d.Timings.Total = d
+	q.d.Timings.set |= queryTimingTotal
 	q.mu.Unlock()
 }
 

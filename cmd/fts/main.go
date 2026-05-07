@@ -302,12 +302,18 @@ func logSearchStats(log *slog.Logger, snapshot ftsstats.Snapshot) {
 }
 
 func formatDiagnosticsTimings(diag *pkgfts.QueryDiagnostics) map[string]string {
-	if diag == nil || len(diag.Timings) == 0 {
+	if diag == nil {
 		return map[string]string{}
 	}
-	out := make(map[string]string, len(diag.Timings))
-	for key, d := range diag.Timings {
-		out[key] = formatAppDuration(d)
+	out := make(map[string]string, 3)
+	if diag.Timings.HasPreprocess() {
+		out["preprocess"] = formatAppDuration(diag.Timings.Preprocess)
+	}
+	if diag.Timings.HasSearchTokens() {
+		out["search_tokens"] = formatAppDuration(diag.Timings.SearchTokens)
+	}
+	if diag.Timings.HasTotal() {
+		out["total"] = formatAppDuration(diag.Timings.Total)
 	}
 	return out
 }

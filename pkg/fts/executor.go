@@ -40,7 +40,7 @@ func (s *Service) searchResultForQuery(ctx context.Context, q Query, maxResults 
 	if q == nil {
 		exec.setQueryTypeIfEmpty("empty")
 		exec.setStrategy("empty")
-		exec.addTiming("total", 0)
+		exec.setTotalTiming(0)
 		return &SearchResult{Results: []Result{}}, nil
 	}
 
@@ -52,10 +52,10 @@ func (s *Service) searchResultForQuery(ctx context.Context, q Query, maxResults 
 		return nil, err
 	}
 	searchTokens := time.Since(searchStart)
-	exec.addTiming("search_tokens", searchTokens)
+	exec.setSearchTokensTiming(searchTokens)
 
 	total := time.Since(start)
-	exec.addTiming("total", total)
+	exec.setTotalTiming(total)
 	return searchResultFromHits(hits, maxResults, s.scorer != nil), nil
 }
 

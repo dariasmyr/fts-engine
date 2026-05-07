@@ -133,14 +133,14 @@ func (s *Service) searchQueryString(ctx context.Context, query string, defaultFi
 	}
 	parsed = bindDefaultField(parsed, defaultField)
 	preprocess := time.Since(preStart)
-	exec.addTiming("preprocess", preprocess)
+	exec.setPreprocessTiming(preprocess)
 
 	res, err := s.searchResultForQuery(ctx, parsed, maxResults, scope)
 	if err != nil {
 		return nil, err
 	}
 	total := time.Since(start)
-	exec.addTiming("total", total)
+	exec.setTotalTiming(total)
 	return attachDiagnostics(ctx, res), nil
 }
 

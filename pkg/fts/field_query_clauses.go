@@ -62,13 +62,13 @@ func (s *Service) SearchFieldClauses(ctx context.Context, clauses []FieldQueryCl
 		})
 	}
 	preprocess := time.Since(preStart)
-	exec.addTiming("preprocess", preprocess)
+	exec.setPreprocessTiming(preprocess)
 
 	res, err := s.searchResultForQuery(ctx, clausesToQuery(boolClauses), maxResults, queryFieldScope{})
 	if err != nil {
 		return nil, err
 	}
 	total := time.Since(start)
-	exec.addTiming("total", total)
+	exec.setTotalTiming(total)
 	return attachDiagnostics(ctx, res), nil
 }

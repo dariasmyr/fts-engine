@@ -119,13 +119,14 @@ func TestSearchDocumentsReturnsDiagnosticsTimings(t *testing.T) {
 		t.Fatal("expected non-nil diagnostics")
 	}
 
-	for _, key := range []string{"preprocess", "search_tokens", "total"} {
-		if _, ok := res.Diagnostics.Timings[key]; !ok {
-			t.Fatalf("timings key %q missing", key)
-		}
-		if res.Diagnostics.Timings[key] <= 0 {
-			t.Fatalf("timings key %q is not positive", key)
-		}
+	if !res.Diagnostics.Timings.HasPreprocess() || res.Diagnostics.Timings.Preprocess <= 0 {
+		t.Fatalf("expected positive preprocess timing, got %+v", res.Diagnostics.Timings)
+	}
+	if !res.Diagnostics.Timings.HasSearchTokens() || res.Diagnostics.Timings.SearchTokens <= 0 {
+		t.Fatalf("expected positive search_tokens timing, got %+v", res.Diagnostics.Timings)
+	}
+	if !res.Diagnostics.Timings.HasTotal() || res.Diagnostics.Timings.Total <= 0 {
+		t.Fatalf("expected positive total timing, got %+v", res.Diagnostics.Timings)
 	}
 }
 

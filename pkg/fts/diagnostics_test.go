@@ -15,8 +15,8 @@ func requireDiagnostics(t *testing.T, res *SearchResult) *QueryDiagnostics {
 	if res.Diagnostics == nil {
 		t.Fatal("expected non-nil Diagnostics")
 	}
-	if res.Diagnostics.Timings["total"] <= 0 {
-		t.Fatalf("expected Diagnostics.Timings[total] > 0, got %v", res.Diagnostics.Timings["total"])
+	if res.Diagnostics.Timings.Total <= 0 {
+		t.Fatalf("expected Diagnostics.Timings.Total > 0, got %v", res.Diagnostics.Timings.Total)
 	}
 	return res.Diagnostics
 }
@@ -44,10 +44,10 @@ func TestSearchDiagnosticsTermStrategy(t *testing.T) {
 	if d.ProcessedTokens <= 0 || d.IndexSearches <= 0 || d.PostingEntriesRead <= 0 {
 		t.Fatalf("expected positive token/lookups/postings metrics, got %+v", *d)
 	}
-	if d.Timings["search_tokens"] <= 0 || d.Timings["total"] < d.Timings["search_tokens"] {
+	if d.Timings.SearchTokens <= 0 || d.Timings.Total < d.Timings.SearchTokens {
 		t.Fatalf("unexpected timings: %+v", d.Timings)
 	}
-	if d.Timings["total"] > 10*time.Second {
+	if d.Timings.Total > 10*time.Second {
 		t.Fatalf("unexpectedly large timing: %+v", d.Timings)
 	}
 }
@@ -308,7 +308,7 @@ func TestSearchDocumentsDiagnosticsNonNil(t *testing.T) {
 	if d.LogicalQueryType != "term" {
 		t.Fatalf("LogicalQueryType = %q, want term", d.LogicalQueryType)
 	}
-	if d.Timings["preprocess"] <= 0 {
+	if d.Timings.Preprocess <= 0 {
 		t.Fatalf("expected preprocess timing > 0, got %+v", d.Timings)
 	}
 }
@@ -327,7 +327,7 @@ func TestSearchFieldClausesDiagnosticsNonNil(t *testing.T) {
 	if d.LogicalQueryType == "" || d.ExecutionStrategy == "" {
 		t.Fatalf("expected non-empty diagnostics labels, got %+v", *d)
 	}
-	if d.Timings["preprocess"] <= 0 {
+	if d.Timings.Preprocess <= 0 {
 		t.Fatalf("expected preprocess timing > 0, got %+v", d.Timings)
 	}
 }
