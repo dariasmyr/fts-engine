@@ -1,6 +1,7 @@
 package bench
 
 import (
+	"bytes"
 	"context"
 	"math/rand"
 	"strings"
@@ -261,6 +262,7 @@ func TestAggregateIncludesDiagnosticsAndStrategies(t *testing.T) {
 	queries := []QueryReport{
 		{
 			Query:                   "alpha",
+			Returned:                1,
 			NDCG:                    1,
 			MRR:                     1,
 			Recall:                  1,
@@ -273,6 +275,7 @@ func TestAggregateIncludesDiagnosticsAndStrategies(t *testing.T) {
 		},
 		{
 			Query:                   "alpha beta",
+			Returned:                1,
 			NDCG:                    0.5,
 			MRR:                     0.5,
 			Recall:                  0.5,
@@ -303,5 +306,134 @@ func TestAggregateIncludesDiagnosticsAndStrategies(t *testing.T) {
 	}
 	if report.Strategies["bool_or_wand"].TotalPostingsRead != 15 {
 		t.Fatalf("bool_or_wand postings = %d, want 15", report.Strategies["bool_or_wand"].TotalPostingsRead)
+	}
+}
+
+func TestAggregateTracksZeroResultsWandAndFallbackReasons(t *testing.T) {
+	queries := []QueryReport{
+		{
+			Query:                   "wand used",
+			Returned:                2,
+			NDCG:                    1,
+			MRR:                     1,
+			Recall:                  1,
+			Latency:                 5 * time.Millisecond,
+			ExecutionStrategy:       "bool_or_wand",
+			IndexSearches:           3,
+			PostingEntriesRead:      11,
+			DiagnosticsTotal:        4 * time.Millisecond,
+			DiagnosticsSearchTokens: 3 * time.Millisecond,
+			WANDUsed:                true,
+		},
+		{
+			Query:                   "wand skipped",
+			Returned:                0,
+			NDCG:                    0,
+			MRR:                     0,
+			Recall:                  0,
+			Latency:                 7 * time.Millisecond,
+			ExecutionStrategy:       "bool_or_fast",
+			StrategySkipReason:      "wand_disabled_no_scorer",
+			IndexSearches:           4,
+			PostingEntriesRead:      17,
+			DiagnosticsTotal:        6 * time.Millisecond,
+			DiagnosticsSearchTokens: 5 * time.Millisecond,
+			WANDSkipReason:          "wand_disabled_no_scorer",
+		},
+	}
+
+	report := Aggregate(10, IndexReport{}, queries, true)
+	if report.ZeroResults != 1 {
+		t.Fatalf("ZeroResults = %d, want 1", report.ZeroResults)
+	}
+	if report.WANDUsed != 1 {
+		t.Fatalf("WANDUsed = %d, want 1", report.WANDUsed)
+	}
+	if report.WANDSkipped != 1 {
+		t.Fatalf("WANDSkipped = %d, want 1", report.WANDSkipped)
+	}
+	if report.WANDSkipReasons["wand_disabled_no_scorer"] != 1 {
+		t.Fatalf("WANDSkipReasons = %+v, want wand_disabled_no_scorer=1", report.WANDSkipReasons)
+	}
+	if report.FallbackReasons["wand_disabled_no_scorer"] != 1 {
+		t.Fatalf("FallbackReasons = %+v, want wand_disabled_no_scorer=1", report.FallbackReasons)
+	}
+}
+
+func TestWriteReportIncludesBenchDiagnosticsSections(t *testing.T) {
+	report := Report{
+		DiagnosticsEnabled: true,
+		K:                  10,
+		Index:              IndexReport{DocumentCount: 2, Duration: time.Second, HeapAllocMB: 123},
+		Queries: []QueryReport{
+			{
+				Query:                   "lighter",
+				Returned:                1,
+				NDCG:                    0.5,
+				MRR:                     0.5,
+				Recall:                  0.5,
+				Latency:                 2 * time.Millisecond,
+				ExecutionStrategy:       "bool_or_fast",
+				StrategySkipReason:      "wand_disabled_no_scorer",
+				IndexSearches:           2,
+				PostingEntriesRead:      9,
+				DiagnosticsTotal:        2 * time.Millisecond,
+				DiagnosticsSearchTokens: 1500 * time.Microsecond,
+				WANDSkipReason:          "wand_disabled_no_scorer",
+			},
+			{
+				Query:                   "heavier",
+				Returned:                0,
+				NDCG:                    1,
+				MRR:                     1,
+				Recall:                  1,
+				Latency:                 4 * time.Millisecond,
+				ExecutionStrategy:       "bool_or_wand",
+				IndexSearches:           3,
+				PostingEntriesRead:      25,
+				DiagnosticsTotal:        4 * time.Millisecond,
+				DiagnosticsSearchTokens: 3 * time.Millisecond,
+				WANDUsed:                true,
+			},
+		},
+		ZeroResults:            1,
+		LatencyP50:             3 * time.Millisecond,
+		LatencyP95:             3900 * time.Microsecond,
+		LatencyP99:             3980 * time.Microsecond,
+		DiagnosticsTotalP50:    3 * time.Millisecond,
+		DiagnosticsTotalP95:    3900 * time.Microsecond,
+		DiagnosticsTotalP99:    3980 * time.Microsecond,
+		DiagnosticsSearchP50:   2250 * time.Microsecond,
+		DiagnosticsSearchP95:   2925 * time.Microsecond,
+		DiagnosticsSearchP99:   2985 * time.Microsecond,
+		MeanNDCG:               0.75,
+		MeanMRR:                0.75,
+		MeanRecall:             0.75,
+		MeanPostingEntriesRead: 17,
+		MeanIndexSearches:      2.5,
+		Strategies: map[string]StrategyReport{
+			"bool_or_fast": {Count: 1, TotalDuration: 2 * time.Millisecond, P95Duration: 2 * time.Millisecond, TotalSearchTokens: 1500 * time.Microsecond, TotalPostingsRead: 9, TotalIndexSearch: 2},
+			"bool_or_wand": {Count: 1, TotalDuration: 4 * time.Millisecond, P95Duration: 4 * time.Millisecond, TotalSearchTokens: 3 * time.Millisecond, TotalPostingsRead: 25, TotalIndexSearch: 3},
+		},
+		WANDUsed:        1,
+		WANDSkipped:     1,
+		WANDSkipReasons: map[string]int{"wand_disabled_no_scorer": 1},
+		FallbackReasons: map[string]int{"wand_disabled_no_scorer": 1},
+	}
+
+	var buf bytes.Buffer
+	WriteReport(&buf, report, 1)
+	out := buf.String()
+	for _, needle := range []string{
+		"zero_results: 1",
+		"wand: used=1 skipped=1",
+		"wand skipped reasons:",
+		"fallback reasons:",
+		"Worst 1 queries by postings_read:",
+		"postings=25",
+	} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("expected output to contain %q, got:\n%s", needle, out)
+		}
 	}
 }

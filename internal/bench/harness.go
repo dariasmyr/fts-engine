@@ -49,17 +49,21 @@ type QueryReport struct {
 	MRR                     float64
 	Recall                  float64
 	Latency                 time.Duration
+	LogicalQueryType        string
 	ExecutionStrategy       string
 	StrategySkipReason      string
 	IndexSearches           int
 	PostingEntriesRead      int
 	DiagnosticsTotal        time.Duration
 	DiagnosticsSearchTokens time.Duration
+	WANDUsed                bool
+	WANDSkipReason          string
 }
 
 type StrategyReport struct {
 	Count             int
 	TotalDuration     time.Duration
+	P95Duration       time.Duration
 	TotalSearchTokens time.Duration
 	TotalPostingsRead int
 	TotalIndexSearch  int
@@ -78,6 +82,7 @@ type Report struct {
 	K                      int
 	Index                  IndexReport
 	Queries                []QueryReport
+	ZeroResults            int
 	LatencyP50             time.Duration
 	LatencyP95             time.Duration
 	LatencyP99             time.Duration
@@ -93,6 +98,10 @@ type Report struct {
 	MeanPostingEntriesRead float64
 	MeanIndexSearches      float64
 	Strategies             map[string]StrategyReport
+	WANDUsed               int
+	WANDSkipped            int
+	WANDSkipReasons        map[string]int
+	FallbackReasons        map[string]int
 }
 
 func IndexCorpus(ctx context.Context, svc *pkgfts.Service, corpus Corpus, content ContentSelector) (IndexReport, error) {
@@ -232,19 +241,32 @@ func runQuery(ctx context.Context, svc *pkgfts.Service, q Query, titleIdx map[st
 		Latency:  elapsed,
 	}
 	if diag := res.Diagnostics; diag != nil {
+		queryReport.LogicalQueryType = diag.LogicalQueryType
 		queryReport.ExecutionStrategy = diag.ExecutionStrategy
 		queryReport.StrategySkipReason = diag.StrategySkipReason
 		queryReport.IndexSearches = diag.IndexSearches
 		queryReport.PostingEntriesRead = diag.PostingEntriesRead
 		queryReport.DiagnosticsTotal = diag.Timings.Total
 		queryReport.DiagnosticsSearchTokens = diag.Timings.SearchTokens
+		if diag.Boolean != nil {
+			queryReport.WANDUsed = diag.Boolean.WAND.Used
+			queryReport.WANDSkipReason = diag.Boolean.WAND.SkipReason
+		}
 	}
 
 	return queryReport, nil
 }
 
 func Aggregate(k int, idx IndexReport, queries []QueryReport, diagnosticsEnabled bool) Report {
-	report := Report{DiagnosticsEnabled: diagnosticsEnabled, K: k, Index: idx, Queries: queries, Strategies: make(map[string]StrategyReport)}
+	report := Report{
+		DiagnosticsEnabled: diagnosticsEnabled,
+		K:                  k,
+		Index:              idx,
+		Queries:            queries,
+		Strategies:         make(map[string]StrategyReport),
+		WANDSkipReasons:    make(map[string]int),
+		FallbackReasons:    make(map[string]int),
+	}
 	if len(queries) == 0 {
 		return report
 	}
@@ -252,10 +274,14 @@ func Aggregate(k int, idx IndexReport, queries []QueryReport, diagnosticsEnabled
 	latencies := make([]time.Duration, 0, len(queries))
 	diagnosticsTotals := make([]time.Duration, 0, len(queries))
 	searchTimings := make([]time.Duration, 0, len(queries))
+	strategyDurations := make(map[string][]time.Duration)
 	var sumNDCG, sumMRR, sumRecall float64
 	var totalPostingsRead, totalIndexSearches int
 	for _, q := range queries {
 		latencies = append(latencies, q.Latency)
+		if q.Returned == 0 {
+			report.ZeroResults++
+		}
 		if diagnosticsEnabled {
 			diagnosticsTotals = append(diagnosticsTotals, q.DiagnosticsTotal)
 			searchTimings = append(searchTimings, q.DiagnosticsSearchTokens)
@@ -280,6 +306,18 @@ func Aggregate(k int, idx IndexReport, queries []QueryReport, diagnosticsEnabled
 			st.TotalPostingsRead += q.PostingEntriesRead
 			st.TotalIndexSearch += q.IndexSearches
 			report.Strategies[strategy] = st
+			strategyDurations[strategy] = append(strategyDurations[strategy], q.DiagnosticsTotal)
+
+			if q.WANDUsed {
+				report.WANDUsed++
+			}
+			if q.WANDSkipReason != "" {
+				report.WANDSkipped++
+				report.WANDSkipReasons[q.WANDSkipReason]++
+			}
+			if q.StrategySkipReason != "" {
+				report.FallbackReasons[q.StrategySkipReason]++
+			}
 		}
 	}
 
@@ -299,6 +337,10 @@ func Aggregate(k int, idx IndexReport, queries []QueryReport, diagnosticsEnabled
 		report.DiagnosticsSearchP50 = Percentile(searchTimings, 0.50)
 		report.DiagnosticsSearchP95 = Percentile(searchTimings, 0.95)
 		report.DiagnosticsSearchP99 = Percentile(searchTimings, 0.99)
+		for strategy, st := range report.Strategies {
+			st.P95Duration = Percentile(strategyDurations[strategy], 0.95)
+			report.Strategies[strategy] = st
+		}
 	}
 
 	sort.SliceStable(report.Queries, func(i, j int) bool {
@@ -307,12 +349,44 @@ func Aggregate(k int, idx IndexReport, queries []QueryReport, diagnosticsEnabled
 	return report
 }
 
+func sortCountKeys(m map[string]int) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if m[keys[i]] != m[keys[j]] {
+			return m[keys[i]] > m[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	return keys
+}
+
+func topQueriesByPostings(queries []QueryReport, limit int) []QueryReport {
+	if limit <= 0 || len(queries) == 0 {
+		return nil
+	}
+	if limit > len(queries) {
+		limit = len(queries)
+	}
+	out := append([]QueryReport(nil), queries...)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].PostingEntriesRead != out[j].PostingEntriesRead {
+			return out[i].PostingEntriesRead > out[j].PostingEntriesRead
+		}
+		return out[i].Latency > out[j].Latency
+	})
+	return out[:limit]
+}
+
 func WriteReport(w io.Writer, r Report, topWorst int) {
 	fmt.Fprintf(w, "Indexed:   %d docs in %s (heap %d MB)\n", r.Index.DocumentCount, r.Index.Duration, r.Index.HeapAllocMB)
 	fmt.Fprintf(w, "Queries:   %d   (k=%d)\n", len(r.Queries), r.K)
 	fmt.Fprintf(w, "  nDCG@%d:   %.4f\n", r.K, r.MeanNDCG)
 	fmt.Fprintf(w, "  MRR:       %.4f\n", r.MeanMRR)
 	fmt.Fprintf(w, "  Recall@%d: %.4f\n", r.K, r.MeanRecall)
+	fmt.Fprintf(w, "  zero_results: %d\n", r.ZeroResults)
 	fmt.Fprintf(w, "  latency:   p50=%s p95=%s p99=%s\n", r.LatencyP50, r.LatencyP95, r.LatencyP99)
 	if r.DiagnosticsEnabled {
 		fmt.Fprintf(w, "  diag.total: p50=%s p95=%s p99=%s\n", r.DiagnosticsTotalP50, r.DiagnosticsTotalP95, r.DiagnosticsTotalP99)
@@ -339,7 +413,24 @@ func WriteReport(w io.Writer, r Report, topWorst int) {
 				avgPostings = float64(st.TotalPostingsRead) / float64(st.Count)
 				avgLookups = float64(st.TotalIndexSearch) / float64(st.Count)
 			}
-			fmt.Fprintf(w, "    %s: count=%d avg_total=%s avg_search_tokens=%s avg_postings=%.1f avg_lookups=%.1f\n", key, st.Count, avgTotal, avgSearch, avgPostings, avgLookups)
+			fmt.Fprintf(w, "    %s: count=%d avg_total=%s p95_total=%s avg_search_tokens=%s avg_postings=%.1f avg_lookups=%.1f\n", key, st.Count, avgTotal, st.P95Duration, avgSearch, avgPostings, avgLookups)
+		}
+
+		if r.WANDUsed > 0 || len(r.WANDSkipReasons) > 0 {
+			fmt.Fprintf(w, "  wand: used=%d skipped=%d\n", r.WANDUsed, r.WANDSkipped)
+			if len(r.WANDSkipReasons) > 0 {
+				fmt.Fprintln(w, "  wand skipped reasons:")
+				for _, key := range sortCountKeys(r.WANDSkipReasons) {
+					fmt.Fprintf(w, "    %s: %d\n", key, r.WANDSkipReasons[key])
+				}
+			}
+		}
+
+		if len(r.FallbackReasons) > 0 {
+			fmt.Fprintln(w, "  fallback reasons:")
+			for _, key := range sortCountKeys(r.FallbackReasons) {
+				fmt.Fprintf(w, "    %s: %d\n", key, r.FallbackReasons[key])
+			}
 		}
 	}
 
@@ -358,5 +449,19 @@ func WriteReport(w io.Writer, r Report, topWorst int) {
 			continue
 		}
 		fmt.Fprintf(w, "  ndcg=%.3f mrr=%.3f recall=%.3f lat=%s  %q\n", q.NDCG, q.MRR, q.Recall, q.Latency, q.Query)
+	}
+
+	if !r.DiagnosticsEnabled {
+		return
+	}
+
+	byPostings := topQueriesByPostings(r.Queries, topWorst)
+	if len(byPostings) == 0 {
+		return
+	}
+
+	fmt.Fprintf(w, "\nWorst %d queries by postings_read:\n", len(byPostings))
+	for _, q := range byPostings {
+		fmt.Fprintf(w, "  postings=%d lookups=%d lat=%s strategy=%s ndcg=%.3f  %q\n", q.PostingEntriesRead, q.IndexSearches, q.Latency, q.ExecutionStrategy, q.NDCG, q.Query)
 	}
 }

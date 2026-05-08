@@ -28,7 +28,7 @@ func main() {
 		field       = flag.String("field", "abstract", "document field to index: abstract | extract | title")
 		k           = flag.Int("k", 10, "top-k used for nDCG and Recall")
 		limit       = flag.Int("limit", 0, "cap documents indexed (0 = all)")
-		worst       = flag.Int("worst", 5, "print N worst queries by nDCG (0 = none)")
+		worst       = flag.Int("worst", 5, "print N worst queries by nDCG and postings_read (0 = none)")
 		warnMissing = flag.Bool("warn-missing", true, "warn if ground-truth titles don't resolve in the corpus")
 		scorer      = flag.String("scorer", "simple", "ranking: simple | bm25 | tfidf")
 		bm25K1      = flag.Float64("bm25-k1", 1.2, "BM25 k1 parameter (only with -scorer=bm25)")

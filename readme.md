@@ -398,7 +398,7 @@ It measures:
 - indexing duration
 - search latency `p50/p95/p99`
 - quality metrics: `nDCG`, `MRR`, `Recall`
-- optional diagnostics: `diag.total`, `diag.search_tokens`, strategy distribution, posting reads, index lookups
+- optional diagnostics: `diag.total`, `diag.search_tokens`, strategy distribution, zero-result counts, WAND/fallback distributions, posting reads, index lookups
 
 Common flags:
 
@@ -410,7 +410,7 @@ Common flags:
 - `-scorer`: `simple|bm25|tfidf`
 - `-k`: top-k used for `nDCG` and `Recall`
 - `-limit`: cap the number of indexed documents for quick experiments
-- `-worst`: print worst queries by `nDCG` and slowest queries by latency
+- `-worst`: print worst queries by `nDCG`; with diagnostics enabled also print worst queries by `postings_read`
 - `-diagnostics`: enable per-query `SearchResult.Diagnostics`
 - `-observer`: enable `ftsstats.SearchStats` aggregation during the benchmark run
 - `-warmup`: run N warmup searches before measured runs; warmup does not affect reported metrics
@@ -470,7 +470,7 @@ To compare index implementations on the same corpus, keep all other flags the sa
 
 - `-index`
 
-Current latency numbers are measured around `SearchDocuments(...)`. `-observer` still exercises the observer path and prints observer summary, but observer work is not included in the reported `latency p50/p95/p99` yet.
+Current latency numbers are measured around `SearchDocuments(...)`. `-observer` still exercises the observer path and prints observer summary, but observer work is not included in the reported `latency p50/p95/p99` yet. The text report uses `p50/p95/p99` as the main latency view; the diagnostics-heavy breakdown focuses on strategies, postings, WAND usage, fallback reasons, and zero-result counts.
 
 ### 2) Engine Microbench
 
@@ -560,7 +560,7 @@ Recommended minimum baseline before a feature branch:
 Compare these outputs:
 
 - microbench: `ns/op`, `B/op`, `allocs/op`
-- `cmd/bench`: indexing duration, latency `p50/p95/p99`, `diag.total`, `diag.search_tokens`, `avg postings`, `avg index_lookups`, strategy distribution, `nDCG`, `MRR`, `Recall`
+- `cmd/bench`: indexing duration, latency `p50/p95/p99`, zero-result counts, `diag.total`, `diag.search_tokens`, `avg postings`, `avg index_lookups`, strategy distribution, WAND/fallback breakdowns, worst-by-postings, `nDCG`, `MRR`, `Recall`
 
 ## Ribbon filter usage
 
