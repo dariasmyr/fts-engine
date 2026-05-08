@@ -4,6 +4,7 @@ fts:
   engine: "trie"
   index: "slicedradix" # radix|slicedradix|hamt|hamtpointered
   keygen: "word"
+  scorer: "none"       # none|bm25|tfidf
   filter: "ribbon"
   snapshot:
     enabled: true

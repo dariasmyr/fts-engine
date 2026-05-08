@@ -18,6 +18,7 @@ type FTSConfig struct {
 	Engine   string         `yaml:"engine" env-default:"trie"`
 	Index    string         `yaml:"index"`
 	KeyGen   string         `yaml:"keygen"`
+	Scorer   string         `yaml:"scorer" env-default:"none"`
 	Filter   string         `yaml:"filter" env-default:"none"`
 	Snapshot SnapshotConfig `yaml:"snapshot"`
 	Bloom    BloomConfig    `yaml:"bloom"`
@@ -118,6 +119,7 @@ func defaultConfig() Config {
 			Engine: "trie",
 			Index:  "slicedradix",
 			KeyGen: "word",
+			Scorer: "none",
 			Filter: "ribbon",
 			Snapshot: SnapshotConfig{
 				Enabled:        true,
@@ -169,6 +171,10 @@ func validateConfig(cfg *Config) {
 		cfg.FTS.KeyGen = "word"
 	}
 
+	if cfg.FTS.Scorer == "" {
+		cfg.FTS.Scorer = "none"
+	}
+
 	if cfg.FTS.Filter == "" {
 		cfg.FTS.Filter = "none"
 	}
@@ -200,6 +206,12 @@ func validateConfig(cfg *Config) {
 	case "word":
 	default:
 		panic("unknown keygen type: " + cfg.FTS.KeyGen)
+	}
+
+	switch cfg.FTS.Scorer {
+	case "none", "bm25", "tfidf":
+	default:
+		panic("unknown scorer type: " + cfg.FTS.Scorer)
 	}
 
 	switch cfg.FTS.Filter {
