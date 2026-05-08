@@ -65,6 +65,7 @@ func main() {
 	log.Info("fts", "engine", cfg.FTS.Engine)
 	log.Info("fts", "index", cfg.FTS.Index)
 	log.Info("fts", "keygen", cfg.FTS.KeyGen)
+	log.Info("fts", "scorer", cfg.FTS.Scorer)
 	log.Info("fts", "filter", cfg.FTS.Filter)
 	log.Info("fts", "mode", cfg.Mode.Type)
 
@@ -344,13 +345,36 @@ func formatAppDuration(d time.Duration) string {
 	return fmt.Sprintf("%dms", d.Milliseconds())
 }
 
+func selectScorer(kind string) (pkgfts.Option, error) {
+	switch kind {
+	case "", "none":
+		return nil, nil
+	case "bm25":
+		return pkgfts.WithScorer(pkgfts.BM25()), nil
+	case "tfidf":
+		return pkgfts.WithScorer(pkgfts.TFIDF()), nil
+	default:
+		return nil, fmt.Errorf("unknown scorer %q", kind)
+	}
+}
+
 func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
 	if cfg == nil {
 		return nil, false, fmt.Errorf("nil config")
 	}
 
+	scorerOpt, err := selectScorer(cfg.FTS.Scorer)
+	if err != nil {
+		return nil, false, err
+	}
+
+	serviceOpts := []pkgfts.Option{pkgfts.WithPipeline(pipeline)}
+	if scorerOpt != nil {
+		serviceOpts = append(serviceOpts, scorerOpt)
+	}
+
 	if cfg.Mode.Type == "prod" && cfg.FTS.Snapshot.Enabled && cfg.FTS.Snapshot.LoadOnStart {
-		svc, ok, err := tryLoadSnapshot(log, cfg, keyGen, pipeline)
+		svc, ok, err := tryLoadSnapshot(log, cfg, keyGen, serviceOpts)
 		if err != nil {
 			return nil, false, err
 		}
@@ -369,15 +393,19 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 		return nil, false, err
 	}
 
-	svc := pkgfts.New(index, keyGen, pkgfts.WithPipeline(pipeline), pkgfts.WithFilter(searchFilter))
+	if searchFilter != nil {
+		serviceOpts = append(serviceOpts, pkgfts.WithFilter(searchFilter))
+	}
+
+	svc := pkgfts.New(index, keyGen, serviceOpts...)
 	return svc, false, nil
 }
 
-func tryLoadSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
-	return tryLoadSplitSnapshot(log, cfg, keyGen, pipeline)
+func tryLoadSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, serviceOpts []pkgfts.Option) (*pkgfts.Service, bool, error) {
+	return tryLoadSplitSnapshot(log, cfg, keyGen, serviceOpts)
 }
 
-func tryLoadSplitSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
+func tryLoadSplitSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, serviceOpts []pkgfts.Option) (*pkgfts.Service, bool, error) {
 	indexPath := snapshotIndexPath(cfg)
 	filterPath := snapshotFilterPath(cfg)
 	expectedFilter := cfg.FTS.Filter
@@ -414,7 +442,7 @@ func tryLoadSplitSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.Ke
 		)
 	}
 
-	builtOpts := []pkgfts.Option{pkgfts.WithPipeline(pipeline)}
+	builtOpts := append([]pkgfts.Option(nil), serviceOpts...)
 	if loadedIndex.CollectionStats != nil {
 		builtOpts = append(builtOpts, pkgfts.WithCollectionStatsSnapshot(loadedIndex.CollectionStats))
 	}

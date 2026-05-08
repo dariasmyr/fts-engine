@@ -30,7 +30,7 @@ func main() {
 		limit       = flag.Int("limit", 0, "cap documents indexed (0 = all)")
 		worst       = flag.Int("worst", 5, "print N worst queries by nDCG and postings_read (0 = none)")
 		warnMissing = flag.Bool("warn-missing", true, "warn if ground-truth titles don't resolve in the corpus")
-		scorer      = flag.String("scorer", "simple", "ranking: simple | bm25 | tfidf")
+		scorer      = flag.String("scorer", "none", "ranking: none | bm25 | tfidf")
 		bm25K1      = flag.Float64("bm25-k1", 1.2, "BM25 k1 parameter (only with -scorer=bm25)")
 		bm25B       = flag.Float64("bm25-b", 0.75, "BM25 b parameter (only with -scorer=bm25)")
 		diagnostics = flag.Bool("diagnostics", true, "enable per-query diagnostics collection during benchmark runs")
@@ -207,7 +207,7 @@ func selectPreset(lang string) (fts.Option, error) {
 
 func selectScorer(kind string, k1, b float64) (fts.Option, error) {
 	switch kind {
-	case "", "simple", "legacy":
+	case "", "none":
 		return nil, nil
 	case "bm25":
 		return fts.WithScorer(&fts.BM25Scorer{K1: k1, B: b}), nil

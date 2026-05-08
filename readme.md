@@ -321,6 +321,7 @@ fts:
   engine: "trie"
   index: "radix"       # radix|slicedradix|hamt|hamtpointered
   keygen: "word"
+  scorer: "none"       # none|bm25|tfidf
   filter: "none"       # none|bloom|cuckoo|ribbon
   snapshot:
     enabled: true
@@ -407,7 +408,7 @@ Common flags:
 - `-index`: `radix|slicedradix|hamt|hamtpointered`
 - `-lang`: `en|ru|multi|none`
 - `-field`: `abstract|extract|title`
-- `-scorer`: `simple|bm25|tfidf`
+- `-scorer`: `none|bm25|tfidf`
 - `-k`: top-k used for `nDCG` and `Recall`
 - `-limit`: cap the number of indexed documents for quick experiments
 - `-worst`: print worst queries by `nDCG`; with diagnostics enabled also print worst queries by `postings_read`
@@ -432,7 +433,7 @@ go run ./cmd/bench \
   -index radix \
   -lang en \
   -field abstract \
-  -scorer simple \
+  -scorer none \
   -k 10 \
   -warmup 50 \
   -repeat 20 \
@@ -450,7 +451,7 @@ go run ./cmd/bench \
   -index radix \
   -lang en \
   -field abstract \
-  -scorer simple \
+  -scorer none \
   -k 10 \
   -warmup 0 \
   -repeat 1 \
