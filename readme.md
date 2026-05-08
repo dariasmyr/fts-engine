@@ -501,8 +501,10 @@ Use the index microbench when you want to measure low-level index operations in 
 
 It typically measures:
 
-- index lookup cost
+- exact lookup cost
+- positional lookup cost
 - insert cost
+- positional insert cost
 - allocations per operation
 
 It uses the same `go test` flags as the engine microbench.
