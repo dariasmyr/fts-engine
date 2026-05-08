@@ -8,13 +8,44 @@ import (
 )
 
 func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.WAND.TopK = candidateLimit
+		})
+	}
 	if candidateLimit <= 0 || s.scorer == nil {
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			reason := "wand_disabled_no_topk"
+			if candidateLimit <= 0 {
+				exec.setSkipReasonIfEmpty(reason)
+			} else {
+				reason = "wand_disabled_no_scorer"
+				exec.setSkipReasonIfEmpty(reason)
+			}
+			exec.recordFastPathSkip(reason)
+			exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+				b.WAND.SkipReason = reason
+			})
+		}
 		return nil, false, nil
 	}
 
-	shouldTerms, mustNots, ok := parseFastOrClauses(q)
+	shouldTerms, mustNots, ok, _ := parseFastOrClauses(q)
 	if !ok || len(shouldTerms) == 0 {
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			reason := "wand_not_or_terms_only"
+			exec.setSkipReasonIfEmpty(reason)
+			exec.recordFastPathSkip(reason)
+			exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+				b.WAND.SkipReason = reason
+			})
+		}
 		return nil, false, nil
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.WAND.ClauseCount = len(shouldTerms)
+		})
 	}
 
 	exclude, err := s.buildExcludeSet(ctx, mustNots, scope)
@@ -23,6 +54,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 	}
 
 	plan := make([]fastMust, 0, len(shouldTerms))
+	postingsPerClause := make([]int, 0, len(shouldTerms))
 	for _, term := range shouldTerms {
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
@@ -31,16 +63,50 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		if err != nil {
 			return nil, false, err
 		}
+		postingsPerClause = append(postingsPerClause, group.totalDocs)
 		if group.totalDocs == 0 {
 			continue
 		}
 		plan = append(plan, group)
 	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.WAND.PostingsPerClause = append([]int(nil), postingsPerClause...)
+		})
+	}
 	if len(plan) == 0 {
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			exec.setStrategy(strategyBoolOrWAND)
+			exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+				b.WAND.Eligible = true
+				b.WAND.Used = true
+				b.WAND.HeapSize = 0
+			})
+		}
 		return map[DocID]docAccum{}, true, nil
 	}
 	if !allSingleExpansionInSameField(plan) || !allClausesHaveStrictSeq(plan) {
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			reason := "wand_multiple_expansions_or_fields"
+			if !allSingleExpansionInSameField(plan) {
+				exec.setSkipReasonIfEmpty(reason)
+			} else {
+				reason = "wand_non_strict_seq"
+				exec.setSkipReasonIfEmpty(reason)
+			}
+			exec.recordFastPathSkip(reason)
+			exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+				b.WAND.SkipReason = reason
+			})
+		}
 		return nil, false, nil
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.setStrategy(strategyBoolOrWAND)
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.WAND.Eligible = true
+			b.WAND.Used = true
+		})
 	}
 
 	clauses := make([]*wandClause, 0, len(plan))
@@ -56,6 +122,8 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 	h := &candidateHeap{}
 	heap.Init(h)
 	var theta float64
+	postingsConsidered := 0
+	candidateDocs := 0
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -86,6 +154,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 
 		pivotSeq := clauses[pivot].currentSeq()
 		if clauses[0].currentSeq() == pivotSeq {
+			candidateDocs++
 			matchedDocID := clauses[0].currentDocID()
 			var accum docAccum
 			for _, c := range clauses {
@@ -114,6 +183,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 
 			for _, c := range clauses {
 				if c.currentSeq() == pivotSeq {
+					postingsConsidered++
 					c.cursor++
 				}
 			}
@@ -124,6 +194,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 			c := clauses[i]
 			if c.currentSeq() < pivotSeq {
 				for c.cursor < len(c.exp.docs) && c.exp.docs[c.cursor].Seq < pivotSeq {
+					postingsConsidered++
 					c.cursor++
 				}
 				break
@@ -134,6 +205,14 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 	out := make(map[DocID]docAccum, h.Len())
 	for _, hit := range *h {
 		out[hit.id] = hit.accum
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.WAND.PostingsConsidered = postingsConsidered
+			b.WAND.CandidateDocs = candidateDocs
+			b.WAND.HeapSize = h.Len()
+			b.WAND.FinalTheta = theta
+		})
 	}
 	return out, true, nil
 }

@@ -1,4 +1,4 @@
-package slicedradix
+package radix
 
 import (
 	"fmt"
@@ -86,18 +86,6 @@ func BenchmarkSearchPositional(b *testing.B) {
 		_, err := idx.SearchPositional(query)
 		if err != nil {
 			b.Fatalf("SearchPositional() error = %v", err)
-		}
-	}
-}
-
-func BenchmarkSearchPrefix(b *testing.B) {
-	idx := benchmarkIndex(b, 500, 500)
-
-	b.ResetTimer()
-	for b.Loop() {
-		_, err := idx.SearchPrefix("word00")
-		if err != nil {
-			b.Fatalf("SearchPrefix() error = %v", err)
 		}
 	}
 }

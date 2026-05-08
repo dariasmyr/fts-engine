@@ -105,7 +105,7 @@ func TestSearchDocumentsTieBreakerByID(t *testing.T) {
 	}
 }
 
-func TestSearchDocumentsReturnsTimings(t *testing.T) {
+func TestSearchDocumentsDiagnosticsDisabledByDefault(t *testing.T) {
 	idx := newMemoryIndex()
 	idx.entries["one"] = []DocRef{{ID: "x", Count: 1}}
 
@@ -115,14 +115,33 @@ func TestSearchDocumentsReturnsTimings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}
+	if res.Diagnostics != nil {
+		t.Fatalf("expected nil diagnostics by default, got %+v", res.Diagnostics)
+	}
+}
 
-	for _, key := range []string{"preprocess", "search_tokens", "total"} {
-		if _, ok := res.Timings[key]; !ok {
-			t.Fatalf("timings key %q missing", key)
-		}
-		if res.Timings[key] == "" {
-			t.Fatalf("timings key %q is empty", key)
-		}
+func TestSearchDocumentsReturnsDiagnosticsTimings(t *testing.T) {
+	idx := newMemoryIndex()
+	idx.entries["one"] = []DocRef{{ID: "x", Count: 1}}
+
+	svc := New(idx, WordKeys)
+
+	res, err := svc.SearchDocuments(WithDiagnostics(context.Background()), "one", 1)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if res.Diagnostics == nil {
+		t.Fatal("expected non-nil diagnostics")
+	}
+
+	if !res.Diagnostics.Timings.HasPreprocess() || res.Diagnostics.Timings.Preprocess <= 0 {
+		t.Fatalf("expected positive preprocess timing, got %+v", res.Diagnostics.Timings)
+	}
+	if !res.Diagnostics.Timings.HasSearchTokens() || res.Diagnostics.Timings.SearchTokens <= 0 {
+		t.Fatalf("expected positive search_tokens timing, got %+v", res.Diagnostics.Timings)
+	}
+	if !res.Diagnostics.Timings.HasTotal() || res.Diagnostics.Timings.Total <= 0 {
+		t.Fatalf("expected positive total timing, got %+v", res.Diagnostics.Timings)
 	}
 }
 

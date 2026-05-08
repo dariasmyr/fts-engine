@@ -6,6 +6,9 @@ import (
 )
 
 func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldScope) (map[DocID]docAccum, error) {
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.setStrategy(strategyTerm)
+	}
 	if q.Term == "" {
 		return map[DocID]docAccum{}, nil
 	}
@@ -15,6 +18,10 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldSco
 		return map[DocID]docAccum{}, nil
 	}
 	fields := s.resolveScopedFields(q.Field, scope)
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.addTokens(len(tokens))
+		exec.addFields(len(fields))
+	}
 	keyGroups := make([][]string, len(tokens))
 	for i, token := range tokens {
 		keys, err := s.keyGen(token)
@@ -22,6 +29,9 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldSco
 			return nil, fmt.Errorf("fts: term query: keygen: %w", err)
 		}
 		keyGroups[i] = keys
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			exec.addKeys(len(keys))
+		}
 	}
 
 	plan := make([]tokenGroup, 0, len(tokens))

@@ -19,6 +19,7 @@ Reusable full-text search engine in Go with configurable indexes, filters, stemm
 - Public text processing pipeline in `pkg/textproc`.
 - Public key generators in `pkg/keygen`.
 - Public probabilistic filters in `pkg/filter`.
+- Public diagnostics observer in `pkg/ftsstats`.
 - CLI entrypoint in `cmd/fts` with:
   - `prod` mode (run with configurable filters and interactive CUI)
   - `experiment` mode (collect indexing metrics)
@@ -208,8 +209,90 @@ res, _ = engine.SearchPhraseFields(context.Background(), []string{"title", "body
 res, _ = engine.SearchPhraseNearFields(context.Background(), []string{"title", "body"}, "barack obama", 1, 10)
 ```
 
+If you want different subqueries for different fields without building the AST manually, use field clauses:
+
+```go
+res, _ := engine.SearchFieldClauses(context.Background(), []fts.FieldQueryClause{
+	fts.MustFieldQuery("title", "barack"),
+	fts.MustFieldQuery("body", `"french hotel"`),
+	fts.MustNotFieldQuery("body", "market"),
+}, 10)
+```
+
 Prefix queries require an index that implements `fts.PrefixIndex`.
 Among the built-in public indexes, `slicedradix` currently supports prefix search.
+
+### 6) Diagnostics and aggregated stats
+
+Per-request diagnostics are opt-in. Regular search methods return `SearchResult.Diagnostics == nil` unless you enable diagnostics for the request context with `fts.WithDiagnostics(ctx)`.
+
+Useful methods include:
+
+- `Search(...)`
+- `SearchDocuments(...)`
+- `SearchField(...)`
+- `SearchFields(...)`
+- `SearchFieldClauses(...)`
+- `SearchPhrase(...)`
+- `SearchPhraseNear(...)`
+
+Example:
+
+```go
+ctx := fts.WithDiagnostics(context.Background())
+res, _ := engine.SearchDocuments(ctx, "postgres wal checkpoint", 10)
+
+fmt.Println(res.Diagnostics.LogicalQueryType)
+fmt.Println(res.Diagnostics.ExecutionStrategy)
+fmt.Println(res.Diagnostics.StrategySkipReason)
+fmt.Println(res.Diagnostics.Timings.Total)
+fmt.Println(res.Diagnostics.PostingEntriesRead)
+```
+
+If you want aggregated observability across many requests, use `pkg/ftsstats`.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
+	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/keygen"
+)
+
+func main() {
+	engine := fts.New(radix.New(), keygen.Word)
+	stats := ftsstats.NewSearchStats(64)
+
+	_ = engine.IndexDocument(context.Background(), "doc-1", "postgres wal checkpoint tuning")
+	_ = engine.IndexDocument(context.Background(), "doc-2", "checkpoint and recovery internals")
+
+	ctx := fts.WithDiagnostics(context.Background())
+	res, err := engine.SearchDocuments(ctx, "postgres checkpoint", 10)
+	stats.ObserveResult("postgres checkpoint", res, err)
+
+	snap := stats.Snapshot()
+	for strategy, st := range snap.ByStrategy {
+		fmt.Println(strategy, st.Count, st.AvgDuration(), st.MaxDuration)
+	}
+
+	for _, ev := range stats.Recent(5) {
+		fmt.Println(ev.QueryHash, ev.ExecutionStrategy, ev.TotalDuration)
+	}
+}
+```
+
+`pkg/ftsstats` is the recommended programmatic surface for agents and library consumers that need:
+
+- recent search events without storing raw query text by default;
+- aggregated stats by execution strategy;
+- structured observability without depending on `cmd/fts` or any HTTP/debug transport layer.
+
+`ObserveResult(...)` is tolerant: it always records base request/error information, uses `SearchResult` fields like `TotalResultsCount` and returned hit count even when diagnostics are disabled, and fills diagnostics-dependent fields only when `res.Diagnostics` is non-nil.
 
 ## Run main app (local testing via config)
 
@@ -296,32 +379,190 @@ Snapshot fields (`fts.snapshot`):
   - always indexes current input and prints memory/index stats,
   - does not run CUI snapshot restore flow.
 
-## Bench CLI
+## Benchmarks
 
-Use `cmd/bench` when you want to compare index/scorer/pipeline combinations on a corpus with labeled queries.
+This repository uses three benchmark types:
 
-Example:
+- end-to-end bench: `go run ./cmd/bench ...`
+- engine microbench: `go test -run '^$' -bench . ./pkg/fts`
+- index microbench: `go test -run '^$' -bench . ./pkg/index/...`
 
-```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-latest-abstract.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.sample.json \
-  -index slicedradix \
-  -lang en \
-  -field abstract \
-  -scorer bm25 \
-  -k 10
-```
+Use `tee file.txt` when you want to both see benchmark output in the terminal and save the same output into a file for before/after comparison.
 
-Useful flags:
+### 1) End-to-End Bench
 
+Use `cmd/bench` when you want to compare index, scorer, and pipeline combinations on a corpus with labeled queries.
+
+It measures:
+
+- indexing duration
+- search latency `p50/p95/p99`
+- quality metrics: `nDCG`, `MRR`, `Recall`
+- optional diagnostics: `diag.total`, `diag.search_tokens`, strategy distribution, zero-result counts, WAND/fallback distributions, posting reads, index lookups
+
+Common flags:
+
+- `-dump`: wiki dump path
+- `-ground-truth`: labeled query set path
 - `-index`: `radix|slicedradix|hamt|hamtpointered`
 - `-lang`: `en|ru|multi|none`
 - `-field`: `abstract|extract|title`
 - `-scorer`: `simple|bm25|tfidf`
 - `-k`: top-k used for `nDCG` and `Recall`
 - `-limit`: cap the number of indexed documents for quick experiments
-- `-worst`: print worst queries by `nDCG`
+- `-worst`: print worst queries by `nDCG`; with diagnostics enabled also print worst queries by `postings_read`
+- `-diagnostics`: enable per-query `SearchResult.Diagnostics`
+- `-observer`: enable `ftsstats.SearchStats` aggregation during the benchmark run
+- `-warmup`: run N warmup searches before measured runs; warmup does not affect reported metrics
+- `-repeat`: repeat the full query set N times for measured runs
+- `-shuffle`: shuffle query order for warmup and each measured repeat with a fixed seed
+
+Local workloads checked in under `internal/bench/testdata/`:
+
+- `queries.abstract1.title.json`: tiny sanity-check workload for `-field title`
+- `queries.abstract1.abstract.json`: tiny sanity-check workload for `-field abstract`
+- `queries.abstract1.abstract.50.json`: curated 50-query `abstract` workload for repeated latency comparisons
+
+Steady-state example:
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-20210820-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
+  -index radix \
+  -lang en \
+  -field abstract \
+  -scorer simple \
+  -k 10 \
+  -warmup 50 \
+  -repeat 20 \
+  -shuffle true \
+  -diagnostics false \
+  -observer false | tee before-e2e.txt
+```
+
+Cold-run example:
+
+```bash
+go run ./cmd/bench \
+  -dump ./data/enwiki-20210820-abstract1.xml.gz \
+  -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
+  -index radix \
+  -lang en \
+  -field abstract \
+  -scorer simple \
+  -k 10 \
+  -warmup 0 \
+  -repeat 1 \
+  -shuffle false \
+  -diagnostics false \
+  -observer false | tee before-e2e-cold.txt
+```
+
+This keeps the first measured pass cold inside a fresh `cmd/bench` process. If you rerun the command, treat each process start as a separate cold run.
+
+To compare instrumentation overhead, keep all other flags the same and vary only:
+
+- `-diagnostics`
+- `-observer`
+
+To compare index implementations on the same corpus, keep all other flags the same and vary only:
+
+- `-index`
+
+Current latency numbers are measured around `SearchDocuments(...)`. `-observer` still exercises the observer path and prints observer summary, but observer work is not included in the reported `latency p50/p95/p99` yet. The text report uses `p50/p95/p99` as the main latency view; the diagnostics-heavy breakdown focuses on strategies, postings, WAND usage, fallback reasons, and zero-result counts.
+
+### 2) Engine Microbench
+
+Use the engine microbench when you want to measure the `pkg/fts` search engine in isolation from the end-to-end CLI flow.
+
+It typically measures:
+
+- `ns/op`
+- `B/op`
+- `allocs/op`
+
+Useful `go test` flags:
+
+- `-bench .`: run all benchmarks in the package
+- `-benchmem`: print allocation stats
+- `-count=5`: repeat the benchmark 5 times
+- `-run '^$'`: skip regular unit tests
+
+Example:
+
+```bash
+go test -run '^$' -bench . -benchmem -count=5 ./pkg/fts | tee before-engine.txt
+```
+
+### 3) Index Microbench
+
+Use the index microbench when you want to measure low-level index operations in the concrete index implementations.
+
+It typically measures:
+
+- exact lookup cost
+- positional lookup cost
+- insert cost
+- positional insert cost
+- allocations per operation
+
+It uses the same `go test` flags as the engine microbench.
+
+Example across all current public indexes:
+
+```bash
+go test -run '^$' -bench . -benchmem -count=5 \
+  ./pkg/index/radix \
+  ./pkg/index/slicedradix \
+  ./pkg/index/hamt \
+  ./pkg/index/hamtpointered | tee before-indexes.txt
+```
+
+If you want one command that runs both microbench groups together, use:
+
+```bash
+go test -run '^$' -bench . -benchmem -count=5 \
+  ./pkg/fts \
+  ./pkg/index/radix \
+  ./pkg/index/slicedradix \
+  ./pkg/index/hamt \
+  ./pkg/index/hamtpointered | tee before-micro-all.txt
+```
+
+### Benchmark Baselines
+
+For fair before/after comparisons:
+
+1. Run the same benchmark type before the change.
+2. Save the output into `before-*` files.
+3. Rerun the same commands after the change and save them into `after-*` files.
+4. Compare like-for-like outputs only.
+
+For end-to-end comparisons keep these flags unchanged between runs:
+
+- `-limit`
+- `-index`
+- `-lang`
+- `-field`
+- `-scorer`
+- `-k`
+- `-warmup`
+- `-repeat`
+- `-shuffle`
+- `-diagnostics`
+- `-observer`
+
+Recommended minimum baseline before a feature branch:
+
+1. Run the engine microbench.
+2. Run the index microbench if you touched index code.
+3. Run the end-to-end bench on a representative local dump.
+
+Compare these outputs:
+
+- microbench: `ns/op`, `B/op`, `allocs/op`
+- `cmd/bench`: indexing duration, latency `p50/p95/p99`, zero-result counts, `diag.total`, `diag.search_tokens`, `avg postings`, `avg index_lookups`, strategy distribution, WAND/fallback breakdowns, worst-by-postings, `nDCG`, `MRR`, `Recall`
 
 ## Ribbon filter usage
 
@@ -454,8 +695,8 @@ Run only public packages:
 go test ./pkg/...
 ```
 
-Run microbenchmarks for the FTS engine and prefix-capable sliced radix index:
+Run microbenchmarks for the FTS engine and all current index implementations:
 
 ```bash
-go test -bench=. ./pkg/fts ./pkg/index/slicedradix
+go test -run '^$' -bench . -benchmem ./pkg/fts ./pkg/index/radix ./pkg/index/slicedradix ./pkg/index/hamt ./pkg/index/hamtpointered
 ```

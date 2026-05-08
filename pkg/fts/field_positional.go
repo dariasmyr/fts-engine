@@ -145,21 +145,44 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 		return nil, err
 	}
 
+	exec := diagnosticsFromContext(ctx)
 	keys, err := s.keyGen(token)
 	if err != nil {
 		return nil, fmt.Errorf("fts: positional search: keygen: %w", err)
 	}
+	if exec != nil {
+		exec.addKeys(len(keys))
+		exec.addTokens(1)
+	}
+	var filterChecks, filterRejects, indexLookups, postingsRead int
+	defer func() {
+		if exec == nil {
+			return
+		}
+		exec.addFilterChecks(filterChecks, filterRejects)
+		exec.addIndexLookups(indexLookups)
+		exec.addPostingsRead(postingsRead)
+	}()
 
 	var merged map[DocID][]uint32
 	if len(keys) == 1 {
-		if s.filter != nil && !s.filter.Contains([]byte(keys[0])) {
-			return nil, nil
+		if s.filter != nil {
+			miss := !s.filter.Contains([]byte(keys[0]))
+			filterChecks++
+			if miss {
+				filterRejects++
+			}
+			if miss {
+				return nil, nil
+			}
 		}
 
+		indexLookups++
 		refs, err := positional.SearchPositional(keys[0])
 		if err != nil {
 			return nil, fmt.Errorf("fts: positional search: index search: %w", err)
 		}
+		postingsRead += len(refs)
 		merged = make(map[DocID][]uint32, len(refs))
 		for _, r := range refs {
 			if len(r.Positions) > 0 {
@@ -171,14 +194,23 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 
 	merged = make(map[DocID][]uint32)
 	for _, key := range keys {
-		if s.filter != nil && !s.filter.Contains([]byte(key)) {
-			continue
+		if s.filter != nil {
+			miss := !s.filter.Contains([]byte(key))
+			filterChecks++
+			if miss {
+				filterRejects++
+			}
+			if miss {
+				continue
+			}
 		}
 
+		indexLookups++
 		refs, err := positional.SearchPositional(key)
 		if err != nil {
 			return nil, fmt.Errorf("fts: positional search: index search: %w", err)
 		}
+		postingsRead += len(refs)
 		for _, r := range refs {
 			if len(r.Positions) == 0 {
 				continue

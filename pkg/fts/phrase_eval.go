@@ -32,11 +32,18 @@ func (s *Service) preparePhrase(fields []string, phrase string) phrasePlan {
 
 func (s *Service) evalPhraseHits(ctx context.Context, fields []string, phrase string, scope queryFieldScope) (map[DocID]docAccum, error) {
 	plan := s.preparePhrase(fields, phrase)
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.addFields(len(fields))
+		exec.addTokens(len(plan.tokens))
+	}
 	if len(plan.tokens) == 0 {
 		return map[DocID]docAccum{}, nil
 	}
 	if plan.fallback != nil {
 		return s.executeQuery(ctx, *plan.fallback, 0, scope)
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.setStrategy(strategyPhraseExact)
 	}
 	return s.evalExactPhraseTokenHits(ctx, fields, plan.tokens)
 }

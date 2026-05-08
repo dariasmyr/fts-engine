@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 )
 
 func (s *Service) Index(ctx context.Context, doc Document) error {
@@ -139,69 +138,85 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, exec := ensureDiagnosticsContext(ctx)
+	exec.setQueryTypeIfEmpty("phrase")
 
-	start := time.Now()
-	timings := make(map[string]string, 3)
+	start := exec.startTimer()
 
-	preStart := time.Now()
+	preStart := exec.startTimer()
 	plan := s.preparePhrase(fields, phrase)
-	timings["preprocess"] = formatDuration(time.Since(preStart))
+	exec.observePreprocess(preStart)
+	exec.addFields(len(fields))
+	exec.addTokens(len(plan.tokens))
 
 	if len(plan.tokens) == 0 {
-		timings["search_tokens"] = formatDuration(0)
-		timings["total"] = formatDuration(time.Since(start))
-		return &SearchResult{Results: []Result{}, Timings: timings}, nil
+		exec.setSearchTokensTiming(0)
+		exec.observeTotal(start)
+		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
 	}
 	if plan.fallback != nil {
-		return s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
+		res, err := s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
+		if err != nil {
+			return nil, err
+		}
+		exec.observeTotal(start)
+		return attachDiagnostics(ctx, res), nil
 	}
+	exec.setStrategy(strategyPhraseExact)
 
-	searchStart := time.Now()
+	searchStart := exec.startTimer()
 	hits, err := s.evalExactPhraseTokenHits(ctx, fields, plan.tokens)
 	if err != nil {
 		return nil, err
 	}
 
-	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-
-	timings["total"] = formatDuration(time.Since(start))
-	return searchResultFromHits(hits, maxResults, timings, s.scorer != nil), nil
+	exec.observeSearchTokens(searchStart)
+	exec.observeTotal(start)
+	return attachDiagnostics(ctx, searchResultFromHits(hits, maxResults, s.scorer != nil)), nil
 }
 
 func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []string, phrase string, distance int, maxResults int) (*SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, exec := ensureDiagnosticsContext(ctx)
+	exec.setQueryTypeIfEmpty("phrase_near")
 	if distance < 0 {
 		return nil, fmt.Errorf("fts: phrase near search: negative distance %d", distance)
 	}
 
-	start := time.Now()
-	timings := make(map[string]string, 3)
+	start := exec.startTimer()
 
-	preStart := time.Now()
+	preStart := exec.startTimer()
 	plan := s.preparePhrase(fields, phrase)
-	timings["preprocess"] = formatDuration(time.Since(preStart))
+	exec.observePreprocess(preStart)
+	exec.addFields(len(fields))
+	exec.addTokens(len(plan.tokens))
 
 	if len(plan.tokens) == 0 {
-		timings["search_tokens"] = formatDuration(0)
-		timings["total"] = formatDuration(time.Since(start))
-		return &SearchResult{Results: []Result{}, Timings: timings}, nil
+		exec.setSearchTokensTiming(0)
+		exec.observeTotal(start)
+		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
 	}
 	if plan.fallback != nil {
-		return s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
+		res, err := s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
+		if err != nil {
+			return nil, err
+		}
+		exec.observeTotal(start)
+		return attachDiagnostics(ctx, res), nil
 	}
+	exec.setStrategy(strategyPhraseNear)
 
-	searchStart := time.Now()
+	searchStart := exec.startTimer()
 	hits, err := s.evalNearPhraseTokenHits(ctx, fields, plan.tokens, uint32(distance))
 	if err != nil {
 		return nil, err
 	}
 
-	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-
-	timings["total"] = formatDuration(time.Since(start))
-	return searchResultFromHits(hits, maxResults, timings, s.scorer != nil), nil
+	exec.observeSearchTokens(searchStart)
+	exec.observeTotal(start)
+	return attachDiagnostics(ctx, searchResultFromHits(hits, maxResults, s.scorer != nil)), nil
 }
 
 func (s *Service) SnapshotFields() (map[string]Index, Filter) {

@@ -24,6 +24,7 @@ import (
 	"github.com/dariasmyr/fts-engine/internal/lib/logger/sl"
 	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
@@ -100,7 +101,7 @@ func main() {
 			log.Error("Failed to initialize trie service", "error", sl.Err(err))
 			return
 		}
-		ftsEngine = &serviceAdapter{service: svc, snapshotLoaded: loadedFromSnapshot}
+		ftsEngine = &serviceAdapter{service: svc, snapshotLoaded: loadedFromSnapshot, searchStats: ftsstats.NewSearchStats(64)}
 	default:
 		log.Error("unknown fts engine", "engine", cfg.FTS.Engine)
 		return
@@ -187,6 +188,9 @@ func main() {
 		log.Error("Failed to start appCUI", "error", sl.Err(cuiErr))
 		return
 	}
+	if snapshot, ok := adapter.SearchStatsSnapshot(); ok && snapshot.TotalSearches > 0 {
+		logSearchStats(log, snapshot)
+	}
 }
 
 func analyzeTrie(
@@ -232,6 +236,7 @@ func analyzeTrie(
 type serviceAdapter struct {
 	service        *pkgfts.Service
 	snapshotLoaded bool
+	searchStats    *ftsstats.SearchStats
 }
 
 func (s *serviceAdapter) IndexDocument(ctx context.Context, docID string, content string) error {
@@ -239,7 +244,11 @@ func (s *serviceAdapter) IndexDocument(ctx context.Context, docID string, conten
 }
 
 func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
+	ctx = pkgfts.WithDiagnostics(ctx)
 	result, err := s.service.SearchDocuments(ctx, query, maxResults)
+	if s.searchStats != nil {
+		s.searchStats.ObserveResult(query, result, err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -256,12 +265,83 @@ func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxR
 	return &models.SearchResult{
 		ResultData:        out,
 		TotalResultsCount: result.TotalResultsCount,
-		Timings:           result.Timings,
+		Diagnostics:       projectDiagnostics(result.Diagnostics),
 	}, nil
 }
 
 func (s *serviceAdapter) AnalyzeStats() (pkgfts.Stats, bool) {
 	return s.service.Analyze()
+}
+
+func (s *serviceAdapter) SearchStatsSnapshot() (ftsstats.Snapshot, bool) {
+	if s.searchStats == nil {
+		return ftsstats.Snapshot{}, false
+	}
+	return s.searchStats.Snapshot(), true
+}
+
+func logSearchStats(log *slog.Logger, snapshot ftsstats.Snapshot) {
+	log.Info("search diagnostics summary",
+		"total_searches", snapshot.TotalSearches,
+		"errors_total", snapshot.ErrorsTotal,
+		"zero_results", snapshot.ZeroResults,
+		"strategies", len(snapshot.ByStrategy),
+	)
+	for strategy, stats := range snapshot.ByStrategy {
+		log.Info("search diagnostics strategy",
+			"strategy", strategy,
+			"count", stats.Count,
+			"avg_duration", stats.AvgDuration(),
+			"max_duration", stats.MaxDuration,
+			"avg_postings", stats.AvgPostings(),
+		)
+	}
+}
+
+func formatDiagnosticsTimings(diag *pkgfts.QueryDiagnostics) map[string]string {
+	if diag == nil {
+		return map[string]string{}
+	}
+	out := make(map[string]string, 3)
+	if diag.Timings.HasPreprocess() {
+		out["preprocess"] = formatAppDuration(diag.Timings.Preprocess)
+	}
+	if diag.Timings.HasSearchTokens() {
+		out["search_tokens"] = formatAppDuration(diag.Timings.SearchTokens)
+	}
+	if diag.Timings.HasTotal() {
+		out["total"] = formatAppDuration(diag.Timings.Total)
+	}
+	return out
+}
+
+func projectDiagnostics(diag *pkgfts.QueryDiagnostics) *models.SearchDiagnostics {
+	if diag == nil {
+		return nil
+	}
+	return &models.SearchDiagnostics{
+		LogicalQueryType:   diag.LogicalQueryType,
+		ExecutionStrategy:  diag.ExecutionStrategy,
+		StrategySkipReason: diag.StrategySkipReason,
+		Timings:            formatDiagnosticsTimings(diag),
+		ProcessedTokens:    diag.ProcessedTokens,
+		FieldsVisited:      diag.FieldsVisited,
+		GeneratedKeys:      diag.GeneratedKeys,
+		IndexSearches:      diag.IndexSearches,
+		FilterChecks:       diag.FilterChecks,
+		FilterRejects:      diag.FilterRejects,
+		PostingEntriesRead: diag.PostingEntriesRead,
+		CandidateDocs:      diag.CandidateDocs,
+		MatchedDocs:        diag.MatchedDocs,
+		ReturnedDocs:       diag.ReturnedDocs,
+	}
+}
+
+func formatAppDuration(d time.Duration) string {
+	if d < time.Millisecond {
+		return fmt.Sprintf("%dus", d.Microseconds())
+	}
+	return fmt.Sprintf("%dms", d.Milliseconds())
 }
 
 func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {

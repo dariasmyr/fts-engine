@@ -3,6 +3,9 @@ package fts
 import "context"
 
 func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFieldScope) (map[DocID]docAccum, error) {
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.setStrategy(strategyPrefix)
+	}
 	if q.Prefix == "" {
 		return map[DocID]docAccum{}, nil
 	}
@@ -11,6 +14,9 @@ func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFiel
 	}
 
 	fields := s.resolveScopedFields(q.Field, scope)
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.addFields(len(fields))
+	}
 	expansions, err := s.collectPrefixFieldDocs(ctx, fields, q.Prefix)
 	if err != nil {
 		return nil, err

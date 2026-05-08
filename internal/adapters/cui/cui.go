@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -185,7 +186,7 @@ func (c *CUI) layout(g *gocui.Gui) error {
 func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQuery string) error {
 	searchQuery = strings.TrimSpace(v.Buffer())
 
-	results, elapsedTime, totalResultsCount, err := c.performSearch(searchQuery, ctx)
+	results, diagnostics, totalResultsCount, err := c.performSearch(searchQuery, ctx)
 
 	timeView, err := g.View("time")
 	if err != nil {
@@ -193,10 +194,39 @@ func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQue
 	}
 	timeView.Clear()
 
-	fmt.Fprintln(timeView, "\033[33mSearch Time:\033[0m")
-
-	for phase, duration := range elapsedTime {
-		fmt.Fprintf(timeView, "\033[32m%s: %s\033[0m\n", phase, duration)
+	fmt.Fprintln(timeView, "\033[33mSearch Diagnostics:\033[0m")
+	if diagnostics != nil {
+		fmt.Fprintf(timeView, "\033[32mquery_type: %s\033[0m\n", diagnostics.LogicalQueryType)
+		fmt.Fprintf(timeView, "\033[32mstrategy: %s\033[0m\n", diagnostics.ExecutionStrategy)
+		if diagnostics.StrategySkipReason != "" {
+			fmt.Fprintf(timeView, "\033[32mskip_reason: %s\033[0m\n", diagnostics.StrategySkipReason)
+		}
+		for _, phase := range []string{"preprocess", "search_tokens", "total"} {
+			if duration, ok := diagnostics.Timings[phase]; ok {
+				fmt.Fprintf(timeView, "\033[32m%s: %s\033[0m\n", phase, duration)
+			}
+		}
+		extraTimingKeys := make([]string, 0, len(diagnostics.Timings))
+		for phase := range diagnostics.Timings {
+			if phase == "preprocess" || phase == "search_tokens" || phase == "total" {
+				continue
+			}
+			extraTimingKeys = append(extraTimingKeys, phase)
+		}
+		sort.Strings(extraTimingKeys)
+		for _, phase := range extraTimingKeys {
+			fmt.Fprintf(timeView, "\033[32m%s: %s\033[0m\n", phase, diagnostics.Timings[phase])
+		}
+		fmt.Fprintf(timeView, "\033[32mprocessed_tokens: %d\033[0m\n", diagnostics.ProcessedTokens)
+		fmt.Fprintf(timeView, "\033[32mfields_visited: %d\033[0m\n", diagnostics.FieldsVisited)
+		fmt.Fprintf(timeView, "\033[32mgenerated_keys: %d\033[0m\n", diagnostics.GeneratedKeys)
+		fmt.Fprintf(timeView, "\033[32mindex_searches: %d\033[0m\n", diagnostics.IndexSearches)
+		fmt.Fprintf(timeView, "\033[32mfilter_checks: %d\033[0m\n", diagnostics.FilterChecks)
+		fmt.Fprintf(timeView, "\033[32mfilter_rejects: %d\033[0m\n", diagnostics.FilterRejects)
+		fmt.Fprintf(timeView, "\033[32mpostings_read: %d\033[0m\n", diagnostics.PostingEntriesRead)
+		fmt.Fprintf(timeView, "\033[32mcandidate_docs: %d\033[0m\n", diagnostics.CandidateDocs)
+		fmt.Fprintf(timeView, "\033[32mmatched_docs: %d\033[0m\n", diagnostics.MatchedDocs)
+		fmt.Fprintf(timeView, "\033[32mreturned_docs: %d\033[0m\n", diagnostics.ReturnedDocs)
 	}
 
 	outputView, err := g.View("output")
@@ -232,7 +262,7 @@ func highlightQueryInResult(document *models.Document, query string) {
 	}
 }
 
-func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, map[string]string, int, error) {
+func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, *models.SearchDiagnostics, int, error) {
 	searchResult, err := c.ftsService.SearchDocuments(
 		ctx,
 		query,
@@ -251,7 +281,7 @@ func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultD
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	return searchResult.ResultData, searchResult.Timings, searchResult.TotalResultsCount, nil
+	return searchResult.ResultData, searchResult.Diagnostics, searchResult.TotalResultsCount, nil
 }
 
 func quit(g *gocui.Gui, v *gocui.View) error {

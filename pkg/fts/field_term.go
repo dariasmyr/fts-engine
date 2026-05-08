@@ -70,15 +70,34 @@ func (s *Service) searchKeysInField(ctx context.Context, field string, index Ind
 
 	res := termFieldDocsResult{expansions: make([]termExpansion, 0, len(keys))}
 	fieldStats := s.fieldStatsFor(field)
+	exec := diagnosticsFromContext(ctx)
+	var filterChecks, filterRejects, indexLookups, postingsRead int
+	defer func() {
+		if exec == nil {
+			return
+		}
+		exec.addFilterChecks(filterChecks, filterRejects)
+		exec.addIndexLookups(indexLookups)
+		exec.addPostingsRead(postingsRead)
+	}()
 	for _, key := range keys {
-		if s.filter != nil && !s.filter.Contains([]byte(key)) {
-			continue
+		if s.filter != nil {
+			miss := !s.filter.Contains([]byte(key))
+			filterChecks++
+			if miss {
+				filterRejects++
+			}
+			if miss {
+				continue
+			}
 		}
 
+		indexLookups++
 		docs, err := index.Search(key)
 		if err != nil {
 			return termFieldDocsResult{}, fmt.Errorf("fts: term query field %q: index search: %w", field, err)
 		}
+		postingsRead += len(docs)
 		if len(docs) == 0 {
 			continue
 		}

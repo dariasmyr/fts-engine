@@ -122,26 +122,24 @@ func (s *Service) searchQueryString(ctx context.Context, query string, defaultFi
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, exec := ensureDiagnosticsContext(ctx)
 
-	start := time.Now()
-	timings := make(map[string]string, 3)
+	start := exec.startTimer()
 
-	preStart := time.Now()
+	preStart := exec.startTimer()
 	parsed, err := ParseQuery(query)
 	if err != nil {
 		return nil, err
 	}
 	parsed = bindDefaultField(parsed, defaultField)
-	timings["preprocess"] = formatDuration(time.Since(preStart))
+	exec.observePreprocess(preStart)
 
 	res, err := s.searchResultForQuery(ctx, parsed, maxResults, scope)
 	if err != nil {
 		return nil, err
 	}
-	timings["search_tokens"] = res.Timings["search_tokens"]
-	timings["total"] = formatDuration(time.Since(start))
-	res.Timings = timings
-	return res, nil
+	exec.observeTotal(start)
+	return attachDiagnostics(ctx, res), nil
 }
 
 func (s *Service) SearchPhrase(ctx context.Context, phrase string, maxResults int) (*SearchResult, error) {
