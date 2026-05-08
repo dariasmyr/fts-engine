@@ -379,52 +379,51 @@ Snapshot fields (`fts.snapshot`):
   - always indexes current input and prints memory/index stats,
   - does not run CUI snapshot restore flow.
 
-## Bench CLI
+## Benchmarks
 
-Use `cmd/bench` when you want to compare index/scorer/pipeline combinations on a corpus with labeled queries.
+This repository uses three benchmark types:
 
-In addition to indexing time and search quality metrics, `cmd/bench` can also report aggregated search diagnostics such as strategy distribution, diagnostics timings, posting reads, and index lookups. It also supports repeated runs with warmup and shuffled query order for more stable latency comparisons.
+- end-to-end bench: `go run ./cmd/bench ...`
+- engine microbench: `go test -run '^$' -bench . ./pkg/fts`
+- index microbench: `go test -run '^$' -bench . ./pkg/index/...`
 
-Example:
+Use `tee file.txt` when you want to both see benchmark output in the terminal and save the same output into a file for before/after comparison.
 
-```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-latest-abstract.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.sample.json \
-  -index slicedradix \
-  -lang en \
-  -field abstract \
-  -scorer bm25 \
-  -k 10 \
-  -diagnostics true \
-  -observer false \
-  -warmup 20 \
-  -repeat 5 \
-  -shuffle true
-```
+### 1) End-to-End Bench
 
-Useful flags:
+Use `cmd/bench` when you want to compare index, scorer, and pipeline combinations on a corpus with labeled queries.
 
+It measures:
+
+- indexing duration
+- search latency `p50/p95/p99`
+- quality metrics: `nDCG`, `MRR`, `Recall`
+- optional diagnostics: `diag.total`, `diag.search_tokens`, strategy distribution, posting reads, index lookups
+
+Common flags:
+
+- `-dump`: wiki dump path
+- `-ground-truth`: labeled query set path
 - `-index`: `radix|slicedradix|hamt|hamtpointered`
 - `-lang`: `en|ru|multi|none`
 - `-field`: `abstract|extract|title`
 - `-scorer`: `simple|bm25|tfidf`
 - `-k`: top-k used for `nDCG` and `Recall`
 - `-limit`: cap the number of indexed documents for quick experiments
-- `-worst`: print worst queries by `nDCG`
+- `-worst`: print worst queries by `nDCG` and slowest queries by latency
 - `-diagnostics`: enable per-query `SearchResult.Diagnostics`
 - `-observer`: enable `ftsstats.SearchStats` aggregation during the benchmark run
 - `-warmup`: run N warmup searches before measured runs; warmup does not affect reported metrics
 - `-repeat`: repeat the full query set N times for measured runs
 - `-shuffle`: shuffle query order for warmup and each measured repeat with a fixed seed
 
-Local shard workloads checked in under `internal/bench/testdata/`:
+Local workloads checked in under `internal/bench/testdata/`:
 
 - `queries.abstract1.title.json`: tiny sanity-check workload for `-field title`
 - `queries.abstract1.abstract.json`: tiny sanity-check workload for `-field abstract`
 - `queries.abstract1.abstract.50.json`: curated 50-query `abstract` workload for repeated latency comparisons
 
-For local instrumentation comparisons on `./data/enwiki-20210820-abstract1.xml.gz`, use the curated 50-query abstract set:
+Steady-state example:
 
 ```bash
 go run ./cmd/bench \
@@ -439,10 +438,10 @@ go run ./cmd/bench \
   -repeat 20 \
   -shuffle true \
   -diagnostics false \
-  -observer false
+  -observer false | tee before-e2e.txt
 ```
 
-To compare instrumentation overhead, rerun the same command and vary only `-diagnostics` and `-observer`:
+Cold-run example:
 
 ```bash
 go run ./cmd/bench \
@@ -453,68 +452,62 @@ go run ./cmd/bench \
   -field abstract \
   -scorer simple \
   -k 10 \
-  -warmup 50 \
-  -repeat 20 \
-  -shuffle true \
-  -diagnostics true \
-  -observer false
-```
-
-```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-20210820-abstract1.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
-  -index radix \
-  -lang en \
-  -field abstract \
-  -scorer simple \
-  -k 10 \
-  -warmup 50 \
-  -repeat 20 \
-  -shuffle true \
+  -warmup 0 \
+  -repeat 1 \
+  -shuffle false \
   -diagnostics false \
-  -observer true
+  -observer false | tee before-e2e-cold.txt
 ```
 
-```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-20210820-abstract1.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
-  -index radix \
-  -lang en \
-  -field abstract \
-  -scorer simple \
-  -k 10 \
-  -warmup 50 \
-  -repeat 20 \
-  -shuffle true \
-  -diagnostics true \
-  -observer true
-```
+This keeps the first measured pass cold inside a fresh `cmd/bench` process. If you rerun the command, treat each process start as a separate cold run.
+
+To compare instrumentation overhead, keep all other flags the same and vary only:
+
+- `-diagnostics`
+- `-observer`
+
+To compare index implementations on the same corpus, keep all other flags the same and vary only:
+
+- `-index`
 
 Current latency numbers are measured around `SearchDocuments(...)`. `-observer` still exercises the observer path and prints observer summary, but observer work is not included in the reported `latency p50/p95/p99` yet.
 
-### Benchmark baselines
+### 2) Engine Microbench
 
-For fair before/after comparisons keep these flags unchanged between runs:
+Use the engine microbench when you want to measure the `pkg/fts` search engine in isolation from the end-to-end CLI flow.
 
-- `-limit`
-- `-index`
-- `-lang`
-- `-field`
-- `-scorer`
-- `-k`
-- `-warmup`
-- `-repeat`
-- `-shuffle`
+It typically measures:
 
-Engine microbench:
+- `ns/op`
+- `B/op`
+- `allocs/op`
+
+Useful `go test` flags:
+
+- `-bench .`: run all benchmarks in the package
+- `-benchmem`: print allocation stats
+- `-count=5`: repeat the benchmark 5 times
+- `-run '^$'`: skip regular unit tests
+
+Example:
 
 ```bash
 go test -run '^$' -bench . -benchmem -count=5 ./pkg/fts | tee before-engine.txt
 ```
 
-Index microbench:
+### 3) Index Microbench
+
+Use the index microbench when you want to measure low-level index operations in the concrete index implementations.
+
+It typically measures:
+
+- index lookup cost
+- insert cost
+- allocations per operation
+
+It uses the same `go test` flags as the engine microbench.
+
+Example across all current public indexes:
 
 ```bash
 go test -run '^$' -bench . -benchmem -count=5 \
@@ -524,7 +517,7 @@ go test -run '^$' -bench . -benchmem -count=5 \
   ./pkg/index/hamtpointered | tee before-indexes.txt
 ```
 
-Full microbench run:
+If you want one command that runs both microbench groups together, use:
 
 ```bash
 go test -run '^$' -bench . -benchmem -count=5 \
@@ -535,97 +528,34 @@ go test -run '^$' -bench . -benchmem -count=5 \
   ./pkg/index/hamtpointered | tee before-micro-all.txt
 ```
 
-Fast end-to-end bench on a local dump, for example `./data/enwiki-latest-abstract1.xml.gz`:
+### Benchmark Baselines
 
-```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-latest-abstract1.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.sample.json \
-  -index slicedradix \
-  -lang en \
-  -field abstract \
-  -scorer bm25 \
-  -k 10 \
-  -limit 5000 \
-  -worst 5 | tee before-e2e-fast.txt
-```
+For fair before/after comparisons:
 
-Medium end-to-end bench:
+1. Run the same benchmark type before the change.
+2. Save the output into `before-*` files.
+3. Rerun the same commands after the change and save them into `after-*` files.
+4. Compare like-for-like outputs only.
 
-```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-latest-abstract1.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.sample.json \
-  -index slicedradix \
-  -lang en \
-  -field abstract \
-  -scorer bm25 \
-  -k 10 \
-  -limit 20000 \
-  -worst 10 | tee before-e2e-medium.txt
-```
+For end-to-end comparisons keep these flags unchanged between runs:
 
-To compare index implementations on the same corpus, rerun `cmd/bench` with the same flags and vary only `-index`:
-
-```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-latest-abstract1.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.sample.json \
-  -index radix \
-  -lang en \
-  -field abstract \
-  -scorer bm25 \
-  -k 10 \
-  -limit 10000 \
-  -worst 5 | tee before-radix.txt
-```
-
-```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-latest-abstract1.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.sample.json \
-  -index slicedradix \
-  -lang en \
-  -field abstract \
-  -scorer bm25 \
-  -k 10 \
-  -limit 10000 \
-  -worst 5 | tee before-slicedradix.txt
-```
-
-```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-latest-abstract1.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.sample.json \
-  -index hamt \
-  -lang en \
-  -field abstract \
-  -scorer bm25 \
-  -k 10 \
-  -limit 10000 \
-  -worst 5 | tee before-hamt.txt
-```
-
-```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-latest-abstract1.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.sample.json \
-  -index hamtpointered \
-  -lang en \
-  -field abstract \
-  -scorer bm25 \
-  -k 10 \
-  -limit 10000 \
-  -worst 5 | tee before-hamtpointered.txt
-```
+- `-limit`
+- `-index`
+- `-lang`
+- `-field`
+- `-scorer`
+- `-k`
+- `-warmup`
+- `-repeat`
+- `-shuffle`
+- `-diagnostics`
+- `-observer`
 
 Recommended minimum baseline before a feature branch:
 
 1. Run the engine microbench.
-2. Run the index microbench.
-3. Run the fast end-to-end bench.
-
-After the change, rerun the same commands and save results into `after-*` files.
+2. Run the index microbench if you touched index code.
+3. Run the end-to-end bench on a representative local dump.
 
 Compare these outputs:
 
