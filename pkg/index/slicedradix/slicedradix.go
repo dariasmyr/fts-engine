@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"io"
+	"sort"
 	"sync"
 )
 
@@ -261,6 +262,15 @@ func (t *Index) Search(word string) ([]fts.DocRef, error) {
 	}
 }
 
+func (t *Index) SearchPrefix(prefix string) ([]fts.DocRef, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	merged := make(map[fts.DocID]fts.DocRef)
+	t.collectPrefixDocs(t.root, prefix, merged)
+	return mergedDocsSlice(merged), nil
+}
+
 func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -383,6 +393,56 @@ func (n *node) isTerminal() bool {
 	return len(n.docs) > 0
 }
 
+func addMergedDoc(merged map[fts.DocID]fts.DocRef, id fts.DocID, count, seq uint32) {
+	ref, ok := merged[id]
+	if !ok {
+		merged[id] = fts.DocRef{ID: id, Count: count, Seq: seq}
+		return
+	}
+	ref.Count += count
+	merged[id] = ref
+}
+
+func mergedDocsSlice(merged map[fts.DocID]fts.DocRef) []fts.DocRef {
+	out := make([]fts.DocRef, 0, len(merged))
+	for _, doc := range merged {
+		out = append(out, doc)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	return out
+}
+
+func (t *Index) collectPrefixDocs(current int, prefix string, merged map[fts.DocID]fts.DocRef) {
+	if prefix == "" {
+		t.collectSubtreeDocs(current, merged)
+		return
+	}
+
+	for _, child := range t.nodes[current].children {
+		p := lcp(prefix, t.nodes[child].prefix)
+		if p == 0 {
+			continue
+		}
+		if p == len(prefix) {
+			t.collectSubtreeDocs(child, merged)
+			continue
+		}
+		if p == len(t.nodes[child].prefix) {
+			t.collectPrefixDocs(child, prefix[p:], merged)
+		}
+	}
+}
+
+func (t *Index) collectSubtreeDocs(current int, merged map[fts.DocID]fts.DocRef) {
+	n := &t.nodes[current]
+	for _, doc := range n.docs {
+		addMergedDoc(merged, doc.ID, doc.Count, doc.Seq)
+	}
+	for _, child := range n.children {
+		t.collectSubtreeDocs(child, merged)
+	}
+}
+
 func (t *Index) Analyze() fts.Stats {
 	var s fts.Stats
 	var totalDepth int
@@ -432,3 +492,4 @@ func (t *Index) Analyze() fts.Stats {
 var _ fts.PositionalIndex = (*Index)(nil)
 var _ fts.PrefixIndex = (*Index)(nil)
 var _ fts.Index = (*Index)(nil)
+var _ fts.PrefixIndex = (*Index)(nil)

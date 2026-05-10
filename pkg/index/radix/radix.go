@@ -234,6 +234,15 @@ func (t *Index) Search(word string) ([]fts.DocRef, error) {
 	}
 }
 
+func (t *Index) SearchPrefix(prefix string) ([]fts.DocRef, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	merged := make(map[fts.DocID]fts.DocRef)
+	t.collectPrefixDocs(t.root, prefix, merged)
+	return mergedDocsSlice(merged), nil
+}
+
 func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -278,6 +287,63 @@ func collectPositionalDocs(positions map[fts.DocID][]uint32, seqs map[fts.DocID]
 		out = append(out, ref.PositionalDocRef)
 	}
 	return out
+}
+
+func addMergedDoc(merged map[fts.DocID]fts.DocRef, id fts.DocID, count, seq uint32) {
+	ref, ok := merged[id]
+	if !ok {
+		merged[id] = fts.DocRef{ID: id, Count: count, Seq: seq}
+		return
+	}
+	ref.Count += count
+	merged[id] = ref
+}
+
+func mergedDocsSlice(merged map[fts.DocID]fts.DocRef) []fts.DocRef {
+	out := make([]fts.DocRef, 0, len(merged))
+	for _, doc := range merged {
+		out = append(out, doc)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	return out
+}
+
+func (t *Index) collectPrefixDocs(current *node, prefix string, merged map[fts.DocID]fts.DocRef) {
+	if current == nil {
+		return
+	}
+	if prefix == "" {
+		t.collectSubtreeDocs(current, merged)
+		return
+	}
+
+	for _, child := range current.children {
+		p := lcp(prefix, child.prefix)
+		if p == 0 {
+			continue
+		}
+		if p == len(prefix) {
+			t.collectSubtreeDocs(child, merged)
+			continue
+		}
+		if p == len(child.prefix) {
+			t.collectPrefixDocs(child, prefix[p:], merged)
+		}
+	}
+}
+
+func (t *Index) collectSubtreeDocs(current *node, merged map[fts.DocID]fts.DocRef) {
+	if current == nil {
+		return
+	}
+	if current.terminal {
+		for id, count := range current.docs {
+			addMergedDoc(merged, id, count, current.seqs[id])
+		}
+	}
+	for _, child := range current.children {
+		t.collectSubtreeDocs(child, merged)
+	}
 }
 
 func (t *Index) next(current *node, rest string) (*node, string, bool, bool) {
@@ -350,4 +416,5 @@ func (t *Index) Analyze() fts.Stats {
 }
 
 var _ fts.Index = (*Index)(nil)
+var _ fts.PrefixIndex = (*Index)(nil)
 var _ fts.PositionalIndex = (*Index)(nil)

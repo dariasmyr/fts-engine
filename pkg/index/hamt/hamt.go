@@ -9,6 +9,7 @@ import (
 	"math/bits"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -260,6 +261,25 @@ func (t *Index) SearchPositional(key string) ([]fts.PositionalDocRef, error) {
 	return docs, nil
 }
 
+func (t *Index) SearchPrefix(prefix string) ([]fts.DocRef, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	merged := make(map[fts.DocID]fts.DocRef)
+	for i := range t.terms {
+		for _, entry := range t.terms[i].entries {
+			if !strings.HasPrefix(entry.key, prefix) {
+				continue
+			}
+			for _, doc := range entry.docs {
+				addMergedDoc(merged, doc.ID, doc.Count, doc.Seq)
+			}
+		}
+	}
+
+	return mergedDocsSlice(merged), nil
+}
+
 func (t *Index) Insert(word string, id fts.DocID) error {
 	return t.insert(word, id, false, 0)
 }
@@ -332,6 +352,25 @@ func collectPositionalDocs(docs []fts.DocRef, positions [][]uint32) []fts.Positi
 		}
 		out = append(out, fts.PositionalDocRef{ID: docs[i].ID, Positions: pos})
 	}
+	return out
+}
+
+func addMergedDoc(merged map[fts.DocID]fts.DocRef, id fts.DocID, count, seq uint32) {
+	ref, ok := merged[id]
+	if !ok {
+		merged[id] = fts.DocRef{ID: id, Count: count, Seq: seq}
+		return
+	}
+	ref.Count += count
+	merged[id] = ref
+}
+
+func mergedDocsSlice(merged map[fts.DocID]fts.DocRef) []fts.DocRef {
+	out := make([]fts.DocRef, 0, len(merged))
+	for _, doc := range merged {
+		out = append(out, doc)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
 	return out
 }
 
@@ -424,4 +463,5 @@ func (t *Index) Analyze() fts.Stats {
 }
 
 var _ fts.Index = (*Index)(nil)
+var _ fts.PrefixIndex = (*Index)(nil)
 var _ fts.PositionalIndex = (*Index)(nil)
