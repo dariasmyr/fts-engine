@@ -8,7 +8,6 @@ import (
 	"github.com/dariasmyr/fts-engine/internal/lib/logger/sl"
 	"log/slog"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +21,7 @@ type SearchEngine interface {
 		docID string,
 		content string,
 	) error
+	HighlightText(query string, text string) string
 	SearchDocuments(
 		ctx context.Context,
 		query string,
@@ -246,20 +246,12 @@ func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQue
 			result.ID, result.UniqueMatches, result.TotalMatches)
 		fmt.Fprintf(outputView, "%s\n", highlightedHeader)
 
-		highlightQueryInResult(&result.Document, searchQuery)
+		result.Document.Abstract = c.ftsService.HighlightText(searchQuery, result.Document.Abstract)
 		fmt.Fprintf(outputView, "%s\n%s\n\n", result.Document.URL, result.Document.Abstract)
 	}
 
 	_, _ = g.SetCurrentView("input")
 	return nil
-}
-
-func highlightQueryInResult(document *models.Document, query string) {
-	words := strings.Fields(query)
-	for _, word := range words {
-		re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(word) + `\b`)
-		document.Abstract = re.ReplaceAllString(document.Abstract, "\033[31m$0\033[0m")
-	}
 }
 
 func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, *models.SearchDiagnostics, int, error) {

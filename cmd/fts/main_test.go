@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
@@ -46,5 +47,18 @@ func TestServiceAdapterObservesSearchDiagnostics(t *testing.T) {
 	}
 	if len(snap.Recent) != 1 || snap.Recent[0].ExecutionStrategy == "" || snap.Recent[0].TotalDuration <= 0 {
 		t.Fatalf("unexpected recent event: %+v", snap.Recent)
+	}
+}
+
+func TestServiceAdapterHighlightTextUsesFTSHighlighter(t *testing.T) {
+	svc := fts.New(radix.New(), fts.WordKeys)
+	adapter := &serviceAdapter{service: svc}
+
+	got := adapter.HighlightText("obam*", "obama obamacare orbit")
+	if strings.Count(got, "\033[31m") != 2 {
+		t.Fatalf("expected 2 highlighted matches, got %q", got)
+	}
+	if strings.Contains(got, "\033[31morbit\033[0m") {
+		t.Fatalf("unexpected highlight for non-matching word: %q", got)
 	}
 }

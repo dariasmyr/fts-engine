@@ -7,6 +7,8 @@ import (
 
 type DocID string
 
+type DocOrd uint32
+
 type DocRef struct {
 	ID    DocID
 	Count uint32

@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -242,6 +243,29 @@ type serviceAdapter struct {
 
 func (s *serviceAdapter) IndexDocument(ctx context.Context, docID string, content string) error {
 	return s.service.IndexDocument(ctx, pkgfts.DocID(docID), content)
+}
+
+func (s *serviceAdapter) HighlightText(query string, text string) string {
+	if s == nil || s.service == nil || strings.TrimSpace(query) == "" || text == "" {
+		return text
+	}
+
+	fragments := s.service.Highlight(query, text, pkgfts.Highlighter{
+		PreTag:       "\033[31m",
+		PostTag:      "\033[0m",
+		MaxFragments: 3,
+		FragmentSize: 180,
+		Separator:    " ... ",
+	})
+	if len(fragments) == 0 {
+		return text
+	}
+
+	out := make([]string, 0, len(fragments))
+	for _, fragment := range fragments {
+		out = append(out, fragment.Text)
+	}
+	return strings.Join(out, "\n")
 }
 
 func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
