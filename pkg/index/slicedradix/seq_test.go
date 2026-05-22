@@ -18,9 +18,9 @@ func TestSeqAssignedOnFirstInsertion(t *testing.T) {
 		t.Fatalf("Search() error = %v", err)
 	}
 	want := []fts.DocRef{
-		{ID: "doc-a", Count: 1, Seq: 0},
-		{ID: "doc-b", Count: 1, Seq: 1},
-		{ID: "doc-c", Count: 1, Seq: 2},
+		{ID: "doc-a", Ord: 0, Count: 1, Seq: 0},
+		{ID: "doc-b", Ord: 1, Count: 1, Seq: 1},
+		{ID: "doc-c", Ord: 2, Count: 1, Seq: 2},
 	}
 	for i := range want {
 		if docs[i] != want[i] {
