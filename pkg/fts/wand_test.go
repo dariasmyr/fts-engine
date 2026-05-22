@@ -6,9 +6,13 @@ import (
 	"testing"
 )
 
-func scoredResultsFromHits(hits map[DocID]docAccum) []Result {
+func scoredResultsFromHits(hits map[DocOrd]docAccum, registry *DocRegistry) []Result {
 	results := make([]Result, 0, len(hits))
-	for id, h := range hits {
+	for ord, h := range hits {
+		id := registry.Lookup(ord)
+		if id == "" {
+			continue
+		}
 		results = append(results, Result{
 			ID:            id,
 			UniqueMatches: h.UniqueMatches,
@@ -45,7 +49,7 @@ func requireSameScoredResults(t *testing.T, got, want []Result) {
 
 func observeDefaultFieldLengths(svc *Service, lengths map[DocID]uint32) {
 	for id, length := range lengths {
-		svc.collection.observe(DefaultField, id, length)
+		svc.collection.observe(DefaultField, svc.registry.GetOrAssign(id), length)
 	}
 }
 
@@ -83,8 +87,8 @@ func TestTryExecBooleanOrWandMatchesFullScoringCandidateLimit(t *testing.T) {
 		t.Fatalf("executeQuery() error = %v", err)
 	}
 
-	got := scoredResultsFromHits(wandHits)
-	wantAll := scoredResultsFromHits(fullHits)
+	got := scoredResultsFromHits(wandHits, svc.registry)
+	wantAll := scoredResultsFromHits(fullHits, svc.registry)
 	requireSameScoredResults(t, got, wantAll[:2])
 }
 
@@ -110,8 +114,8 @@ func TestTryExecBooleanOrWandPreservesTieBreakers(t *testing.T) {
 		t.Fatalf("executeQuery() error = %v", err)
 	}
 
-	got := scoredResultsFromHits(wandHits)
-	want := scoredResultsFromHits(fullHits)[:1]
+	got := scoredResultsFromHits(wandHits, svc.registry)
+	want := scoredResultsFromHits(fullHits, svc.registry)[:1]
 	requireSameScoredResults(t, got, want)
 }
 
@@ -178,8 +182,8 @@ func TestTryExecBooleanOrWandSkipsCrossFieldPlan(t *testing.T) {
 		"title": title,
 		"body":  body,
 	}, WordKeys, WithScorer(TFIDF()))
-	svc.collection.observe("title", "doc-a", 1)
-	svc.collection.observe("body", "doc-b", 1)
+	svc.collection.observe("title", svc.registry.GetOrAssign("doc-a"), 1)
+	svc.collection.observe("body", svc.registry.GetOrAssign("doc-b"), 1)
 
 	q := &BooleanQuery{Clauses: []BoolClause{
 		ShouldClause(TermQuery{Field: "title", Term: "alpha"}),
@@ -226,8 +230,8 @@ func TestTryExecBooleanOrWandSupportsMustNot(t *testing.T) {
 		t.Fatalf("executeQuery() error = %v", err)
 	}
 
-	got := scoredResultsFromHits(wandHits)
-	wantAll := scoredResultsFromHits(fullHits)
+	got := scoredResultsFromHits(wandHits, svc.registry)
+	wantAll := scoredResultsFromHits(fullHits, svc.registry)
 	requireSameScoredResults(t, got, wantAll[:2])
 	for _, hit := range got {
 		if hit.ID == "doc-a" {
