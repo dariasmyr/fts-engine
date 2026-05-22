@@ -59,8 +59,34 @@ func (c *collectionStats) observe(field string, ord DocOrd, tokens uint32) {
 		perField = make(map[DocOrd]uint32)
 		c.docLen[field] = perField
 	}
-	perField[ord] += tokens
-	c.totalLen[field] += uint64(tokens)
+	old := perField[ord]
+	perField[ord] = tokens
+	if tokens >= old {
+		c.totalLen[field] += uint64(tokens - old)
+	} else {
+		c.totalLen[field] -= uint64(old - tokens)
+	}
+}
+
+func (c *collectionStats) remove(ord DocOrd) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.docsSeen, ord)
+	for field, perField := range c.docLen {
+		tokens, ok := perField[ord]
+		if !ok {
+			continue
+		}
+		delete(perField, ord)
+		c.totalLen[field] -= uint64(tokens)
+		if len(perField) == 0 {
+			delete(c.docLen, field)
+			delete(c.totalLen, field)
+		}
+	}
 }
 
 func (c *collectionStats) TotalDocs() int {

@@ -28,6 +28,7 @@ type Service struct {
 	scorer       Scorer
 	collection   *collectionStats
 	registry     *DocRegistry
+	tombstones   *Tombstones
 	singleField  bool
 
 	mu      sync.RWMutex
@@ -64,12 +65,13 @@ func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opt
 }
 
 func newService(keyGen KeyGenerator, opts ...Option) *Service {
-	s := &Service{
+		s := &Service{
 		keyGen:     keyGen,
 		pipeline:   defaultPipeline{},
 		indexes:    make(map[string]Index),
 		collection: newCollectionStats(),
 		registry:   NewDocRegistry(),
+		tombstones: NewTombstones(),
 	}
 
 	for _, opt := range opts {
@@ -106,6 +108,46 @@ func (s *Service) IndexDocument(ctx context.Context, docID DocID, content string
 		return fmt.Errorf("fts: document id is empty")
 	}
 	return s.indexField(ctx, docID, DefaultField, Field{Value: content})
+}
+
+func (s *Service) Delete(docID DocID) bool {
+	if s == nil || docID == "" {
+		return false
+	}
+	ord, ok := s.registry.Has(docID)
+	if !ok {
+		return false
+	}
+	if s.tombstones != nil {
+		s.tombstones.Set(ord)
+	}
+	if s.collection != nil {
+		s.collection.remove(ord)
+	}
+	s.registry.Forget(docID)
+	return true
+}
+
+func (s *Service) UpdateDocument(ctx context.Context, docID DocID, content string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if docID == "" {
+		return fmt.Errorf("fts: document id is empty")
+	}
+	s.Delete(docID)
+	return s.IndexDocument(ctx, docID, content)
+}
+
+func (s *Service) Update(ctx context.Context, doc Document) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if doc.ID == "" {
+		return fmt.Errorf("fts: document id is empty")
+	}
+	s.Delete(doc.ID)
+	return s.Index(ctx, doc)
 }
 
 func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults int) (*SearchResult, error) {

@@ -27,10 +27,14 @@ func searchResultFromOrdHits(hits map[DocOrd]docAccum, maxResults int, useScore 
 func resultsFromOrdHits(hits map[DocOrd]docAccum, useScore bool, registry *DocRegistry) ([]Result, int) {
 	results := make([]Result, 0, len(hits))
 	for ord, hit := range hits {
-		id := registry.Lookup(ord)
-		if id == "" {
+		if registry == nil {
 			continue
 		}
+		// Deleted ords should already be filtered earlier, but keep the final projection defensive.
+		if lookup := registry.Lookup(ord); lookup == "" {
+			continue
+		}
+		id := registry.Lookup(ord)
 		results = append(results, Result{
 			ID:            id,
 			UniqueMatches: hit.UniqueMatches,
