@@ -6,12 +6,24 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 )
 
+func insertOrd(t *testing.T, idx *Index, term string, id fts.DocID, ord fts.DocOrd) {
+	t.Helper()
+	if err := idx.Insert(term, id, ord); err != nil {
+		t.Fatalf("Insert(%q, %q, %d) error = %v", term, id, ord, err)
+	}
+}
+
+func insertAtOrd(t *testing.T, idx *Index, term string, id fts.DocID, pos uint32, ord fts.DocOrd) {
+	t.Helper()
+	if err := idx.InsertAt(term, id, pos, ord); err != nil {
+		t.Fatalf("InsertAt(%q, %q, %d, %d) error = %v", term, id, pos, ord, err)
+	}
+}
+
 func TestIndexInsertAndSearch(t *testing.T) {
 	idx := New()
 
-	if err := idx.Insert("hotel", "doc-1"); err != nil {
-		t.Fatalf("Insert() error = %v", err)
-	}
+	insertOrd(t, idx, "hotel", "doc-1", 0)
 
 	docs, err := idx.Search("hotel")
 	if err != nil {
@@ -20,16 +32,16 @@ func TestIndexInsertAndSearch(t *testing.T) {
 	if len(docs) != 1 {
 		t.Fatalf("len(docs) = %d, want 1", len(docs))
 	}
-	if docs[0].ID != "doc-1" {
-		t.Fatalf("doc ID = %q, want %q", docs[0].ID, "doc-1")
+	if docs[0].Ord != 0 {
+		t.Fatalf("doc Ord = %d, want 0", docs[0].Ord)
 	}
 }
 
 func TestIndexInsertSameDocIncrementsCount(t *testing.T) {
 	idx := New()
 
-	_ = idx.Insert("hotel", "doc-1")
-	_ = idx.Insert("hotel", "doc-1")
+	insertOrd(t, idx, "hotel", "doc-1", 0)
+	insertOrd(t, idx, "hotel", "doc-1", 0)
 
 	docs, err := idx.Search("hotel")
 	if err != nil {
@@ -46,8 +58,8 @@ func TestIndexInsertSameDocIncrementsCount(t *testing.T) {
 func TestIndexInsertDifferentDocs(t *testing.T) {
 	idx := New()
 
-	_ = idx.Insert("hotel", "doc-1")
-	_ = idx.Insert("hotel", "doc-2")
+	insertOrd(t, idx, "hotel", "doc-1", 0)
+	insertOrd(t, idx, "hotel", "doc-2", 1)
 
 	docs, err := idx.Search("hotel")
 	if err != nil {
@@ -72,7 +84,7 @@ func TestIndexSearchNotFound(t *testing.T) {
 
 func TestIndexAnalyze(t *testing.T) {
 	idx := New()
-	_ = idx.Insert("hotel", "doc-1")
+	insertOrd(t, idx, "hotel", "doc-1", 0)
 
 	stats := idx.Analyze()
 	if stats.Nodes == 0 {
@@ -83,9 +95,9 @@ func TestIndexAnalyze(t *testing.T) {
 func TestIndexSearchPositional(t *testing.T) {
 	idx := New()
 
-	_ = idx.InsertAt("hotel", "doc-1", 1)
-	_ = idx.InsertAt("hotel", "doc-1", 3)
-	_ = idx.InsertAt("hotel", "doc-2", 2)
+	insertAtOrd(t, idx, "hotel", "doc-1", 1, 0)
+	insertAtOrd(t, idx, "hotel", "doc-1", 3, 0)
+	insertAtOrd(t, idx, "hotel", "doc-2", 2, 1)
 
 	docs, err := idx.SearchPositional("hotel")
 	if err != nil {
@@ -94,14 +106,14 @@ func TestIndexSearchPositional(t *testing.T) {
 	if len(docs) != 2 {
 		t.Fatalf("len(docs) = %d, want 2", len(docs))
 	}
-	if docs[0].ID != "doc-1" {
-		t.Fatalf("docs[0].ID = %q, want %q", docs[0].ID, "doc-1")
+	if docs[0].Ord != 0 {
+		t.Fatalf("docs[0].Ord = %d, want 0", docs[0].Ord)
 	}
 	if len(docs[0].Positions) != 2 || docs[0].Positions[0] != 1 || docs[0].Positions[1] != 3 {
 		t.Fatalf("docs[0].Positions = %v, want [1 3]", docs[0].Positions)
 	}
-	if docs[1].ID != "doc-2" {
-		t.Fatalf("docs[1].ID = %q, want %q", docs[1].ID, "doc-2")
+	if docs[1].Ord != 1 {
+		t.Fatalf("docs[1].Ord = %d, want 1", docs[1].Ord)
 	}
 	if len(docs[1].Positions) != 1 || docs[1].Positions[0] != 2 {
 		t.Fatalf("docs[1].Positions = %v, want [2]", docs[1].Positions)
@@ -119,8 +131,8 @@ func TestIndexSearchPositional(t *testing.T) {
 func TestIndexSearchReturnsSeqOrder(t *testing.T) {
 	idx := New()
 
-	_ = idx.Insert("hotel", "doc-z")
-	_ = idx.Insert("hotel", "doc-a")
+	insertOrd(t, idx, "hotel", "doc-z", 0)
+	insertOrd(t, idx, "hotel", "doc-a", 1)
 
 	docs, err := idx.Search("hotel")
 	if err != nil {
@@ -129,11 +141,11 @@ func TestIndexSearchReturnsSeqOrder(t *testing.T) {
 	if len(docs) != 2 {
 		t.Fatalf("len(docs) = %d, want 2", len(docs))
 	}
-	if docs[0].ID != "doc-z" || docs[0].Seq != 0 {
-		t.Fatalf("docs[0] = %+v, want doc-z seq=0", docs[0])
+	if docs[0].Ord != 0 || docs[0].Seq != 0 {
+		t.Fatalf("docs[0] = %+v, want ord=0 seq=0", docs[0])
 	}
-	if docs[1].ID != "doc-a" || docs[1].Seq != 1 {
-		t.Fatalf("docs[1] = %+v, want doc-a seq=1", docs[1])
+	if docs[1].Ord != 1 || docs[1].Seq != 1 {
+		t.Fatalf("docs[1] = %+v, want ord=1 seq=1", docs[1])
 	}
 }
 
@@ -148,9 +160,8 @@ func TestSearchPrefix(t *testing.T) {
 	}
 	for word, docs := range inserts {
 		for _, docID := range docs {
-			if err := idx.Insert(word, fts.DocID(docID)); err != nil {
-				t.Fatalf("Insert(%q, %q) error = %v", word, docID, err)
-			}
+			ord := map[fts.DocID]fts.DocOrd{"doc-a": 0, "doc-b": 1, "doc-c": 2, "doc-d": 3}[fts.DocID(docID)]
+			insertOrd(t, idx, word, fts.DocID(docID), ord)
 		}
 	}
 
@@ -159,27 +170,27 @@ func TestSearchPrefix(t *testing.T) {
 		t.Fatalf("SearchPrefix() error = %v", err)
 	}
 
-	got := make(map[fts.DocID]uint32, len(refs))
+	got := make(map[fts.DocOrd]uint32, len(refs))
 	for _, ref := range refs {
-		got[ref.ID] = ref.Count
+		got[ref.Ord] = ref.Count
 	}
-	if got["doc-a"] != 2 {
-		t.Fatalf("doc-a count = %d, want 2", got["doc-a"])
+	if got[0] != 2 {
+		t.Fatalf("ord 0 count = %d, want 2", got[0])
 	}
-	if got["doc-b"] != 1 {
-		t.Fatalf("doc-b count = %d, want 1", got["doc-b"])
+	if got[1] != 1 {
+		t.Fatalf("ord 1 count = %d, want 1", got[1])
 	}
-	if got["doc-c"] != 1 {
-		t.Fatalf("doc-c count = %d, want 1", got["doc-c"])
+	if got[2] != 1 {
+		t.Fatalf("ord 2 count = %d, want 1", got[2])
 	}
-	if _, ok := got["doc-d"]; ok {
-		t.Fatalf("doc-d should not match ba*: %+v", got)
+	if _, ok := got[3]; ok {
+		t.Fatalf("ord 3 should not match ba*: %+v", got)
 	}
 }
 
 func TestSearchPrefixNoMatch(t *testing.T) {
 	idx := New()
-	_ = idx.Insert("hello", "doc-1")
+	insertOrd(t, idx, "hello", "doc-1", 0)
 
 	refs, err := idx.SearchPrefix("zzz")
 	if err != nil {
@@ -192,13 +203,13 @@ func TestSearchPrefixNoMatch(t *testing.T) {
 
 func TestSearchPrefixExactKey(t *testing.T) {
 	idx := New()
-	_ = idx.Insert("barack", "doc-1")
+	insertOrd(t, idx, "barack", "doc-1", 0)
 
 	refs, err := idx.SearchPrefix("barack")
 	if err != nil {
 		t.Fatalf("SearchPrefix() error = %v", err)
 	}
-	if len(refs) != 1 || refs[0].ID != "doc-1" {
+	if len(refs) != 1 || refs[0].Ord != 0 {
 		t.Fatalf("refs = %+v, want exact-key match", refs)
 	}
 }
