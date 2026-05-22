@@ -97,6 +97,7 @@ func (s *Service) searchKeysInField(ctx context.Context, field string, index Ind
 		if err != nil {
 			return termFieldDocsResult{}, fmt.Errorf("fts: term query field %q: index search: %w", field, err)
 		}
+		docs = s.hydratePostings(docs)
 		postingsRead += len(docs)
 		if len(docs) == 0 {
 			continue

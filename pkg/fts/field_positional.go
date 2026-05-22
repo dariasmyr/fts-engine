@@ -182,6 +182,7 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 		if err != nil {
 			return nil, fmt.Errorf("fts: positional search: index search: %w", err)
 		}
+		refs = s.hydratePositionalPostings(refs)
 		postingsRead += len(refs)
 		merged = make(map[DocID][]uint32, len(refs))
 		for _, r := range refs {
@@ -210,6 +211,7 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 		if err != nil {
 			return nil, fmt.Errorf("fts: positional search: index search: %w", err)
 		}
+		refs = s.hydratePositionalPostings(refs)
 		postingsRead += len(refs)
 		for _, r := range refs {
 			if len(r.Positions) == 0 {

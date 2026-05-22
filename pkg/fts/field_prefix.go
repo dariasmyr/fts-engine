@@ -90,6 +90,7 @@ func (s *Service) searchPrefixInField(ctx context.Context, field string, prefixe
 	if err != nil {
 		return termExpansion{}, fmt.Errorf("fts: prefix query field %q: %w", field, err)
 	}
+	docs = s.hydratePostings(docs)
 	postingsRead += len(docs)
 	return termExpansion{
 		field:      field,

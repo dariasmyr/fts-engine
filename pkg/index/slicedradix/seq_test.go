@@ -7,20 +7,34 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 )
 
+func insertSeqOrd(t *testing.T, idx *Index, term string, id fts.DocID, ord fts.DocOrd) {
+	t.Helper()
+	if err := idx.Insert(term, id, ord); err != nil {
+		t.Fatalf("Insert(%q, %q, %d) error = %v", term, id, ord, err)
+	}
+}
+
+func insertAtSeqOrd(t *testing.T, idx *Index, term string, id fts.DocID, pos uint32, ord fts.DocOrd) {
+	t.Helper()
+	if err := idx.InsertAt(term, id, pos, ord); err != nil {
+		t.Fatalf("InsertAt(%q, %q, %d, %d) error = %v", term, id, pos, ord, err)
+	}
+}
+
 func TestSeqAssignedOnFirstInsertion(t *testing.T) {
 	idx := New()
-	_ = idx.Insert("x", "doc-a")
-	_ = idx.Insert("x", "doc-b")
-	_ = idx.Insert("x", "doc-c")
+	insertSeqOrd(t, idx, "x", "doc-a", 0)
+	insertSeqOrd(t, idx, "x", "doc-b", 1)
+	insertSeqOrd(t, idx, "x", "doc-c", 2)
 
 	docs, err := idx.Search("x")
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
 	want := []fts.DocRef{
-		{ID: "doc-a", Ord: 0, Count: 1, Seq: 0},
-		{ID: "doc-b", Ord: 1, Count: 1, Seq: 1},
-		{ID: "doc-c", Ord: 2, Count: 1, Seq: 2},
+		{Ord: 0, Count: 1, Seq: 0},
+		{Ord: 1, Count: 1, Seq: 1},
+		{Ord: 2, Count: 1, Seq: 2},
 	}
 	for i := range want {
 		if docs[i] != want[i] {
@@ -31,9 +45,9 @@ func TestSeqAssignedOnFirstInsertion(t *testing.T) {
 
 func TestSeqStableAcrossTerms(t *testing.T) {
 	idx := New()
-	_ = idx.Insert("foo", "doc-a")
-	_ = idx.Insert("bar", "doc-a")
-	_ = idx.Insert("foo", "doc-b")
+	insertSeqOrd(t, idx, "foo", "doc-a", 0)
+	insertSeqOrd(t, idx, "bar", "doc-a", 0)
+	insertSeqOrd(t, idx, "foo", "doc-b", 1)
 
 	foo, err := idx.Search("foo")
 	if err != nil {
@@ -53,10 +67,10 @@ func TestSeqStableAcrossTerms(t *testing.T) {
 
 func TestSeqUnchangedByTailCheck(t *testing.T) {
 	idx := New()
-	_ = idx.Insert("hotel", "doc-a")
-	_ = idx.Insert("hotel", "doc-a")
-	_ = idx.Insert("hotel", "doc-a")
-	_ = idx.Insert("hotel", "doc-b")
+	insertSeqOrd(t, idx, "hotel", "doc-a", 0)
+	insertSeqOrd(t, idx, "hotel", "doc-a", 0)
+	insertSeqOrd(t, idx, "hotel", "doc-a", 0)
+	insertSeqOrd(t, idx, "hotel", "doc-b", 1)
 
 	docs, err := idx.Search("hotel")
 	if err != nil {
@@ -75,9 +89,9 @@ func TestSeqUnchangedByTailCheck(t *testing.T) {
 
 func TestSeqUnchangedByColdPathReindex(t *testing.T) {
 	idx := New()
-	_ = idx.Insert("x", "doc-a")
-	_ = idx.Insert("x", "doc-b")
-	_ = idx.Insert("x", "doc-a")
+	insertSeqOrd(t, idx, "x", "doc-a", 0)
+	insertSeqOrd(t, idx, "x", "doc-b", 1)
+	insertSeqOrd(t, idx, "x", "doc-a", 0)
 
 	docs, err := idx.Search("x")
 	if err != nil {
@@ -86,8 +100,8 @@ func TestSeqUnchangedByColdPathReindex(t *testing.T) {
 	if len(docs) != 2 {
 		t.Fatalf("len(docs) = %d, want 2", len(docs))
 	}
-	if docs[0].ID != "doc-a" || docs[0].Count != 2 || docs[0].Seq != 0 {
-		t.Fatalf("docs[0] = %+v, want {doc-a Count:2 Seq:0}", docs[0])
+	if docs[0].Ord != 0 || docs[0].Count != 2 || docs[0].Seq != 0 {
+		t.Fatalf("docs[0] = %+v, want {ord:0 Count:2 Seq:0}", docs[0])
 	}
 	if docs[1].Seq != 1 {
 		t.Fatalf("docs[1].Seq = %d, want 1", docs[1].Seq)
@@ -96,8 +110,8 @@ func TestSeqUnchangedByColdPathReindex(t *testing.T) {
 
 func TestSeqMonotonicInPostings(t *testing.T) {
 	idx := New()
-	for _, id := range []fts.DocID{"a", "b", "c", "d", "e"} {
-		_ = idx.Insert("t", id)
+	for i, id := range []fts.DocID{"a", "b", "c", "d", "e"} {
+		insertSeqOrd(t, idx, "t", id, fts.DocOrd(i))
 	}
 
 	docs, err := idx.Search("t")
@@ -115,9 +129,9 @@ func TestSeqMonotonicInPostings(t *testing.T) {
 
 func TestSeqSurvivesSerializeLoad(t *testing.T) {
 	idx := New()
-	_ = idx.Insert("foo", "doc-a")
-	_ = idx.Insert("foo", "doc-b")
-	_ = idx.Insert("bar", "doc-a")
+	insertSeqOrd(t, idx, "foo", "doc-a", 0)
+	insertSeqOrd(t, idx, "foo", "doc-b", 1)
+	insertSeqOrd(t, idx, "bar", "doc-a", 0)
 
 	var buf bytes.Buffer
 	if err := idx.Serialize(&buf); err != nil {
@@ -145,7 +159,7 @@ func TestSeqSurvivesSerializeLoad(t *testing.T) {
 		t.Fatalf("loaded bar[0].Seq = %d, want 0", bar[0].Seq)
 	}
 
-	if err := loadedIdx.Insert("foo", "doc-c"); err != nil {
+	if err := loadedIdx.Insert("foo", "doc-c", 2); err != nil {
 		t.Fatalf("Insert() after Load() error = %v", err)
 	}
 	foo2, err := loadedIdx.Search("foo")
@@ -159,8 +173,8 @@ func TestSeqSurvivesSerializeLoad(t *testing.T) {
 
 func TestSearchPositionalReturnsSharedSlice(t *testing.T) {
 	idx := New()
-	_ = idx.InsertAt("x", "doc-a", 0)
-	_ = idx.InsertAt("x", "doc-a", 5)
+	insertAtSeqOrd(t, idx, "x", "doc-a", 0, 0)
+	insertAtSeqOrd(t, idx, "x", "doc-a", 5, 0)
 
 	refs, err := idx.SearchPositional("x")
 	if err != nil {
