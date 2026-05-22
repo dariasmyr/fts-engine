@@ -10,7 +10,7 @@ type TermStats struct {
 }
 
 type DocStats struct {
-	ID     DocID
+	Ord    DocOrd
 	Length uint32
 }
 
@@ -82,19 +82,19 @@ func (s *Service) fieldStatsFor(field string) FieldStats {
 	}
 }
 
-func (s *Service) scoreTermHit(field string, term string, docID DocID, tf uint32, df uint32, stats FieldStats) float64 {
+func (s *Service) scoreTermHit(field string, term string, ord DocOrd, tf uint32, df uint32, stats FieldStats) float64 {
 	if s.scorer == nil || s.collection == nil {
 		return 0
 	}
 	ts := TermStats{Field: field, Term: term, TF: tf, DF: df}
-	ds := DocStats{ID: docID, Length: s.collection.DocLen(field, docID)}
+	ds := DocStats{Ord: ord, Length: s.collection.DocLen(field, ord)}
 	return s.scorer.Score(ts, ds, stats)
 }
 
 func (s *Service) scoreTermExpansionDoc(exp termExpansion, doc DocRef) float64 {
-	return s.scoreTermHit(exp.field, exp.term, doc.ID, doc.Count, exp.df, exp.fieldStats)
+	return s.scoreTermHit(exp.field, exp.term, s.ordForPosting(doc), doc.Count, exp.df, exp.fieldStats)
 }
 
-func (s *Service) scoreTermExpansionTF(exp termExpansion, docID DocID, tf uint32) float64 {
-	return s.scoreTermHit(exp.field, exp.term, docID, tf, exp.df, exp.fieldStats)
+func (s *Service) scoreTermExpansionTF(exp termExpansion, ord DocOrd, tf uint32) float64 {
+	return s.scoreTermHit(exp.field, exp.term, ord, tf, exp.df, exp.fieldStats)
 }

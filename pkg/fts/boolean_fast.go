@@ -14,26 +14,26 @@ type termExpansion struct {
 
 	fieldStats FieldStats
 	docs       []DocRef
-	byDoc      map[DocID]uint32
+	byDoc      map[DocOrd]uint32
 }
 
 func (e *termExpansion) buildMap() {
 	if e.byDoc != nil {
 		return
 	}
-	e.byDoc = make(map[DocID]uint32, len(e.docs))
+	e.byDoc = make(map[DocOrd]uint32, len(e.docs))
 	for _, d := range e.docs {
-		e.byDoc[d.ID] = d.Count
+		e.byDoc[d.Ord] = d.Count
 	}
 }
 
-func (e *termExpansion) lookup(id DocID) (uint32, bool) {
+func (e *termExpansion) lookup(ord DocOrd) (uint32, bool) {
 	if e.byDoc != nil {
-		tf, ok := e.byDoc[id]
+		tf, ok := e.byDoc[ord]
 		return tf, ok
 	}
 	for _, d := range e.docs {
-		if d.ID == id {
+		if d.Ord == ord {
 			return d.Count, true
 		}
 	}
@@ -45,9 +45,9 @@ type fastMust struct {
 	totalDocs  int
 }
 
-func (m *fastMust) contains(id DocID) bool {
+func (m *fastMust) contains(ord DocOrd) bool {
 	for i := range m.expansions {
-		if _, ok := m.expansions[i].lookup(id); ok {
+		if _, ok := m.expansions[i].lookup(ord); ok {
 			return true
 		}
 	}
@@ -107,8 +107,8 @@ func parseFastOrClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, bool, strin
 	return shouldTerms, mustNots, true, ""
 }
 
-func (s *Service) buildExcludeSet(ctx context.Context, clauses []BoolClause, scope queryFieldScope) (map[DocID]struct{}, error) {
-	exclude := make(map[DocID]struct{})
+func (s *Service) buildExcludeSet(ctx context.Context, clauses []BoolClause, scope queryFieldScope) (map[DocOrd]struct{}, error) {
+	exclude := make(map[DocOrd]struct{})
 	for _, clause := range clauses {
 		child, err := s.executeQuery(ctx, clause.Query, 0, scope)
 		if err != nil {
@@ -139,7 +139,7 @@ func (s *Service) collectFastMustGroups(ctx context.Context, terms []TermQuery, 
 	return groups, false, nil
 }
 
-func (s *Service) applyShouldClauseBoosts(ctx context.Context, combined map[DocID]docAccum, shoulds []BoolClause, scope queryFieldScope) error {
+func (s *Service) applyShouldClauseBoosts(ctx context.Context, combined map[DocOrd]docAccum, shoulds []BoolClause, scope queryFieldScope) error {
 	for _, clause := range shoulds {
 		child, err := s.executeQuery(ctx, clause.Query, 0, scope)
 		if err != nil {
@@ -154,7 +154,7 @@ func (s *Service) applyShouldClauseBoosts(ctx context.Context, combined map[DocI
 	return nil
 }
 
-func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
+func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
 	mustTerms, shoulds, mustNots, ok, reason := parseFastAndClauses(q)
 	if !ok {
 		if exec := diagnosticsFromContext(ctx); exec != nil {
@@ -176,7 +176,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 		return nil, false, err
 	}
 	if exhausted {
-		return map[DocID]docAccum{}, true, nil
+		return map[DocOrd]docAccum{}, true, nil
 	}
 
 	exclude, err := s.buildExcludeSet(ctx, mustNots, scope)
@@ -227,21 +227,22 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 	}
 
 	// Final AND matches keyed by DocID, with accumulated clause and term-frequency counts.
-	combined := make(map[DocID]docAccum, driverGroup.totalDocs)
+	combined := make(map[DocOrd]docAccum, driverGroup.totalDocs)
 	for driverExpansionIdx := range driverGroup.expansions {
 		driverExpansion := &driverGroup.expansions[driverExpansionIdx]
 		for _, driverDoc := range driverExpansion.docs {
-			if _, already := combined[driverDoc.ID]; already {
+			driverOrd := s.ordForPosting(driverDoc)
+			if _, already := combined[driverOrd]; already {
 				continue
 			}
-			if _, skip := exclude[driverDoc.ID]; skip {
+			if _, skip := exclude[driverOrd]; skip {
 				continue
 			}
 
 			// Driver docs are only candidates; keep only docs that also match every other MUST clause.
 			survives := true
 			for i := range otherGroups {
-				if !otherGroups[i].contains(driverDoc.ID) {
+				if !otherGroups[i].contains(driverOrd) {
 					survives = false
 					break
 				}
@@ -256,9 +257,9 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 				if siblingExpansionIdx == driverExpansionIdx {
 					continue
 				}
-				if tf, ok := driverGroup.expansions[siblingExpansionIdx].lookup(driverDoc.ID); ok {
+				if tf, ok := driverGroup.expansions[siblingExpansionIdx].lookup(driverOrd); ok {
 					accum.TotalMatches += int(tf)
-					accum.Score += s.scoreTermExpansionTF(driverGroup.expansions[siblingExpansionIdx], driverDoc.ID, tf)
+					accum.Score += s.scoreTermExpansionTF(driverGroup.expansions[siblingExpansionIdx], driverOrd, tf)
 				}
 			}
 
@@ -266,20 +267,20 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 			for i := range otherGroups {
 				matchedAny := false
 				for expansionIdx := range otherGroups[i].expansions {
-					tf, ok := otherGroups[i].expansions[expansionIdx].lookup(driverDoc.ID)
+					tf, ok := otherGroups[i].expansions[expansionIdx].lookup(driverOrd)
 					if !ok {
 						continue
 					}
 					matchedAny = true
 					accum.TotalMatches += int(tf)
-					accum.Score += s.scoreTermExpansionTF(otherGroups[i].expansions[expansionIdx], driverDoc.ID, tf)
+					accum.Score += s.scoreTermExpansionTF(otherGroups[i].expansions[expansionIdx], driverOrd, tf)
 				}
 				if matchedAny {
 					accum.UniqueMatches++
 				}
 			}
 
-			combined[driverDoc.ID] = accum
+			combined[driverOrd] = accum
 		}
 	}
 
@@ -295,7 +296,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 	return combined, true, nil
 }
 
-func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
+func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
 	shouldTerms, mustNots, ok, reason := parseFastOrClauses(q)
 	if !ok {
 		if exec := diagnosticsFromContext(ctx); exec != nil {
@@ -329,35 +330,36 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, sco
 		totalCap += group.totalDocs
 	}
 	if len(plan) == 0 {
-		return map[DocID]docAccum{}, true, nil
+		return map[DocOrd]docAccum{}, true, nil
 	}
 
 	// Union all SHOULD matches into one result map keyed by DocID.
-	combined := make(map[DocID]docAccum, totalCap)
+	combined := make(map[DocOrd]docAccum, totalCap)
 	for _, shouldGroup := range plan {
 		singleExpansion := len(shouldGroup.expansions) == 1
-		var seenInGroup map[DocID]struct{}
+		var seenInGroup map[DocOrd]struct{}
 		if !singleExpansion {
 			// Count a logical SHOULD clause once even if it expands to multiple postings lists.
-			seenInGroup = make(map[DocID]struct{}, shouldGroup.totalDocs)
+			seenInGroup = make(map[DocOrd]struct{}, shouldGroup.totalDocs)
 		}
 
 		for _, expansion := range shouldGroup.expansions {
 			for _, doc := range expansion.docs {
-				if _, skip := exclude[doc.ID]; skip {
+				ord := s.ordForPosting(doc)
+				if _, skip := exclude[ord]; skip {
 					continue
 				}
-				accum := combined[doc.ID]
+				accum := combined[ord]
 				if singleExpansion {
 					accum.UniqueMatches++
-				} else if _, seen := seenInGroup[doc.ID]; !seen {
+				} else if _, seen := seenInGroup[ord]; !seen {
 					accum.UniqueMatches++
-					seenInGroup[doc.ID] = struct{}{}
+					seenInGroup[ord] = struct{}{}
 				}
 				// TotalMatches still sums TF from every matching expansion.
 				accum.TotalMatches += int(doc.Count)
 				accum.Score += s.scoreTermExpansionDoc(expansion, doc)
-				combined[doc.ID] = accum
+				combined[ord] = accum
 			}
 		}
 	}
@@ -383,7 +385,7 @@ func allSingleExpansionInSameField(musts []fastMust) bool {
 	return true
 }
 
-func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause, exclude map[DocID]struct{}, ctx context.Context, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
+func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause, exclude map[DocOrd]struct{}, ctx context.Context, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
 	k := len(musts)
 	ptrs := make([]int, k)
 	exps := make([]*termExpansion, k)
@@ -392,11 +394,11 @@ func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause
 		exps[i] = &musts[i].expansions[0]
 		if len(exps[i].docs) == 0 {
 			// One empty MUST list makes the whole AND empty.
-			return map[DocID]docAccum{}, true, nil
+			return map[DocOrd]docAccum{}, true, nil
 		}
 	}
 
-	combined := make(map[DocID]docAccum, len(exps[0].docs))
+	combined := make(map[DocOrd]docAccum, len(exps[0].docs))
 	currentSeq := exps[0].docs[0].Seq
 
 loop:
@@ -419,8 +421,8 @@ loop:
 		}
 
 		// All MUST lists are aligned on the same Seq, so we found an intersection hit.
-		docID := exps[0].docs[ptrs[0]].ID
-		if _, skip := exclude[docID]; !skip {
+		docOrd := exps[0].docs[ptrs[0]].Ord
+		if _, skip := exclude[docOrd]; !skip {
 			var accum docAccum
 			for i := 0; i < k; i++ {
 				d := exps[i].docs[ptrs[i]]
@@ -428,7 +430,7 @@ loop:
 				accum.TotalMatches += int(d.Count)
 				accum.Score += s.scoreTermExpansionDoc(*exps[i], d)
 			}
-			combined[docID] = accum
+			combined[docOrd] = accum
 		}
 
 		// Move every list forward past the matched document and continue the merge walk.

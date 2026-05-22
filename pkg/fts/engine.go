@@ -200,7 +200,7 @@ func (s *Service) SnapshotCollectionStats() *CollectionStatsSnapshot {
 	if s == nil || s.collection == nil {
 		return nil
 	}
-	return s.collection.snapshot()
+	return s.collection.snapshot(s.registry)
 }
 
 func (s *Service) BuildFilter() error {

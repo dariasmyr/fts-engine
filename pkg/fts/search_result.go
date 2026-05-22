@@ -13,6 +13,59 @@ func searchResultFromHits(hits map[DocID]docAccum, maxResults int, useScore bool
 	}
 }
 
+func searchResultFromOrdHits(hits map[DocOrd]docAccum, maxResults int, useScore bool, registry *DocRegistry) *SearchResult {
+	results, totalFound := resultsFromOrdHits(hits, useScore, registry)
+	if maxResults <= 0 || maxResults > totalFound {
+		maxResults = totalFound
+	}
+	return &SearchResult{
+		Results:           results[:maxResults],
+		TotalResultsCount: totalFound,
+	}
+}
+
+func resultsFromOrdHits(hits map[DocOrd]docAccum, useScore bool, registry *DocRegistry) ([]Result, int) {
+	results := make([]Result, 0, len(hits))
+	for ord, hit := range hits {
+		id := registry.Lookup(ord)
+		if id == "" {
+			continue
+		}
+		results = append(results, Result{
+			ID:            id,
+			UniqueMatches: hit.UniqueMatches,
+			TotalMatches:  hit.TotalMatches,
+			Score:         hit.Score,
+		})
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if useScore && results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		if results[i].UniqueMatches != results[j].UniqueMatches {
+			return results[i].UniqueMatches > results[j].UniqueMatches
+		}
+		if results[i].TotalMatches != results[j].TotalMatches {
+			return results[i].TotalMatches > results[j].TotalMatches
+		}
+		return results[i].ID < results[j].ID
+	})
+
+	return results, len(results)
+}
+
+func searchResultFromHitsDeprecated(hits map[DocID]docAccum, maxResults int, useScore bool) *SearchResult {
+	results, totalFound := resultsFromHits(hits, useScore)
+	if maxResults <= 0 || maxResults > totalFound {
+		maxResults = totalFound
+	}
+	return &SearchResult{
+		Results:           results[:maxResults],
+		TotalResultsCount: totalFound,
+	}
+}
+
 func resultsFromHits(hits map[DocID]docAccum, useScore bool) ([]Result, int) {
 	results := make([]Result, 0, len(hits))
 	for id, hit := range hits {

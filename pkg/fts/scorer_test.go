@@ -55,7 +55,7 @@ func TestBM25RareTermScoresHigherThanCommon(t *testing.T) {
 	scorer := BM25()
 
 	fieldStats := FieldStats{N: 1000, AvgLength: 20}
-	doc := DocStats{ID: "doc", Length: 20}
+	doc := DocStats{Ord: 1, Length: 20}
 
 	rare := scorer.Score(TermStats{Term: "rosa", TF: 1, DF: 3}, doc, fieldStats)
 	common := scorer.Score(TermStats{Term: "the", TF: 1, DF: 900}, doc, fieldStats)
@@ -70,8 +70,8 @@ func TestBM25LengthNormalization(t *testing.T) {
 	fieldStats := FieldStats{N: 100, AvgLength: 50}
 	term := TermStats{Term: "x", TF: 2, DF: 10}
 
-	short := scorer.Score(term, DocStats{ID: "short", Length: 10}, fieldStats)
-	long := scorer.Score(term, DocStats{ID: "long", Length: 200}, fieldStats)
+	short := scorer.Score(term, DocStats{Ord: 1, Length: 10}, fieldStats)
+	long := scorer.Score(term, DocStats{Ord: 2, Length: 200}, fieldStats)
 
 	if short <= long {
 		t.Fatalf("expected shorter document to score higher, got short=%v long=%v", short, long)
@@ -82,8 +82,8 @@ func TestTFIDFMonotonicInTF(t *testing.T) {
 	scorer := TFIDF()
 	fieldStats := FieldStats{N: 100, AvgLength: 10}
 
-	low := scorer.Score(TermStats{Term: "alpha", TF: 1, DF: 5}, DocStats{ID: "doc", Length: 10}, fieldStats)
-	high := scorer.Score(TermStats{Term: "alpha", TF: 10, DF: 5}, DocStats{ID: "doc", Length: 10}, fieldStats)
+	low := scorer.Score(TermStats{Term: "alpha", TF: 1, DF: 5}, DocStats{Ord: 1, Length: 10}, fieldStats)
+	high := scorer.Score(TermStats{Term: "alpha", TF: 10, DF: 5}, DocStats{Ord: 1, Length: 10}, fieldStats)
 
 	if high <= low {
 		t.Fatalf("expected TF-IDF to increase with TF, got low=%v high=%v", low, high)
@@ -170,7 +170,7 @@ func TestBooleanScoringAppliesShouldBoost(t *testing.T) {
 		{id: "doc-c", length: 1},
 		{id: "doc-d", length: 1},
 	} {
-		svc.collection.observe(DefaultField, doc.id, doc.length)
+		svc.collection.observe(DefaultField, svc.registry.GetOrAssign(doc.id), doc.length)
 	}
 
 	q := &BooleanQuery{Clauses: []BoolClause{

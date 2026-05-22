@@ -24,6 +24,6 @@ func WithScorer(scorer Scorer) Option {
 
 func WithCollectionStatsSnapshot(snapshot *CollectionStatsSnapshot) Option {
 	return func(s *Service) {
-		s.collection = newCollectionStatsFromSnapshot(snapshot)
+		s.collection = newCollectionStatsFromSnapshot(snapshot, s.registry)
 	}
 }

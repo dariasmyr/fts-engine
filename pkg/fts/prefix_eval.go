@@ -2,12 +2,12 @@ package fts
 
 import "context"
 
-func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFieldScope) (map[DocID]docAccum, error) {
+func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFieldScope) (map[DocOrd]docAccum, error) {
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.setStrategy(strategyPrefix)
 	}
 	if q.Prefix == "" {
-		return map[DocID]docAccum{}, nil
+		return map[DocOrd]docAccum{}, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -22,18 +22,19 @@ func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFiel
 		return nil, err
 	}
 
-	hits := make(map[DocID]docAccum)
-	seen := make(map[DocID]struct{})
+	hits := make(map[DocOrd]docAccum)
+	seen := make(map[DocOrd]struct{})
 	for _, expansion := range expansions {
 		for _, doc := range expansion.docs {
-			accum := hits[doc.ID]
-			if _, ok := seen[doc.ID]; !ok {
+			ord := s.ordForPosting(doc)
+			accum := hits[ord]
+			if _, ok := seen[ord]; !ok {
 				accum.UniqueMatches++
-				seen[doc.ID] = struct{}{}
+				seen[ord] = struct{}{}
 			}
 			accum.TotalMatches += int(doc.Count)
 			accum.Score += s.scoreTermExpansionDoc(expansion, doc)
-			hits[doc.ID] = accum
+			hits[ord] = accum
 		}
 	}
 	return hits, nil

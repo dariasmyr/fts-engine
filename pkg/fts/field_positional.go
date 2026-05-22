@@ -9,14 +9,14 @@ import (
 
 type positionalFieldMatchResult struct {
 	field        string
-	matchesByDoc map[DocID]uint32
+	matchesByDoc map[DocOrd]uint32
 	err          error
 }
 
 func (s *Service) collectPositionalFieldMatches(
 	ctx context.Context,
 	fields []string,
-	searchInField func(PositionalIndex) (map[DocID]uint32, error),
+	searchInField func(PositionalIndex) (map[DocOrd]uint32, error),
 ) ([]positionalFieldMatchResult, error) {
 	resultsByField := make([]positionalFieldMatchResult, 0, len(fields))
 	if len(fields) <= 1 {
@@ -84,49 +84,49 @@ func (s *Service) collectPositionalFieldMatches(
 	return resultsByField, nil
 }
 
-func (s *Service) searchExactPhraseCountsInField(ctx context.Context, positional PositionalIndex, tokens []string) (map[DocID]uint32, error) {
+func (s *Service) searchExactPhraseCountsInField(ctx context.Context, positional PositionalIndex, tokens []string) (map[DocOrd]uint32, error) {
 	tokenPostings, err := s.searchTokenPostingsInField(ctx, positional, tokens)
 	if err != nil || tokenPostings == nil {
-		return map[DocID]uint32{}, err
+		return map[DocOrd]uint32{}, err
 	}
 
 	driverIdx := smallestPostingMapIndex(tokenPostings)
-	matchesByDoc := make(map[DocID]uint32)
-	for docID, driverPositions := range tokenPostings[driverIdx] {
-		if !docPresentInAllPostings(tokenPostings, docID, driverIdx) {
+	matchesByDoc := make(map[DocOrd]uint32)
+	for ord, driverPositions := range tokenPostings[driverIdx] {
+		if !docPresentInAllPostings(tokenPostings, ord, driverIdx) {
 			continue
 		}
 
-		matches := phraseAlign(tokenPostings, docID, driverIdx, driverPositions)
+		matches := phraseAlign(tokenPostings, ord, driverIdx, driverPositions)
 		if matches > 0 {
-			matchesByDoc[docID] = matches
+			matchesByDoc[ord] = matches
 		}
 	}
 	return matchesByDoc, nil
 }
 
-func (s *Service) searchNearPhraseCountsInField(ctx context.Context, positional PositionalIndex, tokens []string, maxGap uint32) (map[DocID]uint32, error) {
+func (s *Service) searchNearPhraseCountsInField(ctx context.Context, positional PositionalIndex, tokens []string, maxGap uint32) (map[DocOrd]uint32, error) {
 	tokenPostings, err := s.searchTokenPostingsInField(ctx, positional, tokens)
 	if err != nil || tokenPostings == nil {
-		return map[DocID]uint32{}, err
+		return map[DocOrd]uint32{}, err
 	}
 
-	matchesByDoc := make(map[DocID]uint32)
-	for docID := range tokenPostings[0] {
-		if !docPresentInAllPostings(tokenPostings, docID, 0) {
+	matchesByDoc := make(map[DocOrd]uint32)
+	for ord := range tokenPostings[0] {
+		if !docPresentInAllPostings(tokenPostings, ord, 0) {
 			continue
 		}
 
-		matches := phraseNearAlign(tokenPostings, docID, maxGap)
+		matches := phraseNearAlign(tokenPostings, ord, maxGap)
 		if matches > 0 {
-			matchesByDoc[docID] = matches
+			matchesByDoc[ord] = matches
 		}
 	}
 	return matchesByDoc, nil
 }
 
-func (s *Service) searchTokenPostingsInField(ctx context.Context, positional PositionalIndex, tokens []string) ([]map[DocID][]uint32, error) {
-	tokenPostings := make([]map[DocID][]uint32, len(tokens))
+func (s *Service) searchTokenPostingsInField(ctx context.Context, positional PositionalIndex, tokens []string) ([]map[DocOrd][]uint32, error) {
+	tokenPostings := make([]map[DocOrd][]uint32, len(tokens))
 	for i, token := range tokens {
 		merged, err := s.collectPositionalPostingsForToken(ctx, positional, token)
 		if err != nil {
@@ -140,7 +140,7 @@ func (s *Service) searchTokenPostingsInField(ctx context.Context, positional Pos
 	return tokenPostings, nil
 }
 
-func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positional PositionalIndex, token string) (map[DocID][]uint32, error) {
+func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positional PositionalIndex, token string) (map[DocOrd][]uint32, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -164,7 +164,7 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 		exec.addPostingsRead(postingsRead)
 	}()
 
-	var merged map[DocID][]uint32
+	var merged map[DocOrd][]uint32
 	if len(keys) == 1 {
 		if s.filter != nil {
 			miss := !s.filter.Contains([]byte(keys[0]))
@@ -182,18 +182,17 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 		if err != nil {
 			return nil, fmt.Errorf("fts: positional search: index search: %w", err)
 		}
-		refs = s.hydratePositionalPostings(refs)
 		postingsRead += len(refs)
-		merged = make(map[DocID][]uint32, len(refs))
+		merged = make(map[DocOrd][]uint32, len(refs))
 		for _, r := range refs {
 			if len(r.Positions) > 0 {
-				merged[r.ID] = r.Positions
+				merged[s.ordForPositionalPosting(r)] = r.Positions
 			}
 		}
 		return merged, nil
 	}
 
-	merged = make(map[DocID][]uint32)
+	merged = make(map[DocOrd][]uint32)
 	for _, key := range keys {
 		if s.filter != nil {
 			miss := !s.filter.Contains([]byte(key))
@@ -211,16 +210,16 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 		if err != nil {
 			return nil, fmt.Errorf("fts: positional search: index search: %w", err)
 		}
-		refs = s.hydratePositionalPostings(refs)
 		postingsRead += len(refs)
 		for _, r := range refs {
 			if len(r.Positions) == 0 {
 				continue
 			}
-			if existing, ok := merged[r.ID]; ok {
-				merged[r.ID] = mergeSortedPositions(existing, r.Positions)
+			ord := s.ordForPositionalPosting(r)
+			if existing, ok := merged[ord]; ok {
+				merged[ord] = mergeSortedPositions(existing, r.Positions)
 			} else {
-				merged[r.ID] = append([]uint32(nil), r.Positions...)
+				merged[ord] = append([]uint32(nil), r.Positions...)
 			}
 		}
 	}
@@ -228,7 +227,7 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 	return merged, nil
 }
 
-func smallestPostingMapIndex(tokenPostings []map[DocID][]uint32) int {
+func smallestPostingMapIndex(tokenPostings []map[DocOrd][]uint32) int {
 	driverIdx := 0
 	for i := 1; i < len(tokenPostings); i++ {
 		if len(tokenPostings[i]) < len(tokenPostings[driverIdx]) {
@@ -238,26 +237,30 @@ func smallestPostingMapIndex(tokenPostings []map[DocID][]uint32) int {
 	return driverIdx
 }
 
-func docPresentInAllPostings(tokenPostings []map[DocID][]uint32, docID DocID, skipIdx int) bool {
+func docPresentInAllPostings(tokenPostings []map[DocOrd][]uint32, ord DocOrd, skipIdx int) bool {
 	for i := 0; i < len(tokenPostings); i++ {
 		if i == skipIdx {
 			continue
 		}
-		if _, ok := tokenPostings[i][docID]; !ok {
+		if _, ok := tokenPostings[i][ord]; !ok {
 			return false
 		}
 	}
 	return true
 }
 
-func resultsFromCounts(counts map[DocID]uint32, scores map[DocID]float64, useScore bool) ([]Result, int) {
+func resultsFromCounts(counts map[DocOrd]uint32, scores map[DocOrd]float64, useScore bool, registry *DocRegistry) ([]Result, int) {
 	results := make([]Result, 0, len(counts))
-	for id, cnt := range counts {
+	for ord, cnt := range counts {
+		id := registry.Lookup(ord)
+		if id == "" {
+			continue
+		}
 		results = append(results, Result{
 			ID:            id,
 			UniqueMatches: 1,
 			TotalMatches:  int(cnt),
-			Score:         scores[id],
+			Score:         scores[ord],
 		})
 	}
 
@@ -274,7 +277,7 @@ func resultsFromCounts(counts map[DocID]uint32, scores map[DocID]float64, useSco
 	return results, len(results)
 }
 
-func phraseAlign(tokenPostings []map[DocID][]uint32, docID DocID, driverIdx int, driverPositions []uint32) uint32 {
+func phraseAlign(tokenPostings []map[DocOrd][]uint32, ord DocOrd, driverIdx int, driverPositions []uint32) uint32 {
 	n := len(tokenPostings)
 	if n == 0 || len(driverPositions) == 0 {
 		return 0
@@ -287,7 +290,7 @@ func phraseAlign(tokenPostings []map[DocID][]uint32, docID DocID, driverIdx int,
 		if i == driverIdx {
 			continue
 		}
-		others[i] = tokenPostings[i][docID]
+		others[i] = tokenPostings[i][ord]
 		if len(others[i]) == 0 {
 			return 0
 		}
@@ -337,14 +340,14 @@ outer:
 	return matches
 }
 
-func phraseNearAlign(tokenPostings []map[DocID][]uint32, docID DocID, maxGap uint32) uint32 {
+func phraseNearAlign(tokenPostings []map[DocOrd][]uint32, ord DocOrd, maxGap uint32) uint32 {
 	if len(tokenPostings) == 0 {
 		return 0
 	}
 
 	positions := make([][]uint32, len(tokenPostings))
 	for i := range tokenPostings {
-		positions[i] = tokenPostings[i][docID]
+		positions[i] = tokenPostings[i][ord]
 		if len(positions[i]) == 0 {
 			return 0
 		}

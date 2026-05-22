@@ -1,35 +1,35 @@
 package fts
 
-func (s *Service) hydratePostings(postings []Posting) []Posting {
+func (s *Service) ordForPosting(posting Posting) DocOrd {
+	if posting.ID != "" {
+		return s.registry.GetOrAssign(posting.ID)
+	}
+	return posting.Ord
+}
+
+func (s *Service) normalizePostings(postings []Posting) []Posting {
 	if len(postings) == 0 {
 		return postings
 	}
 	out := make([]Posting, 0, len(postings))
 	for _, posting := range postings {
-		if posting.ID == "" {
-			posting.ID = s.registry.Lookup(posting.Ord)
-			if posting.ID == "" {
-				continue
-			}
-		}
+		posting.Ord = s.ordForPosting(posting)
 		out = append(out, posting)
 	}
 	return out
 }
 
-func (s *Service) hydratePositionalPostings(postings []PositionalPosting) []PositionalPosting {
-	if len(postings) == 0 {
-		return postings
+func (s *Service) ordForPositionalPosting(posting PositionalPosting) DocOrd {
+	if posting.ID != "" {
+		return s.registry.GetOrAssign(posting.ID)
 	}
-	out := make([]PositionalPosting, 0, len(postings))
-	for _, posting := range postings {
-		if posting.ID == "" {
-			posting.ID = s.registry.Lookup(posting.Ord)
-			if posting.ID == "" {
-				continue
-			}
-		}
-		out = append(out, posting)
+	return posting.Ord
+}
+
+func (s *Service) lookupDocID(ord DocOrd) (DocID, bool) {
+	id := s.registry.Lookup(ord)
+	if id == "" {
+		return "", false
 	}
-	return out
+	return id, true
 }

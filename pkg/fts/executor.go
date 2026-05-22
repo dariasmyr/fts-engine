@@ -53,10 +53,10 @@ func (s *Service) searchResultForQuery(ctx context.Context, q Query, maxResults 
 	exec.observeSearchTokens(searchStart)
 	exec.observeTotal(start)
 
-	return searchResultFromHits(hits, maxResults, s.scorer != nil), nil
+	return searchResultFromOrdHits(hits, maxResults, s.scorer != nil, s.registry), nil
 }
 
-func (s *Service) executeQuery(ctx context.Context, q Query, candidateLimit int, scope queryFieldScope) (map[DocID]docAccum, error) {
+func (s *Service) executeQuery(ctx context.Context, q Query, candidateLimit int, scope queryFieldScope) (map[DocOrd]docAccum, error) {
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.setQueryTypeIfEmpty(queryTypeOf(q))
 	}
@@ -65,21 +65,21 @@ func (s *Service) executeQuery(ctx context.Context, q Query, candidateLimit int,
 		return s.execTerm(ctx, t, scope)
 	case *TermQuery:
 		if t == nil {
-			return map[DocID]docAccum{}, nil
+			return map[DocOrd]docAccum{}, nil
 		}
 		return s.execTerm(ctx, *t, scope)
 	case PhraseQuery:
 		return s.execPhrase(ctx, t, scope)
 	case *PhraseQuery:
 		if t == nil {
-			return map[DocID]docAccum{}, nil
+			return map[DocOrd]docAccum{}, nil
 		}
 		return s.execPhrase(ctx, *t, scope)
 	case PrefixQuery:
 		return s.execPrefix(ctx, t, scope)
 	case *PrefixQuery:
 		if t == nil {
-			return map[DocID]docAccum{}, nil
+			return map[DocOrd]docAccum{}, nil
 		}
 		return s.execPrefix(ctx, *t, scope)
 	case *BooleanQuery:

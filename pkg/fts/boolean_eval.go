@@ -5,12 +5,12 @@ import (
 	"sort"
 )
 
-func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocID]docAccum, error) {
+func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocOrd]docAccum, error) {
 	if q == nil || len(q.Clauses) == 0 {
 		if exec := diagnosticsFromContext(ctx); exec != nil {
 			exec.setStrategy(strategyEmpty)
 		}
-		return map[DocID]docAccum{}, nil
+		return map[DocOrd]docAccum{}, nil
 	}
 
 	if res, ok, err := s.tryExecBooleanAndFast(ctx, q, scope); err != nil {
@@ -31,9 +31,9 @@ func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLim
 		return res, nil
 	}
 
-	var musts []map[DocID]docAccum
-	var shoulds []map[DocID]docAccum
-	exclude := make(map[DocID]struct{})
+	var musts []map[DocOrd]docAccum
+	var shoulds []map[DocOrd]docAccum
+	exclude := make(map[DocOrd]struct{})
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.setStrategy(strategyBoolFallback)
 	}
@@ -61,7 +61,7 @@ func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLim
 		}
 	}
 
-	combined := make(map[DocID]docAccum)
+	combined := make(map[DocOrd]docAccum)
 	if len(musts) > 0 {
 		sort.Slice(musts, func(i, j int) bool { return len(musts[i]) < len(musts[j]) })
 		for id, baseHit := range musts[0] {

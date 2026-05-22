@@ -28,10 +28,11 @@ func TestCollectionStatsObservePerFieldLengths(t *testing.T) {
 	if got := svc.collection.TotalDocs(); got != 2 {
 		t.Fatalf("TotalDocs() = %d, want 2", got)
 	}
-	if got := svc.collection.DocLen("title", "doc-1"); got != 2 {
+	ord1 := svc.registry.GetOrAssign("doc-1")
+	if got := svc.collection.DocLen("title", ord1); got != 2 {
 		t.Fatalf("DocLen(title, doc-1) = %d, want 2", got)
 	}
-	if got := svc.collection.DocLen("body", "doc-1"); got != 3 {
+	if got := svc.collection.DocLen("body", ord1); got != 3 {
 		t.Fatalf("DocLen(body, doc-1) = %d, want 3", got)
 	}
 	if got := svc.collection.FieldDocCount("title"); got != 2 {

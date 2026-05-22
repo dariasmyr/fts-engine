@@ -7,7 +7,7 @@ import (
 	"sort"
 )
 
-func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocID]docAccum, bool, error) {
+func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
 			b.WAND.TopK = candidateLimit
@@ -83,7 +83,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 				b.WAND.HeapSize = 0
 			})
 		}
-		return map[DocID]docAccum{}, true, nil
+		return map[DocOrd]docAccum{}, true, nil
 	}
 	if !allSingleExpansionInSameField(plan) || !allClausesHaveStrictSeq(plan) {
 		if exec := diagnosticsFromContext(ctx); exec != nil {
@@ -155,7 +155,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		pivotSeq := clauses[pivot].currentSeq()
 		if clauses[0].currentSeq() == pivotSeq {
 			candidateDocs++
-			matchedDocID := clauses[0].currentDocID()
+			matchedDocOrd := clauses[0].currentDocOrd()
 			var accum docAccum
 			for _, c := range clauses {
 				if c.currentSeq() != pivotSeq {
@@ -167,8 +167,8 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 				accum.Score += s.scoreTermExpansionDoc(*c.exp, d)
 			}
 
-			if _, skip := exclude[matchedDocID]; !skip {
-				hit := wandHit{id: matchedDocID, accum: accum}
+			if _, skip := exclude[matchedDocOrd]; !skip {
+				hit := wandHit{ord: matchedDocOrd, accum: accum}
 				if h.Len() < candidateLimit {
 					heap.Push(h, hit)
 					if h.Len() == candidateLimit {
@@ -202,9 +202,9 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		}
 	}
 
-	out := make(map[DocID]docAccum, h.Len())
+	out := make(map[DocOrd]docAccum, h.Len())
 	for _, hit := range *h {
-		out[hit.id] = hit.accum
+		out[hit.ord] = hit.accum
 	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
@@ -223,10 +223,10 @@ type wandClause struct {
 	cursor int
 }
 
-func (c *wandClause) currentDoc() DocRef  { return c.exp.docs[c.cursor] }
-func (c *wandClause) currentSeq() uint32  { return c.exp.docs[c.cursor].Seq }
-func (c *wandClause) currentDocID() DocID { return c.exp.docs[c.cursor].ID }
-func (c *wandClause) exhausted() bool     { return c.cursor >= len(c.exp.docs) }
+func (c *wandClause) currentDoc() DocRef    { return c.exp.docs[c.cursor] }
+func (c *wandClause) currentSeq() uint32    { return c.exp.docs[c.cursor].Seq }
+func (c *wandClause) currentDocOrd() DocOrd { return c.exp.docs[c.cursor].Ord }
+func (c *wandClause) exhausted() bool       { return c.cursor >= len(c.exp.docs) }
 
 func compactWandClauses(cs []*wandClause) []*wandClause {
 	out := cs[:0]
@@ -253,7 +253,7 @@ func clauseUpperBound(exp *termExpansion, s *Service) float64 {
 	}
 
 	ts := TermStats{Field: exp.field, Term: exp.term, TF: maxTF, DF: exp.df}
-	ds := DocStats{ID: "", Length: 1}
+	ds := DocStats{Ord: 0, Length: 1}
 	return s.scorer.Score(ts, ds, exp.fieldStats)
 }
 
@@ -270,7 +270,7 @@ func allClausesHaveStrictSeq(plan []fastMust) bool {
 }
 
 type wandHit struct {
-	id    DocID
+	ord   DocOrd
 	accum docAccum
 }
 
@@ -284,7 +284,7 @@ func betterWandHit(a, b wandHit) bool {
 	if a.accum.TotalMatches != b.accum.TotalMatches {
 		return a.accum.TotalMatches > b.accum.TotalMatches
 	}
-	return a.id < b.id
+	return a.ord < b.ord
 }
 
 type candidateHeap []wandHit

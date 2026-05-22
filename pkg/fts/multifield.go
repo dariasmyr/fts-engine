@@ -48,7 +48,7 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 	tokens := pipeline.Process(field.Value)
 	ord := s.registry.GetOrAssign(docID)
 	if s.scorer != nil {
-		s.collection.observe(name, docID, uint32(len(tokens)))
+		s.collection.observe(name, ord, uint32(len(tokens)))
 	}
 	for pos, token := range tokens {
 		if err := ctx.Err(); err != nil {
@@ -173,7 +173,7 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 
 	exec.observeSearchTokens(searchStart)
 	exec.observeTotal(start)
-	return attachDiagnostics(ctx, searchResultFromHits(hits, maxResults, s.scorer != nil)), nil
+	return attachDiagnostics(ctx, searchResultFromOrdHits(hits, maxResults, s.scorer != nil, s.registry)), nil
 }
 
 func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []string, phrase string, distance int, maxResults int) (*SearchResult, error) {
@@ -217,7 +217,7 @@ func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []str
 
 	exec.observeSearchTokens(searchStart)
 	exec.observeTotal(start)
-	return attachDiagnostics(ctx, searchResultFromHits(hits, maxResults, s.scorer != nil)), nil
+	return attachDiagnostics(ctx, searchResultFromOrdHits(hits, maxResults, s.scorer != nil, s.registry)), nil
 }
 
 func (s *Service) SnapshotFields() (map[string]Index, Filter) {

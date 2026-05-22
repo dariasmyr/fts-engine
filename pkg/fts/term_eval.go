@@ -5,17 +5,17 @@ import (
 	"fmt"
 )
 
-func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldScope) (map[DocID]docAccum, error) {
+func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldScope) (map[DocOrd]docAccum, error) {
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.setStrategy(strategyTerm)
 	}
 	if q.Term == "" {
-		return map[DocID]docAccum{}, nil
+		return map[DocOrd]docAccum{}, nil
 	}
 
 	tokens := s.pipeline.Process(q.Term)
 	if len(tokens) == 0 {
-		return map[DocID]docAccum{}, nil
+		return map[DocOrd]docAccum{}, nil
 	}
 	fields := s.resolveScopedFields(q.Field, scope)
 	if exec := diagnosticsFromContext(ctx); exec != nil {
@@ -54,25 +54,26 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldSco
 		plan = append(plan, group)
 	}
 
-	hits := make(map[DocID]docAccum, totalCap)
+	hits := make(map[DocOrd]docAccum, totalCap)
 	for _, group := range plan {
-		var seenInGroup map[DocID]struct{}
+		var seenInGroup map[DocOrd]struct{}
 		if !group.single {
-			seenInGroup = make(map[DocID]struct{}, group.totalDocs)
+			seenInGroup = make(map[DocOrd]struct{}, group.totalDocs)
 		}
 
 		for _, expansion := range group.expansions {
 			for _, doc := range expansion.docs {
-				accum := hits[doc.ID]
+				ord := s.ordForPosting(doc)
+				accum := hits[ord]
 				if group.single {
 					accum.UniqueMatches++
-				} else if _, seen := seenInGroup[doc.ID]; !seen {
+				} else if _, seen := seenInGroup[ord]; !seen {
 					accum.UniqueMatches++
-					seenInGroup[doc.ID] = struct{}{}
+					seenInGroup[ord] = struct{}{}
 				}
 				accum.TotalMatches += int(doc.Count)
 				accum.Score += s.scoreTermExpansionDoc(expansion, doc)
-				hits[doc.ID] = accum
+				hits[ord] = accum
 			}
 		}
 	}
