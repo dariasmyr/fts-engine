@@ -117,13 +117,17 @@ func (t *Index) newNode(prefix string) int {
 	return len(t.nodes) - 1
 }
 
-func (t *Index) ordinalFor(id fts.DocID) uint32 {
-	if ord, ok := t.docToOrd[id]; ok {
-		return ord
+func (t *Index) recordOrd(id fts.DocID, ords ...fts.DocOrd) uint32 {
+	if existing, ok := t.docToOrd[id]; ok {
+		return existing
 	}
-	ord := uint32(len(t.docToOrd))
-	t.docToOrd[id] = ord
-	return ord
+	ord := fts.DocOrd(len(t.docToOrd))
+	if len(ords) > 0 {
+		ord = ords[0]
+	}
+	seq := uint32(ord)
+	t.docToOrd[id] = seq
+	return seq
 }
 
 func lcp(a, b string) int {
@@ -134,17 +138,18 @@ func lcp(a, b string) int {
 	return i
 }
 
-func (t *Index) Insert(word string, docID fts.DocID) error {
-	return t.insert(word, docID, false, 0)
+func (t *Index) Insert(word string, docID fts.DocID, ord ...fts.DocOrd) error {
+	return t.insert(word, docID, false, 0, ord...)
 }
 
-func (t *Index) InsertAt(word string, docID fts.DocID, position uint32) error {
-	return t.insert(word, docID, true, position)
+func (t *Index) InsertAt(word string, docID fts.DocID, position uint32, ord ...fts.DocOrd) error {
+	return t.insert(word, docID, true, position, ord...)
 }
 
-func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) error {
+func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, ords ...fts.DocOrd) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	ord := fts.DocOrd(t.recordOrd(docID, ords...))
 
 	current := t.root
 	rest := word
@@ -164,7 +169,7 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) er
 				rest = rest[p:]
 				if rest == "" {
 					// The word ends exactly on this node.
-					t.addDoc(current, docID, hasPos, pos)
+					t.addDoc(current, docID, ord, hasPos, pos)
 					return nil
 				}
 				advanced = true
@@ -184,12 +189,12 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) er
 
 			if newSuffix != "" {
 				newIdx := t.newNode(newSuffix)
-				t.addDoc(newIdx, docID, hasPos, pos)
+				t.addDoc(newIdx, docID, ord, hasPos, pos)
 				t.nodes[middle].children = append(t.nodes[middle].children, newIdx)
 				return nil
 			}
 
-			t.addDoc(middle, docID, hasPos, pos)
+			t.addDoc(middle, docID, ord, hasPos, pos)
 			return nil
 		}
 
@@ -200,13 +205,13 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) er
 
 		// No child matches the remaining suffix, so attach it as a new edge.
 		newIdx := t.newNode(rest)
-		t.addDoc(newIdx, docID, hasPos, pos)
+		t.addDoc(newIdx, docID, ord, hasPos, pos)
 		t.nodes[current].children = append(t.nodes[current].children, newIdx)
 		return nil
 	}
 }
 
-func (t *Index) addDoc(nodeIdx int, docID fts.DocID, hasPos bool, pos uint32) {
+func (t *Index) addDoc(nodeIdx int, docID fts.DocID, ord fts.DocOrd, hasPos bool, pos uint32) {
 	n := &t.nodes[nodeIdx]
 	if last := len(n.docs) - 1; last >= 0 && n.docs[last].ID == docID {
 		n.docs[last].Count++
@@ -226,8 +231,8 @@ func (t *Index) addDoc(nodeIdx int, docID fts.DocID, hasPos bool, pos uint32) {
 			return
 		}
 	}
-	seq := t.ordinalFor(docID)
-	n.docs = append(n.docs, fts.DocRef{ID: docID, Count: 1, Seq: seq})
+	seq := t.recordOrd(docID, ord)
+	n.docs = append(n.docs, fts.DocRef{ID: docID, Ord: ord, Count: 1, Seq: seq})
 	if hasPos {
 		t.growPositions(nodeIdx, len(n.docs))
 		last := len(n.docs) - 1
@@ -293,6 +298,7 @@ func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
 				}
 				out = append(out, fts.PositionalDocRef{
 					ID:        n.docs[i].ID,
+					Ord:       n.docs[i].Ord,
 					Positions: positions,
 				})
 			}
@@ -330,7 +336,7 @@ func (n *node) isTerminal() bool {
 func addMergedDoc(merged map[fts.DocID]fts.DocRef, id fts.DocID, count, seq uint32) {
 	ref, ok := merged[id]
 	if !ok {
-		merged[id] = fts.DocRef{ID: id, Count: count, Seq: seq}
+		merged[id] = fts.DocRef{ID: id, Ord: fts.DocOrd(seq), Count: count, Seq: seq}
 		return
 	}
 	ref.Count += count

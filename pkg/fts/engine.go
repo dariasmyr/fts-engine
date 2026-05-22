@@ -27,6 +27,7 @@ type Service struct {
 	filter       Filter
 	scorer       Scorer
 	collection   *collectionStats
+	registry     *DocRegistry
 	singleField  bool
 
 	mu      sync.RWMutex
@@ -68,6 +69,7 @@ func newService(keyGen KeyGenerator, opts ...Option) *Service {
 		pipeline:   defaultPipeline{},
 		indexes:    make(map[string]Index),
 		collection: newCollectionStats(),
+		registry:   NewDocRegistry(),
 	}
 
 	for _, opt := range opts {

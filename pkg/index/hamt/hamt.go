@@ -21,7 +21,7 @@ const (
 
 type documents []fts.DocRef
 
-func (d documents) Add(id fts.DocID, seq uint32, positions [][]uint32, hasPos bool, pos uint32) (documents, [][]uint32) {
+func (d documents) Add(id fts.DocID, ord fts.DocOrd, seq uint32, positions [][]uint32, hasPos bool, pos uint32) (documents, [][]uint32) {
 	i := sort.Search(len(d), func(i int) bool { return d[i].ID >= id })
 	if i < len(d) && d[i].ID == id {
 		d[i].Count++
@@ -33,7 +33,7 @@ func (d documents) Add(id fts.DocID, seq uint32, positions [][]uint32, hasPos bo
 	}
 	d = append(d, fts.DocRef{})
 	copy(d[i+1:], d[i:])
-	d[i] = fts.DocRef{ID: id, Count: 1, Seq: seq}
+	d[i] = fts.DocRef{ID: id, Ord: ord, Count: 1, Seq: seq}
 	if hasPos {
 		positions = growPositions(positions, len(d))
 		copy(positions[i+1:], positions[i:])
@@ -54,15 +54,15 @@ type terminal struct {
 	entries []entry
 }
 
-func (t *terminal) Append(word string, id fts.DocID, seq uint32, hasPos bool, pos uint32) {
+func (t *terminal) Append(word string, id fts.DocID, ord fts.DocOrd, seq uint32, hasPos bool, pos uint32) {
 	i := sort.Search(len(t.entries), func(i int) bool { return t.entries[i].key >= word })
 	if i < len(t.entries) && t.entries[i].key == word {
-		t.entries[i].docs, t.entries[i].positions = t.entries[i].docs.Add(id, seq, t.entries[i].positions, hasPos, pos)
+		t.entries[i].docs, t.entries[i].positions = t.entries[i].docs.Add(id, ord, seq, t.entries[i].positions, hasPos, pos)
 		return
 	}
 	t.entries = append(t.entries, entry{})
 	copy(t.entries[i+1:], t.entries[i:])
-	e := entry{key: word, docs: documents{{ID: id, Count: 1, Seq: seq}}}
+	e := entry{key: word, docs: documents{{ID: id, Ord: ord, Count: 1, Seq: seq}}}
 	if hasPos {
 		e.positions = [][]uint32{{pos}}
 	}
@@ -280,15 +280,15 @@ func (t *Index) SearchPrefix(prefix string) ([]fts.DocRef, error) {
 	return mergedDocsSlice(merged), nil
 }
 
-func (t *Index) Insert(word string, id fts.DocID) error {
-	return t.insert(word, id, false, 0)
+func (t *Index) Insert(word string, id fts.DocID, ord ...fts.DocOrd) error {
+	return t.insert(word, id, false, 0, ord...)
 }
 
-func (t *Index) InsertAt(word string, id fts.DocID, position uint32) error {
-	return t.insert(word, id, true, position)
+func (t *Index) InsertAt(word string, id fts.DocID, position uint32, ord ...fts.DocOrd) error {
+	return t.insert(word, id, true, position, ord...)
 }
 
-func (t *Index) insert(word string, id fts.DocID, hasPos bool, pos uint32) error {
+func (t *Index) insert(word string, id fts.DocID, hasPos bool, pos uint32, ords ...fts.DocOrd) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -312,7 +312,11 @@ func (t *Index) insert(word string, id fts.DocID, hasPos bool, pos uint32) error
 	}
 
 	seq := t.ordinalFor(id)
-	t.terms[termPtr].Append(word, id, seq, hasPos, pos)
+	if len(ords) > 0 {
+		seq = uint32(ords[0])
+		t.docToOrd[id] = seq
+	}
+	t.terms[termPtr].Append(word, id, fts.DocOrd(seq), seq, hasPos, pos)
 	return nil
 }
 
@@ -350,7 +354,7 @@ func collectPositionalDocs(docs []fts.DocRef, positions [][]uint32) []fts.Positi
 		if i < len(positions) {
 			pos = positions[i]
 		}
-		out = append(out, fts.PositionalDocRef{ID: docs[i].ID, Positions: pos})
+		out = append(out, fts.PositionalDocRef{ID: docs[i].ID, Ord: docs[i].Ord, Positions: pos})
 	}
 	return out
 }
@@ -358,7 +362,7 @@ func collectPositionalDocs(docs []fts.DocRef, positions [][]uint32) []fts.Positi
 func addMergedDoc(merged map[fts.DocID]fts.DocRef, id fts.DocID, count, seq uint32) {
 	ref, ok := merged[id]
 	if !ok {
-		merged[id] = fts.DocRef{ID: id, Count: count, Seq: seq}
+		merged[id] = fts.DocRef{ID: id, Ord: fts.DocOrd(seq), Count: count, Seq: seq}
 		return
 	}
 	ref.Count += count

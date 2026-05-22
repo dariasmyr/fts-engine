@@ -9,11 +9,14 @@ type DocID string
 
 type DocOrd uint32
 
-type DocRef struct {
+type Posting struct {
 	ID    DocID
+	Ord   DocOrd
 	Count uint32
 	Seq   uint32
 }
+
+type DocRef = Posting
 
 type Result struct {
 	ID            DocID
@@ -41,25 +44,28 @@ type Field struct {
 }
 
 type Index interface {
-	Insert(key string, id DocID) error
-	Search(key string) ([]DocRef, error)
+	Insert(key string, id DocID, ord ...DocOrd) error
+	Search(key string) ([]Posting, error)
 }
 
 type PrefixIndex interface {
 	Index
-	SearchPrefix(prefix string) ([]DocRef, error)
+	SearchPrefix(prefix string) ([]Posting, error)
 }
 
-type PositionalDocRef struct {
+type PositionalPosting struct {
 	ID DocID
+	Ord DocOrd
 	// Positions may share backing storage with the index and must be treated as read-only.
 	Positions []uint32
 }
 
+type PositionalDocRef = PositionalPosting
+
 type PositionalIndex interface {
 	Index
-	InsertAt(key string, id DocID, position uint32) error
-	SearchPositional(key string) ([]PositionalDocRef, error)
+	InsertAt(key string, id DocID, position uint32, ord ...DocOrd) error
+	SearchPositional(key string) ([]PositionalPosting, error)
 }
 
 type IndexFactory func(fieldName string) (Index, error)

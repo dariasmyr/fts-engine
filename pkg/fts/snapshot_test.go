@@ -17,7 +17,7 @@ func newSnapshotIndex() *snapshotIndex {
 	return &snapshotIndex{data: make(map[string][]DocRef)}
 }
 
-func (m *snapshotIndex) Insert(key string, id DocID) error {
+func (m *snapshotIndex) Insert(key string, id DocID, ord ...DocOrd) error {
 	rows := m.data[key]
 	for i := range rows {
 		if rows[i].ID == id {

@@ -46,6 +46,7 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 
 	positional, hasPositions := index.(PositionalIndex)
 	tokens := pipeline.Process(field.Value)
+	ord := s.registry.GetOrAssign(docID)
 	if s.scorer != nil {
 		s.collection.observe(name, docID, uint32(len(tokens)))
 	}
@@ -66,12 +67,12 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 				}
 			}
 			if hasPositions {
-				if err := positional.InsertAt(key, docID, uint32(pos)); err != nil {
+				if err := positional.InsertAt(key, docID, uint32(pos), ord); err != nil {
 					return fmt.Errorf("fts: index document %q field %q: insert: %w", docID, name, err)
 				}
 				continue
 			}
-			if err := index.Insert(key, docID); err != nil {
+			if err := index.Insert(key, docID, ord); err != nil {
 				return fmt.Errorf("fts: index document %q field %q: insert: %w", docID, name, err)
 			}
 		}

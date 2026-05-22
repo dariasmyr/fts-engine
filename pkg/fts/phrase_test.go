@@ -18,12 +18,12 @@ func newPositionalMemoryIndex() *positionalMemoryIndex {
 	}
 }
 
-func (p *positionalMemoryIndex) Insert(key string, id DocID) error {
+func (p *positionalMemoryIndex) Insert(key string, id DocID, ord ...DocOrd) error {
 	p.bumpCount(key, id)
 	return nil
 }
 
-func (p *positionalMemoryIndex) InsertAt(key string, id DocID, pos uint32) error {
+func (p *positionalMemoryIndex) InsertAt(key string, id DocID, pos uint32, ord ...DocOrd) error {
 	p.bumpCount(key, id)
 	if _, ok := p.positions[key]; !ok {
 		p.positions[key] = make(map[DocID][]uint32)

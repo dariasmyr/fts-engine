@@ -15,7 +15,7 @@ func newPrefixMemoryIndex() *prefixMemoryIndex {
 	return &prefixMemoryIndex{entries: make(map[string][]DocRef)}
 }
 
-func (p *prefixMemoryIndex) Insert(key string, id DocID) error {
+func (p *prefixMemoryIndex) Insert(key string, id DocID, ord ...DocOrd) error {
 	entries := p.entries[key]
 	for i := range entries {
 		if entries[i].ID == id {

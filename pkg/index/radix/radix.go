@@ -124,13 +124,17 @@ func collectOrdinals(docToOrd map[fts.DocID]uint32, n *node) {
 	}
 }
 
-func (t *Index) ordinalFor(id fts.DocID) uint32 {
-	if ord, ok := t.docToOrd[id]; ok {
-		return ord
+func (t *Index) recordOrd(id fts.DocID, ords ...fts.DocOrd) uint32 {
+	if existing, ok := t.docToOrd[id]; ok {
+		return existing
 	}
-	ord := uint32(len(t.docToOrd))
-	t.docToOrd[id] = ord
-	return ord
+	ord := fts.DocOrd(len(t.docToOrd))
+	if len(ords) > 0 {
+		ord = ords[0]
+	}
+	seq := uint32(ord)
+	t.docToOrd[id] = seq
+	return seq
 }
 
 func lcp(a, b string) int {
@@ -141,17 +145,18 @@ func lcp(a, b string) int {
 	return i
 }
 
-func (t *Index) Insert(word string, docID fts.DocID) error {
-	return t.insert(word, docID, false, 0)
+func (t *Index) Insert(word string, docID fts.DocID, ord ...fts.DocOrd) error {
+	return t.insert(word, docID, false, 0, ord...)
 }
 
-func (t *Index) InsertAt(word string, docID fts.DocID, position uint32) error {
-	return t.insert(word, docID, true, position)
+func (t *Index) InsertAt(word string, docID fts.DocID, position uint32, ord ...fts.DocOrd) error {
+	return t.insert(word, docID, true, position, ord...)
 }
 
-func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) error {
+func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, ords ...fts.DocOrd) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	ord := fts.DocOrd(t.recordOrd(docID, ords...))
 
 	current := t.root
 	rest := word
@@ -168,7 +173,7 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) er
 				current = child
 				rest = rest[p:]
 				if rest == "" {
-					t.recordDoc(current, docID, hasPos, pos)
+					t.recordDoc(current, docID, ord, hasPos, pos)
 					return nil
 				}
 				goto NEXT
@@ -185,17 +190,17 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) er
 
 			if newSuffix != "" {
 				n = newNode(newSuffix)
-				t.recordDoc(n, docID, hasPos, pos)
+				t.recordDoc(n, docID, ord, hasPos, pos)
 				middle.children = append(middle.children, n)
 				return nil
 			}
 
-			t.recordDoc(middle, docID, hasPos, pos)
+			t.recordDoc(middle, docID, ord, hasPos, pos)
 			return nil
 		}
 
 		n = newNode(rest)
-		t.recordDoc(n, docID, hasPos, pos)
+		t.recordDoc(n, docID, ord, hasPos, pos)
 		current.children = append(current.children, n)
 		return nil
 
@@ -203,10 +208,10 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) er
 	}
 }
 
-func (t *Index) recordDoc(n *node, docID fts.DocID, hasPos bool, pos uint32) {
+func (t *Index) recordDoc(n *node, docID fts.DocID, ord fts.DocOrd, hasPos bool, pos uint32) {
 	n.terminal = true
 	if _, ok := n.docs[docID]; !ok {
-		n.seqs[docID] = t.ordinalFor(docID)
+		n.seqs[docID] = t.recordOrd(docID, ord)
 	}
 	n.docs[docID]++
 	if hasPos {
@@ -266,7 +271,8 @@ func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
 func collectDocs(docs map[fts.DocID]uint32, seqs map[fts.DocID]uint32) []fts.DocRef {
 	res := make([]fts.DocRef, 0, len(docs))
 	for id, count := range docs {
-		res = append(res, fts.DocRef{ID: id, Count: count, Seq: seqs[id]})
+		seq := seqs[id]
+		res = append(res, fts.DocRef{ID: id, Ord: fts.DocOrd(seq), Count: count, Seq: seq})
 	}
 	sort.Slice(res, func(i, j int) bool { return res[i].Seq < res[j].Seq })
 	return res
@@ -279,7 +285,8 @@ func collectPositionalDocs(positions map[fts.DocID][]uint32, seqs map[fts.DocID]
 	}
 	res := make([]positionalRef, 0, len(positions))
 	for id, pos := range positions {
-		res = append(res, positionalRef{PositionalDocRef: fts.PositionalDocRef{ID: id, Positions: pos}, seq: seqs[id]})
+		seq := seqs[id]
+		res = append(res, positionalRef{PositionalDocRef: fts.PositionalDocRef{ID: id, Ord: fts.DocOrd(seq), Positions: pos}, seq: seq})
 	}
 	sort.Slice(res, func(i, j int) bool { return res[i].seq < res[j].seq })
 	out := make([]fts.PositionalDocRef, 0, len(res))
@@ -292,7 +299,7 @@ func collectPositionalDocs(positions map[fts.DocID][]uint32, seqs map[fts.DocID]
 func addMergedDoc(merged map[fts.DocID]fts.DocRef, id fts.DocID, count, seq uint32) {
 	ref, ok := merged[id]
 	if !ok {
-		merged[id] = fts.DocRef{ID: id, Count: count, Seq: seq}
+		merged[id] = fts.DocRef{ID: id, Ord: fts.DocOrd(seq), Count: count, Seq: seq}
 		return
 	}
 	ref.Count += count

@@ -147,13 +147,17 @@ func collectOrdinals(docToOrd map[fts.DocID]uint32, n *node) {
 	}
 }
 
-func (t *Index) ordinalFor(id fts.DocID) uint32 {
-	if ord, ok := t.docToOrd[id]; ok {
-		return ord
+func (t *Index) recordOrd(id fts.DocID, ords ...fts.DocOrd) uint32 {
+	if existing, ok := t.docToOrd[id]; ok {
+		return existing
 	}
-	ord := uint32(len(t.docToOrd))
-	t.docToOrd[id] = ord
-	return ord
+	ord := fts.DocOrd(len(t.docToOrd))
+	if len(ords) > 0 {
+		ord = ords[0]
+	}
+	seq := uint32(ord)
+	t.docToOrd[id] = seq
+	return seq
 }
 
 func hashKey(key string) uint32 {
@@ -177,12 +181,12 @@ func (n *node) appendChild(newChild any, mask uint32, pos int) {
 	n.children = append(n.children[:pos], append([]any{newChild}, n.children[pos:]...)...)
 }
 
-func (n *node) insertNode(hash uint32, key string, docID fts.DocID, seq uint32, level int, hasPos bool, tokenPos uint32) {
+func (n *node) insertNode(hash uint32, key string, docID fts.DocID, ord fts.DocOrd, seq uint32, level int, hasPos bool, tokenPos uint32) {
 	child, slot, mask := n.nextNode(hash, level)
 
 	if level == depth {
 		if child == nil {
-			e := entry{key: key, docs: []fts.DocRef{{ID: docID, Count: 1, Seq: seq}}}
+			e := entry{key: key, docs: []fts.DocRef{{ID: docID, Ord: ord, Count: 1, Seq: seq}}}
 			if hasPos {
 				e.positions = [][]uint32{{tokenPos}}
 			}
@@ -194,12 +198,12 @@ func (n *node) insertNode(hash uint32, key string, docID fts.DocID, seq uint32, 
 		t := child.(*terminalNode)
 		for i := range t.entries {
 			if key == t.entries[i].key {
-				addDoc(&t.entries[i].docs, &t.entries[i].positions, docID, seq, hasPos, tokenPos)
+				addDoc(&t.entries[i].docs, &t.entries[i].positions, docID, ord, seq, hasPos, tokenPos)
 				return
 			}
 		}
 
-		e := entry{key: key, docs: []fts.DocRef{{ID: docID, Count: 1, Seq: seq}}}
+		e := entry{key: key, docs: []fts.DocRef{{ID: docID, Ord: ord, Count: 1, Seq: seq}}}
 		if hasPos {
 			e.positions = [][]uint32{{tokenPos}}
 		}
@@ -213,10 +217,10 @@ func (n *node) insertNode(hash uint32, key string, docID fts.DocID, seq uint32, 
 		child = newChild
 	}
 
-	child.(*node).insertNode(hash, key, docID, seq, level+1, hasPos, tokenPos)
+	child.(*node).insertNode(hash, key, docID, ord, seq, level+1, hasPos, tokenPos)
 }
 
-func addDoc(docs *[]fts.DocRef, positions *[][]uint32, docID fts.DocID, seq uint32, hasPos bool, pos uint32) {
+func addDoc(docs *[]fts.DocRef, positions *[][]uint32, docID fts.DocID, ord fts.DocOrd, seq uint32, hasPos bool, pos uint32) {
 	for i := range *docs {
 		if (*docs)[i].ID == docID {
 			(*docs)[i].Count++
@@ -227,7 +231,7 @@ func addDoc(docs *[]fts.DocRef, positions *[][]uint32, docID fts.DocID, seq uint
 			return
 		}
 	}
-	*docs = append(*docs, fts.DocRef{ID: docID, Count: 1, Seq: seq})
+	*docs = append(*docs, fts.DocRef{ID: docID, Ord: ord, Count: 1, Seq: seq})
 	if hasPos {
 		*positions = growPositions(*positions, len(*docs))
 		last := len(*docs) - 1
@@ -235,19 +239,19 @@ func addDoc(docs *[]fts.DocRef, positions *[][]uint32, docID fts.DocID, seq uint
 	}
 }
 
-func (t *Index) Insert(word string, docID fts.DocID) error {
-	return t.insert(word, docID, false, 0)
+func (t *Index) Insert(word string, docID fts.DocID, ord ...fts.DocOrd) error {
+	return t.insert(word, docID, false, 0, ord...)
 }
 
-func (t *Index) InsertAt(word string, docID fts.DocID, position uint32) error {
-	return t.insert(word, docID, true, position)
+func (t *Index) InsertAt(word string, docID fts.DocID, position uint32, ord ...fts.DocOrd) error {
+	return t.insert(word, docID, true, position, ord...)
 }
 
-func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32) error {
+func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, ords ...fts.DocOrd) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	seq := t.ordinalFor(docID)
-	t.root.insertNode(hashKey(word), word, docID, seq, 0, hasPos, pos)
+	seq := t.recordOrd(docID, ords...)
+	t.root.insertNode(hashKey(word), word, docID, fts.DocOrd(seq), seq, 0, hasPos, pos)
 	return nil
 }
 
@@ -334,7 +338,7 @@ func collectPositionalDocs(docs []fts.DocRef, positions [][]uint32) []fts.Positi
 		if i < len(positions) {
 			pos = positions[i]
 		}
-		out = append(out, fts.PositionalDocRef{ID: docs[i].ID, Positions: pos})
+		out = append(out, fts.PositionalDocRef{ID: docs[i].ID, Ord: docs[i].Ord, Positions: pos})
 	}
 	return out
 }
@@ -353,17 +357,17 @@ func collectPrefixDocs(current *node, prefix string, merged map[fts.DocID]fts.Do
 					continue
 				}
 				for _, doc := range entry.docs {
-					addMergedDoc(merged, doc.ID, doc.Count, doc.Seq)
+					addMergedDoc(merged, doc.ID, doc.Ord, doc.Count, doc.Seq)
 				}
 			}
 		}
 	}
 }
 
-func addMergedDoc(merged map[fts.DocID]fts.DocRef, id fts.DocID, count, seq uint32) {
+func addMergedDoc(merged map[fts.DocID]fts.DocRef, id fts.DocID, ord fts.DocOrd, count, seq uint32) {
 	ref, ok := merged[id]
 	if !ok {
-		merged[id] = fts.DocRef{ID: id, Count: count, Seq: seq}
+		merged[id] = fts.DocRef{ID: id, Ord: ord, Count: count, Seq: seq}
 		return
 	}
 	ref.Count += count

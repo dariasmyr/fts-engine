@@ -11,6 +11,7 @@ type memoryIndex struct {
 	inserts []struct {
 		key string
 		id  DocID
+		ord DocOrd
 	}
 	searches []string
 }
@@ -19,11 +20,16 @@ func newMemoryIndex() *memoryIndex {
 	return &memoryIndex{entries: make(map[string][]DocRef)}
 }
 
-func (m *memoryIndex) Insert(key string, id DocID) error {
+func (m *memoryIndex) Insert(key string, id DocID, ord ...DocOrd) error {
+	assigned := DocOrd(0)
+	if len(ord) > 0 {
+		assigned = ord[0]
+	}
 	m.inserts = append(m.inserts, struct {
 		key string
 		id  DocID
-	}{key: key, id: id})
+		ord DocOrd
+	}{key: key, id: id, ord: assigned})
 	return nil
 }
 
