@@ -168,7 +168,8 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 			}
 
 			if _, skip := exclude[matchedDocOrd]; !skip {
-				hit := wandHit{ord: matchedDocOrd, accum: accum}
+				matchedDocID, _ := s.lookupDocID(matchedDocOrd)
+				hit := wandHit{id: matchedDocID, ord: matchedDocOrd, accum: accum}
 				if h.Len() < candidateLimit {
 					heap.Push(h, hit)
 					if h.Len() == candidateLimit {
@@ -270,6 +271,7 @@ func allClausesHaveStrictSeq(plan []fastMust) bool {
 }
 
 type wandHit struct {
+	id    DocID
 	ord   DocOrd
 	accum docAccum
 }
@@ -284,7 +286,7 @@ func betterWandHit(a, b wandHit) bool {
 	if a.accum.TotalMatches != b.accum.TotalMatches {
 		return a.accum.TotalMatches > b.accum.TotalMatches
 	}
-	return a.ord < b.ord
+	return a.id < b.id
 }
 
 type candidateHeap []wandHit

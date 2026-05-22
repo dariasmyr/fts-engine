@@ -24,6 +24,18 @@ func WithScorer(scorer Scorer) Option {
 
 func WithCollectionStatsSnapshot(snapshot *CollectionStatsSnapshot) Option {
 	return func(s *Service) {
-		s.collection = newCollectionStatsFromSnapshot(snapshot, s.registry)
+		s.pendingCollectionStatsSnapshot = snapshot
+	}
+}
+
+func WithDocRegistrySnapshot(ids []DocID) Option {
+	return func(s *Service) {
+		s.pendingRegistrySnapshot = append([]DocID(nil), ids...)
+	}
+}
+
+func WithTombstonesSnapshot(words []uint64) Option {
+	return func(s *Service) {
+		s.pendingTombstonesSnapshot = append([]uint64(nil), words...)
 	}
 }

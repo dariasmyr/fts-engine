@@ -92,7 +92,11 @@ func (s *Service) scoreTermHit(field string, term string, ord DocOrd, tf uint32,
 }
 
 func (s *Service) scoreTermExpansionDoc(exp termExpansion, doc DocRef) float64 {
-	return s.scoreTermHit(exp.field, exp.term, s.ordForPosting(doc), doc.Count, exp.df, exp.fieldStats)
+	ord, ok := s.ordForPosting(doc)
+	if !ok {
+		return 0
+	}
+	return s.scoreTermHit(exp.field, exp.term, ord, doc.Count, exp.df, exp.fieldStats)
 }
 
 func (s *Service) scoreTermExpansionTF(exp termExpansion, ord DocOrd, tf uint32) float64 {

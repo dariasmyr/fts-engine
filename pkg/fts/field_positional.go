@@ -187,7 +187,8 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 		merged = make(map[DocOrd][]uint32, len(refs))
 		for _, r := range refs {
 			if len(r.Positions) > 0 {
-				merged[s.ordForPositionalPosting(r)] = r.Positions
+				ord, _ := s.ordForPositionalPosting(r)
+				merged[ord] = r.Positions
 			}
 		}
 		return merged, nil
@@ -217,7 +218,7 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 			if len(r.Positions) == 0 {
 				continue
 			}
-			ord := s.ordForPositionalPosting(r)
+			ord, _ := s.ordForPositionalPosting(r)
 			if existing, ok := merged[ord]; ok {
 				merged[ord] = mergeSortedPositions(existing, r.Positions)
 			} else {

@@ -63,7 +63,7 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldSco
 
 		for _, expansion := range group.expansions {
 			for _, doc := range expansion.docs {
-				ord := s.ordForPosting(doc)
+				ord, _ := s.ordForPosting(doc)
 				accum := hits[ord]
 				if group.single {
 					accum.UniqueMatches++

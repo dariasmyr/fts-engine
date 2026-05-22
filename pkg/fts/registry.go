@@ -106,6 +106,22 @@ func RestoreDocRegistry(ids []DocID) *DocRegistry {
 	return r
 }
 
+func RestoreDocRegistryActive(ids []DocID, tombstones *Tombstones) *DocRegistry {
+	r := &DocRegistry{
+		idToOrd: make(map[DocID]DocOrd, len(ids)),
+		ordToID: make([]DocID, len(ids)),
+	}
+	copy(r.ordToID, ids)
+	for i, id := range ids {
+		ord := DocOrd(i)
+		if tombstones != nil && tombstones.IsSet(ord) {
+			continue
+		}
+		r.idToOrd[id] = ord
+	}
+	return r
+}
+
 func (r *DocRegistry) ensureInitLocked() {
 	if r.idToOrd == nil {
 		r.idToOrd = make(map[DocID]DocOrd)

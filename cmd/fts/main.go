@@ -467,6 +467,12 @@ func tryLoadSplitSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.Ke
 	}
 
 	builtOpts := append([]pkgfts.Option(nil), serviceOpts...)
+	if len(loadedIndex.Registry) > 0 {
+		builtOpts = append(builtOpts, pkgfts.WithDocRegistrySnapshot(loadedIndex.Registry))
+	}
+	if len(loadedIndex.Tombstones) > 0 {
+		builtOpts = append(builtOpts, pkgfts.WithTombstonesSnapshot(loadedIndex.Tombstones))
+	}
 	if loadedIndex.CollectionStats != nil {
 		builtOpts = append(builtOpts, pkgfts.WithCollectionStatsSnapshot(loadedIndex.CollectionStats))
 	}
@@ -571,6 +577,8 @@ func saveSplitSnapshots(log *slog.Logger, cfg *config.Config, svc *pkgfts.Servic
 
 	index, searchFilter := svc.SnapshotComponents()
 	stats := svc.SnapshotCollectionStats()
+	registry := svc.SnapshotRegistry()
+	tombstones := svc.SnapshotTombstones()
 
 	opts := ftspersist.SaveOptions{
 		BufferSize:     cfg.FTS.Snapshot.BufferSize,
@@ -579,7 +587,7 @@ func saveSplitSnapshots(log *slog.Logger, cfg *config.Config, svc *pkgfts.Servic
 	}
 
 	if err := ftspersist.SaveAtomicWithOptions(indexPath, opts, func(w io.Writer) error {
-		return pkgfts.SaveIndexSnapshotWithStats(w, indexName, index, stats)
+		return pkgfts.SaveIndexSnapshotWithState(w, indexName, index, stats, registry, tombstones)
 	}); err != nil {
 		return err
 	}

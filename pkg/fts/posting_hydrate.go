@@ -1,10 +1,14 @@
 package fts
 
-func (s *Service) ordForPosting(posting Posting) DocOrd {
+func (s *Service) ordForPosting(posting Posting) (DocOrd, bool) {
 	if posting.ID != "" {
-		return s.registry.GetOrAssign(posting.ID)
+		ord, ok := s.registry.Has(posting.ID)
+		if !ok && (s.tombstones == nil || !s.tombstones.Any()) {
+			return s.registry.GetOrAssign(posting.ID), true
+		}
+		return ord, ok
 	}
-	return posting.Ord
+	return posting.Ord, true
 }
 
 func (s *Service) normalizePostings(postings []Posting) []Posting {
@@ -13,7 +17,11 @@ func (s *Service) normalizePostings(postings []Posting) []Posting {
 	}
 	out := make([]Posting, 0, len(postings))
 	for _, posting := range postings {
-		posting.Ord = s.ordForPosting(posting)
+		ord, ok := s.ordForPosting(posting)
+		if !ok {
+			continue
+		}
+		posting.Ord = ord
 		if s.tombstones != nil && s.tombstones.IsSet(posting.Ord) {
 			continue
 		}
@@ -22,11 +30,15 @@ func (s *Service) normalizePostings(postings []Posting) []Posting {
 	return out
 }
 
-func (s *Service) ordForPositionalPosting(posting PositionalPosting) DocOrd {
+func (s *Service) ordForPositionalPosting(posting PositionalPosting) (DocOrd, bool) {
 	if posting.ID != "" {
-		return s.registry.GetOrAssign(posting.ID)
+		ord, ok := s.registry.Has(posting.ID)
+		if !ok && (s.tombstones == nil || !s.tombstones.Any()) {
+			return s.registry.GetOrAssign(posting.ID), true
+		}
+		return ord, ok
 	}
-	return posting.Ord
+	return posting.Ord, true
 }
 
 func (s *Service) normalizePositionalPostings(postings []PositionalPosting) []PositionalPosting {
@@ -35,7 +47,11 @@ func (s *Service) normalizePositionalPostings(postings []PositionalPosting) []Po
 	}
 	out := make([]PositionalPosting, 0, len(postings))
 	for _, posting := range postings {
-		posting.Ord = s.ordForPositionalPosting(posting)
+		ord, ok := s.ordForPositionalPosting(posting)
+		if !ok {
+			continue
+		}
+		posting.Ord = ord
 		if s.tombstones != nil && s.tombstones.IsSet(posting.Ord) {
 			continue
 		}

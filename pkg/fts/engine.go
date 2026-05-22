@@ -29,6 +29,9 @@ type Service struct {
 	collection   *collectionStats
 	registry     *DocRegistry
 	tombstones   *Tombstones
+	pendingRegistrySnapshot        []DocID
+	pendingTombstonesSnapshot      []uint64
+	pendingCollectionStatsSnapshot *CollectionStatsSnapshot
 	singleField  bool
 
 	mu      sync.RWMutex
@@ -83,6 +86,8 @@ func newService(keyGen KeyGenerator, opts ...Option) *Service {
 	if s.keyGen == nil {
 		s.keyGen = WordKeys
 	}
+
+	s.finalizeRestoreState()
 
 	return s
 }
@@ -245,6 +250,20 @@ func (s *Service) SnapshotCollectionStats() *CollectionStatsSnapshot {
 	return s.collection.snapshot(s.registry)
 }
 
+func (s *Service) SnapshotRegistry() []DocID {
+	if s == nil || s.registry == nil {
+		return nil
+	}
+	return s.registry.Snapshot()
+}
+
+func (s *Service) SnapshotTombstones() []uint64 {
+	if s == nil || s.tombstones == nil {
+		return nil
+	}
+	return s.tombstones.Snapshot()
+}
+
 func (s *Service) BuildFilter() error {
 	if s == nil || s.filter == nil {
 		return nil
@@ -267,4 +286,23 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dus", d.Microseconds())
 	}
 	return fmt.Sprintf("%dms", d.Milliseconds())
+}
+
+func (s *Service) finalizeRestoreState() {
+	if s == nil {
+		return
+	}
+	if s.pendingRegistrySnapshot != nil || s.pendingTombstonesSnapshot != nil {
+		tombs := RestoreTombstones(s.pendingTombstonesSnapshot)
+		if s.pendingRegistrySnapshot != nil {
+			s.registry = RestoreDocRegistryActive(s.pendingRegistrySnapshot, tombs)
+		}
+		s.tombstones = tombs
+		s.pendingRegistrySnapshot = nil
+		s.pendingTombstonesSnapshot = nil
+	}
+	if s.pendingCollectionStatsSnapshot != nil {
+		s.collection = newCollectionStatsFromSnapshot(s.pendingCollectionStatsSnapshot, s.registry)
+		s.pendingCollectionStatsSnapshot = nil
+	}
 }

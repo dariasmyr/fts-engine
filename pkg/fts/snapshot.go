@@ -9,8 +9,10 @@ import (
 	"sync"
 )
 
-const snapshotVersion uint16 = 1
-const multiIndexSnapshotVersion uint16 = 2
+const snapshotVersionLegacy uint16 = 1
+const snapshotVersion uint16 = 2
+const multiIndexSnapshotVersionLegacy uint16 = 2
+const multiIndexSnapshotVersion uint16 = 3
 
 type IndexSnapshotSaver func(index Index, w io.Writer) error
 type IndexSnapshotLoader func(r io.Reader) (Index, error)
@@ -22,11 +24,15 @@ type LoadedIndexSnapshot struct {
 	IndexName       string
 	Index           Index
 	CollectionStats *CollectionStatsSnapshot
+	Registry        []DocID
+	Tombstones      []uint64
 }
 
 type LoadedMultiIndexSnapshot struct {
 	Fields          map[string]LoadedIndexSnapshot
 	CollectionStats *CollectionStatsSnapshot
+	Registry        []DocID
+	Tombstones      []uint64
 }
 
 type LoadedFilterSnapshot struct {
@@ -39,6 +45,8 @@ type indexEnvelope struct {
 	IndexName       string
 	IndexPayload    []byte
 	CollectionStats *CollectionStatsSnapshot
+	Registry        []DocID
+	Tombstones      []uint64
 }
 
 type multiIndexField struct {
@@ -51,6 +59,8 @@ type multiIndexEnvelope struct {
 	Version         uint16
 	Fields          []multiIndexField
 	CollectionStats *CollectionStatsSnapshot
+	Registry        []DocID
+	Tombstones      []uint64
 }
 
 type filterEnvelope struct {
@@ -126,6 +136,10 @@ func SaveIndexSnapshot(w io.Writer, indexName string, index Index) error {
 }
 
 func SaveIndexSnapshotWithStats(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot) error {
+	return SaveIndexSnapshotWithState(w, indexName, index, stats, nil, nil)
+}
+
+func SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64) error {
 	if w == nil {
 		return fmt.Errorf("fts: save index snapshot: nil writer")
 	}
@@ -151,6 +165,8 @@ func SaveIndexSnapshotWithStats(w io.Writer, indexName string, index Index, stat
 		IndexName:       indexName,
 		IndexPayload:    indexPayload.Bytes(),
 		CollectionStats: stats,
+		Registry:        append([]DocID(nil), registry...),
+		Tombstones:      append([]uint64(nil), tombstones...),
 	}
 
 	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
@@ -170,7 +186,7 @@ func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
 		return nil, fmt.Errorf("fts: load index snapshot: decode envelope: %w", err)
 	}
 
-	if envelope.Version != snapshotVersion {
+	if envelope.Version != snapshotVersionLegacy && envelope.Version != snapshotVersion {
 		return nil, fmt.Errorf("fts: load index snapshot: unsupported version %d", envelope.Version)
 	}
 	if envelope.IndexName == "" {
@@ -187,7 +203,13 @@ func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
 		return nil, fmt.Errorf("fts: load index snapshot: decode index %q: %w", envelope.IndexName, err)
 	}
 
-	return &LoadedIndexSnapshot{IndexName: envelope.IndexName, Index: index, CollectionStats: envelope.CollectionStats}, nil
+	return &LoadedIndexSnapshot{
+		IndexName:       envelope.IndexName,
+		Index:           index,
+		CollectionStats: envelope.CollectionStats,
+		Registry:        append([]DocID(nil), envelope.Registry...),
+		Tombstones:      append([]uint64(nil), envelope.Tombstones...),
+	}, nil
 }
 
 // SaveMultiIndexSnapshot saves a multi-index snapshot without collection stats.
@@ -197,6 +219,10 @@ func SaveMultiIndexSnapshot(w io.Writer, fieldCodecs map[string]string, indexes 
 }
 
 func SaveMultiIndexSnapshotWithStats(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot) error {
+	return SaveMultiIndexSnapshotWithState(w, fieldCodecs, indexes, stats, nil, nil)
+}
+
+func SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64) error {
 	if w == nil {
 		return fmt.Errorf("fts: save multi-index snapshot: nil writer")
 	}
@@ -247,6 +273,8 @@ func SaveMultiIndexSnapshotWithStats(w io.Writer, fieldCodecs map[string]string,
 		Version:         multiIndexSnapshotVersion,
 		Fields:          fields,
 		CollectionStats: stats,
+		Registry:        append([]DocID(nil), registry...),
+		Tombstones:      append([]uint64(nil), tombstones...),
 	}
 
 	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
@@ -266,11 +294,16 @@ func LoadMultiIndexSnapshot(r io.Reader) (*LoadedMultiIndexSnapshot, error) {
 		return nil, fmt.Errorf("fts: load multi-index snapshot: decode envelope: %w", err)
 	}
 
-	if envelope.Version != multiIndexSnapshotVersion {
+	if envelope.Version != multiIndexSnapshotVersionLegacy && envelope.Version != multiIndexSnapshotVersion {
 		return nil, fmt.Errorf("fts: load multi-index snapshot: unsupported version %d", envelope.Version)
 	}
 
-	loaded := &LoadedMultiIndexSnapshot{Fields: make(map[string]LoadedIndexSnapshot, len(envelope.Fields)), CollectionStats: envelope.CollectionStats}
+	loaded := &LoadedMultiIndexSnapshot{
+		Fields:          make(map[string]LoadedIndexSnapshot, len(envelope.Fields)),
+		CollectionStats: envelope.CollectionStats,
+		Registry:        append([]DocID(nil), envelope.Registry...),
+		Tombstones:      append([]uint64(nil), envelope.Tombstones...),
+	}
 	for _, field := range envelope.Fields {
 		if field.FieldName == "" {
 			return nil, fmt.Errorf("fts: load multi-index snapshot: empty field name")
