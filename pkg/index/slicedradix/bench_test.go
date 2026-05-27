@@ -17,9 +17,8 @@ func benchmarkIndex(b *testing.B, terms int, docs int) *Index {
 		words[i] = fmt.Sprintf("word%04d", i)
 	}
 	for doc := 0; doc < docs; doc++ {
-		docID := fts.DocID(fmt.Sprintf("doc-%d", doc))
 		for j := 0; j < 20; j++ {
-			if err := idx.Insert(words[rng.Intn(len(words))], docID); err != nil {
+			if err := idx.Insert(words[rng.Intn(len(words))], fts.DocOrd(doc)); err != nil {
 				b.Fatalf("Insert() error = %v", err)
 			}
 		}
@@ -36,9 +35,8 @@ func benchmarkPositionalIndex(b *testing.B, terms int, docs int) *Index {
 		words[i] = fmt.Sprintf("word%04d", i)
 	}
 	for doc := 0; doc < docs; doc++ {
-		docID := fts.DocID(fmt.Sprintf("doc-%d", doc))
 		for pos := 0; pos < 20; pos++ {
-			if err := idx.InsertAt(words[rng.Intn(len(words))], docID, uint32(pos)); err != nil {
+			if err := idx.InsertAt(words[rng.Intn(len(words))], uint32(pos), fts.DocOrd(doc)); err != nil {
 				b.Fatalf("InsertAt() error = %v", err)
 			}
 		}
@@ -49,7 +47,7 @@ func benchmarkPositionalIndex(b *testing.B, terms int, docs int) *Index {
 func BenchmarkInsert(b *testing.B) {
 	idx := New()
 	for i := 0; b.Loop(); i++ {
-		if err := idx.Insert(fmt.Sprintf("word%06d", i), fts.DocID(fmt.Sprintf("doc-%d", i))); err != nil {
+		if err := idx.Insert(fmt.Sprintf("word%06d", i), fts.DocOrd(i)); err != nil {
 			b.Fatalf("Insert() error = %v", err)
 		}
 	}
@@ -58,7 +56,7 @@ func BenchmarkInsert(b *testing.B) {
 func BenchmarkInsertAt(b *testing.B) {
 	idx := New()
 	for i := 0; b.Loop(); i++ {
-		if err := idx.InsertAt(fmt.Sprintf("word%06d", i), fts.DocID(fmt.Sprintf("doc-%d", i)), uint32(i%20)); err != nil {
+		if err := idx.InsertAt(fmt.Sprintf("word%06d", i), uint32(i%20), fts.DocOrd(i)); err != nil {
 			b.Fatalf("InsertAt() error = %v", err)
 		}
 	}

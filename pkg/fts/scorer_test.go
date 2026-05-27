@@ -15,16 +15,16 @@ func newPrefixMemoryIndex() *prefixMemoryIndex {
 	return &prefixMemoryIndex{entries: make(map[string][]DocRef)}
 }
 
-func (p *prefixMemoryIndex) Insert(key string, id DocID, ord ...DocOrd) error {
+func (p *prefixMemoryIndex) Insert(key string, ord DocOrd) error {
 	entries := p.entries[key]
 	for i := range entries {
-		if entries[i].ID == id {
+		if entries[i].Ord == ord {
 			entries[i].Count++
 			p.entries[key] = entries
 			return nil
 		}
 	}
-	p.entries[key] = append(entries, DocRef{ID: id, Count: 1})
+	p.entries[key] = append(entries, DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
 	return nil
 }
 
@@ -33,21 +33,21 @@ func (p *prefixMemoryIndex) Search(key string) ([]DocRef, error) {
 }
 
 func (p *prefixMemoryIndex) SearchPrefix(prefix string) ([]DocRef, error) {
-	merged := make(map[DocID]uint32)
+	merged := make(map[DocOrd]uint32)
 	for key, docs := range p.entries {
 		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
 		for _, doc := range docs {
-			merged[doc.ID] += doc.Count
+			merged[doc.Ord] += doc.Count
 		}
 	}
 
 	out := make([]DocRef, 0, len(merged))
-	for id, count := range merged {
-		out = append(out, DocRef{ID: id, Count: count})
+	for ord, count := range merged {
+		out = append(out, DocRef{Ord: ord, Count: count, Seq: uint32(ord)})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
 	return out, nil
 }
 
@@ -156,11 +156,11 @@ func TestSearchWithTFIDFRanksRareDocumentFirst(t *testing.T) {
 
 func TestBooleanScoringAppliesShouldBoost(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 0}, {ID: "doc-b", Count: 1, Seq: 1}, {ID: "doc-c", Count: 1, Seq: 2}}
-	idx.entries["beta"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 0}, {ID: "doc-b", Count: 1, Seq: 1}}
-	idx.entries["delta"] = []DocRef{{ID: "doc-b", Count: 1, Seq: 1}, {ID: "doc-d", Count: 1, Seq: 3}}
 
 	svc := New(idx, WordKeys, WithScorer(TFIDF()))
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1}, namedPosting{"doc-b", 1}, namedPosting{"doc-c", 1})
+	idx.entries["beta"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1}, namedPosting{"doc-b", 1})
+	idx.entries["delta"] = refsForIDs(svc.registry, namedPosting{"doc-b", 1}, namedPosting{"doc-d", 1})
 	for _, doc := range []struct {
 		id     DocID
 		length uint32

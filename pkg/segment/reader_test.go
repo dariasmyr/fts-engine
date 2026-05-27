@@ -113,10 +113,10 @@ func TestReaderIsReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	if err := r.Insert("alpha", "doc-1", 1); err == nil {
+	if err := r.Insert("alpha", 1); err == nil {
 		t.Fatal("Insert() error = nil, want read-only error")
 	}
-	if err := r.InsertAt("alpha", "doc-1", 0, 1); err == nil {
+	if err := r.InsertAt("alpha", 0, 1); err == nil {
 		t.Fatal("InsertAt() error = nil, want read-only error")
 	}
 }

@@ -67,12 +67,12 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 				}
 			}
 			if hasPositions {
-				if err := positional.InsertAt(key, docID, uint32(pos), ord); err != nil {
+				if err := positional.InsertAt(key, uint32(pos), ord); err != nil {
 					return fmt.Errorf("fts: index document %q field %q: insert: %w", docID, name, err)
 				}
 				continue
 			}
-			if err := index.Insert(key, docID, ord); err != nil {
+			if err := index.Insert(key, ord); err != nil {
 				return fmt.Errorf("fts: index document %q field %q: insert: %w", docID, name, err)
 			}
 		}

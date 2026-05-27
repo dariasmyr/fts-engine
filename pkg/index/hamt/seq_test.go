@@ -9,14 +9,14 @@ import (
 
 func insertSeqOrd(t *testing.T, idx *Index, term string, id fts.DocID, ord fts.DocOrd) {
 	t.Helper()
-	if err := idx.Insert(term, id, ord); err != nil {
+	if err := idx.Insert(term, ord); err != nil {
 		t.Fatalf("Insert(%q, %q, %d) error = %v", term, id, ord, err)
 	}
 }
 
 func insertAtSeqOrd(t *testing.T, idx *Index, term string, id fts.DocID, pos uint32, ord fts.DocOrd) {
 	t.Helper()
-	if err := idx.InsertAt(term, id, pos, ord); err != nil {
+	if err := idx.InsertAt(term, pos, ord); err != nil {
 		t.Fatalf("InsertAt(%q, %q, %d, %d) error = %v", term, id, pos, ord, err)
 	}
 }
@@ -159,7 +159,7 @@ func TestSeqSurvivesSerializeLoad(t *testing.T) {
 		t.Fatalf("loaded bar[0].Seq = %d, want 0", bar[0].Seq)
 	}
 
-	if err := loadedIdx.Insert("foo", "doc-c", 2); err != nil {
+	if err := loadedIdx.Insert("foo", 2); err != nil {
 		t.Fatalf("Insert() after Load() error = %v", err)
 	}
 	foo2, err := loadedIdx.Search("foo")

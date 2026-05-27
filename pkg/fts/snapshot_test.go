@@ -17,16 +17,16 @@ func newSnapshotIndex() *snapshotIndex {
 	return &snapshotIndex{data: make(map[string][]DocRef)}
 }
 
-func (m *snapshotIndex) Insert(key string, id DocID, ord ...DocOrd) error {
+func (m *snapshotIndex) Insert(key string, ord DocOrd) error {
 	rows := m.data[key]
 	for i := range rows {
-		if rows[i].ID == id {
+		if rows[i].Ord == ord {
 			rows[i].Count++
 			m.data[key] = rows
 			return nil
 		}
 	}
-	m.data[key] = append(rows, DocRef{ID: id, Count: 1})
+	m.data[key] = append(rows, DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
 	return nil
 }
 

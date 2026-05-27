@@ -109,14 +109,15 @@ func TestPerFieldPipelineOverridesDefault(t *testing.T) {
 
 func TestSearchDocumentsAcrossFields(t *testing.T) {
 	title := newMemoryIndex()
-	title.entries["alpha"] = []DocRef{{ID: "a", Count: 2}}
 	body := newMemoryIndex()
-	body.entries["beta"] = []DocRef{{ID: "b", Count: 3}, {ID: "a", Count: 1}}
+	registry := NewDocRegistry()
+	title.entries["alpha"] = refsForIDs(registry, namedPosting{"a", 2})
+	body.entries["beta"] = refsForIDs(registry, namedPosting{"b", 3}, namedPosting{"a", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
-	}, WordKeys)
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	res, err := svc.SearchDocuments(context.Background(), "alpha beta", 10)
 	if err != nil {
@@ -137,14 +138,15 @@ func TestSearchDocumentsAcrossFields(t *testing.T) {
 
 func TestSearchDocumentsDedupsSameTokenAcrossFields(t *testing.T) {
 	title := newMemoryIndex()
-	title.entries["alpha"] = []DocRef{{ID: "doc-1", Count: 1}}
 	body := newMemoryIndex()
-	body.entries["alpha"] = []DocRef{{ID: "doc-1", Count: 2}}
+	registry := NewDocRegistry()
+	title.entries["alpha"] = refsForIDs(registry, namedPosting{"doc-1", 1})
+	body.entries["alpha"] = refsForIDs(registry, namedPosting{"doc-1", 2})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
-	}, WordKeys)
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	res, err := svc.SearchDocuments(context.Background(), "alpha", 10)
 	if err != nil {
@@ -160,14 +162,15 @@ func TestSearchDocumentsDedupsSameTokenAcrossFields(t *testing.T) {
 
 func TestSearchDocumentsFieldScopedTerm(t *testing.T) {
 	title := newMemoryIndex()
-	title.entries["alpha"] = []DocRef{{ID: "a", Count: 1}}
 	body := newMemoryIndex()
-	body.entries["alpha"] = []DocRef{{ID: "b", Count: 1}}
+	registry := NewDocRegistry()
+	title.entries["alpha"] = refsForIDs(registry, namedPosting{"a", 1})
+	body.entries["alpha"] = refsForIDs(registry, namedPosting{"b", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
-	}, WordKeys)
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	res, err := svc.SearchDocuments(context.Background(), "title:alpha", 10)
 	if err != nil {
@@ -180,14 +183,15 @@ func TestSearchDocumentsFieldScopedTerm(t *testing.T) {
 
 func TestSearchFieldRestrictsUnscopedQueryToOneField(t *testing.T) {
 	title := newMemoryIndex()
-	title.entries["alpha"] = []DocRef{{ID: "a", Count: 1}}
 	body := newMemoryIndex()
-	body.entries["alpha"] = []DocRef{{ID: "b", Count: 1}}
+	registry := NewDocRegistry()
+	title.entries["alpha"] = refsForIDs(registry, namedPosting{"a", 1})
+	body.entries["alpha"] = refsForIDs(registry, namedPosting{"b", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
-	}, WordKeys)
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	res, err := svc.SearchField(context.Background(), "title", "alpha", 10)
 	if err != nil {
@@ -200,14 +204,15 @@ func TestSearchFieldRestrictsUnscopedQueryToOneField(t *testing.T) {
 
 func TestSearchFieldPreservesExplicitFieldScope(t *testing.T) {
 	title := newMemoryIndex()
-	title.entries["alpha"] = []DocRef{{ID: "a", Count: 1}}
 	body := newMemoryIndex()
-	body.entries["alpha"] = []DocRef{{ID: "b", Count: 1}}
+	registry := NewDocRegistry()
+	title.entries["alpha"] = refsForIDs(registry, namedPosting{"a", 1})
+	body.entries["alpha"] = refsForIDs(registry, namedPosting{"b", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
-	}, WordKeys)
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	res, err := svc.SearchField(context.Background(), "title", "body:alpha", 10)
 	if err != nil {
@@ -223,17 +228,18 @@ func TestSearchFieldPreservesExplicitFieldScope(t *testing.T) {
 
 func TestSearchFieldsRestrictsUnscopedQueryToSubset(t *testing.T) {
 	title := newMemoryIndex()
-	title.entries["alpha"] = []DocRef{{ID: "a", Count: 1}}
 	body := newMemoryIndex()
-	body.entries["alpha"] = []DocRef{{ID: "b", Count: 1}}
+	registry := NewDocRegistry()
+	title.entries["alpha"] = refsForIDs(registry, namedPosting{"a", 1})
+	body.entries["alpha"] = refsForIDs(registry, namedPosting{"b", 1})
 	tags := newMemoryIndex()
-	tags.entries["alpha"] = []DocRef{{ID: "c", Count: 1}}
+	tags.entries["alpha"] = refsForIDs(registry, namedPosting{"c", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
 		"tags":  tags,
-	}, WordKeys)
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	res, err := svc.SearchFields(context.Background(), []string{"title", "body"}, "alpha", 10)
 	if err != nil {
@@ -253,14 +259,15 @@ func TestSearchFieldsRestrictsUnscopedQueryToSubset(t *testing.T) {
 
 func TestSearchFieldsRestrictsExplicitFieldToSubset(t *testing.T) {
 	title := newMemoryIndex()
-	title.entries["alpha"] = []DocRef{{ID: "a", Count: 1}}
 	body := newMemoryIndex()
-	body.entries["alpha"] = []DocRef{{ID: "b", Count: 1}}
+	registry := NewDocRegistry()
+	title.entries["alpha"] = refsForIDs(registry, namedPosting{"a", 1})
+	body.entries["alpha"] = refsForIDs(registry, namedPosting{"b", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
-	}, WordKeys)
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	res, err := svc.SearchFields(context.Background(), []string{"title"}, "body:alpha", 10)
 	if err != nil {
@@ -273,14 +280,15 @@ func TestSearchFieldsRestrictsExplicitFieldToSubset(t *testing.T) {
 
 func TestSearchQueryFieldsRestrictsASTQueryToSubset(t *testing.T) {
 	title := newMemoryIndex()
-	title.entries["barack"] = []DocRef{{ID: "doc-1", Count: 1}}
 	body := newMemoryIndex()
-	body.entries["obama"] = []DocRef{{ID: "doc-1", Count: 1}, {ID: "doc-2", Count: 1}}
+	registry := NewDocRegistry()
+	title.entries["barack"] = refsForIDs(registry, namedPosting{"doc-1", 1})
+	body.entries["obama"] = refsForIDs(registry, namedPosting{"doc-1", 1}, namedPosting{"doc-2", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
-	}, WordKeys)
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	q := &BooleanQuery{Clauses: []BoolClause{
 		MustClause(TermQuery{Term: "barack"}),
@@ -298,14 +306,15 @@ func TestSearchQueryFieldsRestrictsASTQueryToSubset(t *testing.T) {
 
 func TestSearchFieldClausesCombinesDifferentQueriesAcrossFields(t *testing.T) {
 	title := newMemoryIndex()
-	title.entries["barack"] = []DocRef{{ID: "doc-1", Count: 1, Seq: 0}, {ID: "doc-2", Count: 1, Seq: 1}}
 	body := newMemoryIndex()
-	body.entries["obama"] = []DocRef{{ID: "doc-3", Count: 1, Seq: 0}, {ID: "doc-2", Count: 1, Seq: 1}}
+	registry := NewDocRegistry()
+	title.entries["barack"] = refsForIDs(registry, namedPosting{"doc-1", 1}, namedPosting{"doc-2", 1})
+	body.entries["obama"] = refsForIDs(registry, namedPosting{"doc-3", 1}, namedPosting{"doc-2", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
-	}, WordKeys)
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	res, err := svc.SearchFieldClauses(context.Background(), []FieldQueryClause{
 		MustFieldQuery("title", "barack"),
@@ -352,14 +361,15 @@ func TestSearchFieldClausesSupportsFieldSpecificPhraseAndExclusion(t *testing.T)
 
 func TestSearchDocumentsMustAcrossFieldsIntersectsByDocID(t *testing.T) {
 	title := newMemoryIndex()
-	title.entries["barack"] = []DocRef{{ID: "doc-1", Count: 1, Seq: 0}, {ID: "doc-2", Count: 1, Seq: 1}}
 	body := newMemoryIndex()
-	body.entries["obama"] = []DocRef{{ID: "doc-3", Count: 1, Seq: 0}, {ID: "doc-2", Count: 1, Seq: 1}}
+	registry := NewDocRegistry()
+	title.entries["barack"] = refsForIDs(registry, namedPosting{"doc-1", 1}, namedPosting{"doc-2", 1})
+	body.entries["obama"] = refsForIDs(registry, namedPosting{"doc-3", 1}, namedPosting{"doc-2", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
-	}, WordKeys)
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	res, err := svc.SearchDocuments(context.Background(), "+title:barack +body:obama", 10)
 	if err != nil {

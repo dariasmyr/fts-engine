@@ -26,7 +26,7 @@ func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFiel
 	seen := make(map[DocOrd]struct{})
 	for _, expansion := range expansions {
 		for _, doc := range expansion.docs {
-			ord, _ := s.ordForPosting(doc)
+			ord := doc.Ord
 			accum := hits[ord]
 			if _, ok := seen[ord]; !ok {
 				accum.UniqueMatches++

@@ -151,11 +151,11 @@ func (r *Reader) findTerm(term string) (termEntry, bool) {
 	return termEntry{}, false
 }
 
-func (r *Reader) Insert(key string, id fts.DocID, ord ...fts.DocOrd) error {
+func (r *Reader) Insert(key string, ord fts.DocOrd) error {
 	return fmt.Errorf("segment: read-only (Insert called on sealed segment)")
 }
 
-func (r *Reader) InsertAt(key string, id fts.DocID, position uint32, ord ...fts.DocOrd) error {
+func (r *Reader) InsertAt(key string, position uint32, ord fts.DocOrd) error {
 	return fmt.Errorf("segment: read-only (InsertAt called on sealed segment)")
 }
 

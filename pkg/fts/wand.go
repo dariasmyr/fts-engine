@@ -168,7 +168,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 			}
 
 			if _, skip := exclude[matchedDocOrd]; !skip {
-				matchedDocID, _ := s.lookupDocID(matchedDocOrd)
+				matchedDocID := s.registry.Lookup(matchedDocOrd)
 				hit := wandHit{id: matchedDocID, ord: matchedDocOrd, accum: accum}
 				if h.Len() < candidateLimit {
 					heap.Push(h, hit)

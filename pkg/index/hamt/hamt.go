@@ -294,18 +294,15 @@ func (t *Index) ExportSegmentTerms(yield func(segment.TermPostings) error) error
 	return nil
 }
 
-func (t *Index) Insert(word string, id fts.DocID, ord ...fts.DocOrd) error {
-	return t.insert(word, id, false, 0, ord...)
+func (t *Index) Insert(word string, ord fts.DocOrd) error {
+	return t.insert(word, false, 0, ord)
 }
 
-func (t *Index) InsertAt(word string, id fts.DocID, position uint32, ord ...fts.DocOrd) error {
-	return t.insert(word, id, true, position, ord...)
+func (t *Index) InsertAt(word string, position uint32, ord fts.DocOrd) error {
+	return t.insert(word, true, position, ord)
 }
 
-func (t *Index) insert(word string, id fts.DocID, hasPos bool, pos uint32, ords ...fts.DocOrd) error {
-	if len(ords) == 0 {
-		return fmt.Errorf("hamt: insert: missing doc ord for %q", id)
-	}
+func (t *Index) insert(word string, hasPos bool, pos uint32, ord fts.DocOrd) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -328,7 +325,7 @@ func (t *Index) insert(word string, id fts.DocID, hasPos bool, pos uint32, ords 
 		t.nodes[n] = t.nodes[n].Append(hash&lowerbits, termPtr)
 	}
 
-	t.terms[termPtr].Append(word, ords[0], hasPos, pos)
+	t.terms[termPtr].Append(word, ord, hasPos, pos)
 	return nil
 }
 

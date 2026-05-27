@@ -80,9 +80,9 @@ func seedSegmentSource(t *testing.T, idx fts.PositionalIndex) {
 	} {
 		var err error
 		if tc.pos == 0 {
-			err = idx.Insert(tc.term, "doc", tc.ord)
+			err = idx.Insert(tc.term, tc.ord)
 		} else {
-			err = idx.InsertAt(tc.term, "doc", tc.pos, tc.ord)
+			err = idx.InsertAt(tc.term, tc.pos, tc.ord)
 		}
 		if err != nil {
 			t.Fatalf("insert %q ord=%d pos=%d: %v", tc.term, tc.ord, tc.pos, err)

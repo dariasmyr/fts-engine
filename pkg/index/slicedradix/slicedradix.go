@@ -118,21 +118,17 @@ func lcp(a, b string) int {
 	return i
 }
 
-func (t *Index) Insert(word string, docID fts.DocID, ord ...fts.DocOrd) error {
-	return t.insert(word, docID, false, 0, ord...)
+func (t *Index) Insert(word string, ord fts.DocOrd) error {
+	return t.insert(word, false, 0, ord)
 }
 
-func (t *Index) InsertAt(word string, docID fts.DocID, position uint32, ord ...fts.DocOrd) error {
-	return t.insert(word, docID, true, position, ord...)
+func (t *Index) InsertAt(word string, position uint32, ord fts.DocOrd) error {
+	return t.insert(word, true, position, ord)
 }
 
-func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, ords ...fts.DocOrd) error {
-	if len(ords) == 0 {
-		return fmt.Errorf("slicedradix: insert: missing doc ord for %q", docID)
-	}
+func (t *Index) insert(word string, hasPos bool, pos uint32, ord fts.DocOrd) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	ord := ords[0]
 
 	current := t.root
 	rest := word
@@ -152,7 +148,7 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, or
 				rest = rest[p:]
 				if rest == "" {
 					// The word ends exactly on this node.
-					t.addDoc(current, docID, ord, hasPos, pos)
+					t.addDoc(current, ord, hasPos, pos)
 					return nil
 				}
 				advanced = true
@@ -172,12 +168,12 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, or
 
 			if newSuffix != "" {
 				newIdx := t.newNode(newSuffix)
-				t.addDoc(newIdx, docID, ord, hasPos, pos)
+				t.addDoc(newIdx, ord, hasPos, pos)
 				t.nodes[middle].children = append(t.nodes[middle].children, newIdx)
 				return nil
 			}
 
-			t.addDoc(middle, docID, ord, hasPos, pos)
+			t.addDoc(middle, ord, hasPos, pos)
 			return nil
 		}
 
@@ -188,13 +184,13 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, or
 
 		// No child matches the remaining suffix, so attach it as a new edge.
 		newIdx := t.newNode(rest)
-		t.addDoc(newIdx, docID, ord, hasPos, pos)
+		t.addDoc(newIdx, ord, hasPos, pos)
 		t.nodes[current].children = append(t.nodes[current].children, newIdx)
 		return nil
 	}
 }
 
-func (t *Index) addDoc(nodeIdx int, docID fts.DocID, ord fts.DocOrd, hasPos bool, pos uint32) {
+func (t *Index) addDoc(nodeIdx int, ord fts.DocOrd, hasPos bool, pos uint32) {
 	n := &t.nodes[nodeIdx]
 	if last := len(n.docs) - 1; last >= 0 && n.docs[last].Ord == ord {
 		n.docs[last].Count++

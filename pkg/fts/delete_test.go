@@ -19,25 +19,19 @@ func newOrdAwareMemoryIndex() *ordAwareMemoryIndex {
 	}
 }
 
-func (m *ordAwareMemoryIndex) Insert(key string, _ DocID, ord ...DocOrd) error {
-	if len(ord) == 0 {
-		return nil
-	}
-	m.bumpCount(key, ord[0])
+func (m *ordAwareMemoryIndex) Insert(key string, ord DocOrd) error {
+	m.bumpCount(key, ord)
 	return nil
 }
 
-func (m *ordAwareMemoryIndex) InsertAt(key string, _ DocID, position uint32, ord ...DocOrd) error {
-	if len(ord) == 0 {
-		return nil
-	}
-	m.bumpCount(key, ord[0])
+func (m *ordAwareMemoryIndex) InsertAt(key string, position uint32, ord DocOrd) error {
+	m.bumpCount(key, ord)
 	if _, ok := m.positions[key]; !ok {
 		m.positions[key] = make(map[DocOrd][]uint32)
 	}
-	ps := append(m.positions[key][ord[0]], position)
+	ps := append(m.positions[key][ord], position)
 	sort.Slice(ps, func(i, j int) bool { return ps[i] < ps[j] })
-	m.positions[key][ord[0]] = ps
+	m.positions[key][ord] = ps
 	return nil
 }
 

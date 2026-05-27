@@ -55,11 +55,11 @@ func observeDefaultFieldLengths(svc *Service, lengths map[DocID]uint32) {
 
 func TestTryExecBooleanOrWandMatchesFullScoringCandidateLimit(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 2, Seq: 1}, {ID: "doc-b", Count: 1, Seq: 2}, {ID: "doc-c", Count: 1, Seq: 3}, {ID: "doc-e", Count: 1, Seq: 5}}
-	idx.entries["beta"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}, {ID: "doc-c", Count: 2, Seq: 3}, {ID: "doc-d", Count: 1, Seq: 4}}
-	idx.entries["gamma"] = []DocRef{{ID: "doc-c", Count: 1, Seq: 3}, {ID: "doc-d", Count: 3, Seq: 4}, {ID: "doc-e", Count: 1, Seq: 5}}
 
 	svc := New(idx, WordKeys, WithScorer(TFIDF()))
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 2}, namedPosting{"doc-b", 1}, namedPosting{"doc-c", 1}, namedPosting{"doc-e", 1})
+	idx.entries["beta"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1}, namedPosting{"doc-c", 2}, namedPosting{"doc-d", 1})
+	idx.entries["gamma"] = refsForIDs(svc.registry, namedPosting{"doc-c", 1}, namedPosting{"doc-d", 3}, namedPosting{"doc-e", 1})
 	observeDefaultFieldLengths(svc, map[DocID]uint32{
 		"doc-a": 3,
 		"doc-b": 1,
@@ -94,9 +94,9 @@ func TestTryExecBooleanOrWandMatchesFullScoringCandidateLimit(t *testing.T) {
 
 func TestTryExecBooleanOrWandPreservesTieBreakers(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["alpha"] = []DocRef{{ID: "z", Count: 1, Seq: 1}, {ID: "a", Count: 1, Seq: 2}}
 
 	svc := New(idx, WordKeys, WithScorer(TFIDF()))
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"z", 1}, namedPosting{"a", 1})
 	observeDefaultFieldLengths(svc, map[DocID]uint32{"a": 1, "z": 1})
 
 	q := &BooleanQuery{Clauses: []BoolClause{ShouldClause(TermQuery{Term: "alpha"})}}
@@ -121,9 +121,9 @@ func TestTryExecBooleanOrWandPreservesTieBreakers(t *testing.T) {
 
 func TestTryExecBooleanOrWandSkipsWithoutCandidateLimit(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}}
 
 	svc := New(idx, WordKeys, WithScorer(TFIDF()))
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1})
 	observeDefaultFieldLengths(svc, map[DocID]uint32{"doc-a": 1})
 
 	q := &BooleanQuery{Clauses: []BoolClause{ShouldClause(TermQuery{Term: "alpha"})}}
@@ -138,9 +138,9 @@ func TestTryExecBooleanOrWandSkipsWithoutCandidateLimit(t *testing.T) {
 
 func TestTryExecBooleanOrWandSkipsWithoutScorer(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}}
 
 	svc := New(idx, WordKeys)
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1})
 	q := &BooleanQuery{Clauses: []BoolClause{ShouldClause(TermQuery{Term: "alpha"})}}
 	_, ok, err := svc.tryExecBooleanOrWand(context.Background(), q, 1, queryFieldScope{})
 	if err != nil {
@@ -153,13 +153,13 @@ func TestTryExecBooleanOrWandSkipsWithoutScorer(t *testing.T) {
 
 func TestTryExecBooleanOrWandSkipsMultiExpansionClause(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}}
-	idx.entries["alpha-alt"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}}
 
 	keyGen := func(token string) ([]string, error) {
 		return []string{token, token + "-alt"}, nil
 	}
 	svc := New(idx, keyGen, WithScorer(TFIDF()))
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1})
+	idx.entries["alpha-alt"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1})
 	observeDefaultFieldLengths(svc, map[DocID]uint32{"doc-a": 1})
 
 	q := &BooleanQuery{Clauses: []BoolClause{ShouldClause(TermQuery{Term: "alpha"})}}
@@ -174,14 +174,15 @@ func TestTryExecBooleanOrWandSkipsMultiExpansionClause(t *testing.T) {
 
 func TestTryExecBooleanOrWandSkipsCrossFieldPlan(t *testing.T) {
 	title := newMemoryIndex()
-	title.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}}
 	body := newMemoryIndex()
-	body.entries["beta"] = []DocRef{{ID: "doc-b", Count: 1, Seq: 1}}
+	registry := NewDocRegistry()
+	title.entries["alpha"] = refsForIDs(registry, namedPosting{"doc-a", 1})
+	body.entries["beta"] = refsForIDs(registry, namedPosting{"doc-b", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
-	}, WordKeys, WithScorer(TFIDF()))
+	}, WordKeys, WithScorer(TFIDF()), WithDocRegistrySnapshot(registry.Snapshot()))
 	svc.collection.observe("title", svc.registry.GetOrAssign("doc-a"), 1)
 	svc.collection.observe("body", svc.registry.GetOrAssign("doc-b"), 1)
 
@@ -200,11 +201,11 @@ func TestTryExecBooleanOrWandSkipsCrossFieldPlan(t *testing.T) {
 
 func TestTryExecBooleanOrWandSupportsMustNot(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 2, Seq: 1}, {ID: "doc-b", Count: 1, Seq: 2}, {ID: "doc-c", Count: 1, Seq: 3}}
-	idx.entries["beta"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}, {ID: "doc-c", Count: 2, Seq: 3}}
-	idx.entries["blocked"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}}
 
 	svc := New(idx, WordKeys, WithScorer(TFIDF()))
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 2}, namedPosting{"doc-b", 1}, namedPosting{"doc-c", 1})
+	idx.entries["beta"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1}, namedPosting{"doc-c", 2})
+	idx.entries["blocked"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1})
 	observeDefaultFieldLengths(svc, map[DocID]uint32{
 		"doc-a": 3,
 		"doc-b": 1,

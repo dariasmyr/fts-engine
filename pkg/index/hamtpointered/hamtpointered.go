@@ -145,7 +145,7 @@ func (n *node) appendChild(newChild any, mask uint32, pos int) {
 	n.children = append(n.children[:pos], append([]any{newChild}, n.children[pos:]...)...)
 }
 
-func (n *node) insertNode(hash uint32, key string, docID fts.DocID, ord fts.DocOrd, seq uint32, level int, hasPos bool, tokenPos uint32) {
+func (n *node) insertNode(hash uint32, key string, ord fts.DocOrd, seq uint32, level int, hasPos bool, tokenPos uint32) {
 	child, slot, mask := n.nextNode(hash, level)
 
 	if level == depth {
@@ -181,7 +181,7 @@ func (n *node) insertNode(hash uint32, key string, docID fts.DocID, ord fts.DocO
 		child = newChild
 	}
 
-	child.(*node).insertNode(hash, key, docID, ord, seq, level+1, hasPos, tokenPos)
+	child.(*node).insertNode(hash, key, ord, seq, level+1, hasPos, tokenPos)
 }
 
 func addDoc(docs *[]fts.DocRef, positions *[][]uint32, ord fts.DocOrd, seq uint32, hasPos bool, pos uint32) {
@@ -203,22 +203,19 @@ func addDoc(docs *[]fts.DocRef, positions *[][]uint32, ord fts.DocOrd, seq uint3
 	}
 }
 
-func (t *Index) Insert(word string, docID fts.DocID, ord ...fts.DocOrd) error {
-	return t.insert(word, docID, false, 0, ord...)
+func (t *Index) Insert(word string, ord fts.DocOrd) error {
+	return t.insert(word, false, 0, ord)
 }
 
-func (t *Index) InsertAt(word string, docID fts.DocID, position uint32, ord ...fts.DocOrd) error {
-	return t.insert(word, docID, true, position, ord...)
+func (t *Index) InsertAt(word string, position uint32, ord fts.DocOrd) error {
+	return t.insert(word, true, position, ord)
 }
 
-func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, ords ...fts.DocOrd) error {
-	if len(ords) == 0 {
-		return fmt.Errorf("hamtpointered: insert: missing doc ord for %q", docID)
-	}
+func (t *Index) insert(word string, hasPos bool, pos uint32, ord fts.DocOrd) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	seq := uint32(ords[0])
-	t.root.insertNode(hashKey(word), word, docID, ords[0], seq, 0, hasPos, pos)
+	seq := uint32(ord)
+	t.root.insertNode(hashKey(word), word, ord, seq, 0, hasPos, pos)
 	return nil
 }
 

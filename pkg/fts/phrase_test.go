@@ -8,42 +8,42 @@ import (
 
 type positionalMemoryIndex struct {
 	postings  map[string][]DocRef
-	positions map[string]map[DocID][]uint32
+	positions map[string]map[DocOrd][]uint32
 }
 
 func newPositionalMemoryIndex() *positionalMemoryIndex {
 	return &positionalMemoryIndex{
 		postings:  make(map[string][]DocRef),
-		positions: make(map[string]map[DocID][]uint32),
+		positions: make(map[string]map[DocOrd][]uint32),
 	}
 }
 
-func (p *positionalMemoryIndex) Insert(key string, id DocID, ord ...DocOrd) error {
-	p.bumpCount(key, id)
+func (p *positionalMemoryIndex) Insert(key string, ord DocOrd) error {
+	p.bumpCount(key, ord)
 	return nil
 }
 
-func (p *positionalMemoryIndex) InsertAt(key string, id DocID, pos uint32, ord ...DocOrd) error {
-	p.bumpCount(key, id)
+func (p *positionalMemoryIndex) InsertAt(key string, pos uint32, ord DocOrd) error {
+	p.bumpCount(key, ord)
 	if _, ok := p.positions[key]; !ok {
-		p.positions[key] = make(map[DocID][]uint32)
+		p.positions[key] = make(map[DocOrd][]uint32)
 	}
-	ps := append(p.positions[key][id], pos)
+	ps := append(p.positions[key][ord], pos)
 	sort.Slice(ps, func(i, j int) bool { return ps[i] < ps[j] })
-	p.positions[key][id] = ps
+	p.positions[key][ord] = ps
 	return nil
 }
 
-func (p *positionalMemoryIndex) bumpCount(key string, id DocID) {
+func (p *positionalMemoryIndex) bumpCount(key string, ord DocOrd) {
 	entries := p.postings[key]
 	for i := range entries {
-		if entries[i].ID == id {
+		if entries[i].Ord == ord {
 			entries[i].Count++
 			p.postings[key] = entries
 			return
 		}
 	}
-	p.postings[key] = append(entries, DocRef{ID: id, Count: 1})
+	p.postings[key] = append(entries, DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
 }
 
 func (p *positionalMemoryIndex) Search(key string) ([]DocRef, error) {
@@ -55,8 +55,8 @@ func (p *positionalMemoryIndex) SearchPositional(key string) ([]PositionalDocRef
 	out := make([]PositionalDocRef, 0, len(entries))
 	for _, entry := range entries {
 		out = append(out, PositionalDocRef{
-			ID:        entry.ID,
-			Positions: p.positions[key][entry.ID],
+			Ord:       entry.Ord,
+			Positions: p.positions[key][entry.Ord],
 		})
 	}
 	return out, nil

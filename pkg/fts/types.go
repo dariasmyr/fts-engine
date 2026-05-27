@@ -10,7 +10,6 @@ type DocID string
 type DocOrd uint32
 
 type Posting struct {
-	ID    DocID
 	Ord   DocOrd
 	Count uint32
 	Seq   uint32
@@ -44,7 +43,7 @@ type Field struct {
 }
 
 type Index interface {
-	Insert(key string, id DocID, ord ...DocOrd) error
+	Insert(key string, ord DocOrd) error
 	Search(key string) ([]Posting, error)
 }
 
@@ -54,7 +53,6 @@ type PrefixIndex interface {
 }
 
 type PositionalPosting struct {
-	ID DocID
 	Ord DocOrd
 	// Positions may share backing storage with the index and must be treated as read-only.
 	Positions []uint32
@@ -64,7 +62,7 @@ type PositionalDocRef = PositionalPosting
 
 type PositionalIndex interface {
 	Index
-	InsertAt(key string, id DocID, position uint32, ord ...DocOrd) error
+	InsertAt(key string, position uint32, ord DocOrd) error
 	SearchPositional(key string) ([]PositionalPosting, error)
 }
 

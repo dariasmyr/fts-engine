@@ -97,7 +97,16 @@ func (s *Service) searchKeysInField(ctx context.Context, field string, index Ind
 		if err != nil {
 			return termFieldDocsResult{}, fmt.Errorf("fts: term query field %q: index search: %w", field, err)
 		}
-		docs = s.normalizePostings(docs)
+		if s.tombstones != nil && s.tombstones.Any() {
+			liveDocs := make([]Posting, 0, len(docs))
+			for _, doc := range docs {
+				if s.tombstones.IsSet(doc.Ord) {
+					continue
+				}
+				liveDocs = append(liveDocs, doc)
+			}
+			docs = liveDocs
+		}
 		postingsRead += len(docs)
 		if len(docs) == 0 {
 			continue

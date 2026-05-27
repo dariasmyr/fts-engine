@@ -16,21 +16,21 @@ func newExecPrefixPositionalMemoryIndex() *execPrefixPositionalMemoryIndex {
 }
 
 func (p *execPrefixPositionalMemoryIndex) SearchPrefix(prefix string) ([]DocRef, error) {
-	merged := make(map[DocID]uint32)
+	merged := make(map[DocOrd]uint32)
 	for key, docs := range p.postings {
 		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
 		for _, doc := range docs {
-			merged[doc.ID] += doc.Count
+			merged[doc.Ord] += doc.Count
 		}
 	}
 
 	out := make([]DocRef, 0, len(merged))
-	for id, count := range merged {
-		out = append(out, DocRef{ID: id, Count: count})
+	for ord, count := range merged {
+		out = append(out, DocRef{Ord: ord, Count: count, Seq: uint32(ord)})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
 	return out, nil
 }
 

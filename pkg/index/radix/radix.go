@@ -112,21 +112,17 @@ func lcp(a, b string) int {
 	return i
 }
 
-func (t *Index) Insert(word string, docID fts.DocID, ord ...fts.DocOrd) error {
-	return t.insert(word, docID, false, 0, ord...)
+func (t *Index) Insert(word string, ord fts.DocOrd) error {
+	return t.insert(word, false, 0, ord)
 }
 
-func (t *Index) InsertAt(word string, docID fts.DocID, position uint32, ord ...fts.DocOrd) error {
-	return t.insert(word, docID, true, position, ord...)
+func (t *Index) InsertAt(word string, position uint32, ord fts.DocOrd) error {
+	return t.insert(word, true, position, ord)
 }
 
-func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, ords ...fts.DocOrd) error {
-	if len(ords) == 0 {
-		return fmt.Errorf("radix: insert: missing doc ord for %q", docID)
-	}
+func (t *Index) insert(word string, hasPos bool, pos uint32, ord fts.DocOrd) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	ord := ords[0]
 
 	current := t.root
 	rest := word
@@ -143,7 +139,7 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, or
 				current = child
 				rest = rest[p:]
 				if rest == "" {
-					t.recordDoc(current, docID, ord, hasPos, pos)
+					t.recordDoc(current, ord, hasPos, pos)
 					return nil
 				}
 				goto NEXT
@@ -160,17 +156,17 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, or
 
 			if newSuffix != "" {
 				n = newNode(newSuffix)
-				t.recordDoc(n, docID, ord, hasPos, pos)
+				t.recordDoc(n, ord, hasPos, pos)
 				middle.children = append(middle.children, n)
 				return nil
 			}
 
-			t.recordDoc(middle, docID, ord, hasPos, pos)
+			t.recordDoc(middle, ord, hasPos, pos)
 			return nil
 		}
 
 		n = newNode(rest)
-		t.recordDoc(n, docID, ord, hasPos, pos)
+		t.recordDoc(n, ord, hasPos, pos)
 		current.children = append(current.children, n)
 		return nil
 
@@ -178,7 +174,7 @@ func (t *Index) insert(word string, docID fts.DocID, hasPos bool, pos uint32, or
 	}
 }
 
-func (t *Index) recordDoc(n *node, docID fts.DocID, ord fts.DocOrd, hasPos bool, pos uint32) {
+func (t *Index) recordDoc(n *node, ord fts.DocOrd, hasPos bool, pos uint32) {
 	n.terminal = true
 	n.docs[ord]++
 	if hasPos {

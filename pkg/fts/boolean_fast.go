@@ -231,7 +231,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 	for driverExpansionIdx := range driverGroup.expansions {
 		driverExpansion := &driverGroup.expansions[driverExpansionIdx]
 		for _, driverDoc := range driverExpansion.docs {
-			driverOrd, _ := s.ordForPosting(driverDoc)
+			driverOrd := driverDoc.Ord
 			if _, already := combined[driverOrd]; already {
 				continue
 			}
@@ -345,7 +345,7 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, sco
 
 		for _, expansion := range shouldGroup.expansions {
 			for _, doc := range expansion.docs {
-				ord, _ := s.ordForPosting(doc)
+				ord := doc.Ord
 				if _, skip := exclude[ord]; skip {
 					continue
 				}

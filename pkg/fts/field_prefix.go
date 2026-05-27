@@ -90,7 +90,16 @@ func (s *Service) searchPrefixInField(ctx context.Context, field string, prefixe
 	if err != nil {
 		return termExpansion{}, fmt.Errorf("fts: prefix query field %q: %w", field, err)
 	}
-	docs = s.normalizePostings(docs)
+	if s.tombstones != nil && s.tombstones.Any() {
+		liveDocs := make([]Posting, 0, len(docs))
+		for _, doc := range docs {
+			if s.tombstones.IsSet(doc.Ord) {
+				continue
+			}
+			liveDocs = append(liveDocs, doc)
+		}
+		docs = liveDocs
+	}
 	postingsRead += len(docs)
 	return termExpansion{
 		field:      field,

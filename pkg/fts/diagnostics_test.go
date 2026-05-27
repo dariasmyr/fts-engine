@@ -77,11 +77,11 @@ func TestSearchDiagnosticsPrefixStrategy(t *testing.T) {
 
 func TestSearchDiagnosticsBooleanOrWandStrategy(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 2, Seq: 1}, {ID: "doc-b", Count: 1, Seq: 2}, {ID: "doc-c", Count: 1, Seq: 3}, {ID: "doc-e", Count: 1, Seq: 5}}
-	idx.entries["beta"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}, {ID: "doc-c", Count: 2, Seq: 3}, {ID: "doc-d", Count: 1, Seq: 4}}
-	idx.entries["gamma"] = []DocRef{{ID: "doc-c", Count: 1, Seq: 3}, {ID: "doc-d", Count: 3, Seq: 4}, {ID: "doc-e", Count: 1, Seq: 5}}
 
 	svc := New(idx, WordKeys, WithScorer(TFIDF()))
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 2}, namedPosting{"doc-b", 1}, namedPosting{"doc-c", 1}, namedPosting{"doc-e", 1})
+	idx.entries["beta"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1}, namedPosting{"doc-c", 2}, namedPosting{"doc-d", 1})
+	idx.entries["gamma"] = refsForIDs(svc.registry, namedPosting{"doc-c", 1}, namedPosting{"doc-d", 3}, namedPosting{"doc-e", 1})
 	observeDefaultFieldLengths(svc, map[DocID]uint32{
 		"doc-a": 3,
 		"doc-b": 1,
@@ -217,12 +217,14 @@ func TestSearchDiagnosticsBooleanAndFastStrategy(t *testing.T) {
 func TestSearchDiagnosticsBooleanAndFastDriverInstrumentation(t *testing.T) {
 	title := newMemoryIndex()
 	body := newMemoryIndex()
+	registry := NewDocRegistry()
 	alphaDocs := make([]DocRef, 0, 60)
 	betaDocs := make([]DocRef, 0, 60)
 	for i := 0; i < 60; i++ {
 		id := DocID(fmt.Sprintf("doc-%d", i))
-		alphaDocs = append(alphaDocs, DocRef{ID: id, Count: 1, Seq: uint32(i + 1)})
-		betaDocs = append(betaDocs, DocRef{ID: id, Count: 1, Seq: uint32(i + 1)})
+		ord := registry.GetOrAssign(id)
+		alphaDocs = append(alphaDocs, DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
+		betaDocs = append(betaDocs, DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
 	}
 	title.entries["alpha"] = alphaDocs
 	body.entries["beta"] = betaDocs
@@ -230,7 +232,7 @@ func TestSearchDiagnosticsBooleanAndFastDriverInstrumentation(t *testing.T) {
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
-	}, WordKeys)
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	q := &BooleanQuery{Clauses: []BoolClause{
 		MustClause(TermQuery{Field: "title", Term: "alpha"}),
@@ -264,10 +266,10 @@ func TestSearchDiagnosticsBooleanAndFastDriverInstrumentation(t *testing.T) {
 
 func TestSearchDiagnosticsWandSkipReasonWithoutScorer(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["alpha"] = []DocRef{{ID: "doc-a", Count: 1, Seq: 1}}
-	idx.entries["beta"] = []DocRef{{ID: "doc-b", Count: 1, Seq: 2}}
 
 	svc := New(idx, WordKeys)
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1})
+	idx.entries["beta"] = refsForIDs(svc.registry, namedPosting{"doc-b", 1})
 	q := &BooleanQuery{Clauses: []BoolClause{
 		ShouldClause(TermQuery{Term: "alpha"}),
 		ShouldClause(TermQuery{Term: "beta"}),
