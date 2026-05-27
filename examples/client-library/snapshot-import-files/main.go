@@ -8,6 +8,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
+	"github.com/dariasmyr/fts-engine/pkg/segment"
 )
 
 func main() {
@@ -15,11 +16,11 @@ func main() {
 		panic(err)
 	}
 
-	indexFile, err := os.Open("./data/segments/default.index.fidx")
+	bundleFile, err := os.Open("./data/segments/default.bundle.fidx")
 	if err != nil {
 		panic(err)
 	}
-	defer indexFile.Close()
+	defer bundleFile.Close()
 
 	filterFile, err := os.Open("./data/segments/default.filter.fidx")
 	if err != nil {
@@ -27,7 +28,7 @@ func main() {
 	}
 	defer filterFile.Close()
 
-	loadedIndex, err := fts.LoadIndexSnapshot(indexFile)
+	loadedBundle, err := segment.LoadBundle(bundleFile)
 	if err != nil {
 		panic(err)
 	}
@@ -37,13 +38,10 @@ func main() {
 		panic(err)
 	}
 
-	restored := fts.New(
-		loadedIndex.Index,
-		keygen.Word,
-		fts.WithFilter(loadedFilter.Filter),
-		fts.WithScorer(fts.BM25()),
-		fts.WithCollectionStatsSnapshot(loadedIndex.CollectionStats),
-	)
+	restored, err := segment.RestoreService(loadedBundle, keygen.Word, fts.WithFilter(loadedFilter.Filter), fts.WithScorer(fts.BM25()))
+	if err != nil {
+		panic(err)
+	}
 	res, err := restored.SearchDocuments(context.Background(), "snapshot", 10)
 	if err != nil {
 		panic(err)

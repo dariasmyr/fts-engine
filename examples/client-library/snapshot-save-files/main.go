@@ -7,6 +7,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
+	"github.com/dariasmyr/fts-engine/pkg/segment"
 )
 
 func main() {
@@ -18,7 +19,7 @@ func main() {
 		panic(err)
 	}
 
-	idx, err := ftsbuiltin.BuildIndex("radix")
+	idx, err := ftsbuiltin.BuildIndex("slicedradix")
 	if err != nil {
 		panic(err)
 	}
@@ -40,12 +41,16 @@ func main() {
 
 	index, searchFilter := svc.SnapshotComponents()
 	stats := svc.SnapshotCollectionStats()
+	source, ok := index.(segment.Source)
+	if !ok {
+		panic("index does not support segment export")
+	}
 
-	indexFile, err := os.Create("./data/segments/default.index.fidx")
+	bundleFile, err := os.Create("./data/segments/default.bundle.fidx")
 	if err != nil {
 		panic(err)
 	}
-	defer indexFile.Close()
+	defer bundleFile.Close()
 
 	filterFile, err := os.Create("./data/segments/default.filter.fidx")
 	if err != nil {
@@ -53,7 +58,7 @@ func main() {
 	}
 	defer filterFile.Close()
 
-	if err := fts.SaveIndexSnapshotWithStats(indexFile, "radix", index, stats); err != nil {
+	if err := segment.SaveBundle(bundleFile, source, stats, svc.SnapshotRegistry(), svc.SnapshotTombstones()); err != nil {
 		panic(err)
 	}
 	if err := fts.SaveFilterSnapshot(filterFile, "bloom", searchFilter); err != nil {

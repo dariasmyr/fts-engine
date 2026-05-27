@@ -27,6 +27,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
+	"github.com/dariasmyr/fts-engine/pkg/segment"
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
@@ -426,7 +427,81 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 }
 
 func tryLoadSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, serviceOpts []pkgfts.Option) (*pkgfts.Service, bool, error) {
+	svc, ok, err := tryLoadBundleSnapshot(log, cfg, keyGen, serviceOpts)
+	if err != nil || ok {
+		return svc, ok, err
+	}
 	return tryLoadSplitSnapshot(log, cfg, keyGen, serviceOpts)
+}
+
+func tryLoadBundleSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, serviceOpts []pkgfts.Option) (*pkgfts.Service, bool, error) {
+	bundlePath := snapshotBundlePath(cfg)
+	filterPath := snapshotFilterPath(cfg)
+	expectedFilter := cfg.FTS.Filter
+	if expectedFilter == "none" {
+		expectedFilter = ""
+	}
+	if bundlePath == "" {
+		return nil, false, nil
+	}
+
+	if _, err := os.Stat(bundlePath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("check segment bundle path: %w", err)
+	}
+
+	bundleFile, err := os.Open(bundlePath)
+	if err != nil {
+		return nil, false, fmt.Errorf("open segment bundle: %w", err)
+	}
+	defer bundleFile.Close()
+
+	loadedBundle, err := segment.LoadBundle(bundleFile)
+	if err != nil {
+		return nil, false, fmt.Errorf("load segment bundle: %w", err)
+	}
+
+	builtOpts := append([]pkgfts.Option(nil), serviceOpts...)
+	if expectedFilter != "" {
+		if filterPath == "" {
+			return nil, false, nil
+		}
+		if _, statErr := os.Stat(filterPath); statErr != nil {
+			if errors.Is(statErr, os.ErrNotExist) {
+				log.Info("Segment bundle filter snapshot is missing, rebuilding from source", "path", filterPath)
+				return nil, false, nil
+			}
+			return nil, false, fmt.Errorf("check filter snapshot path: %w", statErr)
+		}
+		filterFile, openErr := os.Open(filterPath)
+		if openErr != nil {
+			return nil, false, fmt.Errorf("open filter snapshot: %w", openErr)
+		}
+		loadedFilter, loadErr := pkgfts.LoadFilterSnapshot(filterFile)
+		_ = filterFile.Close()
+		if loadErr != nil {
+			return nil, false, fmt.Errorf("load filter snapshot: %w", loadErr)
+		}
+		if loadedFilter.FilterName != expectedFilter {
+			log.Warn("Bundle filter type differs from config",
+				"bundle_filter", loadedFilter.FilterName,
+				"config_filter", cfg.FTS.Filter,
+				"path", filterPath,
+			)
+		}
+		if loadedFilter.Filter != nil {
+			builtOpts = append(builtOpts, pkgfts.WithFilter(loadedFilter.Filter))
+		}
+	}
+
+	svc, err := segment.RestoreService(loadedBundle, keyGen, builtOpts...)
+	if err != nil {
+		return nil, false, fmt.Errorf("restore service from segment bundle: %w", err)
+	}
+	log.Info("Loaded segment bundle", "bundle_path", bundlePath, "filter_path", filterPath)
+	return svc, true, nil
 }
 
 func tryLoadSplitSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, serviceOpts []pkgfts.Option) (*pkgfts.Service, bool, error) {
@@ -555,7 +630,68 @@ func saveSnapshotIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Ser
 		return nil
 	}
 
+	if err := saveBundleSnapshot(log, cfg, svc); err == nil {
+		return nil
+	} else if !errors.Is(err, errSegmentBundleUnsupported) {
+		return err
+	}
+
 	return saveSplitSnapshots(log, cfg, svc)
+}
+
+var errSegmentBundleUnsupported = errors.New("segment bundle unsupported")
+
+func saveBundleSnapshot(log *slog.Logger, cfg *config.Config, svc *pkgfts.Service) error {
+	if cfg == nil || svc == nil {
+		return nil
+	}
+
+	bundlePath := snapshotBundlePath(cfg)
+	filterPath := snapshotFilterPath(cfg)
+	if bundlePath == "" {
+		return errSegmentBundleUnsupported
+	}
+
+	index, searchFilter := svc.SnapshotComponents()
+	source, ok := index.(segment.Source)
+	if !ok {
+		return errSegmentBundleUnsupported
+	}
+
+	filterName := cfg.FTS.Filter
+	if filterName == "none" {
+		filterName = ""
+	}
+
+	stats := svc.SnapshotCollectionStats()
+	registry := svc.SnapshotRegistry()
+	tombstones := svc.SnapshotTombstones()
+	opts := ftspersist.SaveOptions{
+		BufferSize:     cfg.FTS.Snapshot.BufferSize,
+		FlushThreshold: cfg.FTS.Snapshot.FlushThreshold,
+		SyncFile:       cfg.FTS.Snapshot.SyncFile,
+	}
+
+	if err := ftspersist.SaveAtomicWithOptions(bundlePath, opts, func(w io.Writer) error {
+		return segment.SaveBundle(w, source, stats, registry, tombstones)
+	}); err != nil {
+		return err
+	}
+
+	if searchFilter != nil && filterName != "" {
+		if err := ftspersist.SaveAtomicWithOptions(filterPath, opts, func(w io.Writer) error {
+			return pkgfts.SaveFilterSnapshot(w, filterName, searchFilter)
+		}); err != nil {
+			return err
+		}
+	} else if filterPath != "" {
+		if err := os.Remove(filterPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove stale filter snapshot: %w", err)
+		}
+	}
+
+	log.Info("FTS segment bundle persisted", "bundle_path", bundlePath, "filter_path", filterPath)
+	return nil
 }
 
 func saveSplitSnapshots(log *slog.Logger, cfg *config.Config, svc *pkgfts.Service) error {
@@ -628,6 +764,24 @@ func snapshotIndexPath(cfg *config.Config) string {
 	}
 
 	return base[:len(base)-len(ext)] + ".index" + ext
+}
+
+func snapshotBundlePath(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+
+	base := cfg.FTS.Snapshot.Path
+	if base == "" {
+		return ""
+	}
+
+	ext := filepath.Ext(base)
+	if ext == "" {
+		return base + ".bundle"
+	}
+
+	return base[:len(base)-len(ext)] + ".bundle" + ext
 }
 
 func snapshotFilterPath(cfg *config.Config) string {
