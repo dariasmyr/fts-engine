@@ -653,9 +653,21 @@ func saveBundleSnapshot(log *slog.Logger, cfg *config.Config, svc *pkgfts.Servic
 	}
 
 	index, searchFilter := svc.SnapshotComponents()
-	source, ok := index.(segment.Source)
-	if !ok {
-		return errSegmentBundleUnsupported
+	fields, _ := svc.SnapshotFields()
+	sources := make(map[string]segment.Source, len(fields))
+	for fieldName, fieldIndex := range fields {
+		source, ok := fieldIndex.(segment.Source)
+		if !ok {
+			return errSegmentBundleUnsupported
+		}
+		sources[fieldName] = source
+	}
+	if len(sources) == 0 && index != nil {
+		source, ok := index.(segment.Source)
+		if !ok {
+			return errSegmentBundleUnsupported
+		}
+		sources[packageDefaultField()] = source
 	}
 
 	filterName := cfg.FTS.Filter
@@ -673,7 +685,7 @@ func saveBundleSnapshot(log *slog.Logger, cfg *config.Config, svc *pkgfts.Servic
 	}
 
 	if err := ftspersist.SaveAtomicWithOptions(bundlePath, opts, func(w io.Writer) error {
-		return segment.SaveBundle(w, source, stats, registry, tombstones)
+		return segment.SaveMultiFieldBundle(w, sources, stats, registry, tombstones)
 	}); err != nil {
 		return err
 	}
@@ -782,6 +794,10 @@ func snapshotBundlePath(cfg *config.Config) string {
 	}
 
 	return base[:len(base)-len(ext)] + ".bundle" + ext
+}
+
+func packageDefaultField() string {
+	return pkgfts.DefaultField
 }
 
 func snapshotFilterPath(cfg *config.Config) string {
