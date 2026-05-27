@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/segment"
 	"hash/fnv"
 	"io"
 	"math/bits"
@@ -99,9 +100,9 @@ func (n node) Append(idx uint32, branch nodeptr) node {
 }
 
 type Index struct {
-	mu       sync.RWMutex
-	nodes    []node
-	terms    []terminal
+	mu    sync.RWMutex
+	nodes []node
+	terms []terminal
 }
 
 type snapshotEntry struct {
@@ -271,6 +272,26 @@ func (t *Index) SearchPrefix(prefix string) ([]fts.DocRef, error) {
 	}
 
 	return mergedDocsSlice(merged), nil
+}
+
+func (t *Index) ExportSegmentTerms(yield func(segment.TermPostings) error) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	for i := range t.terms {
+		entries := t.terms[i].entries
+		for j := range entries {
+			if err := yield(segment.TermPostings{
+				Term:      entries[j].key,
+				Postings:  append([]fts.DocRef(nil), entries[j].docs...),
+				Positions: clonePositions(entries[j].positions),
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func (t *Index) Insert(word string, id fts.DocID, ord ...fts.DocOrd) error {
@@ -451,3 +472,4 @@ func (t *Index) Analyze() fts.Stats {
 var _ fts.Index = (*Index)(nil)
 var _ fts.PrefixIndex = (*Index)(nil)
 var _ fts.PositionalIndex = (*Index)(nil)
+var _ segment.Source = (*Index)(nil)

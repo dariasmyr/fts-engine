@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/segment"
 	"io"
 	"sort"
 	"sync"
@@ -290,6 +291,13 @@ func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
 	}
 }
 
+func (t *Index) ExportSegmentTerms(yield func(segment.TermPostings) error) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	return t.exportNodeTerms(t.root, "", yield)
+}
+
 func (t *Index) next(current int, rest string) (int, string, bool, bool) {
 	for _, child := range t.nodes[current].children {
 		p := lcp(rest, t.nodes[child].prefix)
@@ -312,6 +320,64 @@ func (t *Index) next(current int, rest string) (int, string, bool, bool) {
 
 func (n *node) isTerminal() bool {
 	return len(n.docs) > 0
+}
+
+func (t *Index) exportNodeTerms(current int, prefix string, yield func(segment.TermPostings) error) error {
+	n := t.nodes[current]
+	term := prefix + n.prefix
+	if n.isTerminal() {
+		postings, positions := cloneDocsAndPositions(n.docs, n.positions)
+		sortTermDocs(postings, positions)
+		if err := yield(segment.TermPostings{
+			Term:      term,
+			Postings:  postings,
+			Positions: positions,
+		}); err != nil {
+			return err
+		}
+	}
+	for _, child := range n.children {
+		if err := t.exportNodeTerms(child, term, yield); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func cloneDocsAndPositions(docs []fts.DocRef, positions [][]uint32) ([]fts.DocRef, [][]uint32) {
+	postings := append([]fts.DocRef(nil), docs...)
+	if len(positions) == 0 {
+		return postings, nil
+	}
+	cloned := make([][]uint32, len(positions))
+	for i := range positions {
+		cloned[i] = append([]uint32(nil), positions[i]...)
+	}
+	return postings, cloned
+}
+
+func sortTermDocs(postings []fts.DocRef, positions [][]uint32) {
+	if len(postings) < 2 {
+		return
+	}
+	type paired struct {
+		posting   fts.DocRef
+		positions []uint32
+	}
+	pairedDocs := make([]paired, len(postings))
+	for i := range postings {
+		pairedDocs[i] = paired{posting: postings[i]}
+		if i < len(positions) {
+			pairedDocs[i].positions = positions[i]
+		}
+	}
+	sort.SliceStable(pairedDocs, func(i, j int) bool { return pairedDocs[i].posting.Ord < pairedDocs[j].posting.Ord })
+	for i := range pairedDocs {
+		postings[i] = pairedDocs[i].posting
+		if i < len(positions) {
+			positions[i] = pairedDocs[i].positions
+		}
+	}
 }
 
 func addMergedDoc(merged map[fts.DocOrd]fts.DocRef, ord fts.DocOrd, count, seq uint32) {
@@ -413,3 +479,4 @@ func (t *Index) Analyze() fts.Stats {
 var _ fts.PositionalIndex = (*Index)(nil)
 var _ fts.PrefixIndex = (*Index)(nil)
 var _ fts.Index = (*Index)(nil)
+var _ segment.Source = (*Index)(nil)
