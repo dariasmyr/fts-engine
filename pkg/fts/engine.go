@@ -21,21 +21,31 @@ type tokenGroup struct {
 }
 
 type Service struct {
-	indexFactory IndexFactory
-	keyGen       KeyGenerator
-	pipeline     Pipeline
-	filter       Filter
-	scorer       Scorer
-	collection   *collectionStats
-	registry     *DocRegistry
-	tombstones   *Tombstones
+	indexFactory                   IndexFactory
+	keyGen                         KeyGenerator
+	pipeline                       Pipeline
+	filter                         Filter
+	scorer                         Scorer
+	compactionLoadFactor           float64
+	autoCompactionCheck            bool
+	compactionCallback             func(CompactionStats)
+	collection                     *collectionStats
+	registry                       *DocRegistry
+	tombstones                     *Tombstones
 	pendingRegistrySnapshot        []DocID
 	pendingTombstonesSnapshot      []uint64
 	pendingCollectionStatsSnapshot *CollectionStatsSnapshot
-	singleField  bool
+	singleField                    bool
 
 	mu      sync.RWMutex
 	indexes map[string]Index
+}
+
+type CompactionStats struct {
+	TotalAssignedDocs   int
+	LiveDocs            int
+	TombstonedDocs      int
+	TombstoneLoadFactor float64
 }
 
 func New(index Index, keyGen KeyGenerator, opts ...Option) *Service {
@@ -68,13 +78,14 @@ func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opt
 }
 
 func newService(keyGen KeyGenerator, opts ...Option) *Service {
-		s := &Service{
-		keyGen:     keyGen,
-		pipeline:   defaultPipeline{},
-		indexes:    make(map[string]Index),
-		collection: newCollectionStats(),
-		registry:   NewDocRegistry(),
-		tombstones: NewTombstones(),
+	s := &Service{
+		keyGen:              keyGen,
+		pipeline:            defaultPipeline{},
+		indexes:             make(map[string]Index),
+		collection:          newCollectionStats(),
+		registry:            NewDocRegistry(),
+		tombstones:          NewTombstones(),
+		autoCompactionCheck: true,
 	}
 
 	for _, opt := range opts {
@@ -116,6 +127,10 @@ func (s *Service) IndexDocument(ctx context.Context, docID DocID, content string
 }
 
 func (s *Service) Delete(docID DocID) bool {
+	return s.delete(docID, true)
+}
+
+func (s *Service) delete(docID DocID, checkCompaction bool) bool {
 	if s == nil || docID == "" {
 		return false
 	}
@@ -130,6 +145,9 @@ func (s *Service) Delete(docID DocID) bool {
 		s.collection.remove(ord)
 	}
 	s.registry.Forget(docID)
+	if checkCompaction {
+		s.maybeTriggerCompactionCheck()
+	}
 	return true
 }
 
@@ -140,8 +158,12 @@ func (s *Service) UpdateDocument(ctx context.Context, docID DocID, content strin
 	if docID == "" {
 		return fmt.Errorf("fts: document id is empty")
 	}
-	s.Delete(docID)
-	return s.IndexDocument(ctx, docID, content)
+	s.delete(docID, false)
+	if err := s.IndexDocument(ctx, docID, content); err != nil {
+		return err
+	}
+	s.maybeTriggerCompactionCheck()
+	return nil
 }
 
 func (s *Service) Update(ctx context.Context, doc Document) error {
@@ -151,8 +173,12 @@ func (s *Service) Update(ctx context.Context, doc Document) error {
 	if doc.ID == "" {
 		return fmt.Errorf("fts: document id is empty")
 	}
-	s.Delete(doc.ID)
-	return s.Index(ctx, doc)
+	s.delete(doc.ID, false)
+	if err := s.Index(ctx, doc); err != nil {
+		return err
+	}
+	s.maybeTriggerCompactionCheck()
+	return nil
 }
 
 func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults int) (*SearchResult, error) {
@@ -279,6 +305,50 @@ func (s *Service) BuildFilter() error {
 	}
 
 	return nil
+}
+
+func (s *Service) CompactionStats() CompactionStats {
+	if s == nil {
+		return CompactionStats{}
+	}
+	totalAssigned := 0
+	liveDocs := 0
+	tombstonedDocs := 0
+	if s.registry != nil {
+		totalAssigned = s.registry.TotalAssigned()
+		liveDocs = s.registry.ActiveLen()
+	}
+	if s.tombstones != nil {
+		tombstonedDocs = s.tombstones.Count()
+	}
+	stats := CompactionStats{
+		TotalAssignedDocs: totalAssigned,
+		LiveDocs:          liveDocs,
+		TombstonedDocs:    tombstonedDocs,
+	}
+	if totalAssigned > 0 {
+		stats.TombstoneLoadFactor = float64(tombstonedDocs) / float64(totalAssigned)
+	}
+	return stats
+}
+
+func (s *Service) NeedsCompaction() bool {
+	if s == nil || s.compactionLoadFactor <= 0 {
+		return false
+	}
+	return s.CompactionStats().TombstoneLoadFactor >= s.compactionLoadFactor
+}
+
+func (s *Service) maybeTriggerCompactionCheck() {
+	if s == nil || !s.autoCompactionCheck {
+		return
+	}
+	if !s.NeedsCompaction() {
+		return
+	}
+	if s.compactionCallback != nil {
+		s.compactionCallback(s.CompactionStats())
+	}
 }
 
 func formatDuration(d time.Duration) string {

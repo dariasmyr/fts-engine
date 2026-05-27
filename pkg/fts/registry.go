@@ -82,6 +82,26 @@ func (r *DocRegistry) Len() int {
 	return len(r.ordToID)
 }
 
+func (r *DocRegistry) TotalAssigned() int {
+	if r == nil {
+		return 0
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.ordToID)
+}
+
+func (r *DocRegistry) ActiveLen() int {
+	if r == nil {
+		return 0
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.idToOrd)
+}
+
 func (r *DocRegistry) Snapshot() []DocID {
 	if r == nil {
 		return nil

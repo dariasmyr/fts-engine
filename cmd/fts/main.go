@@ -69,6 +69,8 @@ func main() {
 	log.Info("fts", "keygen", cfg.FTS.KeyGen)
 	log.Info("fts", "scorer", cfg.FTS.Scorer)
 	log.Info("fts", "filter", cfg.FTS.Filter)
+	log.Info("fts", "compaction_load_factor", cfg.FTS.Compaction.LoadFactor)
+	log.Info("fts", "compaction_auto_check", cfg.FTS.Compaction.AutoCheck)
 	log.Info("fts", "mode", cfg.Mode.Type)
 
 	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
@@ -397,6 +399,19 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 	if scorerOpt != nil {
 		serviceOpts = append(serviceOpts, scorerOpt)
 	}
+	serviceOpts = append(serviceOpts,
+		pkgfts.WithCompactionLoadFactor(cfg.FTS.Compaction.LoadFactor),
+		pkgfts.WithAutoCompactionCheck(cfg.FTS.Compaction.AutoCheck),
+		pkgfts.WithCompactionCallback(func(stats pkgfts.CompactionStats) {
+			log.Warn("FTS compaction threshold reached",
+				"load_factor", stats.TombstoneLoadFactor,
+				"threshold", cfg.FTS.Compaction.LoadFactor,
+				"tombstoned_docs", stats.TombstonedDocs,
+				"live_docs", stats.LiveDocs,
+				"total_assigned_docs", stats.TotalAssignedDocs,
+			)
+		}),
+	)
 
 	if cfg.Mode.Type == "prod" && cfg.FTS.Snapshot.Enabled && cfg.FTS.Snapshot.LoadOnStart {
 		svc, ok, err := tryLoadSnapshot(log, cfg, keyGen, serviceOpts)

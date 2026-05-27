@@ -16,6 +16,9 @@ fts:
     buffer_size: 1048576
     flush_threshold: 262144
     sync_file: true
+  compaction:
+    load_factor: 0      # 0 disables compaction threshold checks, otherwise use 0..1
+    auto_check: true    # run threshold checks automatically after delete/update
   bloom:
     expected_items: 1000000
     bits_per_item: 20

@@ -77,6 +77,13 @@ func (t *Tombstones) Count() int {
 	return count
 }
 
+func (t *Tombstones) LoadFactor(totalAssigned int) float64 {
+	if totalAssigned <= 0 {
+		return 0
+	}
+	return float64(t.Count()) / float64(totalAssigned)
+}
+
 func (t *Tombstones) Snapshot() []uint64 {
 	if t == nil {
 		return nil

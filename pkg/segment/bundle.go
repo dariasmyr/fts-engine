@@ -64,7 +64,7 @@ func SaveMultiFieldBundle(w io.Writer, fields map[string]Source, stats *fts.Coll
 		if source == nil {
 			return fmt.Errorf("segment: save bundle: nil source for field %q", fieldName)
 		}
-		segmentBytes, err := BuildFromSource(source)
+		segmentBytes, err := BuildFromSourceWithTombstones(source, tombstones)
 		if err != nil {
 			return fmt.Errorf("segment: save bundle: build segment for field %q: %w", fieldName, err)
 		}

@@ -39,6 +39,13 @@ func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadBundle() error = %v", err)
 	}
+	sealed, err := loaded.Fields[fts.DefaultField].Search("alpha")
+	if err != nil {
+		t.Fatalf("sealed Search(alpha) error = %v", err)
+	}
+	if len(sealed) != 1 || sealed[0].Ord != 1 || sealed[0].Count != 2 {
+		t.Fatalf("sealed Search(alpha) = %+v, want only live ord=1 count=2", sealed)
+	}
 	restored, err := segment.RestoreService(loaded, fts.WordKeys, fts.WithScorer(fts.BM25()))
 	if err != nil {
 		t.Fatalf("RestoreService() error = %v", err)
@@ -101,6 +108,13 @@ func TestMultiFieldBundleRestoreServiceRoundTrip(t *testing.T) {
 	}
 	if got := len(loaded.Fields); got != 2 {
 		t.Fatalf("len(loaded.Fields) = %d, want 2", got)
+	}
+	titleSealed, err := loaded.Fields["title"].Search("alpha")
+	if err != nil {
+		t.Fatalf("sealed Search(title:alpha) error = %v", err)
+	}
+	if len(titleSealed) != 0 {
+		t.Fatalf("sealed title postings = %+v, want tombstoned doc removed", titleSealed)
 	}
 
 	restored, err := segment.RestoreService(loaded, fts.WordKeys, fts.WithScorer(fts.BM25()))

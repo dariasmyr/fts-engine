@@ -83,3 +83,16 @@ func TestTombstonesZeroValueWorks(t *testing.T) {
 		t.Fatalf("Count() = %d, want 1", got)
 	}
 }
+
+func TestTombstonesLoadFactor(t *testing.T) {
+	tombs := NewTombstones()
+	tombs.Set(1)
+	tombs.Set(3)
+
+	if got, want := tombs.LoadFactor(4), 0.5; got != want {
+		t.Fatalf("LoadFactor(4) = %v, want %v", got, want)
+	}
+	if got := tombs.LoadFactor(0); got != 0 {
+		t.Fatalf("LoadFactor(0) = %v, want 0", got)
+	}
+}

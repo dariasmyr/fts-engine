@@ -39,3 +39,25 @@ func WithTombstonesSnapshot(words []uint64) Option {
 		s.pendingTombstonesSnapshot = append([]uint64(nil), words...)
 	}
 }
+
+func WithCompactionLoadFactor(limit float64) Option {
+	return func(s *Service) {
+		if limit <= 0 || limit > 1 {
+			s.compactionLoadFactor = 0
+			return
+		}
+		s.compactionLoadFactor = limit
+	}
+}
+
+func WithAutoCompactionCheck(enabled bool) Option {
+	return func(s *Service) {
+		s.autoCompactionCheck = enabled
+	}
+}
+
+func WithCompactionCallback(fn func(CompactionStats)) Option {
+	return func(s *Service) {
+		s.compactionCallback = fn
+	}
+}

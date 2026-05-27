@@ -15,16 +15,22 @@ type Config struct {
 }
 
 type FTSConfig struct {
-	Engine   string         `yaml:"engine" env-default:"trie"`
-	Index    string         `yaml:"index"`
-	KeyGen   string         `yaml:"keygen"`
-	Scorer   string         `yaml:"scorer" env-default:"none"`
-	Filter   string         `yaml:"filter" env-default:"none"`
-	Snapshot SnapshotConfig `yaml:"snapshot"`
-	Bloom    BloomConfig    `yaml:"bloom"`
-	Cuckoo   CuckooConfig   `yaml:"cuckoo"`
-	Ribbon   RibbonConfig   `yaml:"ribbon"`
-	Pipeline PipelineConfig `yaml:"pipeline"`
+	Engine     string           `yaml:"engine" env-default:"trie"`
+	Index      string           `yaml:"index"`
+	KeyGen     string           `yaml:"keygen"`
+	Scorer     string           `yaml:"scorer" env-default:"none"`
+	Filter     string           `yaml:"filter" env-default:"none"`
+	Snapshot   SnapshotConfig   `yaml:"snapshot"`
+	Compaction CompactionConfig `yaml:"compaction"`
+	Bloom      BloomConfig      `yaml:"bloom"`
+	Cuckoo     CuckooConfig     `yaml:"cuckoo"`
+	Ribbon     RibbonConfig     `yaml:"ribbon"`
+	Pipeline   PipelineConfig   `yaml:"pipeline"`
+}
+
+type CompactionConfig struct {
+	LoadFactor float64 `yaml:"load_factor" env-default:"0"`
+	AutoCheck  bool    `yaml:"auto_check" env-default:"true"`
 }
 
 type SnapshotConfig struct {
@@ -132,6 +138,10 @@ func defaultConfig() Config {
 				FlushThreshold: 262144,
 				SyncFile:       true,
 			},
+			Compaction: CompactionConfig{
+				LoadFactor: 0,
+				AutoCheck:  true,
+			},
 			Bloom: BloomConfig{
 				ExpectedItems: 1000000,
 				BitsPerItem:   20,
@@ -189,6 +199,10 @@ func validateConfig(cfg *Config) {
 
 	if cfg.FTS.Snapshot.FlushThreshold <= 0 {
 		cfg.FTS.Snapshot.FlushThreshold = 262144
+	}
+
+	if cfg.FTS.Compaction.LoadFactor < 0 || cfg.FTS.Compaction.LoadFactor > 1 {
+		panic("compaction load_factor must be in range [0..1]")
 	}
 
 	switch cfg.FTS.Engine {

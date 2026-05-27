@@ -244,3 +244,120 @@ func TestUpdateDocumentReplacesMultiFieldDocument(t *testing.T) {
 		t.Fatalf("old body leaked after Update: %+v", oldBody.Results)
 	}
 }
+
+func TestDeleteMarksServiceForCompactionWhenLoadFactorReached(t *testing.T) {
+	svc := New(newOrdAwareMemoryIndex(), WordKeys, WithCompactionLoadFactor(0.5))
+	ctx := context.Background()
+	if err := svc.IndexDocument(ctx, "doc-a", "alpha"); err != nil {
+		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	}
+	if err := svc.IndexDocument(ctx, "doc-b", "beta"); err != nil {
+		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	}
+	if svc.NeedsCompaction() {
+		t.Fatal("NeedsCompaction() = true before deletes, want false")
+	}
+	if !svc.Delete("doc-a") {
+		t.Fatal("Delete(doc-a) = false, want true")
+	}
+
+	stats := svc.CompactionStats()
+	if got, want := stats.TotalAssignedDocs, 2; got != want {
+		t.Fatalf("TotalAssignedDocs = %d, want %d", got, want)
+	}
+	if got, want := stats.LiveDocs, 1; got != want {
+		t.Fatalf("LiveDocs = %d, want %d", got, want)
+	}
+	if got, want := stats.TombstonedDocs, 1; got != want {
+		t.Fatalf("TombstonedDocs = %d, want %d", got, want)
+	}
+	if got, want := stats.TombstoneLoadFactor, 0.5; got != want {
+		t.Fatalf("TombstoneLoadFactor = %v, want %v", got, want)
+	}
+	if !svc.NeedsCompaction() {
+		t.Fatal("NeedsCompaction() = false, want true after threshold reached")
+	}
+}
+
+func TestDeleteTriggersCompactionCallbackWhenEnabled(t *testing.T) {
+	called := 0
+	var got CompactionStats
+	svc := New(newOrdAwareMemoryIndex(), WordKeys,
+		WithCompactionLoadFactor(0.5),
+		WithCompactionCallback(func(stats CompactionStats) {
+			called++
+			got = stats
+		}),
+	)
+	ctx := context.Background()
+	if err := svc.IndexDocument(ctx, "doc-a", "alpha"); err != nil {
+		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	}
+	if err := svc.IndexDocument(ctx, "doc-b", "beta"); err != nil {
+		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	}
+	if !svc.Delete("doc-a") {
+		t.Fatal("Delete(doc-a) = false, want true")
+	}
+	if called != 1 {
+		t.Fatalf("compaction callback calls = %d, want 1", called)
+	}
+	if got.TombstoneLoadFactor != 0.5 {
+		t.Fatalf("callback TombstoneLoadFactor = %v, want 0.5", got.TombstoneLoadFactor)
+	}
+}
+
+func TestDeleteDoesNotTriggerCompactionCallbackWhenDisabled(t *testing.T) {
+	called := 0
+	svc := New(newOrdAwareMemoryIndex(), WordKeys,
+		WithCompactionLoadFactor(0.5),
+		WithAutoCompactionCheck(false),
+		WithCompactionCallback(func(stats CompactionStats) {
+			called++
+		}),
+	)
+	ctx := context.Background()
+	if err := svc.IndexDocument(ctx, "doc-a", "alpha"); err != nil {
+		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	}
+	if err := svc.IndexDocument(ctx, "doc-b", "beta"); err != nil {
+		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	}
+	if !svc.Delete("doc-a") {
+		t.Fatal("Delete(doc-a) = false, want true")
+	}
+	if called != 0 {
+		t.Fatalf("compaction callback calls = %d, want 0", called)
+	}
+	if !svc.NeedsCompaction() {
+		t.Fatal("NeedsCompaction() = false, want true even when auto-check disabled")
+	}
+}
+
+func TestUpdateTriggersCompactionCallbackAfterReindex(t *testing.T) {
+	called := 0
+	var got CompactionStats
+	svc := New(newOrdAwareMemoryIndex(), WordKeys,
+		WithCompactionLoadFactor(0.3),
+		WithCompactionCallback(func(stats CompactionStats) {
+			called++
+			got = stats
+		}),
+	)
+	ctx := context.Background()
+	if err := svc.IndexDocument(ctx, "doc-a", "alpha old"); err != nil {
+		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	}
+	if err := svc.IndexDocument(ctx, "doc-b", "beta"); err != nil {
+		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	}
+	if err := svc.UpdateDocument(ctx, "doc-a", "alpha new"); err != nil {
+		t.Fatalf("UpdateDocument(doc-a) error = %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("compaction callback calls = %d, want 1", called)
+	}
+	if got.TotalAssignedDocs != 3 || got.LiveDocs != 2 || got.TombstonedDocs != 1 {
+		t.Fatalf("callback stats = %+v, want assigned=3 live=2 tombstoned=1", got)
+	}
+}
