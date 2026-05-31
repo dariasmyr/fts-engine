@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"sort"
 
-	internalpersist "github.com/dariasmyr/fts-engine/internal/services/fts/persist"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/segment"
 )
@@ -86,7 +85,6 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 	}
 	sort.Strings(fieldNames)
 
-	persistOpts := internalpersist.SaveOptions(opts)
 	manifest := segmentManifest{
 		Version:         segmentManifestVersion,
 		Fields:          make([]segmentFieldMeta, 0, len(fieldNames)),
@@ -103,7 +101,7 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 		}
 		fileName := segmentFieldFileName(fieldName)
 		path := filepath.Join(paths.Dir, fileName)
-		if err := internalpersist.SaveAtomicWithOptions(path, persistOpts, func(w io.Writer) error {
+		if err := saveAtomicWithOptions(path, opts, func(w io.Writer) error {
 			data, err := segment.BuildFromSourceWithTombstones(source, manifest.Tombstones)
 			if err != nil {
 				return err
@@ -119,7 +117,7 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 	if searchFilter != nil && filterName != "" {
 		manifest.Filter = &filterMeta{FilterName: filterName, FileName: segmentFilterFile}
 		filterPath := filepath.Join(paths.Dir, segmentFilterFile)
-		if err := internalpersist.SaveAtomicWithOptions(filterPath, persistOpts, func(w io.Writer) error {
+		if err := saveAtomicWithOptions(filterPath, opts, func(w io.Writer) error {
 			return fts.SaveFilterSnapshot(w, filterName, searchFilter)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save segment filter: %w", err)
@@ -127,7 +125,7 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 	}
 
 	manifestPath := filepath.Join(paths.Dir, segmentManifestFile)
-	if err := internalpersist.SaveAtomicWithOptions(manifestPath, persistOpts, func(w io.Writer) error {
+	if err := saveAtomicWithOptions(manifestPath, opts, func(w io.Writer) error {
 		return gob.NewEncoder(w).Encode(manifest)
 	}); err != nil {
 		return fmt.Errorf("ftspersist: save segment manifest: %w", err)

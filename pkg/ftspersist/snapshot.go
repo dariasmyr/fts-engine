@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 
-	internalpersist "github.com/dariasmyr/fts-engine/internal/services/fts/persist"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 )
 
@@ -58,14 +57,12 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 	stats := svc.SnapshotCollectionStats()
 	registry := svc.SnapshotRegistry()
 	tombstones := svc.SnapshotTombstones()
-	persistOpts := internalpersist.SaveOptions(opts)
-
 	if len(fields) > 1 {
 		fieldCodecs := make(map[string]string, len(fields))
 		for fieldName := range fields {
 			fieldCodecs[fieldName] = indexName
 		}
-		if err := internalpersist.SaveAtomicWithOptions(paths.IndexPath, persistOpts, func(w io.Writer) error {
+		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
 			return fts.SaveMultiIndexSnapshotWithState(w, fieldCodecs, fields, stats, registry, tombstones)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot: %w", err)
@@ -81,7 +78,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 		if index == nil {
 			return fmt.Errorf("ftspersist: save snapshot: nil index")
 		}
-		if err := internalpersist.SaveAtomicWithOptions(paths.IndexPath, persistOpts, func(w io.Writer) error {
+		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
 			return fts.SaveIndexSnapshotWithState(w, indexName, index, stats, registry, tombstones)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot: %w", err)
@@ -92,7 +89,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 		if paths.FilterPath == "" {
 			return fmt.Errorf("ftspersist: save snapshot: empty filter path")
 		}
-		if err := internalpersist.SaveAtomicWithOptions(paths.FilterPath, persistOpts, func(w io.Writer) error {
+		if err := saveAtomicWithOptions(paths.FilterPath, opts, func(w io.Writer) error {
 			return fts.SaveFilterSnapshot(w, filterName, searchFilter)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot filter: %w", err)

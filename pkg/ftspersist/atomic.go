@@ -1,4 +1,4 @@
-package persist
+package ftspersist
 
 import (
 	"bufio"
@@ -13,30 +13,12 @@ const (
 	defaultFlushThreshold = 256 << 10
 )
 
-type SaveOptions struct {
-	BufferSize     int
-	FlushThreshold int
-	SyncFile       bool
-}
-
-func DefaultSaveOptions() SaveOptions {
-	return SaveOptions{
-		BufferSize:     defaultBufferSize,
-		FlushThreshold: defaultFlushThreshold,
-		SyncFile:       true,
-	}
-}
-
-func SaveAtomic(path string, write func(w io.Writer) error) error {
-	return SaveAtomicWithOptions(path, DefaultSaveOptions(), write)
-}
-
-func SaveAtomicWithOptions(path string, opts SaveOptions, write func(w io.Writer) error) error {
+func saveAtomicWithOptions(path string, opts SaveOptions, write func(w io.Writer) error) error {
 	if path == "" {
-		return fmt.Errorf("persist: save atomic: empty path")
+		return fmt.Errorf("ftspersist: save atomic: empty path")
 	}
 	if write == nil {
-		return fmt.Errorf("persist: save atomic: nil writer callback")
+		return fmt.Errorf("ftspersist: save atomic: nil writer callback")
 	}
 
 	if opts.BufferSize <= 0 {
@@ -48,12 +30,12 @@ func SaveAtomicWithOptions(path string, opts SaveOptions, write func(w io.Writer
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("persist: save atomic: mkdir %q: %w", dir, err)
+		return fmt.Errorf("ftspersist: save atomic: mkdir %q: %w", dir, err)
 	}
 
 	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("persist: save atomic: create temp file: %w", err)
+		return fmt.Errorf("ftspersist: save atomic: create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 
@@ -67,31 +49,31 @@ func SaveAtomicWithOptions(path string, opts SaveOptions, write func(w io.Writer
 		_ = bw.Flush()
 		_ = tmpFile.Close()
 		cleanupTmp()
-		return fmt.Errorf("persist: save atomic: write temp file: %w", err)
+		return fmt.Errorf("ftspersist: save atomic: write temp file: %w", err)
 	}
 
 	if err = bw.Flush(); err != nil {
 		_ = tmpFile.Close()
 		cleanupTmp()
-		return fmt.Errorf("persist: save atomic: flush temp file: %w", err)
+		return fmt.Errorf("ftspersist: save atomic: flush temp file: %w", err)
 	}
 
 	if opts.SyncFile {
 		if err = tmpFile.Sync(); err != nil {
 			_ = tmpFile.Close()
 			cleanupTmp()
-			return fmt.Errorf("persist: save atomic: sync temp file: %w", err)
+			return fmt.Errorf("ftspersist: save atomic: sync temp file: %w", err)
 		}
 	}
 
 	if err = tmpFile.Close(); err != nil {
 		cleanupTmp()
-		return fmt.Errorf("persist: save atomic: close temp file: %w", err)
+		return fmt.Errorf("ftspersist: save atomic: close temp file: %w", err)
 	}
 
 	if err = os.Rename(tmpPath, path); err != nil {
 		cleanupTmp()
-		return fmt.Errorf("persist: save atomic: rename temp file: %w", err)
+		return fmt.Errorf("ftspersist: save atomic: rename temp file: %w", err)
 	}
 
 	return nil
