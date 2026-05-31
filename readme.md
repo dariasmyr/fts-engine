@@ -428,11 +428,11 @@ fts:
   keygen: "word"
   scorer: "none"       # none|bm25|tfidf
   filter: "none"       # none|bloom|cuckoo|ribbon
-  snapshot:
+  persistence:
     enabled: true
-    path: "./data/segments/default.fidx"
-    index_path: "./data/segments/local.index.fidx"
-    filter_path: "./data/segments/local.filter.fidx"
+    format: "snapshot"   # snapshot|segment
+    access: "file"       # file|mmap (snapshot supports only file)
+    path: "./data/fts/default"
     load_on_start: true
     save_on_build: true
     buffer_size: 1048576
@@ -463,12 +463,12 @@ mode:
   type: "prod"        # prod|experiment
 ```
 
-Persistence fields in the current CLI config (`fts.snapshot`):
+Persistence fields in the current CLI config (`fts.persistence`):
 
 - `enabled`: enable persistence flow in CLI prod mode.
-- `path`: base path used by the current CLI persistence logic.
-- `index_path`: optional explicit path for mutable index snapshot file.
-- `filter_path`: optional explicit path for filter snapshot file.
+- `format`: `snapshot` for mutable restore, `segment` for read-only restore.
+- `access`: `file` or `mmap`; `snapshot` supports only `file`.
+- `path`: base persistence path. For `snapshot`, the CLI uses `<path>/index.fidx` and `<path>/filter.fidx`. For `segment`, the CLI uses `<path>/` as the segment directory.
 - `load_on_start`: if true and persisted state exists, load it and skip rebuild.
 - `save_on_build`: if true, save persisted state after indexing finishes.
 - `buffer_size`: writer buffer size used during save.
@@ -479,11 +479,11 @@ Persistence fields in the current CLI config (`fts.snapshot`):
 
 - `prod`:
   - runs engine with configurable pipeline and interactive CUI search,
-  - if `fts.snapshot.enabled=true` and `load_on_start=true` and persisted state exists: loads it and skips re-index,
+  - if `fts.persistence.enabled=true` and `load_on_start=true` and persisted state exists: loads it and skips re-index,
   - otherwise indexes documents and (if `save_on_build=true`) persists state atomically.
 - `experiment`:
   - always indexes current input and prints memory/index stats,
-  - does not run CUI snapshot restore flow.
+  - does not run CUI persistence restore flow.
 
 ## Benchmarks
 

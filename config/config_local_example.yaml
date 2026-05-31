@@ -6,11 +6,11 @@ fts:
   keygen: "word"
   scorer: "none"       # none|bm25|tfidf
   filter: "ribbon"
-  snapshot:
+  persistence:
     enabled: true
-    path: "./data/segments/local.fidx"
-    index_path: "./data/segments/local.index.fidx"
-    filter_path: "./data/segments/local.filter.fidx"
+    format: "snapshot"   # snapshot|segment
+    access: "file"       # file|mmap (snapshot supports only file)
+    path: "./data/fts/local"
     load_on_start: false
     save_on_build: true
     buffer_size: 1048576
