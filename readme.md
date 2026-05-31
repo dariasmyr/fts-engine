@@ -154,8 +154,9 @@ The current client-library file persistence examples under:
 - `examples/client-library/segment-save-files/main.go`
 - `examples/client-library/segment-load-files/main.go`
 - `examples/client-library/segment-load-files-low-level/main.go`
+- `examples/client-library/segment-load-mmap/main.go`
 
-demonstrate `segment` export/restore for a service created with `fts.New(...)`, including both a high-level restore path and an explicit low-level restore path.
+demonstrate `segment` export/restore for a service created with `fts.New(...)`, including file-based high-level restore, explicit low-level restore, and `mmap` loading.
 
 Format compatibility rules:
 
@@ -215,7 +216,7 @@ Raw segment files can be opened with `segment.OpenFile(...)`.
 
 - this is available only for raw segment files
 - `segment.Reader` stays read-only
-- current `segment-*` examples use ordinary file loading, not `mmap`
+- `examples/client-library/segment-load-mmap/main.go` shows the manifest-based `mmap` path
 
 Today, `mmap` is a low-level `pkg/segment` API rather than the main persistence flow used by the CLI.
 

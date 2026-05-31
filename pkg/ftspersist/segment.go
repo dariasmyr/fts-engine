@@ -3,6 +3,7 @@ package ftspersist
 import (
 	"bytes"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -142,7 +143,7 @@ func LoadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*LoadedSegmen
 	if load.Access == "" {
 		load.Access = AccessFile
 	}
-	if load.Access != AccessFile {
+	if load.Access != AccessFile && load.Access != AccessMmap {
 		return nil, fmt.Errorf("ftspersist: load segment: unsupported access mode %q", load.Access)
 	}
 
@@ -169,6 +170,7 @@ func LoadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*LoadedSegmen
 		Tombstones:      append([]uint64(nil), manifest.Tombstones...),
 		Close:           func() error { return nil },
 	}
+	closers := make([]func() error, 0, len(manifest.Fields))
 
 	for _, field := range manifest.Fields {
 		if field.FieldName == "" {
@@ -178,15 +180,37 @@ func LoadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*LoadedSegmen
 			return nil, fmt.Errorf("ftspersist: load segment: empty file name for field %q", field.FieldName)
 		}
 		segmentPath := filepath.Join(paths.Dir, field.FileName)
-		data, err := os.ReadFile(segmentPath)
-		if err != nil {
-			return nil, fmt.Errorf("ftspersist: load segment field %q from %q: %w", field.FieldName, segmentPath, err)
-		}
-		reader, err := segment.Open(data)
-		if err != nil {
-			return nil, fmt.Errorf("ftspersist: open segment field %q: %w", field.FieldName, err)
+		var reader *segment.Reader
+		switch load.Access {
+		case AccessFile:
+			data, err := os.ReadFile(segmentPath)
+			if err != nil {
+				return nil, fmt.Errorf("ftspersist: load segment field %q from %q: %w", field.FieldName, segmentPath, err)
+			}
+			reader, err = segment.Open(data)
+			if err != nil {
+				return nil, fmt.Errorf("ftspersist: open segment field %q: %w", field.FieldName, err)
+			}
+		case AccessMmap:
+			mapped, err := segment.OpenFile(segmentPath)
+			if err != nil {
+				closeErr := closeAllReverse(closers)
+				if closeErr != nil {
+					return nil, fmt.Errorf("ftspersist: load segment field %q from %q: %w (cleanup: %v)", field.FieldName, segmentPath, err, closeErr)
+				}
+				return nil, fmt.Errorf("ftspersist: load segment field %q from %q: %w", field.FieldName, segmentPath, err)
+			}
+			reader = mapped.Reader
+			closers = append(closers, mapped.Close)
 		}
 		loaded.Fields[field.FieldName] = reader
+	}
+	if len(closers) > 0 {
+		loaded.Close = func() error {
+			err := closeAllReverse(closers)
+			closers = nil
+			return err
+		}
 	}
 	loaded.Segment = loaded.Fields[fts.DefaultField]
 
@@ -269,4 +293,17 @@ func segmentFieldFileName(fieldName string) string {
 		return "_default.segment.fidx"
 	}
 	return url.PathEscape(fieldName) + ".segment.fidx"
+}
+
+func closeAllReverse(closers []func() error) error {
+	var joined error
+	for i := len(closers) - 1; i >= 0; i-- {
+		if closers[i] == nil {
+			continue
+		}
+		if err := closers[i](); err != nil {
+			joined = errors.Join(joined, err)
+		}
+	}
+	return joined
 }

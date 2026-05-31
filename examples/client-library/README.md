@@ -49,6 +49,7 @@ Current example list:
 - `segment-save-files/main.go` — export a sealed `segment` directory for a service created with `fts.New(...)`.
 - `segment-load-files/main.go` — restore a sealed `segment` directory through the high-level `ftspersist.LoadSegment(...)` API.
 - `segment-load-files-low-level/main.go` — restore a sealed `segment` directory through `LoadSegmentData(...)` and `RestoreSegmentService(...)` explicitly.
+- `segment-load-mmap/main.go` — restore a sealed `segment` directory through the high-level `ftspersist.LoadSegment(...)` API with `mmap` access.
 
 Run each example from repository root:
 
@@ -62,4 +63,5 @@ go run ./examples/client-library/snapshot-load-files-low-level
 go run ./examples/client-library/segment-save-files
 go run ./examples/client-library/segment-load-files
 go run ./examples/client-library/segment-load-files-low-level
+go run ./examples/client-library/segment-load-mmap
 ```

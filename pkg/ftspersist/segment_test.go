@@ -120,3 +120,43 @@ func TestSaveLoadSegmentRoundTripMultiField(t *testing.T) {
 		t.Fatalf("body TotalResultsCount = %d, want %d", got, want)
 	}
 }
+
+func TestSaveLoadSegmentRoundTripMmap(t *testing.T) {
+	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
+	}
+
+	idx, err := ftsbuiltin.BuildIndex("slicedradix")
+	if err != nil {
+		t.Fatalf("BuildIndex() error = %v", err)
+	}
+	svc := fts.New(idx, keygen.Word, fts.WithScorer(fts.BM25()))
+	if err := svc.IndexDocument(context.Background(), "doc-1", "segment mmap roundtrip"); err != nil {
+		t.Fatalf("IndexDocument(doc-1) error = %v", err)
+	}
+
+	paths := ftspersist.SegmentPaths{Dir: filepath.Join(t.TempDir(), "segment")}
+	if err := ftspersist.SaveSegment(paths, svc, "", ftspersist.SaveOptions{SyncFile: true}); err != nil {
+		t.Fatalf("SaveSegment() error = %v", err)
+	}
+
+	loaded, err := ftspersist.LoadSegment(paths, keygen.Word, ftspersist.SegmentLoadOptions{Access: ftspersist.AccessMmap}, fts.WithScorer(fts.BM25()))
+	if err != nil {
+		t.Fatalf("LoadSegment() error = %v", err)
+	}
+
+	res, err := loaded.Service.SearchDocuments(context.Background(), "mmap", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments(mmap) error = %v", err)
+	}
+	if got, want := res.TotalResultsCount, 1; got != want {
+		t.Fatalf("TotalResultsCount = %d, want %d", got, want)
+	}
+
+	if err := loaded.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := loaded.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+}
