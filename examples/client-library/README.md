@@ -46,8 +46,8 @@ Current example list:
 - `snapshot-save-files/main.go` — save mutable snapshot files for a service created with `fts.New(...)`.
 - `snapshot-load-files/main.go` — restore mutable snapshot files through the high-level `ftspersist.LoadSnapshot(...)` API.
 - `snapshot-load-files-low-level/main.go` — restore mutable snapshot files through `LoadSnapshotData(...)` and assemble `fts.New(...)` manually.
-- `segment-save-files/main.go` — export a sealed `segment` bundle and filter files for a service created with `fts.New(...)`.
-- `segment-load-files/main.go` — restore a sealed `segment` bundle and filter files for a service created with `fts.New(...)`.
+- `segment-save-files/main.go` — export a sealed `segment` directory for a service created with `fts.New(...)`.
+- `segment-load-files/main.go` — restore a sealed `segment` directory for a service created with `fts.New(...)`.
 
 Run each example from repository root:
 

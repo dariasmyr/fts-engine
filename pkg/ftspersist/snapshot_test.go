@@ -8,8 +8,8 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {

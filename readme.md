@@ -169,42 +169,35 @@ Example:
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
-	"github.com/dariasmyr/fts-engine/pkg/segment"
 )
 
 func main() {
 	svc := fts.New(slicedradix.New(), keygen.Word, fts.WithScorer(fts.BM25()))
 	_ = svc.IndexDocument(context.Background(), "doc-1", "segment demo")
 
-	index, _ := svc.SnapshotComponents()
-	source, ok := index.(segment.Source)
-	if !ok {
-		panic("index does not support segment export")
-	}
-
-	var bundle bytes.Buffer
-	if err := segment.SaveBundle(&bundle, source, svc.SnapshotCollectionStats(), svc.SnapshotRegistry(), svc.SnapshotTombstones()); err != nil {
+	if err := os.MkdirAll("./data/segments", 0o755); err != nil {
 		panic(err)
 	}
 
-	loaded, err := segment.LoadBundle(bytes.NewReader(bundle.Bytes()))
+	if err := ftspersist.SaveSegment(ftspersist.SegmentPaths{Dir: "./data/segments/default"}, svc, "", ftspersist.SaveOptions{SyncFile: true}); err != nil {
+		panic(err)
+	}
+
+	loaded, err := ftspersist.LoadSegment(ftspersist.SegmentPaths{Dir: "./data/segments/default"}, keygen.Word, ftspersist.SegmentLoadOptions{Access: ftspersist.AccessFile}, fts.WithScorer(fts.BM25()))
 	if err != nil {
 		panic(err)
 	}
+	defer loaded.Close()
 
-	restored, err := segment.RestoreService(loaded, keygen.Word, fts.WithScorer(fts.BM25()))
-	if err != nil {
-		panic(err)
-	}
-
-	res, _ := restored.SearchDocuments(context.Background(), "segment", 10)
+	res, _ := loaded.Service.SearchDocuments(context.Background(), "segment", 10)
 	fmt.Println(res.TotalResultsCount)
 }
 ```
@@ -212,7 +205,7 @@ func main() {
 Important:
 
 - this restores a read-only search service
-- this example uses the current bundle-based segment persistence path
+- the current client-library examples use a manifest-backed segment directory layout
 - raw `segment.OpenFile(...)` is a lower-level API for opening raw segment files directly
 
 #### `mmap` and Segments
@@ -221,7 +214,7 @@ Raw segment files can be opened with `segment.OpenFile(...)`.
 
 - this is available only for raw segment files
 - `segment.Reader` stays read-only
-- current bundle-based examples do not use `mmap`
+- current `segment-*` examples use ordinary file loading, not `mmap`
 
 Today, `mmap` is a low-level `pkg/segment` API rather than the main persistence flow used by the CLI.
 
