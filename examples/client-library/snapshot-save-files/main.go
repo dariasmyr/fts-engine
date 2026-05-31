@@ -6,6 +6,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
@@ -14,11 +15,11 @@ func main() {
 		panic(err)
 	}
 
-	if err := os.MkdirAll("./data/segments", 0755); err != nil {
+	if err := os.MkdirAll("./data/segments", 0o755); err != nil {
 		panic(err)
 	}
 
-	idx, err := ftsbuiltin.BuildIndex("radix")
+	idx, err := ftsbuiltin.BuildIndex("slicedradix")
 	if err != nil {
 		panic(err)
 	}
@@ -32,29 +33,15 @@ func main() {
 		panic(err)
 	}
 
-	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt))
+	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
 	if err := svc.IndexDocument(context.Background(), "doc-1", "snapshot with bloom filter"); err != nil {
 		panic(err)
 	}
 
-	index, searchFilter := svc.SnapshotComponents()
-
-	indexFile, err := os.Create("./data/segments/default.index.fidx")
-	if err != nil {
-		panic(err)
-	}
-	defer indexFile.Close()
-
-	filterFile, err := os.Create("./data/segments/default.filter.fidx")
-	if err != nil {
-		panic(err)
-	}
-	defer filterFile.Close()
-
-	if err := fts.SaveIndexSnapshot(indexFile, "radix", index); err != nil {
-		panic(err)
-	}
-	if err := fts.SaveFilterSnapshot(filterFile, "bloom", searchFilter); err != nil {
+	if err := ftspersist.SaveSnapshot(ftspersist.SnapshotPaths{
+		IndexPath:  "./data/segments/default.index.fidx",
+		FilterPath: "./data/segments/default.filter.fidx",
+	}, svc, "slicedradix", "bloom", ftspersist.SaveOptions{SyncFile: true}); err != nil {
 		panic(err)
 	}
 }

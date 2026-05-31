@@ -4,17 +4,21 @@ fts:
   engine: "trie"
   index: "slicedradix" # radix|slicedradix|hamt|hamtpointered
   keygen: "word"
+  scorer: "none"       # none|bm25|tfidf
   filter: "ribbon"
-  snapshot:
+  persistence:
     enabled: true
-    path: "./data/segments/local.fidx"
-    index_path: "./data/segments/local.index.fidx"
-    filter_path: "./data/segments/local.filter.fidx"
+    format: "snapshot"   # snapshot|segment
+    access: "file"       # file|mmap (snapshot supports only file)
+    path: "./data/fts/local"
     load_on_start: false
     save_on_build: true
     buffer_size: 1048576
     flush_threshold: 262144
     sync_file: true
+  compaction:
+    load_factor: 0      # 0 disables compaction threshold checks, otherwise use 0..1
+    auto_check: true    # run threshold checks automatically after delete/update
   bloom:
     expected_items: 1000000
     bits_per_item: 20

@@ -5,20 +5,23 @@ import (
 	"fmt"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"io"
+	"sort"
 	"sync"
 )
 
 type node struct {
-	terminal bool
-	prefix   string
-	children []*node
-	docs     map[fts.DocID]uint32
+	terminal  bool
+	prefix    string
+	children  []*node
+	docs      map[fts.DocOrd]uint32
+	positions map[fts.DocOrd][]uint32
 }
 
 func newNode(prefix string) *node {
 	return &node{
-		prefix: prefix,
-		docs:   make(map[fts.DocID]uint32),
+		prefix:    prefix,
+		docs:      make(map[fts.DocOrd]uint32),
+		positions: make(map[fts.DocOrd][]uint32),
 	}
 }
 
@@ -28,10 +31,11 @@ type Index struct {
 }
 
 type snapshotNode struct {
-	Terminal bool
-	Prefix   string
-	Docs     []fts.DocRef
-	Children []snapshotNode
+	Terminal  bool
+	Prefix    string
+	Docs      []fts.DocRef
+	Positions []fts.PositionalDocRef
+	Children  []snapshotNode
 }
 
 func New() *Index {
@@ -68,10 +72,11 @@ func encodeNode(n *node) snapshotNode {
 	}
 
 	snap := snapshotNode{
-		Terminal: n.terminal,
-		Prefix:   n.prefix,
-		Docs:     collectDocs(n.docs),
-		Children: make([]snapshotNode, 0, len(n.children)),
+		Terminal:  n.terminal,
+		Prefix:    n.prefix,
+		Docs:      collectDocs(n.docs),
+		Positions: collectPositionalDocs(n.positions),
+		Children:  make([]snapshotNode, 0, len(n.children)),
 	}
 
 	for _, child := range n.children {
@@ -85,7 +90,10 @@ func decodeNode(s snapshotNode) *node {
 	n := newNode(s.Prefix)
 	n.terminal = s.Terminal
 	for _, doc := range s.Docs {
-		n.docs[doc.ID] = doc.Count
+		n.docs[doc.Ord] = doc.Count
+	}
+	for _, doc := range s.Positions {
+		n.positions[doc.Ord] = append([]uint32(nil), doc.Positions...)
 	}
 
 	n.children = make([]*node, 0, len(s.Children))
@@ -104,7 +112,15 @@ func lcp(a, b string) int {
 	return i
 }
 
-func (t *Index) Insert(word string, docID fts.DocID) error {
+func (t *Index) Insert(word string, ord fts.DocOrd) error {
+	return t.insert(word, false, 0, ord)
+}
+
+func (t *Index) InsertAt(word string, position uint32, ord fts.DocOrd) error {
+	return t.insert(word, true, position, ord)
+}
+
+func (t *Index) insert(word string, hasPos bool, pos uint32, ord fts.DocOrd) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -123,8 +139,7 @@ func (t *Index) Insert(word string, docID fts.DocID) error {
 				current = child
 				rest = rest[p:]
 				if rest == "" {
-					current.terminal = true
-					current.docs[docID]++
+					t.recordDoc(current, ord, hasPos, pos)
 					return nil
 				}
 				goto NEXT
@@ -141,24 +156,29 @@ func (t *Index) Insert(word string, docID fts.DocID) error {
 
 			if newSuffix != "" {
 				n = newNode(newSuffix)
-				n.terminal = true
-				n.docs[docID]++
+				t.recordDoc(n, ord, hasPos, pos)
 				middle.children = append(middle.children, n)
 				return nil
 			}
 
-			middle.terminal = true
-			middle.docs[docID]++
+			t.recordDoc(middle, ord, hasPos, pos)
 			return nil
 		}
 
 		n = newNode(rest)
-		n.terminal = true
-		n.docs[docID]++
+		t.recordDoc(n, ord, hasPos, pos)
 		current.children = append(current.children, n)
 		return nil
 
 	NEXT:
+	}
+}
+
+func (t *Index) recordDoc(n *node, ord fts.DocOrd, hasPos bool, pos uint32) {
+	n.terminal = true
+	n.docs[ord]++
+	if hasPos {
+		n.positions[ord] = append(n.positions[ord], pos)
 	}
 }
 
@@ -182,12 +202,117 @@ func (t *Index) Search(word string) ([]fts.DocRef, error) {
 	}
 }
 
-func collectDocs(docs map[fts.DocID]uint32) []fts.DocRef {
-	res := make([]fts.DocRef, 0, len(docs))
-	for id, count := range docs {
-		res = append(res, fts.DocRef{ID: id, Count: count})
+func (t *Index) SearchPrefix(prefix string) ([]fts.DocRef, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	merged := make(map[fts.DocOrd]fts.DocRef)
+	t.collectPrefixDocs(t.root, prefix, merged)
+	return mergedDocsSlice(merged), nil
+}
+
+func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	current := t.root
+	rest := word
+
+	for {
+		nextNode, nextRest, matched, exact := t.next(current, rest)
+		if !matched {
+			return nil, nil
+		}
+		if exact {
+			return collectPositionalDocs(nextNode.positions), nil
+		}
+		current = nextNode
+		rest = nextRest
 	}
+}
+
+func collectDocs(docs map[fts.DocOrd]uint32) []fts.DocRef {
+	res := make([]fts.DocRef, 0, len(docs))
+	for ord, count := range docs {
+		res = append(res, fts.DocRef{Ord: ord, Count: count, Seq: uint32(ord)})
+	}
+	sort.Slice(res, func(i, j int) bool { return res[i].Seq < res[j].Seq })
 	return res
+}
+
+func collectPositionalDocs(positions map[fts.DocOrd][]uint32) []fts.PositionalDocRef {
+	type positionalRef struct {
+		fts.PositionalDocRef
+		seq uint32
+	}
+	res := make([]positionalRef, 0, len(positions))
+	for ord, pos := range positions {
+		seq := uint32(ord)
+		res = append(res, positionalRef{PositionalDocRef: fts.PositionalDocRef{Ord: ord, Positions: pos}, seq: seq})
+	}
+	sort.Slice(res, func(i, j int) bool { return res[i].seq < res[j].seq })
+	out := make([]fts.PositionalDocRef, 0, len(res))
+	for _, ref := range res {
+		out = append(out, ref.PositionalDocRef)
+	}
+	return out
+}
+
+func addMergedDoc(merged map[fts.DocOrd]fts.DocRef, ord fts.DocOrd, count, seq uint32) {
+	ref, ok := merged[ord]
+	if !ok {
+		merged[ord] = fts.DocRef{Ord: ord, Count: count, Seq: seq}
+		return
+	}
+	ref.Count += count
+	merged[ord] = ref
+}
+
+func mergedDocsSlice(merged map[fts.DocOrd]fts.DocRef) []fts.DocRef {
+	out := make([]fts.DocRef, 0, len(merged))
+	for _, doc := range merged {
+		out = append(out, doc)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	return out
+}
+
+func (t *Index) collectPrefixDocs(current *node, prefix string, merged map[fts.DocOrd]fts.DocRef) {
+	if current == nil {
+		return
+	}
+	if prefix == "" {
+		t.collectSubtreeDocs(current, merged)
+		return
+	}
+
+	for _, child := range current.children {
+		p := lcp(prefix, child.prefix)
+		if p == 0 {
+			continue
+		}
+		if p == len(prefix) {
+			t.collectSubtreeDocs(child, merged)
+			continue
+		}
+		if p == len(child.prefix) {
+			t.collectPrefixDocs(child, prefix[p:], merged)
+		}
+	}
+}
+
+func (t *Index) collectSubtreeDocs(current *node, merged map[fts.DocOrd]fts.DocRef) {
+	if current == nil {
+		return
+	}
+	if current.terminal {
+		for ord, count := range current.docs {
+			addMergedDoc(merged, ord, count, uint32(ord))
+		}
+	}
+	for _, child := range current.children {
+		t.collectSubtreeDocs(child, merged)
+	}
 }
 
 func (t *Index) next(current *node, rest string) (*node, string, bool, bool) {
@@ -260,3 +385,5 @@ func (t *Index) Analyze() fts.Stats {
 }
 
 var _ fts.Index = (*Index)(nil)
+var _ fts.PrefixIndex = (*Index)(nil)
+var _ fts.PositionalIndex = (*Index)(nil)

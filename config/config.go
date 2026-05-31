@@ -15,22 +15,29 @@ type Config struct {
 }
 
 type FTSConfig struct {
-	Engine   string         `yaml:"engine" env-default:"trie"`
-	Index    string         `yaml:"index"`
-	KeyGen   string         `yaml:"keygen"`
-	Filter   string         `yaml:"filter" env-default:"none"`
-	Snapshot SnapshotConfig `yaml:"snapshot"`
-	Bloom    BloomConfig    `yaml:"bloom"`
-	Cuckoo   CuckooConfig   `yaml:"cuckoo"`
-	Ribbon   RibbonConfig   `yaml:"ribbon"`
-	Pipeline PipelineConfig `yaml:"pipeline"`
+	Engine      string            `yaml:"engine" env-default:"trie"`
+	Index       string            `yaml:"index"`
+	KeyGen      string            `yaml:"keygen"`
+	Scorer      string            `yaml:"scorer" env-default:"none"`
+	Filter      string            `yaml:"filter" env-default:"none"`
+	Persistence PersistenceConfig `yaml:"persistence"`
+	Compaction  CompactionConfig  `yaml:"compaction"`
+	Bloom       BloomConfig       `yaml:"bloom"`
+	Cuckoo      CuckooConfig      `yaml:"cuckoo"`
+	Ribbon      RibbonConfig      `yaml:"ribbon"`
+	Pipeline    PipelineConfig    `yaml:"pipeline"`
 }
 
-type SnapshotConfig struct {
+type CompactionConfig struct {
+	LoadFactor float64 `yaml:"load_factor" env-default:"0"`
+	AutoCheck  bool    `yaml:"auto_check" env-default:"true"`
+}
+
+type PersistenceConfig struct {
 	Enabled        bool   `yaml:"enabled" env-default:"false"`
-	Path           string `yaml:"path" env-default:"./data/segments/default.fidx"`
-	IndexPath      string `yaml:"index_path" env-default:""`
-	FilterPath     string `yaml:"filter_path" env-default:""`
+	Format         string `yaml:"format" env-default:"snapshot"`
+	Access         string `yaml:"access" env-default:"file"`
+	Path           string `yaml:"path" env-default:"./data/fts/default"`
 	LoadOnStart    bool   `yaml:"load_on_start" env-default:"true"`
 	SaveOnBuild    bool   `yaml:"save_on_build" env-default:"true"`
 	BufferSize     int    `yaml:"buffer_size" env-default:"1048576"`
@@ -118,17 +125,22 @@ func defaultConfig() Config {
 			Engine: "trie",
 			Index:  "slicedradix",
 			KeyGen: "word",
+			Scorer: "none",
 			Filter: "ribbon",
-			Snapshot: SnapshotConfig{
+			Persistence: PersistenceConfig{
 				Enabled:        true,
-				Path:           "./data/segments/local.fidx",
-				IndexPath:      "./data/segments/local.index.fidx",
-				FilterPath:     "./data/segments/local.filter.fidx",
+				Format:         "snapshot",
+				Access:         "file",
+				Path:           "./data/fts/local",
 				LoadOnStart:    false,
 				SaveOnBuild:    true,
 				BufferSize:     1048576,
 				FlushThreshold: 262144,
 				SyncFile:       true,
+			},
+			Compaction: CompactionConfig{
+				LoadFactor: 0,
+				AutoCheck:  true,
 			},
 			Bloom: BloomConfig{
 				ExpectedItems: 1000000,
@@ -169,20 +181,36 @@ func validateConfig(cfg *Config) {
 		cfg.FTS.KeyGen = "word"
 	}
 
+	if cfg.FTS.Scorer == "" {
+		cfg.FTS.Scorer = "none"
+	}
+
 	if cfg.FTS.Filter == "" {
 		cfg.FTS.Filter = "none"
 	}
 
-	if cfg.FTS.Snapshot.Path == "" {
-		cfg.FTS.Snapshot.Path = "./data/segments/default.fidx"
+	if cfg.FTS.Persistence.Format == "" {
+		cfg.FTS.Persistence.Format = "snapshot"
 	}
 
-	if cfg.FTS.Snapshot.BufferSize <= 0 {
-		cfg.FTS.Snapshot.BufferSize = 1048576
+	if cfg.FTS.Persistence.Access == "" {
+		cfg.FTS.Persistence.Access = "file"
 	}
 
-	if cfg.FTS.Snapshot.FlushThreshold <= 0 {
-		cfg.FTS.Snapshot.FlushThreshold = 262144
+	if cfg.FTS.Persistence.Path == "" {
+		cfg.FTS.Persistence.Path = "./data/fts/default"
+	}
+
+	if cfg.FTS.Persistence.BufferSize <= 0 {
+		cfg.FTS.Persistence.BufferSize = 1048576
+	}
+
+	if cfg.FTS.Persistence.FlushThreshold <= 0 {
+		cfg.FTS.Persistence.FlushThreshold = 262144
+	}
+
+	if cfg.FTS.Compaction.LoadFactor < 0 || cfg.FTS.Compaction.LoadFactor > 1 {
+		panic("compaction load_factor must be in range [0..1]")
 	}
 
 	switch cfg.FTS.Engine {
@@ -202,10 +230,32 @@ func validateConfig(cfg *Config) {
 		panic("unknown keygen type: " + cfg.FTS.KeyGen)
 	}
 
+	switch cfg.FTS.Scorer {
+	case "none", "bm25", "tfidf":
+	default:
+		panic("unknown scorer type: " + cfg.FTS.Scorer)
+	}
+
 	switch cfg.FTS.Filter {
 	case "none", "bloom", "cuckoo", "ribbon":
 	default:
 		panic("unknown filter type: " + cfg.FTS.Filter)
+	}
+
+	switch cfg.FTS.Persistence.Format {
+	case "snapshot", "segment":
+	default:
+		panic("unknown persistence format: " + cfg.FTS.Persistence.Format)
+	}
+
+	switch cfg.FTS.Persistence.Access {
+	case "file", "mmap":
+	default:
+		panic("unknown persistence access: " + cfg.FTS.Persistence.Access)
+	}
+
+	if cfg.FTS.Persistence.Format == "snapshot" && cfg.FTS.Persistence.Access != "file" {
+		panic("snapshot persistence supports only file access")
 	}
 
 	if cfg.FTS.Cuckoo.BucketCount <= 0 {

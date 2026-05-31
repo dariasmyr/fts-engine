@@ -32,11 +32,24 @@ replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
 
 ## Examples in this folder
 
-- `default/main.go` — minimal setup with defaults.
-- `preset/main.go` — language preset via `pkg/ftspreset`.
-- `custom-options/main.go` — custom pipeline and extra options.
-- `snapshot-save-files/main.go` — save split snapshot files (index + filter).
-- `snapshot-import-files/main.go` — restore from existing split snapshot files.
+The examples currently cover three usage styles:
+
+- in-memory library usage
+- immutable segment export/restore
+- custom runtime configuration
+
+Current example list:
+
+- `default/main.go` — minimal in-memory setup with defaults.
+- `preset/main.go` — in-memory setup with language preset via `pkg/ftspreset`.
+- `custom-options/main.go` — in-memory setup with custom pipeline and extra options.
+- `snapshot-save-files/main.go` — save mutable snapshot files for a service created with `fts.New(...)`.
+- `snapshot-load-files/main.go` — restore mutable snapshot files through the high-level `ftspersist.LoadSnapshot(...)` API.
+- `snapshot-load-files-low-level/main.go` — restore mutable snapshot files through `LoadSnapshotData(...)` and assemble `fts.New(...)` manually.
+- `segment-save-files/main.go` — export a sealed `segment` directory for a service created with `fts.New(...)`.
+- `segment-load-files/main.go` — restore a sealed `segment` directory through the high-level `ftspersist.LoadSegment(...)` API.
+- `segment-load-files-low-level/main.go` — restore a sealed `segment` directory through `LoadSegmentData(...)` and `RestoreSegmentService(...)` explicitly.
+- `segment-load-mmap/main.go` — restore a sealed `segment` directory through the high-level `ftspersist.LoadSegment(...)` API with `mmap` access.
 
 Run each example from repository root:
 
@@ -45,5 +58,10 @@ go run ./examples/client-library/default
 go run ./examples/client-library/preset
 go run ./examples/client-library/custom-options
 go run ./examples/client-library/snapshot-save-files
-go run ./examples/client-library/snapshot-import-files
+go run ./examples/client-library/snapshot-load-files
+go run ./examples/client-library/snapshot-load-files-low-level
+go run ./examples/client-library/segment-save-files
+go run ./examples/client-library/segment-load-files
+go run ./examples/client-library/segment-load-files-low-level
+go run ./examples/client-library/segment-load-mmap
 ```

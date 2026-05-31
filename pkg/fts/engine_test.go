@@ -3,6 +3,7 @@ package fts
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 )
 
@@ -10,26 +11,41 @@ type memoryIndex struct {
 	entries map[string][]DocRef
 	inserts []struct {
 		key string
-		id  DocID
+		ord DocOrd
 	}
 	searches []string
+}
+
+type namedPosting struct {
+	id    DocID
+	count uint32
 }
 
 func newMemoryIndex() *memoryIndex {
 	return &memoryIndex{entries: make(map[string][]DocRef)}
 }
 
-func (m *memoryIndex) Insert(key string, id DocID) error {
+func (m *memoryIndex) Insert(key string, ord DocOrd) error {
 	m.inserts = append(m.inserts, struct {
 		key string
-		id  DocID
-	}{key: key, id: id})
+		ord DocOrd
+	}{key: key, ord: ord})
 	return nil
 }
 
 func (m *memoryIndex) Search(key string) ([]DocRef, error) {
 	m.searches = append(m.searches, key)
 	return m.entries[key], nil
+}
+
+func refsForIDs(reg *DocRegistry, specs ...namedPosting) []DocRef {
+	out := make([]DocRef, 0, len(specs))
+	for _, spec := range specs {
+		ord := reg.GetOrAssign(spec.id)
+		out = append(out, DocRef{Ord: ord, Count: spec.count, Seq: uint32(ord)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
+	return out
 }
 
 type containsOnlyFilter struct {
@@ -60,10 +76,10 @@ func (f *buildableContainsFilter) Build() error {
 
 func TestSearchDocumentsSortAndLimit(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["alpha"] = []DocRef{{ID: "a", Count: 3}, {ID: "b", Count: 1}}
-	idx.entries["beta"] = []DocRef{{ID: "a", Count: 1}, {ID: "c", Count: 5}}
 
 	svc := New(idx, WordKeys)
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"a", 3}, namedPosting{"b", 1})
+	idx.entries["beta"] = refsForIDs(svc.registry, namedPosting{"a", 1}, namedPosting{"c", 5})
 
 	res, err := svc.SearchDocuments(context.Background(), "alpha beta", 2)
 	if err != nil {
@@ -87,9 +103,9 @@ func TestSearchDocumentsSortAndLimit(t *testing.T) {
 
 func TestSearchDocumentsTieBreakerByID(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["token"] = []DocRef{{ID: "z", Count: 2}, {ID: "b", Count: 2}}
 
 	svc := New(idx, WordKeys)
+	idx.entries["token"] = refsForIDs(svc.registry, namedPosting{"z", 2}, namedPosting{"b", 2})
 
 	res, err := svc.SearchDocuments(context.Background(), "token", 10)
 	if err != nil {
@@ -105,24 +121,43 @@ func TestSearchDocumentsTieBreakerByID(t *testing.T) {
 	}
 }
 
-func TestSearchDocumentsReturnsTimings(t *testing.T) {
+func TestSearchDocumentsDiagnosticsDisabledByDefault(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["one"] = []DocRef{{ID: "x", Count: 1}}
 
 	svc := New(idx, WordKeys)
+	idx.entries["one"] = refsForIDs(svc.registry, namedPosting{"x", 1})
 
 	res, err := svc.SearchDocuments(context.Background(), "one", 1)
 	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}
+	if res.Diagnostics != nil {
+		t.Fatalf("expected nil diagnostics by default, got %+v", res.Diagnostics)
+	}
+}
 
-	for _, key := range []string{"preprocess", "search_tokens", "total"} {
-		if _, ok := res.Timings[key]; !ok {
-			t.Fatalf("timings key %q missing", key)
-		}
-		if res.Timings[key] == "" {
-			t.Fatalf("timings key %q is empty", key)
-		}
+func TestSearchDocumentsReturnsDiagnosticsTimings(t *testing.T) {
+	idx := newMemoryIndex()
+
+	svc := New(idx, WordKeys)
+	idx.entries["one"] = refsForIDs(svc.registry, namedPosting{"x", 1})
+
+	res, err := svc.SearchDocuments(WithDiagnostics(context.Background()), "one", 1)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if res.Diagnostics == nil {
+		t.Fatal("expected non-nil diagnostics")
+	}
+
+	if !res.Diagnostics.Timings.HasPreprocess() || res.Diagnostics.Timings.Preprocess <= 0 {
+		t.Fatalf("expected positive preprocess timing, got %+v", res.Diagnostics.Timings)
+	}
+	if !res.Diagnostics.Timings.HasSearchTokens() || res.Diagnostics.Timings.SearchTokens <= 0 {
+		t.Fatalf("expected positive search_tokens timing, got %+v", res.Diagnostics.Timings)
+	}
+	if !res.Diagnostics.Timings.HasTotal() || res.Diagnostics.Timings.Total <= 0 {
+		t.Fatalf("expected positive total timing, got %+v", res.Diagnostics.Timings)
 	}
 }
 
@@ -141,6 +176,119 @@ func TestIndexDocumentUsesKeyGenerator(t *testing.T) {
 
 	if len(idx.inserts) != 2 {
 		t.Fatalf("insert count = %d, want 2", len(idx.inserts))
+	}
+}
+
+func TestSearchDocumentsDedupsUniqueMatchesWithinTokenClause(t *testing.T) {
+	idx := newMemoryIndex()
+
+	keyGen := func(token string) ([]string, error) {
+		return []string{token, token + "-alt"}, nil
+	}
+	svc := New(idx, keyGen)
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-1", 1}, namedPosting{"doc-2", 1})
+	idx.entries["alpha-alt"] = refsForIDs(svc.registry, namedPosting{"doc-1", 2}, namedPosting{"doc-3", 1})
+
+	res, err := svc.SearchDocuments(context.Background(), "alpha", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 3 {
+		t.Fatalf("len(Results) = %d, want 3", len(res.Results))
+	}
+
+	hits := map[DocID]Result{}
+	for _, item := range res.Results {
+		hits[item.ID] = item
+	}
+
+	if got := hits["doc-1"]; got.UniqueMatches != 1 || got.TotalMatches != 3 {
+		t.Fatalf("doc-1 = %+v, want UniqueMatches=1 TotalMatches=3", got)
+	}
+	if got := hits["doc-2"]; got.UniqueMatches != 1 || got.TotalMatches != 1 {
+		t.Fatalf("doc-2 = %+v, want UniqueMatches=1 TotalMatches=1", got)
+	}
+	if got := hits["doc-3"]; got.UniqueMatches != 1 || got.TotalMatches != 1 {
+		t.Fatalf("doc-3 = %+v, want UniqueMatches=1 TotalMatches=1", got)
+	}
+}
+
+func TestSearchDocumentsCountsSeparateTokensIndependently(t *testing.T) {
+	idx := newMemoryIndex()
+
+	keyGen := func(token string) ([]string, error) {
+		return []string{token, token + "-alt"}, nil
+	}
+	svc := New(idx, keyGen)
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-1", 1})
+	idx.entries["alpha-alt"] = refsForIDs(svc.registry, namedPosting{"doc-1", 1})
+	idx.entries["beta"] = refsForIDs(svc.registry, namedPosting{"doc-1", 2})
+	idx.entries["beta-alt"] = refsForIDs(svc.registry, namedPosting{"doc-1", 3})
+
+	res, err := svc.SearchDocuments(context.Background(), "alpha beta", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(res.Results))
+	}
+	if got := res.Results[0]; got.UniqueMatches != 2 || got.TotalMatches != 7 {
+		t.Fatalf("result = %+v, want UniqueMatches=2 TotalMatches=7", got)
+	}
+}
+
+func TestSearchDocumentsMustTermsIntersect(t *testing.T) {
+	idx := newMemoryIndex()
+
+	svc := New(idx, WordKeys)
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1}, namedPosting{"doc-c", 1})
+	idx.entries["beta"] = refsForIDs(svc.registry, namedPosting{"doc-b", 1}, namedPosting{"doc-c", 3})
+
+	res, err := svc.SearchDocuments(context.Background(), "+alpha +beta", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(res.Results))
+	}
+	if got := res.Results[0]; got.ID != "doc-c" || got.UniqueMatches != 2 || got.TotalMatches != 4 {
+		t.Fatalf("result = %+v, want doc-c UniqueMatches=2 TotalMatches=4", got)
+	}
+}
+
+func TestSearchDocumentsMustNotExcludesMatches(t *testing.T) {
+	idx := newMemoryIndex()
+
+	svc := New(idx, WordKeys)
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1}, namedPosting{"doc-b", 1})
+	idx.entries["beta"] = refsForIDs(svc.registry, namedPosting{"doc-b", 1})
+
+	res, err := svc.SearchDocuments(context.Background(), "alpha -beta", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 1 || res.Results[0].ID != "doc-a" {
+		t.Fatalf("unexpected results: %+v", res.Results)
+	}
+}
+
+func TestSearchDocumentsQuotedPhraseUsesPhraseQuery(t *testing.T) {
+	svc := New(newPositionalMemoryIndex(), WordKeys)
+
+	ctx := context.Background()
+	if err := svc.IndexDocument(ctx, "doc-a", "barack obama"); err != nil {
+		t.Fatalf("IndexDocument() error = %v", err)
+	}
+	if err := svc.IndexDocument(ctx, "doc-b", "obama barack"); err != nil {
+		t.Fatalf("IndexDocument() error = %v", err)
+	}
+
+	res, err := svc.SearchDocuments(ctx, `"barack obama"`, 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 1 || res.Results[0].ID != "doc-a" {
+		t.Fatalf("unexpected phrase results: %+v", res.Results)
 	}
 }
 
@@ -173,11 +321,11 @@ func TestContextCancellation(t *testing.T) {
 
 func TestSearchDocumentsSkipsIndexWhenFilterMisses(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["known"] = []DocRef{{ID: "doc", Count: 1}}
 
 	svc := New(idx, WordKeys, WithFilter(containsOnlyFilter{
 		allowed: map[string]bool{"known": true},
 	}))
+	idx.entries["known"] = refsForIDs(svc.registry, namedPosting{"doc", 1})
 
 	res, err := svc.SearchDocuments(context.Background(), "unknown", 10)
 	if err != nil {
@@ -195,13 +343,13 @@ func TestSearchDocumentsSkipsIndexWhenFilterMisses(t *testing.T) {
 
 func TestSearchDocumentsDoesNotAutoBuildBuildableFilter(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["known"] = []DocRef{{ID: "doc", Count: 1}}
 
 	filter := &buildableContainsFilter{
 		containsOnlyFilter: containsOnlyFilter{allowed: map[string]bool{"known": true}},
 	}
 
 	svc := New(idx, WordKeys, WithFilter(filter))
+	idx.entries["known"] = refsForIDs(svc.registry, namedPosting{"doc", 1})
 
 	if _, err := svc.SearchDocuments(context.Background(), "known", 10); err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
@@ -214,12 +362,12 @@ func TestSearchDocumentsDoesNotAutoBuildBuildableFilter(t *testing.T) {
 
 func TestSearchUsesBufferedStaticFilterAfterManualBuild(t *testing.T) {
 	idx := newMemoryIndex()
-	idx.entries["known"] = []DocRef{{ID: "doc", Count: 1}}
 
 	static := &testStaticFilter{}
 	filter := NewBufferedStaticFilter(static)
 
 	svc := New(idx, WordKeys, WithFilter(filter))
+	idx.entries["known"] = refsForIDs(svc.registry, namedPosting{"doc", 1})
 
 	if err := svc.IndexDocument(context.Background(), "doc-1", "known"); err != nil {
 		t.Fatalf("IndexDocument() error = %v", err)

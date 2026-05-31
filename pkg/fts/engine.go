@@ -4,22 +4,88 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sort"
+	"sync"
 	"time"
 )
 
+type docAccum struct {
+	UniqueMatches int
+	TotalMatches  int
+	Score         float64
+}
+
+type tokenGroup struct {
+	expansions []termExpansion
+	totalDocs  int
+	single     bool
+}
+
 type Service struct {
-	index    Index
-	keyGen   KeyGenerator
-	pipeline Pipeline
-	filter   Filter
+	indexFactory                   IndexFactory
+	keyGen                         KeyGenerator
+	pipeline                       Pipeline
+	filter                         Filter
+	scorer                         Scorer
+	compactionLoadFactor           float64
+	autoCompactionCheck            bool
+	compactionCallback             func(CompactionStats)
+	collection                     *collectionStats
+	registry                       *DocRegistry
+	tombstones                     *Tombstones
+	pendingRegistrySnapshot        []DocID
+	pendingTombstonesSnapshot      []uint64
+	pendingCollectionStatsSnapshot *CollectionStatsSnapshot
+	singleField                    bool
+
+	mu      sync.RWMutex
+	indexes map[string]Index
+}
+
+type CompactionStats struct {
+	TotalAssignedDocs   int
+	LiveDocs            int
+	TombstonedDocs      int
+	TombstoneLoadFactor float64
 }
 
 func New(index Index, keyGen KeyGenerator, opts ...Option) *Service {
+	s := newService(keyGen, opts...)
+	s.singleField = true
+	s.indexFactory = func(name string) (Index, error) {
+		return nil, fmt.Errorf("fts: field %q is not available (service was built with fts.New; use fts.NewMultiField to index arbitrary fields)", name)
+	}
+	if index != nil {
+		s.indexes[DefaultField] = index
+	}
+	return s
+}
+
+func NewMultiField(factory IndexFactory, keyGen KeyGenerator, opts ...Option) *Service {
+	s := newService(keyGen, opts...)
+	s.indexFactory = factory
+	return s
+}
+
+func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opts ...Option) *Service {
+	s := newService(keyGen, opts...)
+	for name, idx := range indexes {
+		s.indexes[name] = idx
+	}
+	s.indexFactory = func(name string) (Index, error) {
+		return nil, fmt.Errorf("fts: field %q was not present in the restored snapshot", name)
+	}
+	return s
+}
+
+func newService(keyGen KeyGenerator, opts ...Option) *Service {
 	s := &Service{
-		index:    index,
-		keyGen:   keyGen,
-		pipeline: defaultPipeline{},
+		keyGen:              keyGen,
+		pipeline:            defaultPipeline{},
+		indexes:             make(map[string]Index),
+		collection:          newCollectionStats(),
+		registry:            NewDocRegistry(),
+		tombstones:          NewTombstones(),
+		autoCompactionCheck: true,
 	}
 
 	for _, opt := range opts {
@@ -31,6 +97,8 @@ func New(index Index, keyGen KeyGenerator, opts ...Option) *Service {
 	if s.keyGen == nil {
 		s.keyGen = WordKeys
 	}
+
+	s.finalizeRestoreState()
 
 	return s
 }
@@ -52,117 +120,142 @@ func (s *Service) IndexDocument(ctx context.Context, docID DocID, content string
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
-	tokens := s.pipeline.Process(content)
-	for _, token := range tokens {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		keys, err := s.keyGen(token)
-		if err != nil {
-			return fmt.Errorf("fts: index document: keygen: %w", err)
-		}
-
-		for _, key := range keys {
-			if s.filter != nil {
-				if ok := s.filter.Add([]byte(key)); !ok {
-					return fmt.Errorf("fts: index document: filter add failed for key %q", key)
-				}
-			}
-			if err := s.index.Insert(key, docID); err != nil {
-				return fmt.Errorf("fts: index document: insert: %w", err)
-			}
-		}
+	if docID == "" {
+		return fmt.Errorf("fts: document id is empty")
 	}
+	return s.indexField(ctx, docID, DefaultField, Field{Value: content})
+}
 
+func (s *Service) Delete(docID DocID) bool {
+	return s.delete(docID, true)
+}
+
+func (s *Service) delete(docID DocID, checkCompaction bool) bool {
+	if s == nil || docID == "" {
+		return false
+	}
+	ord, ok := s.registry.Has(docID)
+	if !ok {
+		return false
+	}
+	if s.tombstones != nil {
+		s.tombstones.Set(ord)
+	}
+	if s.collection != nil {
+		s.collection.remove(ord)
+	}
+	s.registry.Forget(docID)
+	if checkCompaction {
+		s.maybeTriggerCompactionCheck()
+	}
+	return true
+}
+
+func (s *Service) UpdateDocument(ctx context.Context, docID DocID, content string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if docID == "" {
+		return fmt.Errorf("fts: document id is empty")
+	}
+	s.delete(docID, false)
+	if err := s.IndexDocument(ctx, docID, content); err != nil {
+		return err
+	}
+	s.maybeTriggerCompactionCheck()
+	return nil
+}
+
+func (s *Service) Update(ctx context.Context, doc Document) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if doc.ID == "" {
+		return fmt.Errorf("fts: document id is empty")
+	}
+	s.delete(doc.ID, false)
+	if err := s.Index(ctx, doc); err != nil {
+		return err
+	}
+	s.maybeTriggerCompactionCheck()
 	return nil
 }
 
 func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults int) (*SearchResult, error) {
+	return s.searchQueryString(ctx, query, "", queryFieldScope{}, maxResults)
+}
+
+func (s *Service) SearchField(ctx context.Context, field string, query string, maxResults int) (*SearchResult, error) {
+	return s.searchQueryString(ctx, query, field, queryFieldScope{}, maxResults)
+}
+
+func (s *Service) SearchFields(ctx context.Context, fields []string, query string, maxResults int) (*SearchResult, error) {
+	return s.searchQueryString(ctx, query, "", newQueryFieldScope(fields), maxResults)
+}
+
+func (s *Service) searchQueryString(ctx context.Context, query string, defaultField string, scope queryFieldScope, maxResults int) (*SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, exec := ensureDiagnosticsContext(ctx)
 
-	start := time.Now()
-	timings := make(map[string]string, 3)
+	start := exec.startTimer()
 
-	preStart := time.Now()
-	tokens := s.pipeline.Process(query)
-	timings["preprocess"] = formatDuration(time.Since(preStart))
-
-	searchStart := time.Now()
-	uniqueMatches := make(map[DocID]int)
-	totalMatches := make(map[DocID]int)
-
-	for _, token := range tokens {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-
-		keys, err := s.keyGen(token)
-		if err != nil {
-			return nil, fmt.Errorf("fts: search: keygen: %w", err)
-		}
-
-		for _, key := range keys {
-			if s.filter != nil && !s.filter.Contains([]byte(key)) {
-				continue
-			}
-
-			docs, err := s.index.Search(key)
-			if err != nil {
-				return nil, fmt.Errorf("fts: search: index search: %w", err)
-			}
-
-			for _, doc := range docs {
-				uniqueMatches[doc.ID]++
-				totalMatches[doc.ID] += int(doc.Count)
-			}
-		}
+	preStart := exec.startTimer()
+	parsed, err := ParseQuery(query)
+	if err != nil {
+		return nil, err
 	}
+	parsed = bindDefaultField(parsed, defaultField)
+	exec.observePreprocess(preStart)
 
-	timings["search_tokens"] = formatDuration(time.Since(searchStart))
-
-	results := make([]Result, 0, len(uniqueMatches))
-	for id, unique := range uniqueMatches {
-		results = append(results, Result{
-			ID:            id,
-			UniqueMatches: unique,
-			TotalMatches:  totalMatches[id],
-		})
+	res, err := s.searchResultForQuery(ctx, parsed, maxResults, scope)
+	if err != nil {
+		return nil, err
 	}
+	exec.observeTotal(start)
+	return attachDiagnostics(ctx, res), nil
+}
 
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].UniqueMatches != results[j].UniqueMatches {
-			return results[i].UniqueMatches > results[j].UniqueMatches
-		}
-		if results[i].TotalMatches != results[j].TotalMatches {
-			return results[i].TotalMatches > results[j].TotalMatches
-		}
-		return results[i].ID < results[j].ID
-	})
+func (s *Service) SearchPhrase(ctx context.Context, phrase string, maxResults int) (*SearchResult, error) {
+	return s.searchPhraseFieldsResult(ctx, s.fieldNames(), phrase, maxResults)
+}
 
-	totalFound := len(results)
-	if maxResults <= 0 || maxResults > totalFound {
-		maxResults = totalFound
-	}
+func (s *Service) SearchPhraseField(ctx context.Context, field string, phrase string, maxResults int) (*SearchResult, error) {
+	return s.SearchPhraseFields(ctx, []string{field}, phrase, maxResults)
+}
 
-	timings["total"] = formatDuration(time.Since(start))
+func (s *Service) SearchPhraseFields(ctx context.Context, fields []string, phrase string, maxResults int) (*SearchResult, error) {
+	return s.searchPhraseFieldsResult(ctx, fields, phrase, maxResults)
+}
 
-	return &SearchResult{
-		Results:           results[:maxResults],
-		TotalResultsCount: totalFound,
-		Timings:           timings,
-	}, nil
+func (s *Service) SearchPhraseNear(ctx context.Context, phrase string, distance int, maxResults int) (*SearchResult, error) {
+	return s.searchPhraseNearFieldsResult(ctx, s.fieldNames(), phrase, distance, maxResults)
+}
+
+func (s *Service) SearchPhraseNearField(ctx context.Context, field string, phrase string, distance int, maxResults int) (*SearchResult, error) {
+	return s.SearchPhraseNearFields(ctx, []string{field}, phrase, distance, maxResults)
+}
+
+func (s *Service) SearchPhraseNearFields(ctx context.Context, fields []string, phrase string, distance int, maxResults int) (*SearchResult, error) {
+	return s.searchPhraseNearFieldsResult(ctx, fields, phrase, distance, maxResults)
 }
 
 func (s *Service) Analyze() (Stats, bool) {
-	analyzer, ok := s.index.(Analyzer)
-	if !ok {
-		return Stats{}, false
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var combined Stats
+	found := false
+	for _, idx := range s.indexes {
+		analyzer, ok := idx.(Analyzer)
+		if !ok {
+			continue
+		}
+		found = true
+		combined = mergeStats(combined, analyzer.Analyze())
 	}
-	return analyzer.Analyze(), true
+	return combined, found
 }
 
 func (s *Service) SnapshotComponents() (Index, Filter) {
@@ -170,7 +263,31 @@ func (s *Service) SnapshotComponents() (Index, Filter) {
 		return nil, nil
 	}
 
-	return s.index, s.filter
+	s.mu.RLock()
+	idx := s.indexes[DefaultField]
+	s.mu.RUnlock()
+	return idx, s.filter
+}
+
+func (s *Service) SnapshotCollectionStats() *CollectionStatsSnapshot {
+	if s == nil || s.collection == nil {
+		return nil
+	}
+	return s.collection.snapshot(s.registry)
+}
+
+func (s *Service) SnapshotRegistry() []DocID {
+	if s == nil || s.registry == nil {
+		return nil
+	}
+	return s.registry.Snapshot()
+}
+
+func (s *Service) SnapshotTombstones() []uint64 {
+	if s == nil || s.tombstones == nil {
+		return nil
+	}
+	return s.tombstones.Snapshot()
 }
 
 func (s *Service) BuildFilter() error {
@@ -190,9 +307,72 @@ func (s *Service) BuildFilter() error {
 	return nil
 }
 
+func (s *Service) CompactionStats() CompactionStats {
+	if s == nil {
+		return CompactionStats{}
+	}
+	totalAssigned := 0
+	liveDocs := 0
+	tombstonedDocs := 0
+	if s.registry != nil {
+		totalAssigned = s.registry.TotalAssigned()
+		liveDocs = s.registry.ActiveLen()
+	}
+	if s.tombstones != nil {
+		tombstonedDocs = s.tombstones.Count()
+	}
+	stats := CompactionStats{
+		TotalAssignedDocs: totalAssigned,
+		LiveDocs:          liveDocs,
+		TombstonedDocs:    tombstonedDocs,
+	}
+	if totalAssigned > 0 {
+		stats.TombstoneLoadFactor = float64(tombstonedDocs) / float64(totalAssigned)
+	}
+	return stats
+}
+
+func (s *Service) NeedsCompaction() bool {
+	if s == nil || s.compactionLoadFactor <= 0 {
+		return false
+	}
+	return s.CompactionStats().TombstoneLoadFactor >= s.compactionLoadFactor
+}
+
+func (s *Service) maybeTriggerCompactionCheck() {
+	if s == nil || !s.autoCompactionCheck {
+		return
+	}
+	if !s.NeedsCompaction() {
+		return
+	}
+	if s.compactionCallback != nil {
+		s.compactionCallback(s.CompactionStats())
+	}
+}
+
 func formatDuration(d time.Duration) string {
 	if d < time.Millisecond {
 		return fmt.Sprintf("%dus", d.Microseconds())
 	}
 	return fmt.Sprintf("%dms", d.Milliseconds())
+}
+
+func (s *Service) finalizeRestoreState() {
+	if s == nil {
+		return
+	}
+	if s.pendingRegistrySnapshot != nil || s.pendingTombstonesSnapshot != nil {
+		tombs := RestoreTombstones(s.pendingTombstonesSnapshot)
+		if s.pendingRegistrySnapshot != nil {
+			s.registry = RestoreDocRegistryActive(s.pendingRegistrySnapshot, tombs)
+		}
+		s.tombstones = tombs
+		s.pendingRegistrySnapshot = nil
+		s.pendingTombstonesSnapshot = nil
+	}
+	if s.pendingCollectionStatsSnapshot != nil {
+		s.collection = newCollectionStatsFromSnapshot(s.pendingCollectionStatsSnapshot, s.registry)
+		s.pendingCollectionStatsSnapshot = nil
+	}
 }
