@@ -137,8 +137,9 @@ The current client-library file persistence examples under:
 
 - `examples/client-library/snapshot-save-files/main.go`
 - `examples/client-library/snapshot-load-files/main.go`
+- `examples/client-library/snapshot-load-files-low-level/main.go`
 
-demonstrate mutable `snapshot` export/restore for a service created with `fts.New(...)`.
+demonstrate mutable `snapshot` export/restore for a service created with `fts.New(...)`, including both a high-level restore path and an explicit low-level restore path.
 
 #### Segment Files (`pkg/segment`)
 

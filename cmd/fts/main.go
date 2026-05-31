@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	ftspersist "github.com/dariasmyr/fts-engine/internal/services/fts/persist"
 	"github.com/dariasmyr/fts-engine/internal/utils"
 	"io"
 	"log/slog"
@@ -25,6 +24,7 @@ import (
 	"github.com/dariasmyr/fts-engine/internal/lib/logger/sl"
 	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
 	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/segment"
@@ -529,111 +529,43 @@ func tryLoadSplitSnapshot(log *slog.Logger, cfg *config.Config, keyGen pkgfts.Ke
 	if indexPath == "" {
 		return nil, false, nil
 	}
+	if expectedFilter != "" && filterPath == "" {
+		return nil, false, nil
+	}
+	if expectedFilter == "" && filterPath != "" {
+		if _, err := os.Stat(filterPath); errors.Is(err, os.ErrNotExist) {
+			filterPath = ""
+		} else if err != nil {
+			return nil, false, fmt.Errorf("check filter snapshot path: %w", err)
+		}
+	}
 
-	if _, err := os.Stat(indexPath); err != nil {
+	loaded, err := ftspersist.LoadSnapshot(ftspersist.SnapshotPaths{IndexPath: indexPath, FilterPath: filterPath}, keyGen, serviceOpts...)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, false, nil
 		}
-		return nil, false, fmt.Errorf("check index snapshot path: %w", err)
+		return nil, false, err
 	}
 
-	indexFile, err := os.Open(indexPath)
-	if err != nil {
-		return nil, false, fmt.Errorf("open index snapshot: %w", err)
-	}
-	defer indexFile.Close()
-
-	loadedIndex, err := pkgfts.LoadIndexSnapshot(indexFile)
-	if err != nil {
-		return nil, false, fmt.Errorf("load index snapshot: %w", err)
-	}
-
-	if loadedIndex.IndexName != cfg.FTS.Index {
+	if loaded.IndexName != "" && loaded.IndexName != cfg.FTS.Index {
 		log.Warn("Snapshot index type differs from config",
-			"snapshot_index", loadedIndex.IndexName,
+			"snapshot_index", loaded.IndexName,
 			"config_index", cfg.FTS.Index,
 			"path", indexPath,
 		)
 	}
 
-	builtOpts := append([]pkgfts.Option(nil), serviceOpts...)
-	if len(loadedIndex.Registry) > 0 {
-		builtOpts = append(builtOpts, pkgfts.WithDocRegistrySnapshot(loadedIndex.Registry))
-	}
-	if len(loadedIndex.Tombstones) > 0 {
-		builtOpts = append(builtOpts, pkgfts.WithTombstonesSnapshot(loadedIndex.Tombstones))
-	}
-	if loadedIndex.CollectionStats != nil {
-		builtOpts = append(builtOpts, pkgfts.WithCollectionStatsSnapshot(loadedIndex.CollectionStats))
+	if loaded.FilterName != expectedFilter {
+		log.Warn("Snapshot filter type differs from config",
+			"snapshot_filter", loaded.FilterName,
+			"config_filter", cfg.FTS.Filter,
+			"path", filterPath,
+		)
 	}
 
-	if expectedFilter != "" {
-		if filterPath == "" {
-			return nil, false, nil
-		}
-
-		if _, statErr := os.Stat(filterPath); statErr != nil {
-			if errors.Is(statErr, os.ErrNotExist) {
-				log.Info("Split filter snapshot is missing, rebuilding from source", "path", filterPath)
-				return nil, false, nil
-			}
-			return nil, false, fmt.Errorf("check filter snapshot path: %w", statErr)
-		}
-
-		filterFile, openErr := os.Open(filterPath)
-		if openErr != nil {
-			return nil, false, fmt.Errorf("open filter snapshot: %w", openErr)
-		}
-
-		loadedFilter, loadErr := pkgfts.LoadFilterSnapshot(filterFile)
-		_ = filterFile.Close()
-		if loadErr != nil {
-			return nil, false, fmt.Errorf("load filter snapshot: %w", loadErr)
-		}
-
-		if loadedFilter.FilterName != expectedFilter {
-			log.Warn("Snapshot filter type differs from config",
-				"snapshot_filter", loadedFilter.FilterName,
-				"config_filter", cfg.FTS.Filter,
-				"path", filterPath,
-			)
-		}
-
-		if loadedFilter.Filter != nil {
-			builtOpts = append(builtOpts, pkgfts.WithFilter(loadedFilter.Filter))
-		}
-	} else if filterPath != "" {
-		if _, statErr := os.Stat(filterPath); statErr == nil {
-			filterFile, openErr := os.Open(filterPath)
-			if openErr != nil {
-				return nil, false, fmt.Errorf("open filter snapshot: %w", openErr)
-			}
-
-			loadedFilter, loadErr := pkgfts.LoadFilterSnapshot(filterFile)
-			_ = filterFile.Close()
-			if loadErr != nil {
-				return nil, false, fmt.Errorf("load filter snapshot: %w", loadErr)
-			}
-
-			if loadedFilter.FilterName != expectedFilter {
-				log.Warn("Snapshot filter type differs from config",
-					"snapshot_filter", loadedFilter.FilterName,
-					"config_filter", cfg.FTS.Filter,
-					"path", filterPath,
-				)
-			}
-
-			if loadedFilter.Filter != nil {
-				builtOpts = append(builtOpts, pkgfts.WithFilter(loadedFilter.Filter))
-			}
-		} else if !errors.Is(statErr, os.ErrNotExist) {
-			return nil, false, fmt.Errorf("check filter snapshot path: %w", statErr)
-		}
-	}
-
-	svc := pkgfts.New(loadedIndex.Index, keyGen, builtOpts...)
 	log.Info("Loaded split FTS snapshots", "index_path", indexPath, "filter_path", filterPath)
-	return svc, true, nil
+	return loaded.Service, true, nil
 }
 
 func saveSnapshotIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Service) error {
@@ -647,14 +579,12 @@ func saveSnapshotIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Ser
 
 	if err := saveBundleSnapshot(log, cfg, svc); err == nil {
 		return nil
-	} else if !errors.Is(err, errSegmentBundleUnsupported) {
+	} else if !errors.Is(err, ftspersist.ErrSegmentBundleUnsupported) {
 		return err
 	}
 
 	return saveSplitSnapshots(log, cfg, svc)
 }
-
-var errSegmentBundleUnsupported = errors.New("segment bundle unsupported")
 
 func saveBundleSnapshot(log *slog.Logger, cfg *config.Config, svc *pkgfts.Service) error {
 	if cfg == nil || svc == nil {
@@ -664,57 +594,21 @@ func saveBundleSnapshot(log *slog.Logger, cfg *config.Config, svc *pkgfts.Servic
 	bundlePath := snapshotBundlePath(cfg)
 	filterPath := snapshotFilterPath(cfg)
 	if bundlePath == "" {
-		return errSegmentBundleUnsupported
-	}
-
-	index, searchFilter := svc.SnapshotComponents()
-	fields, _ := svc.SnapshotFields()
-	sources := make(map[string]segment.Source, len(fields))
-	for fieldName, fieldIndex := range fields {
-		source, ok := fieldIndex.(segment.Source)
-		if !ok {
-			return errSegmentBundleUnsupported
-		}
-		sources[fieldName] = source
-	}
-	if len(sources) == 0 && index != nil {
-		source, ok := index.(segment.Source)
-		if !ok {
-			return errSegmentBundleUnsupported
-		}
-		sources[packageDefaultField()] = source
+		return ftspersist.ErrSegmentBundleUnsupported
 	}
 
 	filterName := cfg.FTS.Filter
 	if filterName == "none" {
 		filterName = ""
 	}
-
-	stats := svc.SnapshotCollectionStats()
-	registry := svc.SnapshotRegistry()
-	tombstones := svc.SnapshotTombstones()
 	opts := ftspersist.SaveOptions{
 		BufferSize:     cfg.FTS.Snapshot.BufferSize,
 		FlushThreshold: cfg.FTS.Snapshot.FlushThreshold,
 		SyncFile:       cfg.FTS.Snapshot.SyncFile,
 	}
 
-	if err := ftspersist.SaveAtomicWithOptions(bundlePath, opts, func(w io.Writer) error {
-		return segment.SaveMultiFieldBundle(w, sources, stats, registry, tombstones)
-	}); err != nil {
+	if err := ftspersist.SaveSegmentBundle(ftspersist.SegmentBundlePaths{BundlePath: bundlePath, FilterPath: filterPath}, svc, filterName, opts); err != nil {
 		return err
-	}
-
-	if searchFilter != nil && filterName != "" {
-		if err := ftspersist.SaveAtomicWithOptions(filterPath, opts, func(w io.Writer) error {
-			return pkgfts.SaveFilterSnapshot(w, filterName, searchFilter)
-		}); err != nil {
-			return err
-		}
-	} else if filterPath != "" {
-		if err := os.Remove(filterPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove stale filter snapshot: %w", err)
-		}
 	}
 
 	log.Info("FTS segment bundle persisted", "bundle_path", bundlePath, "filter_path", filterPath)
@@ -738,33 +632,14 @@ func saveSplitSnapshots(log *slog.Logger, cfg *config.Config, svc *pkgfts.Servic
 		filterName = ""
 	}
 
-	index, searchFilter := svc.SnapshotComponents()
-	stats := svc.SnapshotCollectionStats()
-	registry := svc.SnapshotRegistry()
-	tombstones := svc.SnapshotTombstones()
-
 	opts := ftspersist.SaveOptions{
 		BufferSize:     cfg.FTS.Snapshot.BufferSize,
 		FlushThreshold: cfg.FTS.Snapshot.FlushThreshold,
 		SyncFile:       cfg.FTS.Snapshot.SyncFile,
 	}
 
-	if err := ftspersist.SaveAtomicWithOptions(indexPath, opts, func(w io.Writer) error {
-		return pkgfts.SaveIndexSnapshotWithState(w, indexName, index, stats, registry, tombstones)
-	}); err != nil {
+	if err := ftspersist.SaveSnapshot(ftspersist.SnapshotPaths{IndexPath: indexPath, FilterPath: filterPath}, svc, indexName, filterName, opts); err != nil {
 		return err
-	}
-
-	if searchFilter != nil && filterName != "" {
-		if err := ftspersist.SaveAtomicWithOptions(filterPath, opts, func(w io.Writer) error {
-			return pkgfts.SaveFilterSnapshot(w, filterName, searchFilter)
-		}); err != nil {
-			return err
-		}
-	} else if filterPath != "" {
-		if err := os.Remove(filterPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove stale filter snapshot: %w", err)
-		}
 	}
 
 	log.Info("FTS snapshots persisted", "index_path", indexPath, "filter_path", filterPath)
@@ -809,10 +684,6 @@ func snapshotBundlePath(cfg *config.Config) string {
 	}
 
 	return base[:len(base)-len(ext)] + ".bundle" + ext
-}
-
-func packageDefaultField() string {
-	return pkgfts.DefaultField
 }
 
 func snapshotFilterPath(cfg *config.Config) string {

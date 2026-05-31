@@ -6,6 +6,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
@@ -37,24 +38,10 @@ func main() {
 		panic(err)
 	}
 
-	index, searchFilter := svc.SnapshotComponents()
-
-	indexFile, err := os.Create("./data/segments/default.index.fidx")
-	if err != nil {
-		panic(err)
-	}
-	defer indexFile.Close()
-
-	filterFile, err := os.Create("./data/segments/default.filter.fidx")
-	if err != nil {
-		panic(err)
-	}
-	defer filterFile.Close()
-
-	if err := fts.SaveIndexSnapshotWithState(indexFile, "slicedradix", index, svc.SnapshotCollectionStats(), svc.SnapshotRegistry(), svc.SnapshotTombstones()); err != nil {
-		panic(err)
-	}
-	if err := fts.SaveFilterSnapshot(filterFile, "bloom", searchFilter); err != nil {
+	if err := ftspersist.SaveSnapshot(ftspersist.SnapshotPaths{
+		IndexPath:  "./data/segments/default.index.fidx",
+		FilterPath: "./data/segments/default.filter.fidx",
+	}, svc, "slicedradix", "bloom", ftspersist.SaveOptions{SyncFile: true}); err != nil {
 		panic(err)
 	}
 }

@@ -15,18 +15,26 @@ func main() {
 		panic(err)
 	}
 
-	loaded, err := ftspersist.LoadSnapshot(ftspersist.SnapshotPaths{
+	loaded, err := ftspersist.LoadSnapshotData(ftspersist.SnapshotPaths{
 		IndexPath:  "./data/segments/default.index.fidx",
 		FilterPath: "./data/segments/default.filter.fidx",
-	}, keygen.Word, fts.WithScorer(fts.BM25()))
+	})
 	if err != nil {
 		panic(err)
 	}
 	defer loaded.Close()
 
-	restored := loaded.Service
+	// Low-level restore keeps full control over optional restore options.
+	restored := fts.New(
+		loaded.Index,
+		keygen.Word,
+		fts.WithFilter(loaded.Filter),
+		fts.WithScorer(fts.BM25()),
+		fts.WithCollectionStatsSnapshot(loaded.CollectionStats),
+		fts.WithDocRegistrySnapshot(loaded.Registry),
+		fts.WithTombstonesSnapshot(loaded.Tombstones),
+	)
 
-	// Snapshot restore stays writable, so we can keep indexing after load.
 	if err := restored.IndexDocument(context.Background(), "doc-2", "restored snapshot stays writable"); err != nil {
 		panic(err)
 	}

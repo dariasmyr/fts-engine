@@ -44,7 +44,8 @@ Current example list:
 - `preset/main.go` — in-memory setup with language preset via `pkg/ftspreset`.
 - `custom-options/main.go` — in-memory setup with custom pipeline and extra options.
 - `snapshot-save-files/main.go` — save mutable snapshot files for a service created with `fts.New(...)`.
-- `snapshot-load-files/main.go` — restore mutable snapshot files and continue indexing.
+- `snapshot-load-files/main.go` — restore mutable snapshot files through the high-level `ftspersist.LoadSnapshot(...)` API.
+- `snapshot-load-files-low-level/main.go` — restore mutable snapshot files through `LoadSnapshotData(...)` and assemble `fts.New(...)` manually.
 - `segment-save-files/main.go` — export a sealed `segment` bundle and filter files for a service created with `fts.New(...)`.
 - `segment-load-files/main.go` — restore a sealed `segment` bundle and filter files for a service created with `fts.New(...)`.
 
@@ -56,6 +57,7 @@ go run ./examples/client-library/preset
 go run ./examples/client-library/custom-options
 go run ./examples/client-library/snapshot-save-files
 go run ./examples/client-library/snapshot-load-files
+go run ./examples/client-library/snapshot-load-files-low-level
 go run ./examples/client-library/segment-save-files
 go run ./examples/client-library/segment-load-files
 ```
