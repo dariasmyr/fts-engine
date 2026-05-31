@@ -153,8 +153,9 @@ The current client-library file persistence examples under:
 
 - `examples/client-library/segment-save-files/main.go`
 - `examples/client-library/segment-load-files/main.go`
+- `examples/client-library/segment-load-files-low-level/main.go`
 
-demonstrate `segment` export/restore for a service created with `fts.New(...)`.
+demonstrate `segment` export/restore for a service created with `fts.New(...)`, including both a high-level restore path and an explicit low-level restore path.
 
 Format compatibility rules:
 

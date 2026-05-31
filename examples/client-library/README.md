@@ -47,7 +47,8 @@ Current example list:
 - `snapshot-load-files/main.go` — restore mutable snapshot files through the high-level `ftspersist.LoadSnapshot(...)` API.
 - `snapshot-load-files-low-level/main.go` — restore mutable snapshot files through `LoadSnapshotData(...)` and assemble `fts.New(...)` manually.
 - `segment-save-files/main.go` — export a sealed `segment` directory for a service created with `fts.New(...)`.
-- `segment-load-files/main.go` — restore a sealed `segment` directory for a service created with `fts.New(...)`.
+- `segment-load-files/main.go` — restore a sealed `segment` directory through the high-level `ftspersist.LoadSegment(...)` API.
+- `segment-load-files-low-level/main.go` — restore a sealed `segment` directory through `LoadSegmentData(...)` and `RestoreSegmentService(...)` explicitly.
 
 Run each example from repository root:
 
@@ -60,4 +61,5 @@ go run ./examples/client-library/snapshot-load-files
 go run ./examples/client-library/snapshot-load-files-low-level
 go run ./examples/client-library/segment-save-files
 go run ./examples/client-library/segment-load-files
+go run ./examples/client-library/segment-load-files-low-level
 ```
