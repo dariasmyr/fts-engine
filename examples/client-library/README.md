@@ -32,11 +32,21 @@ replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
 
 ## Examples in this folder
 
-- `default/main.go` — minimal setup with defaults.
-- `preset/main.go` — language preset via `pkg/ftspreset`.
-- `custom-options/main.go` — custom pipeline and extra options.
-- `snapshot-save-files/main.go` — save split snapshot files (index + filter).
-- `snapshot-import-files/main.go` — restore from existing split snapshot files.
+The examples currently cover three usage styles:
+
+- in-memory library usage
+- immutable segment export/restore
+- custom runtime configuration
+
+Current example list:
+
+- `default/main.go` — minimal in-memory setup with defaults.
+- `preset/main.go` — in-memory setup with language preset via `pkg/ftspreset`.
+- `custom-options/main.go` — in-memory setup with custom pipeline and extra options.
+- `snapshot-save-files/main.go` — save mutable snapshot files for a service created with `fts.New(...)`.
+- `snapshot-load-files/main.go` — restore mutable snapshot files and continue indexing.
+- `segment-save-files/main.go` — export a sealed `segment` bundle and filter files for a service created with `fts.New(...)`.
+- `segment-load-files/main.go` — restore a sealed `segment` bundle and filter files for a service created with `fts.New(...)`.
 
 Run each example from repository root:
 
@@ -45,5 +55,7 @@ go run ./examples/client-library/default
 go run ./examples/client-library/preset
 go run ./examples/client-library/custom-options
 go run ./examples/client-library/snapshot-save-files
-go run ./examples/client-library/snapshot-import-files
+go run ./examples/client-library/snapshot-load-files
+go run ./examples/client-library/segment-save-files
+go run ./examples/client-library/segment-load-files
 ```

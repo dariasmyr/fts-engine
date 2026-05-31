@@ -57,11 +57,24 @@ func main() {
 }
 ```
 
-### 3) Snapshots
+### 3) Persistence Modes
 
-Index and filter snapshots are always stored in separate files.
+The project currently exposes two different persistence models:
 
-Flow 1 (recommended): manual codec registration via `init()` + split files. If you enable scorer-aware ranking, prefer `SaveIndexSnapshotWithStats(...)` so restore can recover collection stats.
+- `snapshot`: mutable persistence for restoring an index and continuing writes
+- `segment`: immutable persistence for restoring a sealed read-only search index
+
+`mmap` belongs only to the `segment` model. It is a way to open raw segment files, not a separate persistence format.
+
+#### Snapshot Files (`pkg/fts`)
+
+Use snapshot files when you want to restore an index and continue indexing after process restart.
+
+- writable after restore
+- based on registered index/filter snapshot codecs
+- best default when you need mutable runtime behavior
+
+Manual codec registration via `init()` + split files. If you enable scorer-aware ranking, prefer `SaveIndexSnapshotWithStats(...)` so restore can recover collection stats.
 
 ```go
 package main
@@ -118,11 +131,98 @@ func main() {
 }
 ```
 
-The old `SaveIndexSnapshot(...)` and `SaveMultiIndexSnapshot(...)` wrappers are still available for backward compatibility, but they do not persist `CollectionStats`. Use `SaveIndexSnapshotWithStats(...)` / `SaveMultiIndexSnapshotWithStats(...)` for scorer-aware restore.
+If you use scorer-aware restore, prefer `SaveIndexSnapshotWithStats(...)` / `SaveMultiIndexSnapshotWithStats(...)` so `CollectionStats` are preserved.
 
-Flow 2: ready-to-use built-in codecs and filters is now in examples:
+The current client-library file persistence examples under:
+
 - `examples/client-library/snapshot-save-files/main.go`
-- `examples/client-library/snapshot-import-files/main.go`
+- `examples/client-library/snapshot-load-files/main.go`
+
+demonstrate mutable `snapshot` export/restore for a service created with `fts.New(...)`.
+
+#### Segment Files (`pkg/segment`)
+
+Use segments when you want to export a sealed read-only index for search.
+
+- read-only after restore
+- built from mutable indexes that implement `segment.Source`
+- suitable for file-backed loading and raw segment `mmap`
+
+The current client-library file persistence examples under:
+
+- `examples/client-library/segment-save-files/main.go`
+- `examples/client-library/segment-load-files/main.go`
+
+demonstrate `segment` export/restore for a service created with `fts.New(...)`.
+
+Format compatibility rules:
+
+- snapshot files must be loaded with `fts.LoadIndexSnapshot(...)` or `fts.LoadMultiIndexSnapshot(...)`
+- segment files must be loaded with `pkg/segment` APIs
+- a snapshot file cannot be opened as a segment file
+- a segment file cannot be loaded as a snapshot file
+
+Example:
+
+```go
+package main
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/pkg/keygen"
+	"github.com/dariasmyr/fts-engine/pkg/segment"
+)
+
+func main() {
+	svc := fts.New(slicedradix.New(), keygen.Word, fts.WithScorer(fts.BM25()))
+	_ = svc.IndexDocument(context.Background(), "doc-1", "segment demo")
+
+	index, _ := svc.SnapshotComponents()
+	source, ok := index.(segment.Source)
+	if !ok {
+		panic("index does not support segment export")
+	}
+
+	var bundle bytes.Buffer
+	if err := segment.SaveBundle(&bundle, source, svc.SnapshotCollectionStats(), svc.SnapshotRegistry(), svc.SnapshotTombstones()); err != nil {
+		panic(err)
+	}
+
+	loaded, err := segment.LoadBundle(bytes.NewReader(bundle.Bytes()))
+	if err != nil {
+		panic(err)
+	}
+
+	restored, err := segment.RestoreService(loaded, keygen.Word, fts.WithScorer(fts.BM25()))
+	if err != nil {
+		panic(err)
+	}
+
+	res, _ := restored.SearchDocuments(context.Background(), "segment", 10)
+	fmt.Println(res.TotalResultsCount)
+}
+```
+
+Important:
+
+- this restores a read-only search service
+- this example uses the current bundle-based segment persistence path
+- raw `segment.OpenFile(...)` is a lower-level API for opening raw segment files directly
+
+#### `mmap` and Segments
+
+Raw segment files can be opened with `segment.OpenFile(...)`.
+
+- this is available only for raw segment files
+- `segment.Reader` stays read-only
+- current bundle-based examples do not use `mmap`
+
+Today, `mmap` is a low-level `pkg/segment` API rather than the main persistence flow used by the CLI.
 
 ### 4) Custom pipeline and language presets
 
@@ -294,7 +394,16 @@ func main() {
 
 `ObserveResult(...)` is tolerant: it always records base request/error information, uses `SearchResult` fields like `TotalResultsCount` and returned hit count even when diagnostics are disabled, and fills diagnostics-dependent fields only when `res.Diagnostics` is non-nil.
 
-## Run main app (local testing via config)
+## Usage Modes
+
+The repository currently supports these top-level usage patterns:
+
+- library mode in memory: create `fts.New(...)` or `fts.NewMultiField(...)` and manage indexing/search yourself
+- library mode with mutable snapshots: use `pkg/fts` snapshot save/load helpers
+- library mode with immutable segments: use `pkg/segment` export/load helpers
+- app mode via config: run `cmd/fts` and let the repository app manage startup/build persistence
+
+## Run Main App
 
 Use this only when you want to test the repository app itself (`cmd/fts`), not when embedding the library into your service.
 
@@ -358,14 +467,14 @@ mode:
   type: "prod"        # prod|experiment
 ```
 
-Snapshot fields (`fts.snapshot`):
+Persistence fields in the current CLI config (`fts.snapshot`):
 
-- `enabled`: enable snapshot persistence flow in CLI prod mode.
-- `path`: base path used to derive split files when explicit paths are not set (`*.index.*` and `*.filter.*`).
-- `index_path`: optional explicit path for index snapshot file.
+- `enabled`: enable persistence flow in CLI prod mode.
+- `path`: base path used by the current CLI persistence logic.
+- `index_path`: optional explicit path for mutable index snapshot file.
 - `filter_path`: optional explicit path for filter snapshot file.
-- `load_on_start`: if true and snapshot exists, load it and skip rebuild.
-- `save_on_build`: if true, save snapshot after indexing finishes.
+- `load_on_start`: if true and persisted state exists, load it and skip rebuild.
+- `save_on_build`: if true, save persisted state after indexing finishes.
 - `buffer_size`: writer buffer size used during save.
 - `flush_threshold`: buffered flush threshold used by the built-in save helper.
 - `sync_file`: fsync temp file before atomic rename.
@@ -374,8 +483,8 @@ Snapshot fields (`fts.snapshot`):
 
 - `prod`:
   - runs engine with configurable pipeline and interactive CUI search,
-  - if `fts.snapshot.enabled=true` and `load_on_start=true` and snapshot exists: loads snapshot and skips re-index,
-  - otherwise indexes documents and (if `save_on_build=true`) persists snapshot atomically.
+  - if `fts.snapshot.enabled=true` and `load_on_start=true` and persisted state exists: loads it and skips re-index,
+  - otherwise indexes documents and (if `save_on_build=true`) persists state atomically.
 - `experiment`:
   - always indexes current input and prints memory/index stats,
   - does not run CUI snapshot restore flow.

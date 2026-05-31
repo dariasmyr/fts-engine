@@ -7,6 +7,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
+	"github.com/dariasmyr/fts-engine/pkg/segment"
 )
 
 func main() {
@@ -14,7 +15,7 @@ func main() {
 		panic(err)
 	}
 
-	if err := os.MkdirAll("./data/segments", 0o755); err != nil {
+	if err := os.MkdirAll("./data/segments", 0755); err != nil {
 		panic(err)
 	}
 
@@ -32,18 +33,24 @@ func main() {
 		panic(err)
 	}
 
+	// Enable scorer so collection stats are populated and can be persisted with the snapshot.
 	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
 	if err := svc.IndexDocument(context.Background(), "doc-1", "snapshot with bloom filter"); err != nil {
 		panic(err)
 	}
 
 	index, searchFilter := svc.SnapshotComponents()
+	stats := svc.SnapshotCollectionStats()
+	source, ok := index.(segment.Source)
+	if !ok {
+		panic("index does not support segment export")
+	}
 
-	indexFile, err := os.Create("./data/segments/default.index.fidx")
+	bundleFile, err := os.Create("./data/segments/default.bundle.fidx")
 	if err != nil {
 		panic(err)
 	}
-	defer indexFile.Close()
+	defer bundleFile.Close()
 
 	filterFile, err := os.Create("./data/segments/default.filter.fidx")
 	if err != nil {
@@ -51,7 +58,7 @@ func main() {
 	}
 	defer filterFile.Close()
 
-	if err := fts.SaveIndexSnapshotWithState(indexFile, "slicedradix", index, svc.SnapshotCollectionStats(), svc.SnapshotRegistry(), svc.SnapshotTombstones()); err != nil {
+	if err := segment.SaveBundle(bundleFile, source, stats, svc.SnapshotRegistry(), svc.SnapshotTombstones()); err != nil {
 		panic(err)
 	}
 	if err := fts.SaveFilterSnapshot(filterFile, "bloom", searchFilter); err != nil {
