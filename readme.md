@@ -10,6 +10,22 @@ Reusable full-text search engine in Go with configurable indexes, filters, stemm
 
 ## What this repository provides
 
+
+The repository has two distinct layers:
+
+- Public library surface:
+  - `pkg/fts`
+  - `pkg/index/*`
+  - `pkg/textproc`
+  - `pkg/keygen`
+  - `pkg/filter`
+  - `pkg/ftsstats`
+- Repository-local app/tooling:
+  - `cmd/fts` demo app
+  - `cmd/bench` benchmark/evaluation CLI
+  - `internal/adapters/cui` terminal UI for the demo app
+  - `internal/bench` benchmark harness used by `cmd/bench`
+
 - Public library API in `pkg/fts`.
 - Public index implementations in `pkg/index/*`:
 	- `slicedradix` (exact + positional + prefix)
@@ -18,10 +34,10 @@ Reusable full-text search engine in Go with configurable indexes, filters, stemm
 - Public key generators in `pkg/keygen`.
 - Public probabilistic filters in `pkg/filter`.
 - Public diagnostics observer in `pkg/ftsstats`.
-- CLI entrypoint in `cmd/fts` with:
+- Repository demo app in `cmd/fts` with:
   - `prod` mode (run with configurable filters and interactive CUI)
   - `experiment` mode (collect indexing metrics)
-- Benchmark/evaluation CLI in `cmd/bench` for indexing throughput, latency, `nDCG`, `MRR`, and `Recall`.
+- Repository benchmark/evaluation CLI in `cmd/bench` for indexing throughput, latency, `nDCG`, `MRR`, and `Recall`.
 
 ## Library usage
 
@@ -395,11 +411,14 @@ The repository currently supports these top-level usage patterns:
 - library mode in memory: create `fts.New(...)` or `fts.NewMultiField(...)` and manage indexing/search yourself
 - library mode with mutable snapshots: use `pkg/fts` snapshot save/load helpers
 - library mode with immutable segments: use `pkg/segment` export/load helpers
-- app mode via config: run `cmd/fts` and let the repository app manage startup/build persistence
+- repository demo app mode: run `cmd/fts` and let the repository app manage startup/build persistence
+- repository evaluation mode: run `cmd/bench` to benchmark local corpora and labeled query sets
 
-## Run Main App
+For external integrations, prefer the public `pkg/*` packages. Treat `cmd/*` and `internal/*` here as repository-owned tooling rather than the main product surface.
 
-Use this only when you want to test the repository app itself (`cmd/fts`), not when embedding the library into your service.
+## Run Demo App
+
+Use this only when you want to test the repository demo app itself (`cmd/fts`), not when embedding the library into your service.
 
 Download the Wikipedia dump from:
 
@@ -475,14 +494,16 @@ Persistence fields in the current CLI config (`fts.persistence`):
 ## CLI modes
 
 - `prod`:
-  - runs engine with configurable pipeline and interactive CUI search,
+  - runs the repository demo app with configurable pipeline and interactive CUI search,
   - if `fts.persistence.enabled=true` and `load_on_start=true` and persisted state exists: loads it and skips re-index,
   - otherwise indexes documents and (if `save_on_build=true`) persists state atomically.
 - `experiment`:
-  - always indexes current input and prints memory/index stats,
+  - always indexes current input and prints demo-app memory/index stats,
   - does not run CUI persistence restore flow.
 
 ## Benchmarks
+
+`cmd/bench` and `internal/bench` are repository benchmarking tools, not part of the public library API.
 
 This repository uses three benchmark types:
 
