@@ -5,12 +5,12 @@ import (
 	"fmt"
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
-	engine := fts.New(radix.New(), keygen.Word)
+	engine := fts.New(slicedradix.New(), keygen.Word)
 
 	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
 	_ = engine.IndexDocument(context.Background(), "doc-2", "Rosa runs hotel operations in France")

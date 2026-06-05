@@ -11,7 +11,7 @@ import (
 	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
@@ -72,7 +72,7 @@ func TestIndexAndRunQueriesEndToEnd(t *testing.T) {
 		mkDoc("3", "Empty", "unrelated content about cats and dogs"),
 	}
 
-	svc := fts.New(radix.New(), keygen.Word)
+	svc := fts.New(slicedradix.New(), keygen.Word)
 	idxReport, err := IndexCorpus(ctx, svc, corpus, SelectAbstract)
 	if err != nil {
 		t.Fatalf("IndexCorpus() error = %v", err)
@@ -126,7 +126,7 @@ func TestRunQueriesWithoutDiagnosticsLeavesInstrumentationFieldsEmpty(t *testing
 	ctx := context.Background()
 	corpus := Corpus{mkDoc("1", "Rosa Barge", "Rosa is a French hotel barge on the Canal du Midi")}
 
-	svc := fts.New(radix.New(), keygen.Word)
+	svc := fts.New(slicedradix.New(), keygen.Word)
 	if _, err := IndexCorpus(ctx, svc, corpus, SelectAbstract); err != nil {
 		t.Fatalf("IndexCorpus() error = %v", err)
 	}
@@ -157,7 +157,7 @@ func TestRunQueriesObserverTracksQueriesWithoutDiagnostics(t *testing.T) {
 	ctx := context.Background()
 	corpus := Corpus{mkDoc("1", "Rosa Barge", "Rosa is a French hotel barge on the Canal du Midi")}
 
-	svc := fts.New(radix.New(), keygen.Word)
+	svc := fts.New(slicedradix.New(), keygen.Word)
 	if _, err := IndexCorpus(ctx, svc, corpus, SelectAbstract); err != nil {
 		t.Fatalf("IndexCorpus() error = %v", err)
 	}
@@ -184,7 +184,7 @@ func TestRunQueriesRepeatMultipliesMeasuredRuns(t *testing.T) {
 	ctx := context.Background()
 	corpus := Corpus{mkDoc("1", "Rosa Barge", "Rosa is a French hotel barge on the Canal du Midi")}
 
-	svc := fts.New(radix.New(), keygen.Word)
+	svc := fts.New(slicedradix.New(), keygen.Word)
 	if _, err := IndexCorpus(ctx, svc, corpus, SelectAbstract); err != nil {
 		t.Fatalf("IndexCorpus() error = %v", err)
 	}
@@ -208,7 +208,7 @@ func TestRunQueriesWarmupDoesNotAffectMeasuredReportsOrObserver(t *testing.T) {
 	ctx := context.Background()
 	corpus := Corpus{mkDoc("1", "Rosa Barge", "Rosa is a French hotel barge on the Canal du Midi")}
 
-	svc := fts.New(radix.New(), keygen.Word)
+	svc := fts.New(slicedradix.New(), keygen.Word)
 	if _, err := IndexCorpus(ctx, svc, corpus, SelectAbstract); err != nil {
 		t.Fatalf("IndexCorpus() error = %v", err)
 	}

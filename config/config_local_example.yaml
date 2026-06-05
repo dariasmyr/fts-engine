@@ -1,7 +1,7 @@
 env: "local"
 dump_path: "./data/enwiki-latest-abstract1.xml.gz"
 fts:
-  index: "slicedradix" # radix|slicedradix|hamt|hamtpointered
+  index: "slicedradix" # slicedradix|hamt
   keygen: "word"
   scorer: "none"       # none|bm25|tfidf
   filter: "ribbon"

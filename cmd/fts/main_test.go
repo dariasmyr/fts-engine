@@ -10,7 +10,7 @@ import (
 	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 )
 
 type fakeSearchEngine struct {
@@ -31,7 +31,7 @@ func (f *fakeSearchEngine) SearchDocuments(ctx context.Context, query string, ma
 }
 
 func TestServiceAdapterObservesSearchDiagnostics(t *testing.T) {
-	svc := fts.New(radix.New(), fts.WordKeys)
+	svc := fts.New(slicedradix.New(), fts.WordKeys)
 	ctx := context.Background()
 	if err := svc.IndexDocument(ctx, "doc-1", "alpha beta gamma"); err != nil {
 		t.Fatalf("IndexDocument() error = %v", err)
@@ -71,7 +71,7 @@ func TestServiceAdapterObservesSearchDiagnostics(t *testing.T) {
 }
 
 func TestServiceAdapterHighlightTextUsesFTSHighlighter(t *testing.T) {
-	svc := fts.New(radix.New(), fts.WordKeys)
+	svc := fts.New(slicedradix.New(), fts.WordKeys)
 	adapter := &serviceAdapter{service: svc}
 
 	got := adapter.HighlightText("obam*", "obama obamacare orbit")

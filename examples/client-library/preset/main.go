@@ -6,13 +6,13 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftspreset"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
 	engine := fts.New(
-		radix.New(),
+		slicedradix.New(),
 		keygen.Word,
 		ftspreset.Multilingual(),
 	)

@@ -12,10 +12,8 @@ Reusable full-text search engine in Go with configurable indexes, filters, stemm
 
 - Public library API in `pkg/fts`.
 - Public index implementations in `pkg/index/*`:
-  - `radix` (exact + positional)
-  - `slicedradix` (exact + positional + prefix)
-  - `hamt` (exact + positional)
-  - `hamtpointered` (exact + positional)
+	- `slicedradix` (exact + positional + prefix)
+	- `hamt` (exact + positional)
 - Public text processing pipeline in `pkg/textproc`.
 - Public key generators in `pkg/keygen`.
 - Public probabilistic filters in `pkg/filter`.
@@ -43,12 +41,12 @@ import (
 	"fmt"
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
-	engine := fts.New(radix.New(), keygen.Word)
+	engine := fts.New(slicedradix.New(), keygen.Word)
 
 	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
 	res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
@@ -225,7 +223,7 @@ Today, `mmap` is a low-level `pkg/segment` API rather than the main persistence 
 Default preset shortcut:
 
 ```go
-engine := fts.New(radix.New(), keygen.Word, ftspreset.English())
+engine := fts.New(slicedradix.New(), keygen.Word, ftspreset.English())
 ```
 
 Available presets:
@@ -246,7 +244,7 @@ pipe := textproc.NewPipeline(
 	textproc.EnglishStemFilter{},
 )
 
-engine := fts.New(radix.New(), keygen.Word, fts.WithPipeline(pipe))
+engine := fts.New(slicedradix.New(), keygen.Word, fts.WithPipeline(pipe))
 ```
 
 ### 5) Query types
@@ -356,12 +354,12 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
-	engine := fts.New(radix.New(), keygen.Word)
+	engine := fts.New(slicedradix.New(), keygen.Word)
 	stats := ftsstats.NewSearchStats(64)
 
 	_ = engine.IndexDocument(context.Background(), "doc-1", "postgres wal checkpoint tuning")
@@ -423,7 +421,7 @@ Important config fields:
 
 ```yaml
 fts:
-  index: "radix"       # radix|slicedradix|hamt|hamtpointered
+  index: "slicedradix" # slicedradix|hamt
   keygen: "word"
   scorer: "none"       # none|bm25|tfidf
   filter: "none"       # none|bloom|cuckoo|ribbon
@@ -509,7 +507,7 @@ Common flags:
 
 - `-dump`: wiki dump path
 - `-ground-truth`: labeled query set path
-- `-index`: `radix|slicedradix|hamt|hamtpointered`
+- `-index`: `slicedradix|hamt`
 - `-lang`: `en|ru|multi|none`
 - `-field`: `abstract|extract|title`
 - `-scorer`: `none|bm25|tfidf`
@@ -534,7 +532,7 @@ Steady-state example:
 go run ./cmd/bench \
   -dump ./data/enwiki-20210820-abstract1.xml.gz \
   -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
-  -index radix \
+  -index slicedradix \
   -lang en \
   -field abstract \
   -scorer none \
@@ -552,7 +550,7 @@ Cold-run example:
 go run ./cmd/bench \
   -dump ./data/enwiki-20210820-abstract1.xml.gz \
   -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
-  -index radix \
+  -index slicedradix \
   -lang en \
   -field abstract \
   -scorer none \
@@ -618,21 +616,17 @@ Example across all current public indexes:
 
 ```bash
 go test -run '^$' -bench . -benchmem -count=5 \
-  ./pkg/index/radix \
-  ./pkg/index/slicedradix \
-  ./pkg/index/hamt \
-  ./pkg/index/hamtpointered | tee before-indexes.txt
+	./pkg/index/slicedradix \
+	./pkg/index/hamt | tee before-indexes.txt
 ```
 
 If you want one command that runs both microbench groups together, use:
 
 ```bash
 go test -run '^$' -bench . -benchmem -count=5 \
-  ./pkg/fts \
-  ./pkg/index/radix \
-  ./pkg/index/slicedradix \
-  ./pkg/index/hamt \
-  ./pkg/index/hamtpointered | tee before-micro-all.txt
+	./pkg/fts \
+	./pkg/index/slicedradix \
+	./pkg/index/hamt | tee before-micro-all.txt
 ```
 
 ### Benchmark Baselines
@@ -803,5 +797,5 @@ go test ./pkg/...
 Run microbenchmarks for the FTS engine and all current index implementations:
 
 ```bash
-go test -run '^$' -bench . -benchmem ./pkg/fts ./pkg/index/radix ./pkg/index/slicedradix ./pkg/index/hamt ./pkg/index/hamtpointered
+go test -run '^$' -bench . -benchmem ./pkg/fts ./pkg/index/slicedradix ./pkg/index/hamt
 ```

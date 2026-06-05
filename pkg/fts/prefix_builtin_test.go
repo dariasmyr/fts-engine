@@ -6,8 +6,6 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/index/hamt"
-	"github.com/dariasmyr/fts-engine/pkg/index/hamtpointered"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 )
 
@@ -16,10 +14,8 @@ func TestBuiltInIndexesSupportPrefixSearch(t *testing.T) {
 		name  string
 		index fts.Index
 	}{
-		{name: "radix", index: radix.New()},
 		{name: "slicedradix", index: slicedradix.New()},
 		{name: "hamt", index: hamt.New()},
-		{name: "hamtpointered", index: hamtpointered.New()},
 	}
 
 	for _, tt := range tests {

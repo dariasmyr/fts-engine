@@ -230,7 +230,7 @@ func validateConfig(cfg *Config) {
 	}
 
 	switch cfg.FTS.Index {
-	case "radix", "slicedradix", "hamt", "hamtpointered":
+	case "slicedradix", "hamt":
 	default:
 		panic("unknown index type: " + cfg.FTS.Index)
 	}

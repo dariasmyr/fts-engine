@@ -23,7 +23,7 @@ func main() {
 	var (
 		dumpPath    = flag.String("dump", "", "path to wiki dump (.xml.gz) - required")
 		gtPath      = flag.String("ground-truth", "", "path to ground truth JSON - required")
-		indexKind   = flag.String("index", "radix", "index impl: radix | slicedradix | hamt | hamtpointered")
+		indexKind   = flag.String("index", "slicedradix", "index impl: slicedradix | hamt")
 		lang        = flag.String("lang", "en", "pipeline preset: en | ru | multi | none")
 		field       = flag.String("field", "abstract", "document field to index: abstract | extract | title")
 		k           = flag.Int("k", 10, "top-k used for nDCG and Recall")

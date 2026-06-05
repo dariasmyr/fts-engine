@@ -6,7 +6,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/filter"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
@@ -21,7 +21,7 @@ func main() {
 	bloom := filter.NewBloomFilter(100_000, 10, 7)
 
 	engine := fts.New(
-		radix.New(),
+		slicedradix.New(),
 		keygen.Word,
 		fts.WithPipeline(pipe),
 		fts.WithFilter(bloom),
