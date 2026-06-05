@@ -109,8 +109,8 @@ func buildBooleanService(t *testing.T, index fts.Index, scored bool) *fts.Servic
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		if err := svc.IndexDocument(ctx, fts.DocID(id), corpus[id]); err != nil {
-			t.Fatalf("IndexDocument(%q) error = %v", id, err)
+		if err := svc.Index(ctx, fts.Document{ID: fts.DocID(id), Fields: map[string]fts.Field{fts.DefaultField: {Value: corpus[id]}}}); err != nil {
+			t.Fatalf("Index(%q) error = %v", id, err)
 		}
 	}
 	return svc

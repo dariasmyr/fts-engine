@@ -27,21 +27,21 @@ func benchSvc(b *testing.B, docs int, wordsPerDoc int, vocab int) (*Service, []s
 			}
 			buf = append(buf, words[rng.Intn(vocab)]...)
 		}
-		if err := svc.IndexDocument(ctx, DocID(fmt.Sprintf("doc-%d", doc)), string(buf)); err != nil {
-			b.Fatalf("IndexDocument() error = %v", err)
+		if err := svc.Index(ctx, defaultDoc(DocID(fmt.Sprintf("doc-%d", doc)), string(buf))); err != nil {
+			b.Fatalf("Index() error = %v", err)
 		}
 	}
 	return svc, words
 }
 
-func BenchmarkServiceIndexDocument(b *testing.B) {
+func BenchmarkServiceIndex(b *testing.B) {
 	idx := newMemoryIndex()
 	svc := New(idx, WordKeys)
 	ctx := context.Background()
 	content := "alpha beta gamma delta epsilon zeta eta theta iota kappa"
 
 	for i := 0; b.Loop(); i++ {
-		_ = svc.IndexDocument(ctx, DocID(fmt.Sprintf("d-%d", i)), content)
+		_ = svc.Index(ctx, defaultDoc(DocID(fmt.Sprintf("d-%d", i)), content))
 	}
 }
 

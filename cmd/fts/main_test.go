@@ -13,31 +13,18 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 )
 
-type fakeSearchEngine struct {
-	indexCalls int
-}
-
-func (f *fakeSearchEngine) IndexDocument(ctx context.Context, docID string, content string) error {
-	f.indexCalls++
-	return nil
-}
-
-func (f *fakeSearchEngine) HighlightText(query string, text string) string {
-	return text
-}
-
-func (f *fakeSearchEngine) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
-	return &models.SearchResult{}, nil
+func indexTestDocument(ctx context.Context, svc *fts.Service, docID, content string) error {
+	return svc.Index(ctx, fts.Document{ID: fts.DocID(docID), Fields: map[string]fts.Field{fts.DefaultField: {Value: content}}})
 }
 
 func TestServiceAdapterObservesSearchDiagnostics(t *testing.T) {
 	svc := fts.New(slicedradix.New(), fts.WordKeys)
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-1", "alpha beta gamma"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexTestDocument(ctx, svc, "doc-1", "alpha beta gamma"); err != nil {
+		t.Fatalf("Index(doc-1) error = %v", err)
 	}
-	if err := svc.IndexDocument(ctx, "doc-2", "alpha delta"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexTestDocument(ctx, svc, "doc-2", "alpha delta"); err != nil {
+		t.Fatalf("Index(doc-2) error = %v", err)
 	}
 
 	adapter := &serviceAdapter{service: svc, searchStats: ftsstats.NewSearchStats(8)}
@@ -84,7 +71,6 @@ func TestServiceAdapterHighlightTextUsesFTSHighlighter(t *testing.T) {
 }
 
 func TestPopulateDocumentsSkipsReindexWhenPersistenceLoaded(t *testing.T) {
-	engine := &fakeSearchEngine{}
 	documents := []models.Document{
 		{DocumentBase: models.DocumentBase{Abstract: "alpha"}, ID: "doc-1"},
 		{DocumentBase: models.DocumentBase{Abstract: "beta"}, ID: "doc-2"},
@@ -92,12 +78,9 @@ func TestPopulateDocumentsSkipsReindexWhenPersistenceLoaded(t *testing.T) {
 	documentsByID := make(map[string]models.Document, len(documents))
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	interrupted := populateDocuments(context.Background(), context.Background(), log, engine, documents, documentsByID, true)
+	interrupted := populateDocuments(context.Background(), context.Background(), log, nil, documents, documentsByID, true)
 	if interrupted {
 		t.Fatal("populateDocuments() interrupted = true, want false")
-	}
-	if engine.indexCalls != 0 {
-		t.Fatalf("IndexDocument() calls = %d, want 0 when persistence was loaded", engine.indexCalls)
 	}
 	if len(documentsByID) != len(documents) {
 		t.Fatalf("documentsByID size = %d, want %d", len(documentsByID), len(documents))

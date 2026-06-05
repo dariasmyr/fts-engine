@@ -31,8 +31,8 @@ func TestSaveLoadSegmentRoundTripSingleField(t *testing.T) {
 	}
 
 	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
-	if err := svc.IndexDocument(context.Background(), "doc-1", "segment roundtrip"); err != nil {
-		t.Fatalf("IndexDocument(doc-1) error = %v", err)
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "segment roundtrip"}}}); err != nil {
+		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 
 	dir := filepath.Join(t.TempDir(), "segment")
@@ -63,8 +63,8 @@ func TestSaveLoadSegmentRoundTripSingleField(t *testing.T) {
 		t.Fatalf("TotalResultsCount = %d, want %d", got, want)
 	}
 
-	if err := loaded.Service.IndexDocument(context.Background(), "doc-2", "should fail"); err == nil {
-		t.Fatal("IndexDocument(doc-2) after segment restore error = nil, want read-only error")
+	if err := loaded.Service.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "should fail"}}}); err == nil {
+		t.Fatal("Index(doc-2) after segment restore error = nil, want read-only error")
 	}
 }
 
@@ -131,8 +131,8 @@ func TestSaveLoadSegmentRoundTripMmap(t *testing.T) {
 		t.Fatalf("BuildIndex() error = %v", err)
 	}
 	svc := fts.New(idx, keygen.Word, fts.WithScorer(fts.BM25()))
-	if err := svc.IndexDocument(context.Background(), "doc-1", "segment mmap roundtrip"); err != nil {
-		t.Fatalf("IndexDocument(doc-1) error = %v", err)
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "segment mmap roundtrip"}}}); err != nil {
+		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 
 	paths := ftspersist.SegmentPaths{Dir: filepath.Join(t.TempDir(), "segment")}

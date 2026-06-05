@@ -16,11 +16,6 @@ import (
 )
 
 type SearchEngine interface {
-	IndexDocument(
-		ctx context.Context,
-		docID string,
-		content string,
-	) error
 	HighlightText(query string, text string) string
 	SearchDocuments(
 		ctx context.Context,

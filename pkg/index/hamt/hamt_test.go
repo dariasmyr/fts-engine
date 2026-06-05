@@ -134,7 +134,7 @@ func TestPhraseSearchWithHAMT(t *testing.T) {
 		"doc-c": "barack obama said barack obama again",
 	}
 	for id, content := range docs {
-		if err := svc.IndexDocument(ctx, fts.DocID(id), content); err != nil {
+		if err := svc.Index(ctx, fts.Document{ID: fts.DocID(id), Fields: map[string]fts.Field{fts.DefaultField: {Value: content}}}); err != nil {
 			t.Fatalf("index %s: %v", id, err)
 		}
 	}

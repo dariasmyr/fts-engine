@@ -52,8 +52,8 @@ func TestCollectionStatsObservePerFieldLengths(t *testing.T) {
 func TestCollectionStatsNotObservedWithoutScorer(t *testing.T) {
 	svc := New(newMemoryIndex(), WordKeys)
 
-	if err := svc.IndexDocument(context.Background(), "doc-1", "alpha beta"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(context.Background(), svc, "doc-1", "alpha beta"); err != nil {
+		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 	if got := svc.collection.TotalDocs(); got != 0 {
 		t.Fatalf("TotalDocs() without scorer = %d, want 0", got)

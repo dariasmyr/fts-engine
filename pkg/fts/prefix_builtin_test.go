@@ -26,14 +26,14 @@ func TestBuiltInIndexesSupportPrefixSearch(t *testing.T) {
 
 			svc := fts.New(tt.index, fts.WordKeys)
 			ctx := context.Background()
-			if err := svc.IndexDocument(ctx, "doc-a", "bar barge"); err != nil {
-				t.Fatalf("IndexDocument(doc-a) error = %v", err)
+			if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.Field{fts.DefaultField: {Value: "bar barge"}}}); err != nil {
+				t.Fatalf("Index(doc-a) error = %v", err)
 			}
-			if err := svc.IndexDocument(ctx, "doc-b", "bar"); err != nil {
-				t.Fatalf("IndexDocument(doc-b) error = %v", err)
+			if err := svc.Index(ctx, fts.Document{ID: "doc-b", Fields: map[string]fts.Field{fts.DefaultField: {Value: "bar"}}}); err != nil {
+				t.Fatalf("Index(doc-b) error = %v", err)
 			}
-			if err := svc.IndexDocument(ctx, "doc-c", "hotel"); err != nil {
-				t.Fatalf("IndexDocument(doc-c) error = %v", err)
+			if err := svc.Index(ctx, fts.Document{ID: "doc-c", Fields: map[string]fts.Field{fts.DefaultField: {Value: "hotel"}}}); err != nil {
+				t.Fatalf("Index(doc-c) error = %v", err)
 			}
 
 			res, err := svc.SearchDocuments(ctx, "bar*", 10)

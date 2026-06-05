@@ -181,8 +181,8 @@ func buildPropertyService(t *testing.T, index fts.Index, corpus map[fts.DocID][]
 
 	ctx := context.Background()
 	for _, id := range ids {
-		if err := svc.IndexDocument(ctx, id, strings.Join(corpus[id], " ")); err != nil {
-			t.Fatalf("IndexDocument(%q) error = %v", id, err)
+		if err := svc.Index(ctx, fts.Document{ID: id, Fields: map[string]fts.Field{fts.DefaultField: {Value: strings.Join(corpus[id], " ")}}}); err != nil {
+			t.Fatalf("Index(%q) error = %v", id, err)
 		}
 	}
 	return svc

@@ -72,7 +72,7 @@ func TestSearchPhraseMatchesExactOrder(t *testing.T) {
 		"doc-c": "barack obama said barack obama again",
 	}
 	for id, content := range docs {
-		if err := svc.IndexDocument(ctx, DocID(id), content); err != nil {
+		if err := indexDefaultDoc(ctx, svc, DocID(id), content); err != nil {
 			t.Fatalf("index %s: %v", id, err)
 		}
 	}
@@ -102,8 +102,8 @@ func TestSearchPhraseSingleTokenFallsBackToSearch(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "hello world"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "hello world"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
 	res, err := svc.SearchPhrase(ctx, "hello", 10)
@@ -119,7 +119,7 @@ func TestSearchPhraseEmptyQuery(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	_ = svc.IndexDocument(ctx, "doc-a", "hello world")
+	_ = indexDefaultDoc(ctx, svc, "doc-a", "hello world")
 
 	res, err := svc.SearchPhrase(ctx, "   ", 10)
 	if err != nil {
@@ -134,8 +134,8 @@ func TestSearchPhraseSkipsNonPositionalIndexes(t *testing.T) {
 	svc := New(newMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "barack obama"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
 	res, err := svc.SearchPhrase(ctx, "barack obama", 10)
@@ -154,8 +154,8 @@ func TestSearchPhraseMergesMultipleKeys(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), keyGen)
 
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "barack obama barack obama"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama barack obama"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
 	res, err := svc.SearchPhrase(ctx, "barack obama", 10)

@@ -102,8 +102,8 @@ func TestSearchWithBM25RanksRareDocumentFirst(t *testing.T) {
 		docs[id] = "barge"
 	}
 	for id, content := range docs {
-		if err := svc.IndexDocument(ctx, DocID(id), content); err != nil {
-			t.Fatalf("IndexDocument(%q) error = %v", id, err)
+		if err := indexDefaultDoc(ctx, svc, DocID(id), content); err != nil {
+			t.Fatalf("Index(%q) error = %v", id, err)
 		}
 	}
 
@@ -134,8 +134,8 @@ func TestSearchWithTFIDFRanksRareDocumentFirst(t *testing.T) {
 		docs[id] = "barge"
 	}
 	for id, content := range docs {
-		if err := svc.IndexDocument(ctx, DocID(id), content); err != nil {
-			t.Fatalf("IndexDocument(%q) error = %v", id, err)
+		if err := indexDefaultDoc(ctx, svc, DocID(id), content); err != nil {
+			t.Fatalf("Index(%q) error = %v", id, err)
 		}
 	}
 
@@ -230,14 +230,14 @@ func TestSearchWithPrefixScoringRanksHigherFrequencyFirst(t *testing.T) {
 	svc := New(newPrefixMemoryIndex(), WordKeys, WithScorer(TFIDF()))
 
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "bar barge"); err != nil {
-		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "bar barge"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.IndexDocument(ctx, "doc-b", "bar"); err != nil {
-		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "bar"); err != nil {
+		t.Fatalf("Index(doc-b) error = %v", err)
 	}
-	if err := svc.IndexDocument(ctx, "doc-c", "hotel"); err != nil {
-		t.Fatalf("IndexDocument(doc-c) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-c", "hotel"); err != nil {
+		t.Fatalf("Index(doc-c) error = %v", err)
 	}
 
 	res, err := svc.SearchDocuments(ctx, "bar*", 10)
@@ -259,8 +259,8 @@ func TestSearchScoreStaysZeroWithoutScorer(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "alpha beta"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "alpha beta"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
 	res, err := svc.SearchDocuments(ctx, "alpha", 10)

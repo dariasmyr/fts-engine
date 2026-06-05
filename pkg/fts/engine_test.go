@@ -169,9 +169,9 @@ func TestIndexDocumentUsesKeyGenerator(t *testing.T) {
 
 	svc := New(idx, keyGen)
 
-	err := svc.IndexDocument(context.Background(), "doc-1", "Alpha")
+	err := indexDefaultDoc(context.Background(), svc, "doc-1", "Alpha")
 	if err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 
 	if len(idx.inserts) != 2 {
@@ -276,11 +276,11 @@ func TestSearchDocumentsQuotedPhraseUsesPhraseQuery(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "barack obama"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.IndexDocument(ctx, "doc-b", "obama barack"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "obama barack"); err != nil {
+		t.Fatalf("Index(doc-b) error = %v", err)
 	}
 
 	res, err := svc.SearchDocuments(ctx, `"barack obama"`, 10)
@@ -296,9 +296,9 @@ func TestIndexDocumentReturnsErrorWhenFilterAddFails(t *testing.T) {
 	idx := newMemoryIndex()
 	svc := New(idx, WordKeys, WithFilter(rejectingFilter{}))
 
-	err := svc.IndexDocument(context.Background(), "doc-1", "Alpha")
+	err := indexDefaultDoc(context.Background(), svc, "doc-1", "Alpha")
 	if err == nil {
-		t.Fatal("IndexDocument() error = nil, want filter add failure")
+		t.Fatal("Index(doc-1) error = nil, want filter add failure")
 	}
 }
 
@@ -309,8 +309,8 @@ func TestContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := svc.IndexDocument(ctx, "doc-1", "text"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("IndexDocument() err = %v, want context canceled", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-1", "text"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Index(doc-1) err = %v, want context canceled", err)
 	}
 
 	_, err := svc.SearchDocuments(ctx, "text", 10)
@@ -369,8 +369,8 @@ func TestSearchUsesBufferedStaticFilterAfterManualBuild(t *testing.T) {
 	svc := New(idx, WordKeys, WithFilter(filter))
 	idx.entries["known"] = refsForIDs(svc.registry, namedPosting{"doc", 1})
 
-	if err := svc.IndexDocument(context.Background(), "doc-1", "known"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(context.Background(), svc, "doc-1", "known"); err != nil {
+		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 
 	resBefore, err := svc.SearchDocuments(context.Background(), "known", 10)

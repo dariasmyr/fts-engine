@@ -41,8 +41,8 @@ func TestIndexDocumentStillWorksAsSugar(t *testing.T) {
 	idx := newMemoryIndex()
 	svc := New(idx, WordKeys)
 
-	if err := svc.IndexDocument(context.Background(), "doc-1", "alpha"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(context.Background(), svc, "doc-1", "alpha"); err != nil {
+		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 	if len(idx.inserts) != 1 || idx.inserts[0].key != "alpha" {
 		t.Fatalf("legacy IndexDocument did not populate default field: %+v", idx.inserts)

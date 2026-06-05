@@ -35,7 +35,7 @@ func main() {
 		fts.WithTombstonesSnapshot(loaded.Tombstones),
 	)
 
-	if err := restored.IndexDocument(context.Background(), "doc-2", "restored snapshot stays writable"); err != nil {
+	if err := restored.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "restored snapshot stays writable"}}}); err != nil {
 		panic(err)
 	}
 

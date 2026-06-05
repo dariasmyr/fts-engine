@@ -130,7 +130,7 @@ func main() {
 		startTime = time.Now()
 		memStats := utils.MeasureMemory(func() {
 			for _, doc := range documents {
-				_ = ftsEngine.IndexDocument(ctx, doc.ID, doc.Abstract)
+				_ = indexAbstractDocument(ctx, ftsEngine.service, doc.ID, doc.Abstract)
 			}
 		})
 		duration = time.Since(startTime)
@@ -144,7 +144,7 @@ func main() {
 		log.Info("Skipping re-indexing: persisted state loaded", "path", cfg.FTS.Persistence.Path)
 	}
 
-	if interrupted := populateDocuments(rootCtx, ctx, log, ftsEngine, documents, documentsByID, ftsEngine.snapshotLoaded); interrupted {
+	if interrupted := populateDocuments(rootCtx, ctx, log, ftsEngine.service, documents, documentsByID, ftsEngine.snapshotLoaded); interrupted {
 		return
 	}
 
@@ -172,7 +172,7 @@ func main() {
 	}
 }
 
-func populateDocuments(rootCtx context.Context, ctx context.Context, log *slog.Logger, engine cui.SearchEngine, documents []models.Document, documentsByID map[string]models.Document, skipIndexing bool) bool {
+func populateDocuments(rootCtx context.Context, ctx context.Context, log *slog.Logger, service *pkgfts.Service, documents []models.Document, documentsByID map[string]models.Document, skipIndexing bool) bool {
 	for i := range documents {
 		doc := documents[i]
 		documentsByID[doc.ID] = doc
@@ -188,13 +188,25 @@ func populateDocuments(rootCtx context.Context, ctx context.Context, log *slog.L
 			log.Info("Received shutdown signal, shutting down...")
 			return true
 		default:
-			if err := engine.IndexDocument(ctx, doc.ID, doc.Abstract); err != nil {
+			if err := indexAbstractDocument(ctx, service, doc.ID, doc.Abstract); err != nil {
 				log.Error("could not index document:", "error", err)
 			}
 		}
 	}
 
 	return false
+}
+
+func indexAbstractDocument(ctx context.Context, service *pkgfts.Service, docID string, content string) error {
+	if service == nil {
+		return fmt.Errorf("nil service")
+	}
+	return service.Index(ctx, pkgfts.Document{
+		ID: pkgfts.DocID(docID),
+		Fields: map[string]pkgfts.Field{
+			pkgfts.DefaultField: {Value: content},
+		},
+	})
 }
 
 func analyzeIndex(
@@ -240,10 +252,6 @@ type serviceAdapter struct {
 	service        *pkgfts.Service
 	snapshotLoaded bool
 	searchStats    *ftsstats.SearchStats
-}
-
-func (s *serviceAdapter) IndexDocument(ctx context.Context, docID string, content string) error {
-	return s.service.IndexDocument(ctx, pkgfts.DocID(docID), content)
 }
 
 func (s *serviceAdapter) HighlightText(query string, text string) string {

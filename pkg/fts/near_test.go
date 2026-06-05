@@ -16,7 +16,7 @@ func TestSearchPhraseNearMatchesOrderedWindow(t *testing.T) {
 		"doc-d": "barack obama barack x obama",
 	}
 	for id, content := range docs {
-		if err := svc.IndexDocument(ctx, DocID(id), content); err != nil {
+		if err := indexDefaultDoc(ctx, svc, DocID(id), content); err != nil {
 			t.Fatalf("index %s: %v", id, err)
 		}
 	}
@@ -52,8 +52,8 @@ func TestSearchPhraseNearDistanceZeroMatchesAdjacency(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "barack obama barack x obama"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama barack x obama"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
 	res, err := svc.SearchPhraseNear(ctx, "barack obama", 0, 10)
@@ -79,8 +79,8 @@ func TestSearchPhraseNearSkipsNonPositionalIndexes(t *testing.T) {
 	svc := New(newMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "barack obama"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
 	res, err := svc.SearchPhraseNear(ctx, "barack obama", 1, 10)
@@ -99,8 +99,8 @@ func TestSearchPhraseNearMergesMultipleKeys(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), keyGen)
 
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "barack x obama"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack x obama"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
 	res, err := svc.SearchPhraseNear(ctx, "barack obama", 1, 10)
@@ -124,7 +124,7 @@ func TestSearchPhraseNearMatchesThreeTokenWindow(t *testing.T) {
 		"doc-e": "barack x obama speech barack obama x speech",
 	}
 	for id, content := range docs {
-		if err := svc.IndexDocument(ctx, DocID(id), content); err != nil {
+		if err := indexDefaultDoc(ctx, svc, DocID(id), content); err != nil {
 			t.Fatalf("index %s: %v", id, err)
 		}
 	}
@@ -163,8 +163,8 @@ func TestSearchPhraseNearDistanceZeroMatchesExactPhrase(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "barack obama speech barack x obama speech"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama speech barack x obama speech"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
 	res, err := svc.SearchPhraseNear(ctx, "barack obama speech", 0, 10)
@@ -180,8 +180,8 @@ func TestSearchPhraseNearSingleTokenFallsBackToSearch(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "hello world hello"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "hello world hello"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
 	res, err := svc.SearchPhraseNear(ctx, "hello", 3, 10)

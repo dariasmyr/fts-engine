@@ -119,7 +119,12 @@ func IndexCorpus(ctx context.Context, svc *pkgfts.Service, corpus Corpus, conten
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
-		if err := svc.IndexDocument(ctx, pkgfts.DocID(doc.ID), content(doc)); err != nil {
+		if err := svc.Index(ctx, pkgfts.Document{
+			ID: pkgfts.DocID(doc.ID),
+			Fields: map[string]pkgfts.Field{
+				pkgfts.DefaultField: {Value: content(doc)},
+			},
+		}); err != nil {
 			return report, fmt.Errorf("index %q: %w", doc.ID, err)
 		}
 	}

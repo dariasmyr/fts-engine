@@ -31,8 +31,8 @@ func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
 	}
 
 	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
-	if err := svc.IndexDocument(context.Background(), "doc-1", "snapshot roundtrip"); err != nil {
-		t.Fatalf("IndexDocument(doc-1) error = %v", err)
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "snapshot roundtrip"}}}); err != nil {
+		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 
 	dir := t.TempDir()
@@ -69,8 +69,8 @@ func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
 		t.Fatalf("TotalResultsCount = %d, want %d", got, want)
 	}
 
-	if err := loaded.Service.IndexDocument(context.Background(), "doc-2", "snapshot stays writable"); err != nil {
-		t.Fatalf("IndexDocument(doc-2) after restore error = %v", err)
+	if err := loaded.Service.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "snapshot stays writable"}}}); err != nil {
+		t.Fatalf("Index(doc-2) after restore error = %v", err)
 	}
 
 	res, err = loaded.Service.SearchDocuments(context.Background(), "writable", 10)
@@ -101,8 +101,8 @@ func TestLoadSnapshotDataAllowsExplicitRestore(t *testing.T) {
 	}
 
 	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
-	if err := svc.IndexDocument(context.Background(), "doc-1", "explicit restore path"); err != nil {
-		t.Fatalf("IndexDocument(doc-1) error = %v", err)
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "explicit restore path"}}}); err != nil {
+		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 
 	dir := t.TempDir()

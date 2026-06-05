@@ -1,7 +1,6 @@
 package fts
 
 import (
-	"context"
 	"io"
 )
 
@@ -103,16 +102,6 @@ type StaticFilter interface {
 type RetryableStaticFilter interface {
 	StaticFilter
 	BuildWithRetriesFromKeyStream(stream func(func([]byte) bool) error, maxAttempts uint32) error
-}
-
-type Engine interface {
-	IndexDocument(ctx context.Context, docID DocID, content string) error
-	Delete(docID DocID) bool
-	Update(ctx context.Context, doc Document) error
-	UpdateDocument(ctx context.Context, docID DocID, content string) error
-	Search(ctx context.Context, q Query, maxResults int) (*SearchResult, error)
-	SearchFieldClauses(ctx context.Context, clauses []FieldQueryClause, maxResults int) (*SearchResult, error)
-	SearchDocuments(ctx context.Context, query string, maxResults int) (*SearchResult, error)
 }
 
 func WordKeys(token string) ([]string, error) {

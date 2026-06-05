@@ -12,8 +12,8 @@ import (
 func main() {
 	engine := fts.New(slicedradix.New(), keygen.Word)
 
-	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
-	_ = engine.IndexDocument(context.Background(), "doc-2", "Rosa runs hotel operations in France")
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Wikipedia: Rosa is a French hotel barge"}}})
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Rosa runs hotel operations in France"}}})
 
 	res, err := engine.SearchDocuments(context.Background(), "french hotel", 10)
 	if err != nil {

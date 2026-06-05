@@ -64,7 +64,7 @@ import (
 func main() {
 	engine := fts.New(slicedradix.New(), keygen.Word)
 
-	_ = engine.IndexDocument(context.Background(), "doc-1", "Wikipedia: Rosa is a French hotel barge")
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Wikipedia: Rosa is a French hotel barge"}}})
 	res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
 
 	fmt.Println(res.TotalResultsCount)
@@ -119,7 +119,7 @@ func init() {
 
 func main() {
 	svc := fts.New(slicedradix.New(), keygen.Word, fts.WithScorer(fts.BM25()))
-	_ = svc.IndexDocument(context.Background(), "doc-1", "snapshot demo")
+	_ = svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "snapshot demo"}}})
 	idx, _ := svc.SnapshotComponents()
 	stats := svc.SnapshotCollectionStats()
 
@@ -197,7 +197,7 @@ import (
 
 func main() {
 	svc := fts.New(slicedradix.New(), keygen.Word, fts.WithScorer(fts.BM25()))
-	_ = svc.IndexDocument(context.Background(), "doc-1", "segment demo")
+	_ = svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "segment demo"}}})
 
 	if err := os.MkdirAll("./data/segments", 0o755); err != nil {
 		panic(err)
@@ -378,8 +378,8 @@ func main() {
 	engine := fts.New(slicedradix.New(), keygen.Word)
 	stats := ftsstats.NewSearchStats(64)
 
-	_ = engine.IndexDocument(context.Background(), "doc-1", "postgres wal checkpoint tuning")
-	_ = engine.IndexDocument(context.Background(), "doc-2", "checkpoint and recovery internals")
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "postgres wal checkpoint tuning"}}})
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "checkpoint and recovery internals"}}})
 
 	ctx := fts.WithDiagnostics(context.Background())
 	res, err := engine.SearchDocuments(ctx, "postgres checkpoint", 10)

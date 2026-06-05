@@ -100,8 +100,8 @@ func TestSaveLoadSplitSnapshotsRoundTrip(t *testing.T) {
 	f := newSnapshotFilter()
 	svc := New(idx, WordKeys, WithFilter(f))
 
-	if err := svc.IndexDocument(context.Background(), "doc-1", "alpha beta"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(context.Background(), svc, "doc-1", "alpha beta"); err != nil {
+		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 
 	index, searchFilter := svc.SnapshotComponents()
@@ -155,11 +155,11 @@ func TestSaveLoadIndexSnapshotWithCollectionStatsRoundTrip(t *testing.T) {
 
 	svc := New(newSnapshotIndex(), WordKeys, WithScorer(BM25()))
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "rosa barge"); err != nil {
-		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "rosa barge"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.IndexDocument(ctx, "doc-b", "barge barge"); err != nil {
-		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "barge barge"); err != nil {
+		t.Fatalf("Index(doc-b) error = %v", err)
 	}
 
 	index, _ := svc.SnapshotComponents()
@@ -219,8 +219,8 @@ func TestSaveIndexSnapshotWritesPayload(t *testing.T) {
 	}
 
 	svc := New(newSnapshotIndex(), WordKeys)
-	if err := svc.IndexDocument(context.Background(), "doc-1", "alpha"); err != nil {
-		t.Fatalf("IndexDocument() error = %v", err)
+	if err := indexDefaultDoc(context.Background(), svc, "doc-1", "alpha"); err != nil {
+		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 
 	index, _ := svc.SnapshotComponents()
@@ -247,11 +247,11 @@ func TestSaveLoadIndexSnapshotPreservesRegistryAndTombstones(t *testing.T) {
 
 	svc := New(newSnapshotIndex(), WordKeys)
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "alpha stale"); err != nil {
-		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "alpha stale"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.IndexDocument(ctx, "doc-b", "alpha live"); err != nil {
-		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "alpha live"); err != nil {
+		t.Fatalf("Index(doc-b) error = %v", err)
 	}
 	if !svc.Delete("doc-a") {
 		t.Fatal("Delete(doc-a) = false, want true")

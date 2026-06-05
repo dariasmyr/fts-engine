@@ -17,8 +17,8 @@ func main() {
 		ftspreset.Multilingual(),
 	)
 
-	_ = engine.IndexDocument(context.Background(), "doc-1", "Hotels in France and отели в России")
-	_ = engine.IndexDocument(context.Background(), "doc-2", "Hotel market overview")
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Hotels in France and отели в России"}}})
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Hotel market overview"}}})
 
 	res, err := engine.SearchDocuments(context.Background(), "отели hotel", 10)
 	if err != nil {

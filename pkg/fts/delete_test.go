@@ -103,8 +103,8 @@ func TestDeleteFiltersAllSearchPathsAndUpdatesStats(t *testing.T) {
 		{id: "doc-b", content: "alpha beta hotel"},
 		{id: "doc-c", content: "alpha gamma bar"},
 	} {
-		if err := svc.IndexDocument(ctx, doc.id, doc.content); err != nil {
-			t.Fatalf("IndexDocument(%q) error = %v", doc.id, err)
+		if err := indexDefaultDoc(ctx, svc, doc.id, doc.content); err != nil {
+			t.Fatalf("Index(%q) error = %v", doc.id, err)
 		}
 	}
 
@@ -173,11 +173,11 @@ func TestDeleteFiltersAllSearchPathsAndUpdatesStats(t *testing.T) {
 func TestUpdateDocumentDoesNotLeaveStaleContent(t *testing.T) {
 	svc := New(newOrdAwareMemoryIndex(), WordKeys)
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "alpha oldterm"); err != nil {
-		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "alpha oldterm"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.UpdateDocument(ctx, "doc-a", "alpha newterm"); err != nil {
-		t.Fatalf("UpdateDocument(doc-a) error = %v", err)
+	if err := updateDefaultDoc(ctx, svc, "doc-a", "alpha newterm"); err != nil {
+		t.Fatalf("Update(doc-a) error = %v", err)
 	}
 
 	oldRes, err := svc.SearchDocuments(ctx, "oldterm", 10)
@@ -242,11 +242,11 @@ func TestUpdateDocumentReplacesMultiFieldDocument(t *testing.T) {
 func TestDeleteMarksServiceForCompactionWhenLoadFactorReached(t *testing.T) {
 	svc := New(newOrdAwareMemoryIndex(), WordKeys, WithCompactionLoadFactor(0.5))
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "alpha"); err != nil {
-		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "alpha"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.IndexDocument(ctx, "doc-b", "beta"); err != nil {
-		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "beta"); err != nil {
+		t.Fatalf("Index(doc-b) error = %v", err)
 	}
 	if svc.NeedsCompaction() {
 		t.Fatal("NeedsCompaction() = true before deletes, want false")
@@ -284,11 +284,11 @@ func TestDeleteTriggersCompactionCallbackWhenEnabled(t *testing.T) {
 		}),
 	)
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "alpha"); err != nil {
-		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "alpha"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.IndexDocument(ctx, "doc-b", "beta"); err != nil {
-		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "beta"); err != nil {
+		t.Fatalf("Index(doc-b) error = %v", err)
 	}
 	if !svc.Delete("doc-a") {
 		t.Fatal("Delete(doc-a) = false, want true")
@@ -311,11 +311,11 @@ func TestDeleteDoesNotTriggerCompactionCallbackWhenDisabled(t *testing.T) {
 		}),
 	)
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "alpha"); err != nil {
-		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "alpha"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.IndexDocument(ctx, "doc-b", "beta"); err != nil {
-		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "beta"); err != nil {
+		t.Fatalf("Index(doc-b) error = %v", err)
 	}
 	if !svc.Delete("doc-a") {
 		t.Fatal("Delete(doc-a) = false, want true")
@@ -339,14 +339,14 @@ func TestUpdateTriggersCompactionCallbackAfterReindex(t *testing.T) {
 		}),
 	)
 	ctx := context.Background()
-	if err := svc.IndexDocument(ctx, "doc-a", "alpha old"); err != nil {
-		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "alpha old"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.IndexDocument(ctx, "doc-b", "beta"); err != nil {
-		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "beta"); err != nil {
+		t.Fatalf("Index(doc-b) error = %v", err)
 	}
-	if err := svc.UpdateDocument(ctx, "doc-a", "alpha new"); err != nil {
-		t.Fatalf("UpdateDocument(doc-a) error = %v", err)
+	if err := updateDefaultDoc(ctx, svc, "doc-a", "alpha new"); err != nil {
+		t.Fatalf("Update(doc-a) error = %v", err)
 	}
 	if called != 1 {
 		t.Fatalf("compaction callback calls = %d, want 1", called)

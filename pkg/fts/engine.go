@@ -116,16 +116,6 @@ func NewFromReader(r io.Reader, loader IndexLoader, keyGen KeyGenerator, opts ..
 	return New(index, keyGen, opts...), nil
 }
 
-func (s *Service) IndexDocument(ctx context.Context, docID DocID, content string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if docID == "" {
-		return fmt.Errorf("fts: document id is empty")
-	}
-	return s.indexField(ctx, docID, DefaultField, Field{Value: content})
-}
-
 func (s *Service) Delete(docID DocID) bool {
 	return s.delete(docID, true)
 }
@@ -149,21 +139,6 @@ func (s *Service) delete(docID DocID, checkCompaction bool) bool {
 		s.maybeTriggerCompactionCheck()
 	}
 	return true
-}
-
-func (s *Service) UpdateDocument(ctx context.Context, docID DocID, content string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if docID == "" {
-		return fmt.Errorf("fts: document id is empty")
-	}
-	s.delete(docID, false)
-	if err := s.IndexDocument(ctx, docID, content); err != nil {
-		return err
-	}
-	s.maybeTriggerCompactionCheck()
-	return nil
 }
 
 func (s *Service) Update(ctx context.Context, doc Document) error {

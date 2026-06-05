@@ -15,11 +15,11 @@ func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 	svc := fts.New(idx, fts.WordKeys, fts.WithScorer(fts.BM25()))
 	ctx := context.Background()
 
-	if err := svc.IndexDocument(ctx, "doc-a", "alpha beta"); err != nil {
-		t.Fatalf("IndexDocument(doc-a) error = %v", err)
+	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.Field{fts.DefaultField: {Value: "alpha beta"}}}); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.IndexDocument(ctx, "doc-b", "alpha alpha"); err != nil {
-		t.Fatalf("IndexDocument(doc-b) error = %v", err)
+	if err := svc.Index(ctx, fts.Document{ID: "doc-b", Fields: map[string]fts.Field{fts.DefaultField: {Value: "alpha alpha"}}}); err != nil {
+		t.Fatalf("Index(doc-b) error = %v", err)
 	}
 	if !svc.Delete("doc-a") {
 		t.Fatal("Delete(doc-a) = false, want true")
