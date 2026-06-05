@@ -149,25 +149,16 @@ func main() {
 		return
 	}
 
-	startTime = time.Now()
-	for i := range documents {
-		doc := documents[i]
-		documentsByID[doc.ID] = doc
-
-		select {
-		case <-rootCtx.Done():
-			log.Info("Received shutdown signal, shutting down...")
-			return
-		default:
-			if indexErr := ftsEngine.IndexDocument(ctx, doc.ID, doc.Abstract); indexErr != nil {
-				log.Error("could not index document:", "error", indexErr)
-			}
-		}
-	}
-
 	adapter, ok := ftsEngine.(*serviceAdapter)
 	if !ok {
 		log.Error("unexpected search engine type")
+		return
+	}
+	if adapter.snapshotLoaded {
+		log.Info("Skipping re-indexing: persisted state loaded", "path", cfg.FTS.Persistence.Path)
+	}
+
+	if interrupted := populateDocuments(rootCtx, ctx, log, ftsEngine, documents, documentsByID, adapter.snapshotLoaded); interrupted {
 		return
 	}
 
@@ -181,8 +172,6 @@ func main() {
 			log.Error("Failed to persist state", "error", sl.Err(err))
 			return
 		}
-	} else {
-		log.Info("Skipping re-indexing: persisted state loaded", "path", cfg.FTS.Persistence.Path)
 	}
 
 	appCUI := cui.New(ctx, log, ftsEngine, documentsByID, 10)
@@ -195,6 +184,31 @@ func main() {
 	if snapshot, ok := adapter.SearchStatsSnapshot(); ok && snapshot.TotalSearches > 0 {
 		logSearchStats(log, snapshot)
 	}
+}
+
+func populateDocuments(rootCtx context.Context, ctx context.Context, log *slog.Logger, engine cui.SearchEngine, documents []models.Document, documentsByID map[string]models.Document, skipIndexing bool) bool {
+	for i := range documents {
+		doc := documents[i]
+		documentsByID[doc.ID] = doc
+	}
+	if skipIndexing {
+		return false
+	}
+
+	for i := range documents {
+		doc := documents[i]
+		select {
+		case <-rootCtx.Done():
+			log.Info("Received shutdown signal, shutting down...")
+			return true
+		default:
+			if err := engine.IndexDocument(ctx, doc.ID, doc.Abstract); err != nil {
+				log.Error("could not index document:", "error", err)
+			}
+		}
+	}
+
+	return false
 }
 
 func analyzeTrie(
