@@ -15,7 +15,6 @@ type Config struct {
 }
 
 type FTSConfig struct {
-	Engine      string            `yaml:"engine"`
 	Index       string            `yaml:"index"`
 	KeyGen      string            `yaml:"keygen"`
 	Scorer      string            `yaml:"scorer"`
@@ -122,7 +121,6 @@ func defaultConfig() Config {
 		Env:      "local",
 		DumpPath: "./data/enwiki-latest-abstract1.xml.gz",
 		FTS: FTSConfig{
-			Engine: "trie",
 			Index:  "slicedradix",
 			KeyGen: "word",
 			Scorer: "none",
@@ -183,10 +181,6 @@ func validateConfig(cfg *Config) {
 		cfg.DumpPath = defaults.DumpPath
 	}
 
-	if cfg.FTS.Engine == "" {
-		cfg.FTS.Engine = defaults.FTS.Engine
-	}
-
 	if cfg.FTS.Index == "" {
 		cfg.FTS.Index = defaults.FTS.Index
 	}
@@ -235,15 +229,10 @@ func validateConfig(cfg *Config) {
 		panic("compaction load_factor must be in range [0..1]")
 	}
 
-	switch cfg.FTS.Engine {
-	case "trie":
-		switch cfg.FTS.Index {
-		case "radix", "slicedradix", "hamt", "hamtpointered":
-		default:
-			panic("unknown index type: " + cfg.FTS.Index)
-		}
+	switch cfg.FTS.Index {
+	case "radix", "slicedradix", "hamt", "hamtpointered":
 	default:
-		panic("unknown fts engine: " + cfg.FTS.Engine)
+		panic("unknown index type: " + cfg.FTS.Index)
 	}
 
 	switch cfg.FTS.KeyGen {

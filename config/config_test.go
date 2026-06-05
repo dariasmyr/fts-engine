@@ -9,7 +9,6 @@ func TestValidateConfigAppliesFallbacksFromDefaultConfig(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Env = ""
 	cfg.DumpPath = ""
-	cfg.FTS.Engine = ""
 	cfg.FTS.Index = ""
 	cfg.FTS.KeyGen = ""
 	cfg.FTS.Scorer = ""

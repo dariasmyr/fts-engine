@@ -63,7 +63,6 @@ func main() {
 		log.Info("Loaded configuration", "source", cfgSource)
 	}
 	log.Info("fts", "env", cfg.Env)
-	log.Info("fts", "engine", cfg.FTS.Engine)
 	log.Info("fts", "index", cfg.FTS.Index)
 	log.Info("fts", "keygen", cfg.FTS.KeyGen)
 	log.Info("fts", "scorer", cfg.FTS.Scorer)
@@ -89,27 +88,19 @@ func main() {
 
 	documentsByID := make(map[string]models.Document)
 
-	var ftsEngine cui.SearchEngine
-
-	switch cfg.FTS.Engine {
-	case "trie":
-		keyGen, err := selectKeyGenerator(cfg.FTS.KeyGen)
-		if err != nil {
-			log.Error("Failed to select keygen", "error", sl.Err(err))
-			return
-		}
-
-		pipeline := buildPipeline(cfg)
-		svc, loadedFromSnapshot, err := buildService(log, cfg, keyGen, pipeline)
-		if err != nil {
-			log.Error("Failed to initialize trie service", "error", sl.Err(err))
-			return
-		}
-		ftsEngine = &serviceAdapter{service: svc, snapshotLoaded: loadedFromSnapshot, searchStats: ftsstats.NewSearchStats(64)}
-	default:
-		log.Error("unknown fts engine", "engine", cfg.FTS.Engine)
+	keyGen, err := selectKeyGenerator(cfg.FTS.KeyGen)
+	if err != nil {
+		log.Error("Failed to select keygen", "error", sl.Err(err))
 		return
 	}
+
+	pipeline := buildPipeline(cfg)
+	svc, loadedFromSnapshot, err := buildService(log, cfg, keyGen, pipeline)
+	if err != nil {
+		log.Error("Failed to initialize search service", "error", sl.Err(err))
+		return
+	}
+	ftsEngine := &serviceAdapter{service: svc, snapshotLoaded: loadedFromSnapshot, searchStats: ftsstats.NewSearchStats(64)}
 
 	log.Info("FTS engine initialised")
 
@@ -145,30 +136,25 @@ func main() {
 		duration = time.Since(startTime)
 		log.Info(fmt.Sprintf("Indexed %d documents in %v", len(documents), duration))
 
-		analyzeTrie(cfg, ftsEngine, memStats, log)
+		analyzeIndex(cfg, ftsEngine, memStats, log)
 		return
 	}
 
-	adapter, ok := ftsEngine.(*serviceAdapter)
-	if !ok {
-		log.Error("unexpected search engine type")
-		return
-	}
-	if adapter.snapshotLoaded {
+	if ftsEngine.snapshotLoaded {
 		log.Info("Skipping re-indexing: persisted state loaded", "path", cfg.FTS.Persistence.Path)
 	}
 
-	if interrupted := populateDocuments(rootCtx, ctx, log, ftsEngine, documents, documentsByID, adapter.snapshotLoaded); interrupted {
+	if interrupted := populateDocuments(rootCtx, ctx, log, ftsEngine, documents, documentsByID, ftsEngine.snapshotLoaded); interrupted {
 		return
 	}
 
-	if !adapter.snapshotLoaded {
-		if err := buildFilterIfNeeded(log, adapter.service); err != nil {
+	if !ftsEngine.snapshotLoaded {
+		if err := buildFilterIfNeeded(log, ftsEngine.service); err != nil {
 			log.Error("Failed to finalize search filter", "error", sl.Err(err))
 			return
 		}
 
-		if err := savePersistenceIfEnabled(log, cfg, adapter.service); err != nil {
+		if err := savePersistenceIfEnabled(log, cfg, ftsEngine.service); err != nil {
 			log.Error("Failed to persist state", "error", sl.Err(err))
 			return
 		}
@@ -181,7 +167,7 @@ func main() {
 		log.Error("Failed to start appCUI", "error", sl.Err(cuiErr))
 		return
 	}
-	if snapshot, ok := adapter.SearchStatsSnapshot(); ok && snapshot.TotalSearches > 0 {
+	if snapshot, ok := ftsEngine.SearchStatsSnapshot(); ok && snapshot.TotalSearches > 0 {
 		logSearchStats(log, snapshot)
 	}
 }
@@ -211,7 +197,7 @@ func populateDocuments(rootCtx context.Context, ctx context.Context, log *slog.L
 	return false
 }
 
-func analyzeTrie(
+func analyzeIndex(
 	cfg *config.Config,
 	engine cui.SearchEngine,
 	memStats runtime.MemStats,
@@ -221,18 +207,17 @@ func analyzeTrie(
 		AnalyzeStats() (pkgfts.Stats, bool)
 	})
 	if !ok {
-		log.Warn("analyzeTrie: engine does not support analysis")
+		log.Warn("analyzeIndex: engine does not support analysis")
 		return
 	}
 
 	stats, ok := statsProvider.AnalyzeStats()
 	if !ok {
-		log.Warn("analyzeTrie: engine does not support analysis")
+		log.Warn("analyzeIndex: engine does not support analysis")
 		return
 	}
 
 	log.Info("FTS analysis result",
-		"engine", cfg.FTS.Engine,
 		"index", cfg.FTS.Index,
 		"nodes", stats.Nodes,
 		"leafNodes", stats.Leaves,

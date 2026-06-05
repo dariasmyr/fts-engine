@@ -423,7 +423,6 @@ Important config fields:
 
 ```yaml
 fts:
-  engine: "trie"
   index: "radix"       # radix|slicedradix|hamt|hamtpointered
   keygen: "word"
   scorer: "none"       # none|bm25|tfidf
