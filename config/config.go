@@ -8,18 +8,18 @@ import (
 )
 
 type Config struct {
-	Env      string     `yaml:"env" env-default:"local"`
-	DumpPath string     `yaml:"dump_path" env-default:"./data/enwiki-latest-abstract10.xml.gz"`
+	Env      string     `yaml:"env"`
+	DumpPath string     `yaml:"dump_path"`
 	FTS      FTSConfig  `yaml:"fts"`
 	Mode     ModeConfig `yaml:"mode"`
 }
 
 type FTSConfig struct {
-	Engine      string            `yaml:"engine" env-default:"trie"`
+	Engine      string            `yaml:"engine"`
 	Index       string            `yaml:"index"`
 	KeyGen      string            `yaml:"keygen"`
-	Scorer      string            `yaml:"scorer" env-default:"none"`
-	Filter      string            `yaml:"filter" env-default:"none"`
+	Scorer      string            `yaml:"scorer"`
+	Filter      string            `yaml:"filter"`
 	Persistence PersistenceConfig `yaml:"persistence"`
 	Compaction  CompactionConfig  `yaml:"compaction"`
 	Bloom       BloomConfig       `yaml:"bloom"`
@@ -29,53 +29,53 @@ type FTSConfig struct {
 }
 
 type CompactionConfig struct {
-	LoadFactor float64 `yaml:"load_factor" env-default:"0"`
-	AutoCheck  bool    `yaml:"auto_check" env-default:"true"`
+	LoadFactor float64 `yaml:"load_factor"`
+	AutoCheck  bool    `yaml:"auto_check"`
 }
 
 type PersistenceConfig struct {
-	Enabled        bool   `yaml:"enabled" env-default:"false"`
-	Format         string `yaml:"format" env-default:"snapshot"`
-	Access         string `yaml:"access" env-default:"file"`
-	Path           string `yaml:"path" env-default:"./data/fts/default"`
-	LoadOnStart    bool   `yaml:"load_on_start" env-default:"true"`
-	SaveOnBuild    bool   `yaml:"save_on_build" env-default:"true"`
-	BufferSize     int    `yaml:"buffer_size" env-default:"1048576"`
-	FlushThreshold int    `yaml:"flush_threshold" env-default:"262144"`
-	SyncFile       bool   `yaml:"sync_file" env-default:"true"`
+	Enabled        bool   `yaml:"enabled"`
+	Format         string `yaml:"format"`
+	Access         string `yaml:"access"`
+	Path           string `yaml:"path"`
+	LoadOnStart    bool   `yaml:"load_on_start"`
+	SaveOnBuild    bool   `yaml:"save_on_build"`
+	BufferSize     int    `yaml:"buffer_size"`
+	FlushThreshold int    `yaml:"flush_threshold"`
+	SyncFile       bool   `yaml:"sync_file"`
 }
 
 type BloomConfig struct {
-	ExpectedItems uint64 `yaml:"expected_items" env-default:"1000000"`
-	BitsPerItem   uint64 `yaml:"bits_per_item" env-default:"10"`
-	K             uint64 `yaml:"k" env-default:"7"`
+	ExpectedItems uint64 `yaml:"expected_items"`
+	BitsPerItem   uint64 `yaml:"bits_per_item"`
+	K             uint64 `yaml:"k"`
 }
 
 type CuckooConfig struct {
-	BucketCount int `yaml:"bucket_count" env-default:"262144"`
-	BucketSize  int `yaml:"bucket_size" env-default:"4"`
-	MaxKicks    int `yaml:"max_kicks" env-default:"500"`
+	BucketCount int `yaml:"bucket_count"`
+	BucketSize  int `yaml:"bucket_size"`
+	MaxKicks    int `yaml:"max_kicks"`
 }
 
 type RibbonConfig struct {
-	ExpectedItems uint32 `yaml:"expected_items" env-default:"1000000"`
-	ExtraCells    uint32 `yaml:"extra_cells" env-default:"250000"`
-	WindowSize    uint32 `yaml:"window_size" env-default:"24"`
-	Seed          uint64 `yaml:"seed" env-default:"0"`
-	MaxAttempts   uint32 `yaml:"max_attempts" env-default:"5"`
+	ExpectedItems uint32 `yaml:"expected_items"`
+	ExtraCells    uint32 `yaml:"extra_cells"`
+	WindowSize    uint32 `yaml:"window_size"`
+	Seed          uint64 `yaml:"seed"`
+	MaxAttempts   uint32 `yaml:"max_attempts"`
 }
 
 type ModeConfig struct {
-	Type string `yaml:"type" env-default:"prod"`
+	Type string `yaml:"type"`
 }
 
 type PipelineConfig struct {
-	Lowercase   bool `yaml:"lowercase" env-default:"true"`
-	StopwordsEN bool `yaml:"stopwords_en" env-default:"true"`
-	StopwordsRU bool `yaml:"stopwords_ru" env-default:"false"`
-	StemEN      bool `yaml:"stem_en" env-default:"true"`
-	StemRU      bool `yaml:"stem_ru" env-default:"false"`
-	MinLength   int  `yaml:"min_length" env-default:"3"`
+	Lowercase   bool `yaml:"lowercase"`
+	StopwordsEN bool `yaml:"stopwords_en"`
+	StopwordsRU bool `yaml:"stopwords_ru"`
+	StemEN      bool `yaml:"stem_en"`
+	StemRU      bool `yaml:"stem_ru"`
+	MinLength   int  `yaml:"min_length"`
 }
 
 func MustLoad() (*Config, string) {
@@ -173,40 +173,62 @@ func defaultConfig() Config {
 }
 
 func validateConfig(cfg *Config) {
+	defaults := defaultConfig()
+
+	if cfg.Env == "" {
+		cfg.Env = defaults.Env
+	}
+
+	if cfg.DumpPath == "" {
+		cfg.DumpPath = defaults.DumpPath
+	}
+
+	if cfg.FTS.Engine == "" {
+		cfg.FTS.Engine = defaults.FTS.Engine
+	}
+
 	if cfg.FTS.Index == "" {
-		cfg.FTS.Index = "radix"
+		cfg.FTS.Index = defaults.FTS.Index
 	}
 
 	if cfg.FTS.KeyGen == "" {
-		cfg.FTS.KeyGen = "word"
+		cfg.FTS.KeyGen = defaults.FTS.KeyGen
 	}
 
 	if cfg.FTS.Scorer == "" {
-		cfg.FTS.Scorer = "none"
+		cfg.FTS.Scorer = defaults.FTS.Scorer
 	}
 
 	if cfg.FTS.Filter == "" {
-		cfg.FTS.Filter = "none"
+		cfg.FTS.Filter = defaults.FTS.Filter
 	}
 
 	if cfg.FTS.Persistence.Format == "" {
-		cfg.FTS.Persistence.Format = "snapshot"
+		cfg.FTS.Persistence.Format = defaults.FTS.Persistence.Format
 	}
 
 	if cfg.FTS.Persistence.Access == "" {
-		cfg.FTS.Persistence.Access = "file"
+		cfg.FTS.Persistence.Access = defaults.FTS.Persistence.Access
 	}
 
 	if cfg.FTS.Persistence.Path == "" {
-		cfg.FTS.Persistence.Path = "./data/fts/default"
+		cfg.FTS.Persistence.Path = defaults.FTS.Persistence.Path
 	}
 
 	if cfg.FTS.Persistence.BufferSize <= 0 {
-		cfg.FTS.Persistence.BufferSize = 1048576
+		cfg.FTS.Persistence.BufferSize = defaults.FTS.Persistence.BufferSize
 	}
 
 	if cfg.FTS.Persistence.FlushThreshold <= 0 {
-		cfg.FTS.Persistence.FlushThreshold = 262144
+		cfg.FTS.Persistence.FlushThreshold = defaults.FTS.Persistence.FlushThreshold
+	}
+
+	if cfg.FTS.Pipeline.MinLength <= 0 {
+		cfg.FTS.Pipeline.MinLength = defaults.FTS.Pipeline.MinLength
+	}
+
+	if cfg.Mode.Type == "" {
+		cfg.Mode.Type = defaults.Mode.Type
 	}
 
 	if cfg.FTS.Compaction.LoadFactor < 0 || cfg.FTS.Compaction.LoadFactor > 1 {
