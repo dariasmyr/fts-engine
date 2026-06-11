@@ -196,9 +196,11 @@ func run(cfg config) error {
 
 		qs := quality.Compute(rep.QueryResults, corpus.Qrels, cfg.K)
 		rec := metrics.Build(rep, qs, metrics.RunMeta{
-			Dataset:     cfg.Dataset,
 			Concurrency: cfg.Concurrency,
+			BatchSize:   cfg.Batch,
+			WarmupFrac:  cfg.Warmup,
 		})
+		rec.Dataset = datasetMetadata(cfg, corpus)
 		if provider, ok := eng.(harness.MetadataProvider); ok {
 			rec.Config = provider.BenchmarkMetadata()
 		}
@@ -231,6 +233,26 @@ func loadDataset(cfg config) (*dataset.Corpus, error) {
 		K:             cfg.K,
 		Seed:          cfg.Seed,
 	}), nil
+}
+
+func datasetMetadata(cfg config, corpus *dataset.Corpus) metrics.DatasetMeta {
+	meta := metrics.DatasetMeta{
+		Name:       cfg.Dataset,
+		NumDocs:    len(corpus.Docs),
+		NumQueries: len(corpus.Queries),
+	}
+	if cfg.Dataset == "synthetic" {
+		meta.Params = map[string]any{
+			"seed":            cfg.Seed,
+			"synth_docs":      cfg.SynthDocs,
+			"synth_queries":   cfg.SynthQueries,
+			"words_per_doc":   cfg.WordsPerDoc,
+			"words_per_query": cfg.WordsPerQuery,
+			"vocab_size":      cfg.VocabSize,
+			"zipf_s":          cfg.ZipfS,
+		}
+	}
+	return meta
 }
 
 func buildEngineWithConfig(name string, cfg config) (harness.Engine, error) {

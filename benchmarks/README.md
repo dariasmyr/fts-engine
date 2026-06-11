@@ -198,6 +198,55 @@ The JSON should contain at least:
 - quality metrics when qrels are available
 - optional engine-specific extras
 
+## Stable Report Schema
+
+The JSON output format is versioned.
+
+Current version:
+
+- `schema_version = "benchmarks.v1alpha1"`
+
+JSON layout:
+
+- top-level object
+- `schema_version`
+- `records`
+
+Each record contains:
+
+- `engine`
+- `run`
+- `dataset`
+- `config`
+- `index`
+- `latency`
+- optional `quality`
+- optional `extras`
+
+`run` contains execution-environment and run-control metadata:
+
+- `timestamp`
+- `go_version`
+- `goos`
+- `goarch`
+- `num_cpu`
+- `concurrency`
+- `batch_size`
+- `warmup_frac`
+
+`dataset` contains corpus metadata separate from runtime metadata:
+
+- `name`
+- `num_docs`
+- `num_queries`
+- optional `params`
+
+Rules:
+
+- additive fields are allowed in future schema revisions
+- breaking field moves or renames require a new `schema_version`
+- `extras` is reserved for engine-specific diagnostics and must not be required for cross-engine comparisons
+
 ## Existing Tooling Boundary
 
 This benchmark suite complements, but does not replace, existing repository tooling.

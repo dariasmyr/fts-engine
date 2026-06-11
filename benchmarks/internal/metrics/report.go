@@ -12,9 +12,17 @@ import (
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/quality"
 )
 
+const SchemaVersion = "benchmarks.v1alpha1"
+
+type ReportFile struct {
+	SchemaVersion string   `json:"schema_version"`
+	Records       []Record `json:"records"`
+}
+
 type Record struct {
 	Engine  string         `json:"engine"`
 	Run     RunMeta        `json:"run"`
+	Dataset DatasetMeta    `json:"dataset"`
 	Config  map[string]any `json:"config,omitempty"`
 	Index   IndexStats     `json:"index"`
 	Latency LatencyStats   `json:"latency"`
@@ -28,10 +36,16 @@ type RunMeta struct {
 	GOOS        string    `json:"goos"`
 	GOARCH      string    `json:"goarch"`
 	NumCPU      int       `json:"num_cpu"`
-	Dataset     string    `json:"dataset"`
 	Concurrency int       `json:"concurrency"`
-	NumDocs     int       `json:"num_docs"`
-	NumQueries  int       `json:"num_queries"`
+	BatchSize   int       `json:"batch_size,omitempty"`
+	WarmupFrac  float64   `json:"warmup_frac,omitempty"`
+}
+
+type DatasetMeta struct {
+	Name       string         `json:"name"`
+	NumDocs    int            `json:"num_docs"`
+	NumQueries int            `json:"num_queries"`
+	Params     map[string]any `json:"params,omitempty"`
 }
 
 type IndexStats struct {
@@ -76,13 +90,7 @@ func Build(rep *harness.Report, q *quality.Scores, meta RunMeta) Record {
 		docsPS = float64(rep.NumDocs) / rep.IndexBuildDur.Seconds()
 	}
 
-	meta.Timestamp = time.Now().UTC()
-	meta.GoVersion = runtime.Version()
-	meta.GOOS = runtime.GOOS
-	meta.GOARCH = runtime.GOARCH
-	meta.NumCPU = runtime.NumCPU()
-	meta.NumDocs = rep.NumDocs
-	meta.NumQueries = rep.NumQueries
+	meta = withRuntimeDefaults(meta)
 
 	rec := Record{
 		Engine: rep.Engine,
@@ -116,7 +124,7 @@ func Build(rep *harness.Report, q *quality.Scores, meta RunMeta) Record {
 func WriteJSON(w io.Writer, recs []Record) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(recs)
+	return enc.Encode(ReportFile{SchemaVersion: SchemaVersion, Records: recs})
 }
 
 func WriteTable(w io.Writer, recs []Record) error {
@@ -146,3 +154,22 @@ func WriteTable(w io.Writer, recs []Record) error {
 }
 
 func ms(d time.Duration) float64 { return float64(d.Nanoseconds()) / 1e6 }
+
+func withRuntimeDefaults(meta RunMeta) RunMeta {
+	if meta.Timestamp.IsZero() {
+		meta.Timestamp = time.Now().UTC()
+	}
+	if meta.GoVersion == "" {
+		meta.GoVersion = runtime.Version()
+	}
+	if meta.GOOS == "" {
+		meta.GOOS = runtime.GOOS
+	}
+	if meta.GOARCH == "" {
+		meta.GOARCH = runtime.GOARCH
+	}
+	if meta.NumCPU == 0 {
+		meta.NumCPU = runtime.NumCPU()
+	}
+	return meta
+}
