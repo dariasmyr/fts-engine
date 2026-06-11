@@ -22,9 +22,10 @@ The repository has two distinct layers:
   - `pkg/ftsstats`
 - Repository-local app/tooling:
   - `cmd/fts` demo app
-  - `cmd/bench` benchmark/evaluation CLI
+  - `cmd/bench` repo-specific benchmark/evaluation CLI
   - `internal/adapters/cui` terminal UI for the demo app
-  - `internal/bench` benchmark harness used by `cmd/bench`
+  - `internal/bench` benchmark harness used by the legacy benchmark CLI
+  - `benchmarks/` cross-engine benchmark suite
 
 - Public library API in `pkg/fts`.
 - Public index implementations in `pkg/index/*`:
@@ -37,7 +38,9 @@ The repository has two distinct layers:
 - Repository demo app in `cmd/fts` with:
   - `prod` mode (run with configurable filters and interactive CUI)
   - `experiment` mode (collect indexing metrics)
-- Repository benchmark/evaluation CLI in `cmd/bench` for indexing throughput, latency, `nDCG`, `MRR`, and `Recall`.
+- Repository benchmark tooling split into:
+  - legacy repo-specific evaluation in `cmd/bench` and `internal/bench`
+  - cross-engine suite in `benchmarks/`
 
 ## Library usage
 
@@ -412,7 +415,9 @@ The repository currently supports these top-level usage patterns:
 - library mode with mutable snapshots: use `pkg/fts` snapshot save/load helpers
 - library mode with immutable segments: use `pkg/segment` export/load helpers
 - repository demo app mode: run `cmd/fts` and let the repository app manage startup/build persistence
-- repository evaluation mode: run `cmd/bench` to benchmark local corpora and labeled query sets
+- repository benchmark mode:
+  - run `cmd/bench` for wiki/custom-ground-truth evaluation
+  - run the suite under `benchmarks/` for synthetic, MS MARCO, and cross-engine evaluation
 
 For external integrations, prefer the public `pkg/*` packages. Treat `cmd/*` and `internal/*` here as repository-owned tooling rather than the main product surface.
 
@@ -503,98 +508,29 @@ Persistence fields in the current CLI config (`fts.persistence`):
 
 ## Benchmarks
 
-`cmd/bench` and `internal/bench` are repository benchmarking tools, not part of the public library API.
+This repository uses four benchmark types:
 
-This repository uses three benchmark types:
-
-- end-to-end bench: `go run ./cmd/bench ...`
+- legacy repo-specific end-to-end bench: `go run ./cmd/bench ...`
+- suite runs under `benchmarks/`
 - engine microbench: `go test -run '^$' -bench . ./pkg/fts`
 - index microbench: `go test -run '^$' -bench . ./pkg/index/...`
 
-Use `tee file.txt` when you want to both see benchmark output in the terminal and save the same output into a file for before/after comparison.
+Use the legacy `cmd/bench` flow when you want repo-specific evaluation on the wiki/custom-ground-truth path.
 
-### 1) End-to-End Bench
+Use the `benchmarks/` module when you want cross-engine comparisons, synthetic runs, MS MARCO quality evaluation, or aggregated suite runs.
 
-Use `cmd/bench` when you want to compare index, scorer, and pipeline combinations on a corpus with labeled queries.
-
-It measures:
-
-- indexing duration
-- search latency `p50/p95/p99`
-- quality metrics: `nDCG`, `MRR`, `Recall`
-- optional diagnostics: `diag.total`, `diag.search_tokens`, strategy distribution, zero-result counts, WAND/fallback distributions, posting reads, index lookups
-
-Common flags:
-
-- `-dump`: wiki dump path
-- `-ground-truth`: labeled query set path
-- `-index`: `slicedradix|hamt`
-- `-lang`: `en|ru|multi|none`
-- `-field`: `abstract|extract|title`
-- `-scorer`: `none|bm25|tfidf`
-- `-k`: top-k used for `nDCG` and `Recall`
-- `-limit`: cap the number of indexed documents for quick experiments
-- `-worst`: print worst queries by `nDCG`; with diagnostics enabled also print worst queries by `postings_read`
-- `-diagnostics`: enable per-query `SearchResult.Diagnostics`
-- `-observer`: enable `ftsstats.SearchStats` aggregation during the benchmark run
-- `-warmup`: run N warmup searches before measured runs; warmup does not affect reported metrics
-- `-repeat`: repeat the full query set N times for measured runs
-- `-shuffle`: shuffle query order for warmup and each measured repeat with a fixed seed
-
-Local workloads checked in under `internal/bench/testdata/`:
-
-- `queries.abstract1.title.json`: tiny sanity-check workload for `-field title`
-- `queries.abstract1.abstract.json`: tiny sanity-check workload for `-field abstract`
-- `queries.abstract1.abstract.50.json`: curated 50-query `abstract` workload for repeated latency comparisons
-
-Steady-state example:
+Quick examples from the repository root:
 
 ```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-20210820-abstract1.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
-  -index slicedradix \
-  -lang en \
-  -field abstract \
-  -scorer none \
-  -k 10 \
-  -warmup 50 \
-  -repeat 20 \
-  -shuffle true \
-  -diagnostics false \
-  -observer false | tee before-e2e.txt
+(cd benchmarks && go run ./cmd/bench -engines=fts-engine,bleve,bluge -dataset=synthetic -synth-docs=5000 -synth-queries=500 -k=10)
 ```
-
-Cold-run example:
 
 ```bash
-go run ./cmd/bench \
-  -dump ./data/enwiki-20210820-abstract1.xml.gz \
-  -ground-truth ./internal/bench/testdata/queries.abstract1.abstract.50.json \
-  -index slicedradix \
-  -lang en \
-  -field abstract \
-  -scorer none \
-  -k 10 \
-  -warmup 0 \
-  -repeat 1 \
-  -shuffle false \
-  -diagnostics false \
-  -observer false | tee before-e2e-cold.txt
+./benchmarks/scripts/fetch-msmarco.sh ./benchmarks/data/msmarco
+MSMARCO_DIR=./data/msmarco ./benchmarks/scripts/run-suite.sh
 ```
 
-This keeps the first measured pass cold inside a fresh `cmd/bench` process. If you rerun the command, treat each process start as a separate cold run.
-
-To compare instrumentation overhead, keep all other flags the same and vary only:
-
-- `-diagnostics`
-- `-observer`
-
-To compare index implementations on the same corpus, keep all other flags the same and vary only:
-
-- `-index`
-
-Current latency numbers are measured around `SearchDocuments(...)`. `-observer` still exercises the observer path and prints observer summary, but observer work is not included in the reported `latency p50/p95/p99` yet. The text report uses `p50/p95/p99` as the main latency view; the diagnostics-heavy breakdown focuses on strategies, postings, WAND usage, fallback reasons, and zero-result counts.
+For the full benchmark workflow and report format, see `benchmarks/README.md`.
 
 ### 2) Engine Microbench
 
@@ -677,12 +613,12 @@ Recommended minimum baseline before a feature branch:
 
 1. Run the engine microbench.
 2. Run the index microbench if you touched index code.
-3. Run the end-to-end bench on a representative local dump.
+3. Run the benchmark suite on a representative local dataset.
 
 Compare these outputs:
 
 - microbench: `ns/op`, `B/op`, `allocs/op`
-- `cmd/bench`: indexing duration, latency `p50/p95/p99`, zero-result counts, `diag.total`, `diag.search_tokens`, `avg postings`, `avg index_lookups`, strategy distribution, WAND/fallback breakdowns, worst-by-postings, `nDCG`, `MRR`, `Recall`
+- `benchmarks/`: indexing duration, latency `p50/p95/p99`, throughput, on-disk size, `nDCG`, `MRR`, `Recall`, plus optional `fts-engine` diagnostics extras
 
 ## Ribbon filter usage
 

@@ -2,7 +2,7 @@
 
 Cross-engine benchmark suite for the current `fts-engine` repository.
 
-This directory is intentionally separate from the existing repository benchmark and evaluation tooling under `cmd/bench` and `internal/bench`. The existing tooling remains the engine's native evaluation path. The suite in `benchmarks/` is for cross-engine comparison.
+This directory contains the newer cross-engine benchmark suite. The repository also keeps a repo-specific evaluation flow under `cmd/bench` and `internal/bench` for wiki-dump and custom ground-truth workloads.
 
 ## Status
 
@@ -17,10 +17,10 @@ This document describes the current benchmark suite layout, baseline methodology
 
 ## Non-Goals
 
-- Replacing the existing `cmd/bench` command.
 - Reusing the fork's benchmark code unchanged.
 - Hiding analyzer or query-semantics differences between engines.
 - Shipping per-engine tuning in the baseline comparison.
+- Replacing the legacy repo-specific benchmark flow.
 
 ## Current Repository Constraints
 
@@ -33,24 +33,25 @@ Current `fts-engine` integration points:
 - searching via `svc.SearchDocuments(...)`
 - optional persistence via `pkg/ftspersist` snapshot and segment helpers
 
-The suite must also respect that this repository already has:
+The suite must also respect that this repository exposes:
 
-- native quality and diagnostics tooling in `internal/bench`
 - index variants `slicedradix` and `hamt`
 - scorer options `none`, `bm25`, `tfidf`
 - optional diagnostics such as strategy selection, postings read, and WAND usage
+- a separate legacy benchmark path for repo-owned wiki/custom-ground-truth evaluation
 
-## MVP Scope
+## Current Coverage
 
-The first usable version of the suite will include:
+Currently implemented in the suite:
 
 - a separate Go module under `benchmarks/`
 - a shared harness and report format
 - adapters for `fts-engine`, `bleve`, and `bluge`
 - synthetic and MS MARCO datasets
 - JSON and plain-text table outputs
+- suite automation and result aggregation
 
-The first usable version does not require:
+Not yet implemented:
 
 - `tantivy`
 - `riot`
@@ -128,29 +129,33 @@ Expected files for the initial loader:
 
 ## Example Commands
 
-Run commands below from the `benchmarks/` directory.
+Run commands below from the repository root.
+
+Commands below are written to run from the repository root while targeting the `benchmarks/` module explicitly.
+
+If you want the legacy repo-specific evaluation flow, use the root command `go run ./cmd/bench ...` instead.
 
 Synthetic smoke run:
 
 ```bash
-go run ./cmd/bench \
+(cd benchmarks && go run ./cmd/bench \
   -engines=fts-engine,bleve,bluge \
   -dataset=synthetic \
   -synth-docs=5000 \
   -synth-queries=500 \
-  -k=10
+  -k=10)
 ```
 
 MS MARCO quality run:
 
 ```bash
-go run ./cmd/bench \
+(cd benchmarks && go run ./cmd/bench \
   -engines=fts-engine,bleve,bluge \
   -dataset=msmarco \
-  -msmarco-dir=/path/to/msmarco \
+  -msmarco-dir=./data/msmarco \
   -max-docs=100000 \
   -max-queries=2000 \
-  -k=10
+  -k=10)
 ```
 
 ## Automation
@@ -158,13 +163,13 @@ go run ./cmd/bench \
 Fetch MS MARCO files:
 
 ```bash
-./scripts/fetch-msmarco.sh ./data/msmarco
+./benchmarks/scripts/fetch-msmarco.sh ./benchmarks/data/msmarco
 ```
 
 Run the full suite:
 
 ```bash
-MSMARCO_DIR=./data/msmarco ./scripts/run-suite.sh
+MSMARCO_DIR=./data/msmarco ./benchmarks/scripts/run-suite.sh
 ```
 
 The suite script emits JSON shards under `results/full/` using these scenario groups:
@@ -177,7 +182,7 @@ The suite script emits JSON shards under `results/full/` using these scenario gr
 Aggregate suite shards into summary tables:
 
 ```bash
-go run ./cmd/aggregate results/full
+(cd benchmarks && go run ./cmd/aggregate results/full)
 ```
 
 Local result shards under `results/` are treated as disposable run artifacts. Only placeholder `.gitkeep` files are expected to stay in git.
@@ -230,7 +235,7 @@ If exact semantic parity is not possible, the difference must be documented in t
 
 ### Analyzer Notes
 
-Current baseline analyzer choices for MVP:
+Current baseline analyzer choices:
 
 - `fts-engine`: `ftspreset.English()`
 - `bleve`: built-in `en`
@@ -335,13 +340,14 @@ Rules:
 - breaking field moves or renames require a new `schema_version`
 - `extras` is reserved for engine-specific diagnostics and must not be required for cross-engine comparisons
 
-## Existing Tooling Boundary
+## Repository Boundary
 
-This benchmark suite complements, but does not replace, existing repository tooling.
+This repository currently has two benchmark layers:
 
-- `cmd/bench` remains the native benchmark and evaluation command for this repository
-- `internal/bench` remains the source of engine-native quality and diagnostics logic
-- `benchmarks/` is the cross-engine comparison layer
+- `benchmarks/`: the newer cross-engine suite for synthetic, MS MARCO, and aggregated scenario runs
+- `cmd/bench` + `internal/bench`: the legacy repo-specific evaluation flow for wiki/custom-ground-truth workloads
+
+Both layers are separate from the public library packages under `pkg/`.
 
 ## Current Coverage
 
