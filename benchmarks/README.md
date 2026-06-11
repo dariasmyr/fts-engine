@@ -4,9 +4,9 @@ Cross-engine benchmark suite for the current `fts-engine` repository.
 
 This directory is intentionally separate from the existing repository benchmark and evaluation tooling under `cmd/bench` and `internal/bench`. The existing tooling remains the engine's native evaluation path. The suite in `benchmarks/` is for cross-engine comparison.
 
-## Iteration 0 Status
+## Status
 
-This document defines the MVP scope, baseline methodology, and default comparison settings for the benchmark suite.
+This document describes the current benchmark suite layout, baseline methodology, and run workflow.
 
 ## Goals
 
@@ -128,6 +128,8 @@ Expected files for the initial loader:
 
 ## Example Commands
 
+Run commands below from the `benchmarks/` directory.
+
 Synthetic smoke run:
 
 ```bash
@@ -150,6 +152,35 @@ go run ./cmd/bench \
   -max-queries=2000 \
   -k=10
 ```
+
+## Automation
+
+Fetch MS MARCO files:
+
+```bash
+./scripts/fetch-msmarco.sh ./data/msmarco
+```
+
+Run the full suite:
+
+```bash
+MSMARCO_DIR=./data/msmarco ./scripts/run-suite.sh
+```
+
+The suite script emits JSON shards under `results/full/` using these scenario groups:
+
+- `var-*` for repeatability runs
+- `conc-*` for concurrency runs
+- `scale-*` for corpus-size runs
+- `synthetic` for the synthetic baseline
+
+Aggregate suite shards into summary tables:
+
+```bash
+go run ./cmd/aggregate results/full
+```
+
+Local result shards under `results/` are treated as disposable run artifacts. Only placeholder `.gitkeep` files are expected to stay in git.
 
 ## Shared Metrics
 
@@ -312,25 +343,19 @@ This benchmark suite complements, but does not replace, existing repository tool
 - `internal/bench` remains the source of engine-native quality and diagnostics logic
 - `benchmarks/` is the cross-engine comparison layer
 
-## MVP Exit Criteria
+## Current Coverage
 
-Iteration 0 is complete when the project has an explicit written baseline that answers:
+Currently implemented in the suite:
 
-- which engines are in scope for MVP
-- which engines are deferred
-- which `fts-engine` configuration is the default baseline
-- which datasets are required
-- which metrics are mandatory
-- which fields are `fts-engine`-specific extras
-- which methodology constraints are considered part of the benchmark contract
+- shared benchmark harness
+- `fts-engine`, `bleve`, and `bluge` adapters
+- synthetic dataset generator
+- MS MARCO loader
+- versioned JSON reports
+- suite scripts and shard aggregation
 
-## Next Iterations
+Not yet implemented:
 
-Implementation after this spec proceeds in the following order:
-
-1. module skeleton and harness interfaces
-2. synthetic dataset and shared metrics
-3. current-API `fts-engine` adapter
-4. stable report schema
-5. `bleve` and `bluge` adapters
-6. MS MARCO loader and quality runs
+- `tantivy`
+- `riot`
+- containerized automation for external engines
