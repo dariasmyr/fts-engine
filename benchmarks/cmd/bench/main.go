@@ -29,6 +29,9 @@ type config struct {
 	Warmup        float64
 	Concurrency   int
 	Seed          uint64
+	MSMARCODir    string
+	MaxDocs       int
+	MaxQueries    int
 	SynthDocs     int
 	SynthQueries  int
 	WordsPerDoc   int
@@ -70,6 +73,9 @@ func parseFlags(args []string) (config, error) {
 		warmup        = fs.Float64("warmup", 0.10, "warmup fraction in [0, 0.5]")
 		concurrency   = fs.Int("concurrency", 1, "search concurrency")
 		seed          = fs.Uint64("seed", 0xC0FFEE, "deterministic seed")
+		msmarcoDir    = fs.String("msmarco-dir", "", "directory with collection.tsv, queries.dev.small.tsv, qrels.dev.small.tsv")
+		maxDocs       = fs.Int("max-docs", 0, "cap dataset documents (0 = all)")
+		maxQueries    = fs.Int("max-queries", 0, "cap dataset queries (0 = all)")
 		synthDocs     = fs.Int("synth-docs", 5000, "synthetic document count")
 		synthQueries  = fs.Int("synth-queries", 500, "synthetic query count")
 		wordsPerDoc   = fs.Int("words-per-doc", 60, "synthetic words per document")
@@ -98,6 +104,9 @@ func parseFlags(args []string) (config, error) {
 		Warmup:        *warmup,
 		Concurrency:   *concurrency,
 		Seed:          *seed,
+		MSMARCODir:    strings.TrimSpace(*msmarcoDir),
+		MaxDocs:       *maxDocs,
+		MaxQueries:    *maxQueries,
 		SynthDocs:     *synthDocs,
 		SynthQueries:  *synthQueries,
 		WordsPerDoc:   *wordsPerDoc,
@@ -141,26 +150,14 @@ func (c config) validate() error {
 	if c.Work == "" {
 		return errors.New("bench: -work must not be empty")
 	}
-	if c.Dataset != "synthetic" {
-		return fmt.Errorf("bench: unsupported dataset %q", c.Dataset)
+	if c.MaxDocs < 0 {
+		return fmt.Errorf("bench: -max-docs must be >= 0, got %d", c.MaxDocs)
 	}
-	if c.SynthDocs <= 0 {
-		return fmt.Errorf("bench: -synth-docs must be > 0, got %d", c.SynthDocs)
+	if c.MaxQueries < 0 {
+		return fmt.Errorf("bench: -max-queries must be >= 0, got %d", c.MaxQueries)
 	}
-	if c.SynthQueries <= 0 {
-		return fmt.Errorf("bench: -synth-queries must be > 0, got %d", c.SynthQueries)
-	}
-	if c.WordsPerDoc <= 0 {
-		return fmt.Errorf("bench: -words-per-doc must be > 0, got %d", c.WordsPerDoc)
-	}
-	if c.WordsPerQuery <= 0 {
-		return fmt.Errorf("bench: -words-per-query must be > 0, got %d", c.WordsPerQuery)
-	}
-	if c.VocabSize <= 1 {
-		return fmt.Errorf("bench: -vocab-size must be > 1, got %d", c.VocabSize)
-	}
-	if c.ZipfS <= 1 {
-		return fmt.Errorf("bench: -zipf-s must be > 1, got %g", c.ZipfS)
+	if err := validateDatasetConfig(c); err != nil {
+		return err
 	}
 	if err := validateFTSEngineConfig(c); err != nil {
 		return err
@@ -222,19 +219,29 @@ func run(cfg config) error {
 }
 
 func loadDataset(cfg config) (*dataset.Corpus, error) {
-	if cfg.Dataset != "synthetic" {
+	switch cfg.Dataset {
+	case "synthetic":
+		return dataset.Synthetic(dataset.SyntheticConfig{
+			NumDocs:       cfg.SynthDocs,
+			NumQueries:    cfg.SynthQueries,
+			WordsPerDoc:   cfg.WordsPerDoc,
+			WordsPerQuery: cfg.WordsPerQuery,
+			VocabSize:     cfg.VocabSize,
+			ZipfS:         cfg.ZipfS,
+			K:             cfg.K,
+			Seed:          cfg.Seed,
+		}), nil
+	case "msmarco":
+		return dataset.LoadMSMARCO(dataset.MSMARCOConfig{
+			Dir:        cfg.MSMARCODir,
+			MaxDocs:    cfg.MaxDocs,
+			MaxQueries: cfg.MaxQueries,
+			K:          cfg.K,
+			Seed:       cfg.Seed,
+		})
+	default:
 		return nil, fmt.Errorf("bench: unsupported dataset %q", cfg.Dataset)
 	}
-	return dataset.Synthetic(dataset.SyntheticConfig{
-		NumDocs:       cfg.SynthDocs,
-		NumQueries:    cfg.SynthQueries,
-		WordsPerDoc:   cfg.WordsPerDoc,
-		WordsPerQuery: cfg.WordsPerQuery,
-		VocabSize:     cfg.VocabSize,
-		ZipfS:         cfg.ZipfS,
-		K:             cfg.K,
-		Seed:          cfg.Seed,
-	}), nil
 }
 
 func datasetMetadata(cfg config, corpus *dataset.Corpus) metrics.DatasetMeta {
@@ -253,8 +260,46 @@ func datasetMetadata(cfg config, corpus *dataset.Corpus) metrics.DatasetMeta {
 			"vocab_size":      cfg.VocabSize,
 			"zipf_s":          cfg.ZipfS,
 		}
+	} else if cfg.Dataset == "msmarco" {
+		meta.Params = map[string]any{
+			"seed":        cfg.Seed,
+			"msmarco_dir": cfg.MSMARCODir,
+			"max_docs":    cfg.MaxDocs,
+			"max_queries": cfg.MaxQueries,
+		}
 	}
 	return meta
+}
+
+func validateDatasetConfig(c config) error {
+	switch c.Dataset {
+	case "synthetic":
+		if c.SynthDocs <= 0 {
+			return fmt.Errorf("bench: -synth-docs must be > 0, got %d", c.SynthDocs)
+		}
+		if c.SynthQueries <= 0 {
+			return fmt.Errorf("bench: -synth-queries must be > 0, got %d", c.SynthQueries)
+		}
+		if c.WordsPerDoc <= 0 {
+			return fmt.Errorf("bench: -words-per-doc must be > 0, got %d", c.WordsPerDoc)
+		}
+		if c.WordsPerQuery <= 0 {
+			return fmt.Errorf("bench: -words-per-query must be > 0, got %d", c.WordsPerQuery)
+		}
+		if c.VocabSize <= 1 {
+			return fmt.Errorf("bench: -vocab-size must be > 1, got %d", c.VocabSize)
+		}
+		if c.ZipfS <= 1 {
+			return fmt.Errorf("bench: -zipf-s must be > 1, got %g", c.ZipfS)
+		}
+	case "msmarco":
+		if c.MSMARCODir == "" {
+			return errors.New("bench: -msmarco-dir must not be empty when -dataset=msmarco")
+		}
+	default:
+		return fmt.Errorf("bench: unsupported dataset %q", c.Dataset)
+	}
+	return nil
 }
 
 func buildEngineWithConfig(name string, cfg config) (harness.Engine, error) {

@@ -83,6 +83,10 @@ Deferred engines:
 - `tantivy`: allowed later through an explicit HTTP shim and documented as out-of-process
 - `riot`: deferred until a fair English-oriented configuration is defined
 
+Internal-only adapter:
+
+- `mock`: used only for harness bring-up and smoke verification; not part of user-facing comparison runs
+
 ## Datasets
 
 The suite will support two dataset classes.
@@ -115,6 +119,37 @@ Sampling rule for capped runs:
 - fill the remaining document budget with deterministic reservoir sampling
 
 This avoids the false-quality collapse that happens when a naive head slice drops relevant documents from the corpus.
+
+Expected files for the initial loader:
+
+- `collection.tsv`
+- `queries.dev.small.tsv`
+- `qrels.dev.small.tsv`
+
+## Example Commands
+
+Synthetic smoke run:
+
+```bash
+go run ./cmd/bench \
+  -engines=fts-engine,bleve,bluge \
+  -dataset=synthetic \
+  -synth-docs=5000 \
+  -synth-queries=500 \
+  -k=10
+```
+
+MS MARCO quality run:
+
+```bash
+go run ./cmd/bench \
+  -engines=fts-engine,bleve,bluge \
+  -dataset=msmarco \
+  -msmarco-dir=/path/to/msmarco \
+  -max-docs=100000 \
+  -max-queries=2000 \
+  -k=10
+```
 
 ## Shared Metrics
 
