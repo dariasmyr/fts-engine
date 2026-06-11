@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dariasmyr/fts-engine/benchmarks/adapters/bleve"
+	"github.com/dariasmyr/fts-engine/benchmarks/adapters/bluge"
 	benchftsengine "github.com/dariasmyr/fts-engine/benchmarks/adapters/ftsengine"
 	"github.com/dariasmyr/fts-engine/benchmarks/adapters/mock"
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/dataset"
@@ -59,7 +61,7 @@ func parseFlags(args []string) (config, error) {
 	fs.SetOutput(os.Stderr)
 
 	var (
-		engines       = fs.String("engines", "mock", "comma-separated engine list")
+		engines       = fs.String("engines", "fts-engine", "comma-separated engine list")
 		dataset       = fs.String("dataset", "synthetic", "dataset name")
 		k             = fs.Int("k", 10, "top-k results")
 		out           = fs.String("out", "", "JSON output path")
@@ -140,7 +142,7 @@ func (c config) validate() error {
 		return errors.New("bench: -work must not be empty")
 	}
 	if c.Dataset != "synthetic" {
-		return fmt.Errorf("bench: unsupported dataset %q in iteration 2", c.Dataset)
+		return fmt.Errorf("bench: unsupported dataset %q", c.Dataset)
 	}
 	if c.SynthDocs <= 0 {
 		return fmt.Errorf("bench: -synth-docs must be > 0, got %d", c.SynthDocs)
@@ -268,6 +270,10 @@ func buildEngineWithConfig(name string, cfg config) (harness.Engine, error) {
 			Persist:     cfg.Persist,
 			Diagnostics: cfg.Diagnostics,
 		}), nil
+	case "bleve":
+		return bleve.New(), nil
+	case "bluge":
+		return bluge.New(), nil
 	default:
 		return nil, fmt.Errorf("bench: unknown engine %q", name)
 	}

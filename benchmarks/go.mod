@@ -2,8 +2,48 @@ module github.com/dariasmyr/fts-engine/benchmarks
 
 go 1.25
 
-require github.com/dariasmyr/fts-engine v0.0.0
+require (
+	github.com/blevesearch/bleve/v2 v2.4.4
+	github.com/blugelabs/bluge v0.2.2
+	github.com/dariasmyr/fts-engine v0.0.0
+)
 
-require github.com/kljensen/snowball v0.10.0 // indirect
+require (
+	github.com/RoaringBitmap/roaring v1.9.3 // indirect
+	github.com/axiomhq/hyperloglog v0.0.0-20191112132149-a4c4c47bc57f // indirect
+	github.com/bits-and-blooms/bitset v1.12.0 // indirect
+	github.com/blevesearch/bleve_index_api v1.1.12 // indirect
+	github.com/blevesearch/geo v0.1.20 // indirect
+	github.com/blevesearch/go-faiss v1.0.24 // indirect
+	github.com/blevesearch/go-porterstemmer v1.0.3 // indirect
+	github.com/blevesearch/gtreap v0.1.1 // indirect
+	github.com/blevesearch/mmap-go v1.0.4 // indirect
+	github.com/blevesearch/scorch_segment_api/v2 v2.2.16 // indirect
+	github.com/blevesearch/segment v0.9.1 // indirect
+	github.com/blevesearch/snowballstem v0.9.0 // indirect
+	github.com/blevesearch/upsidedown_store_api v1.0.2 // indirect
+	github.com/blevesearch/vellum v1.0.10 // indirect
+	github.com/blevesearch/zapx/v11 v11.3.10 // indirect
+	github.com/blevesearch/zapx/v12 v12.3.10 // indirect
+	github.com/blevesearch/zapx/v13 v13.3.10 // indirect
+	github.com/blevesearch/zapx/v14 v14.3.10 // indirect
+	github.com/blevesearch/zapx/v15 v15.3.16 // indirect
+	github.com/blevesearch/zapx/v16 v16.1.9-0.20241217210638-a0519e7caf3b // indirect
+	github.com/blugelabs/bluge_segment_api v0.2.0 // indirect
+	github.com/blugelabs/ice v1.0.0 // indirect
+	github.com/blugelabs/ice/v2 v2.0.1 // indirect
+	github.com/caio/go-tdigest v3.1.0+incompatible // indirect
+	github.com/dgryski/go-metro v0.0.0-20180109044635-280f6062b5bc // indirect
+	github.com/golang/geo v0.0.0-20210211234256-740aa86cb551 // indirect
+	github.com/golang/protobuf v1.3.2 // indirect
+	github.com/golang/snappy v0.0.1 // indirect
+	github.com/json-iterator/go v0.0.0-20171115153421-f7279a603ede // indirect
+	github.com/klauspost/compress v1.15.2 // indirect
+	github.com/kljensen/snowball v0.10.0 // indirect
+	github.com/mschoch/smat v0.2.0 // indirect
+	go.etcd.io/bbolt v1.3.7 // indirect
+	golang.org/x/sys v0.13.0 // indirect
+	golang.org/x/text v0.8.0 // indirect
+)
 
 replace github.com/dariasmyr/fts-engine => ../

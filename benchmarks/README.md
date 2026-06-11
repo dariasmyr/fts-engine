@@ -162,6 +162,28 @@ The current `fts-engine` parser treats adjacent plain terms as a `Should`-style 
 
 If exact semantic parity is not possible, the difference must be documented in the adapter and README.
 
+### Analyzer Notes
+
+Current baseline analyzer choices for MVP:
+
+- `fts-engine`: `ftspreset.English()`
+- `bleve`: built-in `en`
+- `bluge`: `analyzer.NewStandardAnalyzer()`
+
+These are close enough for an MVP comparison, but not identical.
+
+Implications:
+
+- quality numbers are still useful for broad comparisons
+- exact ranking parity should not be expected
+- any result summary should mention that analyzer families differ slightly across engines
+
+### Query Adapter Notes
+
+Current external adapters use a single analyzed body field and a match-style query over the full query string.
+
+This is intentionally closer to `fts-engine`'s bag-of-words behavior than phrase matching, but it is still adapter-specific behavior and should be treated as approximate semantic alignment rather than exact parser parity.
+
 ### Persistence
 
 Default baseline runs for `fts-engine` use `persist=none`.
