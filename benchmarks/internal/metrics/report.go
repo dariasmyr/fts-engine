@@ -13,11 +13,13 @@ import (
 )
 
 type Record struct {
-	Engine  string        `json:"engine"`
-	Run     RunMeta       `json:"run"`
-	Index   IndexStats    `json:"index"`
-	Latency LatencyStats  `json:"latency"`
-	Quality *QualityStats `json:"quality,omitempty"`
+	Engine  string         `json:"engine"`
+	Run     RunMeta        `json:"run"`
+	Config  map[string]any `json:"config,omitempty"`
+	Index   IndexStats     `json:"index"`
+	Latency LatencyStats   `json:"latency"`
+	Quality *QualityStats  `json:"quality,omitempty"`
+	Extras  map[string]any `json:"extras,omitempty"`
 }
 
 type RunMeta struct {

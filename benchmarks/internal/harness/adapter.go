@@ -21,6 +21,14 @@ type SearchHit struct {
 	Score float64
 }
 
+type MetadataProvider interface {
+	BenchmarkMetadata() map[string]any
+}
+
+type ExtrasProvider interface {
+	BenchmarkExtras() map[string]any
+}
+
 // Engine lifecycle: Open -> (Index... Commit)* -> (Search)* -> Close.
 type Engine interface {
 	Name() string

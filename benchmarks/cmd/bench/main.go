@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	benchftsengine "github.com/dariasmyr/fts-engine/benchmarks/adapters/ftsengine"
 	"github.com/dariasmyr/fts-engine/benchmarks/adapters/mock"
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/dataset"
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
@@ -32,6 +33,12 @@ type config struct {
 	WordsPerQuery int
 	VocabSize     int
 	ZipfS         float64
+	Index         string
+	Scorer        string
+	Lang          string
+	Filter        string
+	Persist       string
+	Diagnostics   bool
 }
 
 func main() {
@@ -53,7 +60,7 @@ func parseFlags(args []string) (config, error) {
 
 	var (
 		engines       = fs.String("engines", "mock", "comma-separated engine list")
-		dataset = fs.String("dataset", "synthetic", "dataset name")
+		dataset       = fs.String("dataset", "synthetic", "dataset name")
 		k             = fs.Int("k", 10, "top-k results")
 		out           = fs.String("out", "", "JSON output path")
 		work          = fs.String("work", "./work", "work directory for engine state")
@@ -67,6 +74,12 @@ func parseFlags(args []string) (config, error) {
 		wordsPerQuery = fs.Int("words-per-query", 3, "synthetic words per query")
 		vocabSize     = fs.Int("vocab-size", 20000, "synthetic vocabulary size")
 		zipfS         = fs.Float64("zipf-s", 1.07, "synthetic Zipf exponent")
+		index         = fs.String("index", "slicedradix", "fts-engine index: slicedradix|hamt")
+		scorer        = fs.String("scorer", "bm25", "fts-engine scorer: none|bm25|tfidf")
+		lang          = fs.String("lang", "en", "fts-engine language preset: en|ru|multi|none")
+		filter        = fs.String("filter", "none", "fts-engine filter: none|bloom|cuckoo|ribbon")
+		persist       = fs.String("persist", "none", "fts-engine persistence: none|snapshot|segment")
+		diagnostics   = fs.Bool("diagnostics", false, "enable fts-engine search diagnostics")
 	)
 
 	if err := fs.Parse(args); err != nil {
@@ -89,6 +102,12 @@ func parseFlags(args []string) (config, error) {
 		WordsPerQuery: *wordsPerQuery,
 		VocabSize:     *vocabSize,
 		ZipfS:         *zipfS,
+		Index:         strings.TrimSpace(*index),
+		Scorer:        strings.TrimSpace(*scorer),
+		Lang:          strings.TrimSpace(*lang),
+		Filter:        strings.TrimSpace(*filter),
+		Persist:       strings.TrimSpace(*persist),
+		Diagnostics:   *diagnostics,
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -141,6 +160,9 @@ func (c config) validate() error {
 	if c.ZipfS <= 1 {
 		return fmt.Errorf("bench: -zipf-s must be > 1, got %g", c.ZipfS)
 	}
+	if err := validateFTSEngineConfig(c); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -156,7 +178,7 @@ func run(cfg config) error {
 
 	records := make([]metrics.Record, 0, len(cfg.Engines))
 	for _, engineName := range cfg.Engines {
-		eng, err := buildEngine(engineName)
+		eng, err := buildEngineWithConfig(engineName, cfg)
 		if err != nil {
 			return err
 		}
@@ -173,10 +195,17 @@ func run(cfg config) error {
 		}
 
 		qs := quality.Compute(rep.QueryResults, corpus.Qrels, cfg.K)
-		records = append(records, metrics.Build(rep, qs, metrics.RunMeta{
+		rec := metrics.Build(rep, qs, metrics.RunMeta{
 			Dataset:     cfg.Dataset,
 			Concurrency: cfg.Concurrency,
-		}))
+		})
+		if provider, ok := eng.(harness.MetadataProvider); ok {
+			rec.Config = provider.BenchmarkMetadata()
+		}
+		if provider, ok := eng.(harness.ExtrasProvider); ok {
+			rec.Extras = provider.BenchmarkExtras()
+		}
+		records = append(records, rec)
 	}
 
 	if cfg.Out != "" {
@@ -204,13 +233,51 @@ func loadDataset(cfg config) (*dataset.Corpus, error) {
 	}), nil
 }
 
-func buildEngine(name string) (harness.Engine, error) {
+func buildEngineWithConfig(name string, cfg config) (harness.Engine, error) {
 	switch name {
 	case "mock":
 		return mock.New(), nil
+	case "fts-engine":
+		return benchftsengine.New(benchftsengine.Config{
+			Index:       cfg.Index,
+			Scorer:      cfg.Scorer,
+			Lang:        cfg.Lang,
+			Filter:      cfg.Filter,
+			Persist:     cfg.Persist,
+			Diagnostics: cfg.Diagnostics,
+		}), nil
 	default:
 		return nil, fmt.Errorf("bench: unknown engine %q", name)
 	}
+}
+
+func validateFTSEngineConfig(cfg config) error {
+	switch cfg.Index {
+	case "slicedradix", "hamt":
+	default:
+		return fmt.Errorf("bench: unsupported -index %q", cfg.Index)
+	}
+	switch cfg.Scorer {
+	case "", "none", "bm25", "tfidf":
+	default:
+		return fmt.Errorf("bench: unsupported -scorer %q", cfg.Scorer)
+	}
+	switch cfg.Lang {
+	case "", "none", "en", "ru", "multi":
+	default:
+		return fmt.Errorf("bench: unsupported -lang %q", cfg.Lang)
+	}
+	switch cfg.Filter {
+	case "", "none", "bloom", "cuckoo", "ribbon":
+	default:
+		return fmt.Errorf("bench: unsupported -filter %q", cfg.Filter)
+	}
+	switch cfg.Persist {
+	case "", "none", "snapshot", "segment":
+	default:
+		return fmt.Errorf("bench: unsupported -persist %q", cfg.Persist)
+	}
+	return nil
 }
 
 func writeJSON(path string, records []metrics.Record) error {
