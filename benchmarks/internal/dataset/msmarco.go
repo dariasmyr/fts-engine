@@ -101,7 +101,7 @@ func readQueryTSV(path string, k int) ([]harness.Query, error) {
 		if tab < 0 {
 			continue
 		}
-		out = append(out, harness.Query{ID: line[:tab], Text: line[tab+1:], K: k})
+		out = append(out, harness.Query{ID: line[:tab], Kind: harness.QueryKindText, Text: line[tab+1:], K: k})
 	}
 	return out, sc.Err()
 }

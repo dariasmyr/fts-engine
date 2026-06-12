@@ -77,3 +77,35 @@ func TestWriteJSONStableSchema(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteTableGroupsByQueryClass(t *testing.T) {
+	recs := []Record{
+		{Engine: "fts-engine", QueryClass: "phrase", Index: IndexStats{BuildDurationMS: 1000, DocsPerSec: 100}, Latency: LatencyStats{P50MS: 1, P95MS: 2, P99MS: 3, QPS: 10}},
+		{Engine: "bleve", QueryClass: "term", Index: IndexStats{BuildDurationMS: 1000, DocsPerSec: 100}, Latency: LatencyStats{P50MS: 1, P95MS: 2, P99MS: 3, QPS: 10}},
+		{Engine: "fts-engine", QueryClass: "term", Index: IndexStats{BuildDurationMS: 1000, DocsPerSec: 100}, Latency: LatencyStats{P50MS: 1, P95MS: 2, P99MS: 3, QPS: 10}},
+		{Engine: "bleve", QueryClass: "phrase", Index: IndexStats{BuildDurationMS: 1000, DocsPerSec: 100}, Latency: LatencyStats{P50MS: 1, P95MS: 2, P99MS: 3, QPS: 10}},
+	}
+
+	var out bytes.Buffer
+	if err := WriteTable(&out, recs); err != nil {
+		t.Fatalf("WriteTable() error = %v", err)
+	}
+
+	got := out.String()
+	checks := []string{
+		"QUERY",
+		"ENGINE",
+		"term      bleve",
+		"term      fts-engine",
+		"\n\nphrase    bleve",
+		"phrase    fts-engine",
+	}
+	for _, check := range checks {
+		if !strings.Contains(got, check) {
+			t.Fatalf("WriteTable() output missing %q\n%s", check, got)
+		}
+	}
+	if strings.Index(got, "term   bleve") > strings.Index(got, "phrase  bleve") {
+		t.Fatalf("term rows should appear before phrase rows\n%s", got)
+	}
+}

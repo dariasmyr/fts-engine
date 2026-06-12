@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	bleveapi "github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/search/query"
 
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
 )
@@ -48,9 +50,11 @@ func (a *Adapter) Index(_ context.Context, docs []harness.Document) error {
 func (a *Adapter) Commit(_ context.Context) error { return nil }
 
 func (a *Adapter) Search(_ context.Context, q harness.Query) ([]harness.SearchHit, error) {
-	mq := bleveapi.NewMatchQuery(q.Text)
-	mq.SetField("body")
-	req := bleveapi.NewSearchRequestOptions(mq, q.K, 0, false)
+	bq, err := a.buildQuery(q)
+	if err != nil {
+		return nil, err
+	}
+	req := bleveapi.NewSearchRequestOptions(bq, q.K, 0, false)
 	res, err := a.idx.Search(req)
 	if err != nil {
 		return nil, err
@@ -60,6 +64,70 @@ func (a *Adapter) Search(_ context.Context, q harness.Query) ([]harness.SearchHi
 		hits = append(hits, harness.SearchHit{DocID: hit.ID, Score: hit.Score})
 	}
 	return hits, nil
+}
+
+func (a *Adapter) buildQuery(q harness.Query) (query.Query, error) {
+	switch q.Kind {
+	case "", harness.QueryKindText, harness.QueryKindTerm:
+		mq := bleveapi.NewMatchQuery(q.Text)
+		mq.SetField("body")
+		return mq, nil
+	case harness.QueryKindPhrase:
+		pq := bleveapi.NewMatchPhraseQuery(q.Text)
+		pq.SetField("body")
+		return pq, nil
+	case harness.QueryKindPrefix:
+		pq := bleveapi.NewPrefixQuery(strings.ToLower(q.Text))
+		pq.SetField("body")
+		return pq, nil
+	case harness.QueryKindBoolean:
+		return buildBleveBooleanQuery(q.Boolean)
+	default:
+		return nil, fmt.Errorf("unsupported harness query kind %q", q.Kind)
+	}
+}
+
+func buildBleveBooleanQuery(spec *harness.BoolQuery) (query.Query, error) {
+	bq := bleveapi.NewBooleanQuery()
+	if spec == nil {
+		return bq, nil
+	}
+	for _, clause := range spec.Clauses {
+		child, err := buildBleveAtom(clause.Atom)
+		if err != nil {
+			return nil, err
+		}
+		switch clause.Occur {
+		case harness.OccurMust:
+			bq.AddMust(child)
+		case harness.OccurShould:
+			bq.AddShould(child)
+		case harness.OccurMustNot:
+			bq.AddMustNot(child)
+		default:
+			return nil, fmt.Errorf("unsupported bool occur %q", clause.Occur)
+		}
+	}
+	return bq, nil
+}
+
+func buildBleveAtom(atom harness.Atom) (query.Query, error) {
+	switch atom.Kind {
+	case "", harness.QueryKindText, harness.QueryKindTerm:
+		mq := bleveapi.NewMatchQuery(atom.Text)
+		mq.SetField("body")
+		return mq, nil
+	case harness.QueryKindPhrase:
+		pq := bleveapi.NewMatchPhraseQuery(atom.Text)
+		pq.SetField("body")
+		return pq, nil
+	case harness.QueryKindPrefix:
+		pq := bleveapi.NewPrefixQuery(strings.ToLower(atom.Text))
+		pq.SetField("body")
+		return pq, nil
+	default:
+		return nil, fmt.Errorf("unsupported bool atom kind %q", atom.Kind)
+	}
 }
 
 func (a *Adapter) IndexSizeBytes() (int64, error) { return dirSize(a.dir) }

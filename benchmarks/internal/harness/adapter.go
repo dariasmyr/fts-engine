@@ -10,10 +10,45 @@ type Document struct {
 	Body string
 }
 
-type Query struct {
-	ID   string
+type QueryKind string
+
+const (
+	QueryKindText    QueryKind = "text"
+	QueryKindTerm    QueryKind = "term"
+	QueryKindPhrase  QueryKind = "phrase"
+	QueryKindPrefix  QueryKind = "prefix"
+	QueryKindBoolean QueryKind = "boolean"
+)
+
+type BoolOccur string
+
+const (
+	OccurMust    BoolOccur = "must"
+	OccurShould  BoolOccur = "should"
+	OccurMustNot BoolOccur = "must_not"
+)
+
+type Atom struct {
+	Kind QueryKind
 	Text string
-	K    int
+}
+
+type BoolClause struct {
+	Occur BoolOccur
+	Atom  Atom
+}
+
+type BoolQuery struct {
+	Clauses []BoolClause
+}
+
+type Query struct {
+	ID      string
+	Kind    QueryKind
+	Text    string
+	K       int
+	Class   string
+	Boolean *BoolQuery
 }
 
 type SearchHit struct {

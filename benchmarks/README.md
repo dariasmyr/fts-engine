@@ -1,152 +1,50 @@
 # benchmarks
 
-Cross-engine benchmark suite for the current `fts-engine` repository.
+Cross-engine benchmark suite for `fts-engine`, `bleve`, and `bluge`.
 
-This directory contains the newer cross-engine benchmark suite. The repository also keeps a repo-specific evaluation flow under `cmd/bench` and `internal/bench` for wiki-dump and custom ground-truth workloads.
+This module is the newer benchmark layer under `benchmarks/`.
+The repository also still has a separate legacy benchmark flow under root `cmd/bench` and `internal/bench`.
 
-## Status
+Current default baseline:
 
-This document describes the current benchmark suite layout, baseline methodology, and run workflow.
+- `-concurrency=8`
+- `fts-engine -persist=snapshot`
 
-## Goals
+## What It Can Run
 
-- Compare the current `fts-engine` implementation against other Go or external FTS engines.
-- Keep the suite separate from library and application code.
-- Produce repeatable benchmark runs with explicit engine configuration.
-- Measure both search quality and operational performance.
+Datasets:
 
-## Non-Goals
+- `synthetic`: deterministic synthetic corpus
+- `msmarco`: natural-language quality benchmark
+- `wiki-typed`: real-data typed query benchmark
 
-- Reusing the fork's benchmark code unchanged.
-- Hiding analyzer or query-semantics differences between engines.
-- Shipping per-engine tuning in the baseline comparison.
-- Replacing the legacy repo-specific benchmark flow.
-
-## Current Repository Constraints
-
-The suite must target the current repository shape rather than the fork's API.
-
-Current `fts-engine` integration points:
-
-- service construction via `fts.New(...)`
-- indexing via `svc.Index(ctx, fts.Document{...})`
-- searching via `svc.SearchDocuments(...)`
-- optional persistence via `pkg/ftspersist` snapshot and segment helpers
-
-The suite must also respect that this repository exposes:
-
-- index variants `slicedradix` and `hamt`
-- scorer options `none`, `bm25`, `tfidf`
-- optional diagnostics such as strategy selection, postings read, and WAND usage
-- a separate legacy benchmark path for repo-owned wiki/custom-ground-truth evaluation
-
-## Current Coverage
-
-Currently implemented in the suite:
-
-- a separate Go module under `benchmarks/`
-- a shared harness and report format
-- adapters for `fts-engine`, `bleve`, and `bluge`
-- synthetic and MS MARCO datasets
-- JSON and plain-text table outputs
-- suite automation and result aggregation
-
-Not yet implemented:
-
-- `tantivy`
-- `riot`
-- per-engine tuning profiles
-- fancy terminal UI
-
-## Baseline `fts-engine` Profile
-
-Default baseline settings for `fts-engine` in cross-engine runs:
-
-- index: `slicedradix`
-- language preset: `ftspreset.English()`
-- scorer: `fts.WithScorer(fts.BM25())`
-- filter: none
-- persistence: `persist=none`
-- field model: single-field body text
-
-This baseline exists to keep the default cross-engine comparison simple and reproducible.
-
-## Engine Matrix
-
-Baseline engine set for MVP:
+Engines:
 
 - `fts-engine`
 - `bleve`
 - `bluge`
+- `mock`: internal-only, useful only for harness bring-up
 
-Deferred engines:
+Output:
 
-- `tantivy`: allowed later through an explicit HTTP shim and documented as out-of-process
-- `riot`: deferred until a fair English-oriented configuration is defined
+- plain-text summary table
+- JSON report via `-out`
 
-Internal-only adapter:
+## Quick Start
 
-- `mock`: used only for harness bring-up and smoke verification; not part of user-facing comparison runs
-
-## Datasets
-
-The suite will support two dataset classes.
-
-### Synthetic
-
-Purpose:
-
-- deterministic control runs
-- throughput and latency comparison without external corpus dependencies
-- stress-testing different corpus sizes and query concurrency levels
-
-Baseline shape:
-
-- Zipf-distributed vocabulary
-- configurable document count
-- configurable query count
-- deterministic seed
-
-### MS MARCO
-
-Purpose:
-
-- shared quality benchmark across engines
-- realistic top-k ranking comparisons
-
-Sampling rule for capped runs:
-
-- always keep qrel-positive documents for kept queries
-- fill the remaining document budget with deterministic reservoir sampling
-
-This avoids the false-quality collapse that happens when a naive head slice drops relevant documents from the corpus.
-
-Expected files for the initial loader:
-
-- `collection.tsv`
-- `queries.dev.small.tsv`
-- `qrels.dev.small.tsv`
-
-## Example Commands
-
-Run commands below from the repository root.
-
-Commands below are written to run from the repository root while targeting the `benchmarks/` module explicitly.
-
-If you want the legacy repo-specific evaluation flow, use the root command `go run ./cmd/bench ...` instead.
-
-Synthetic smoke run:
+Recommended synthetic baseline (heavier comparison run):
 
 ```bash
 (cd benchmarks && go run ./cmd/bench \
   -engines=fts-engine,bleve,bluge \
   -dataset=synthetic \
-  -synth-docs=5000 \
-  -synth-queries=500 \
+  -synth-docs=10000 \
+  -synth-queries=200 \
+  -out=./results/local/synthetic-baseline.json \
   -k=10)
 ```
 
-MS MARCO quality run:
+MS MARCO run:
 
 ```bash
 (cd benchmarks && go run ./cmd/bench \
@@ -155,8 +53,280 @@ MS MARCO quality run:
   -msmarco-dir=./data/msmarco \
   -max-docs=100000 \
   -max-queries=2000 \
+  -concurrency=8 \
+  -persist=snapshot \
+  -out=./results/local/msmarco.json \
   -k=10)
 ```
+
+Wiki typed run:
+
+```bash
+(cd benchmarks && go run ./cmd/bench \
+  -engines=fts-engine,bleve,bluge \
+  -dataset=wiki-typed \
+  -wiki-dump=./data/wiki/simplewiki-latest-pages-articles.xml.bz2 \
+  -wiki-cache-dir=./data/wiki/wiki-typed-cache \
+  -max-docs=50000 \
+  -typed-queries=200 \
+  -query-types=term,and-hh,and-hl,or-hh,phrase,prefix \
+  -concurrency=8 \
+  -persist=snapshot \
+  -out=./results/local/wiki-typed.json \
+  -k=10)
+```
+
+Write JSON output:
+
+```bash
+(cd benchmarks && go run ./cmd/bench \
+  -engines=fts-engine,bleve,bluge \
+  -dataset=synthetic \
+  -out=./results/local/synth.json)
+```
+
+## Supported Modes
+
+### `synthetic`
+
+Use when you want:
+
+- deterministic runs
+- fast smoke tests
+- throughput/latency comparison without external data
+
+Required flags:
+
+- `-dataset=synthetic`
+
+Useful flags:
+
+- `-synth-docs`
+- `-synth-queries`
+- `-words-per-doc`
+- `-words-per-query`
+- `-vocab-size`
+- `-zipf-s`
+
+### `msmarco`
+
+Use when you want:
+
+- realistic natural-language queries
+- shared quality metrics across engines
+
+Required flags:
+
+- `-dataset=msmarco`
+- `-msmarco-dir=/path/to/msmarco`
+
+Useful flags:
+
+- `-max-docs`
+- `-max-queries`
+- `-k`
+
+Expected files inside `-msmarco-dir`:
+
+- `collection.tsv`
+- `queries.dev.small.tsv`
+- `qrels.dev.small.tsv`
+
+### `wiki-typed`
+
+Use when you want:
+
+- typed query classes on real data
+- separate results for `term`, `and-hh`, `and-hl`, `or-hh`, `phrase`, `prefix`
+- benchmark-side exact semantics with generated qrels
+
+Required flags:
+
+- `-dataset=wiki-typed`
+- `-wiki-dump=/path/to/wiki.xml|wiki.xml.gz|wiki.xml.bz2`
+
+Useful flags:
+
+- `-wiki-cache-dir`
+- `-max-docs`
+- `-typed-queries`
+- `-query-types=term,and-hh,and-hl,or-hh,phrase,prefix`
+- `-high-skip-top`
+- `-high-pool`
+- `-low-pool`
+- `-prefix-min-expand`
+- `-prefix-max-expand`
+
+Important notes:
+
+- parsed docs, generated queries, and generated qrels are cached
+- cache files are split into:
+  - `*.docs.json`
+  - `*.queries.json`
+  - `*.qrels.json`
+  - `*.manifest.json`
+- the benchmark builds each engine index once per run, then executes all query classes on that ready index
+- `BUILD(s)`, `docs/s`, and `INDEX(MB)` are therefore shared across query classes for the same engine in the same run
+
+## Common Flags
+
+Available for all dataset modes:
+
+- `-engines=fts-engine,bleve,bluge`
+- `-dataset=synthetic|msmarco|wiki-typed`
+- `-k=10`
+- `-out=./results/run.json`
+- `-work=./work`
+- `-batch=1000`
+- `-warmup=0.10`
+- `-concurrency=8`
+- `-seed=0xC0FFEE`
+
+What they mean:
+
+- `-engines`: engines to compare
+- `-dataset`: corpus mode
+- `-k`: top-k used for quality metrics
+- `-out`: optional JSON output path
+- `-work`: engine work directory
+- `-batch`: indexing batch size
+- `-warmup`: fraction of queries used only for warmup
+- `-concurrency`: parallel search workers
+- `-seed`: deterministic shuffle and sampling seed
+
+## `fts-engine` Flags
+
+These matter only for `fts-engine` runs:
+
+- `-index=slicedradix|hamt`
+- `-scorer=none|bm25|tfidf`
+- `-lang=none|en|ru|multi`
+- `-filter=none|bloom|cuckoo|ribbon`
+- `-persist=none|snapshot|segment`
+- `-diagnostics`
+
+Default `fts-engine` persistence in this suite is `snapshot`.
+
+Examples:
+
+Run `fts-engine` on `hamt`:
+
+```bash
+(cd benchmarks && go run ./cmd/bench \
+  -engines=fts-engine \
+  -dataset=msmarco \
+  -msmarco-dir=./data/msmarco \
+  -out=./results/local/fts-hamt-msmarco.json \
+  -index=hamt)
+```
+
+Measure persisted `snapshot` output:
+
+```bash
+(cd benchmarks && go run ./cmd/bench \
+  -engines=fts-engine \
+  -dataset=wiki-typed \
+  -wiki-dump=./data/wiki/simplewiki-latest-pages-articles.xml.bz2 \
+  -out=./results/local/fts-snapshot.json \
+  -persist=snapshot)
+```
+
+Disable persistence for pure in-memory `fts-engine` runs:
+
+```bash
+(cd benchmarks && go run ./cmd/bench \
+  -engines=fts-engine \
+  -dataset=synthetic \
+  -synth-docs=100000 \
+  -synth-queries=2000 \
+  -out=./results/local/fts-inmemory.json \
+  -persist=none)
+```
+
+Enable diagnostics:
+
+```bash
+(cd benchmarks && go run ./cmd/bench \
+  -engines=fts-engine \
+  -dataset=wiki-typed \
+  -wiki-dump=./data/wiki/simplewiki-latest-pages-articles.xml.bz2 \
+  -out=./results/local/fts-diagnostics.json \
+  -diagnostics)
+```
+
+## Runtime Flow
+
+### `synthetic`
+
+1. Generate synthetic docs and queries.
+2. Build each engine index.
+3. Run warmup queries.
+4. Run measured queries.
+5. Print table and optionally write JSON.
+
+### `msmarco`
+
+1. Load `collection.tsv`, queries, and qrels.
+2. Apply caps from `-max-docs` and `-max-queries`.
+3. Build each engine index.
+4. Run warmup queries.
+5. Run measured queries.
+6. Print table and optionally write JSON.
+
+### `wiki-typed`
+
+1. Load docs from wiki dump or `*.docs.json` cache.
+2. Load typed workload from `*.queries.json` + `*.qrels.json`, or regenerate it.
+3. Refresh `*.manifest.json`.
+4. Build each engine index once.
+5. Run each query class separately on the same ready index.
+6. Print grouped table and optionally write JSON.
+
+Expected progress logs look like:
+
+```text
+bench: loading dataset=wiki-typed
+wiki-typed: docs cache hit file=...
+wiki-typed: queries cache hit file=...
+wiki-typed: qrels cache hit file=...
+wiki-typed: manifest ready file=...
+bench: preparing engine=fts-engine
+bench: engine=fts-engine index ready build_ms=... index_bytes=...
+bench: running engine=fts-engine query_class=term docs=... queries=...
+```
+
+## Output Semantics
+
+Main table columns:
+
+- `BUILD(s)`: index build duration
+- `docs/s`: indexing throughput
+- `INDEX(MB)`: on-disk index size reported by the adapter
+- `p50/p95/p99`: search latency percentiles
+- `QPS`: measured search throughput
+- `Recall@k`, `nDCG@k`, `MRR`: quality metrics
+
+For `wiki-typed`:
+
+- quality metrics come from benchmark-side exact semantics over the corpus
+- they are not human relevance labels like MS MARCO qrels
+
+## Practical Defaults
+
+If you do not pass overrides, this suite currently assumes:
+
+- `-concurrency=8`
+- `-warmup=0.10`
+- `-batch=1000`
+- `-k=10`
+- `fts-engine -persist=snapshot`
+
+Recommended starting points:
+
+- smoke check: `synthetic`, `5000 docs`, `500 queries`
+- realistic synthetic baseline: `100000 docs`, `2000 queries`
+- MS MARCO baseline: `100000 docs`, `2000 queries`
+- wiki-typed baseline: `50000 docs`, `200 queries per class`
 
 ## Automation
 
@@ -166,202 +336,25 @@ Fetch MS MARCO files:
 ./benchmarks/scripts/fetch-msmarco.sh ./benchmarks/data/msmarco
 ```
 
-Run the full suite:
+Run the built-in suite script:
 
 ```bash
 MSMARCO_DIR=./data/msmarco ./benchmarks/scripts/run-suite.sh
 ```
 
-The suite script emits JSON shards under `results/full/` using these scenario groups:
-
-- `var-*` for repeatability runs
-- `conc-*` for concurrency runs
-- `scale-*` for corpus-size runs
-- `synthetic` for the synthetic baseline
-
-Aggregate suite shards into summary tables:
+Aggregate JSON shards:
 
 ```bash
 (cd benchmarks && go run ./cmd/aggregate results/full)
 ```
 
-Local result shards under `results/` are treated as disposable run artifacts. Only placeholder `.gitkeep` files are expected to stay in git.
+## Notes From Current Package Review
 
-## Shared Metrics
+Nothing obviously dead or broken stands out in the current `benchmarks/` code after the recent refactors.
 
-Every engine should report the same core fields where applicable:
+Two things are still intentionally kept even though they are not core user-facing paths:
 
-- build duration
-- documents per second
-- search latency p50
-- search latency p95
-- search latency p99
-- mean search latency
-- QPS
-- index size on disk
-- Recall@k
-- MRR
-- nDCG@k
+- `adapters/mock`: useful for harness bring-up and tests
+- `cmd/aggregate` legacy JSON-array fallback: harmless compatibility layer for older shards
 
-## `fts-engine`-Specific Extras
-
-When diagnostics are enabled for `fts-engine`, the report may additionally include:
-
-- execution strategy
-- strategy skip reason
-- postings read
-- index lookups
-- diagnostics timing breakdown
-- WAND usage and skip reasons
-
-These fields are extra metadata. They are not part of the cross-engine required minimum schema.
-
-## Methodology Rules
-
-The suite should follow these rules by default.
-
-### Fairness
-
-- Use one baseline analyzer family per engine and document differences explicitly.
-- Do not apply engine-specific tuning in baseline runs.
-- Keep query concurrency explicit and identical across engines for a given scenario.
-- Keep top-k identical across engines for a given scenario.
-
-### Query Semantics
-
-The current `fts-engine` parser treats adjacent plain terms as a `Should`-style boolean query. Adapters for other engines should aim for the closest available bag-of-words semantics rather than silently switching to phrase matching.
-
-If exact semantic parity is not possible, the difference must be documented in the adapter and README.
-
-### Analyzer Notes
-
-Current baseline analyzer choices:
-
-- `fts-engine`: `ftspreset.English()`
-- `bleve`: built-in `en`
-- `bluge`: `analyzer.NewStandardAnalyzer()`
-
-These are close enough for an MVP comparison, but not identical.
-
-Implications:
-
-- quality numbers are still useful for broad comparisons
-- exact ranking parity should not be expected
-- any result summary should mention that analyzer families differ slightly across engines
-
-### Query Adapter Notes
-
-Current external adapters use a single analyzed body field and a match-style query over the full query string.
-
-This is intentionally closer to `fts-engine`'s bag-of-words behavior than phrase matching, but it is still adapter-specific behavior and should be treated as approximate semantic alignment rather than exact parser parity.
-
-### Persistence
-
-Default baseline runs for `fts-engine` use `persist=none`.
-
-Implications:
-
-- build and search metrics are still valid
-- on-disk size for the default `fts-engine` profile will be `0`
-- later iterations will add `persist=snapshot` and `persist=segment` scenarios so that size comparisons become meaningful for this engine
-
-### Reproducibility
-
-- deterministic shuffle seed
-- deterministic dataset sampling seed
-- explicit batch size
-- explicit concurrency
-- explicit warmup behavior
-
-## Output Requirements
-
-The suite must produce:
-
-- machine-readable JSON output
-- plain-text table output for local inspection
-
-The JSON should contain at least:
-
-- run metadata
-- engine name
-- engine configuration
-- dataset configuration
-- index metrics
-- latency metrics
-- quality metrics when qrels are available
-- optional engine-specific extras
-
-## Stable Report Schema
-
-The JSON output format is versioned.
-
-Current version:
-
-- `schema_version = "benchmarks.v1alpha1"`
-
-JSON layout:
-
-- top-level object
-- `schema_version`
-- `records`
-
-Each record contains:
-
-- `engine`
-- `run`
-- `dataset`
-- `config`
-- `index`
-- `latency`
-- optional `quality`
-- optional `extras`
-
-`run` contains execution-environment and run-control metadata:
-
-- `timestamp`
-- `go_version`
-- `goos`
-- `goarch`
-- `num_cpu`
-- `concurrency`
-- `batch_size`
-- `warmup_frac`
-
-`dataset` contains corpus metadata separate from runtime metadata:
-
-- `name`
-- `num_docs`
-- `num_queries`
-- optional `params`
-
-Rules:
-
-- additive fields are allowed in future schema revisions
-- breaking field moves or renames require a new `schema_version`
-- `extras` is reserved for engine-specific diagnostics and must not be required for cross-engine comparisons
-
-## Repository Boundary
-
-This repository currently has two benchmark layers:
-
-- `benchmarks/`: the newer cross-engine suite for synthetic, MS MARCO, and aggregated scenario runs
-- `cmd/bench` + `internal/bench`: the legacy repo-specific evaluation flow for wiki/custom-ground-truth workloads
-
-Both layers are separate from the public library packages under `pkg/`.
-
-## Current Coverage
-
-Currently implemented in the suite:
-
-- shared benchmark harness
-- `fts-engine`, `bleve`, and `bluge` adapters
-- synthetic dataset generator
-- MS MARCO loader
-- versioned JSON reports
-- suite scripts and shard aggregation
-
-Not yet implemented:
-
-- `tantivy`
-- `riot`
-- containerized automation for external engines
+If you want, those can be removed later as a separate cleanup pass, but they are not urgent.

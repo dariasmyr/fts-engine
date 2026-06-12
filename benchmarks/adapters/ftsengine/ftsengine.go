@@ -147,7 +147,7 @@ func (a *Adapter) Search(ctx context.Context, q harness.Query) ([]harness.Search
 	if a.cfg.Diagnostics {
 		ctx = fts.WithDiagnostics(ctx)
 	}
-	res, err := a.svc.SearchPlainText(ctx, q.Text, q.K)
+	res, err := a.search(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +157,64 @@ func (a *Adapter) Search(ctx context.Context, q harness.Query) ([]harness.Search
 		hits = append(hits, harness.SearchHit{DocID: string(item.ID), Score: item.Score})
 	}
 	return hits, nil
+}
+
+func (a *Adapter) search(ctx context.Context, q harness.Query) (*fts.SearchResult, error) {
+	switch q.Kind {
+	case "", harness.QueryKindText:
+		return a.svc.SearchPlainText(ctx, q.Text, q.K)
+	case harness.QueryKindTerm:
+		return a.svc.Search(ctx, fts.TermQuery{Term: q.Text}, q.K)
+	case harness.QueryKindPhrase:
+		return a.svc.Search(ctx, fts.PhraseQuery{Phrase: q.Text}, q.K)
+	case harness.QueryKindPrefix:
+		return a.svc.Search(ctx, fts.PrefixQuery{Prefix: q.Text}, q.K)
+	case harness.QueryKindBoolean:
+		fq, err := buildFTSBooleanQuery(q.Boolean)
+		if err != nil {
+			return nil, err
+		}
+		return a.svc.Search(ctx, fq, q.K)
+	default:
+		return nil, fmt.Errorf("unsupported harness query kind %q", q.Kind)
+	}
+}
+
+func buildFTSBooleanQuery(spec *harness.BoolQuery) (*fts.BooleanQuery, error) {
+	if spec == nil {
+		return &fts.BooleanQuery{}, nil
+	}
+	out := &fts.BooleanQuery{Clauses: make([]fts.BoolClause, 0, len(spec.Clauses))}
+	for _, clause := range spec.Clauses {
+		atom, err := buildFTSAtom(clause.Atom)
+		if err != nil {
+			return nil, err
+		}
+		switch clause.Occur {
+		case harness.OccurMust:
+			out.Clauses = append(out.Clauses, fts.MustClause(atom))
+		case harness.OccurShould:
+			out.Clauses = append(out.Clauses, fts.ShouldClause(atom))
+		case harness.OccurMustNot:
+			out.Clauses = append(out.Clauses, fts.MustNotClause(atom))
+		default:
+			return nil, fmt.Errorf("unsupported bool occur %q", clause.Occur)
+		}
+	}
+	return out, nil
+}
+
+func buildFTSAtom(atom harness.Atom) (fts.Query, error) {
+	switch atom.Kind {
+	case "", harness.QueryKindTerm, harness.QueryKindText:
+		return fts.TermQuery{Term: atom.Text}, nil
+	case harness.QueryKindPhrase:
+		return fts.PhraseQuery{Phrase: atom.Text}, nil
+	case harness.QueryKindPrefix:
+		return fts.PrefixQuery{Prefix: atom.Text}, nil
+	default:
+		return nil, fmt.Errorf("unsupported bool atom kind %q", atom.Kind)
+	}
 }
 
 func (a *Adapter) IndexSizeBytes() (int64, error) { return a.indexBytes, nil }

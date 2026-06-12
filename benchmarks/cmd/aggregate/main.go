@@ -36,7 +36,7 @@ func run(dir string, w io.Writer) error {
 		return fmt.Errorf("aggregate: list json files: %w", err)
 	}
 	if len(files) == 0 {
-		return fmt.Errorf("aggregate: no JSON files found in %s", dir)
+		return fmt.Errorf("aggregate: no JSON files found in %s (run ./benchmarks/scripts/run-suite.sh first or point to a directory with benchmark -out JSON files)", dir)
 	}
 	sort.Strings(files)
 
@@ -99,29 +99,32 @@ func renderVariability(w io.Writer, runs map[string][]metrics.Record) {
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "\nVariability")
-	_, _ = fmt.Fprintln(tw, "ENGINE\tBUILD(s)\tp50(ms)\tp95(ms)\tQPS\tRecall@k\tnDCG@k\tMRR")
+	_, _ = fmt.Fprintln(tw, "ENGINE\tQUERY\tBUILD(s)\tp50(ms)\tp95(ms)\tQPS\tRecall@k\tnDCG@k\tMRR")
 	perEngine := map[string]map[string][]float64{}
 	for _, recs := range runs {
 		for _, r := range recs {
-			if perEngine[r.Engine] == nil {
-				perEngine[r.Engine] = make(map[string][]float64)
+			label := recordLabel(r)
+			if perEngine[label] == nil {
+				perEngine[label] = make(map[string][]float64)
 			}
-			appendMetric(perEngine[r.Engine], "build_s", float64(r.Index.BuildDurationMS)/1000.0)
-			appendMetric(perEngine[r.Engine], "p50", r.Latency.P50MS)
-			appendMetric(perEngine[r.Engine], "p95", r.Latency.P95MS)
-			appendMetric(perEngine[r.Engine], "qps", r.Latency.QPS)
+			appendMetric(perEngine[label], "build_s", float64(r.Index.BuildDurationMS)/1000.0)
+			appendMetric(perEngine[label], "p50", r.Latency.P50MS)
+			appendMetric(perEngine[label], "p95", r.Latency.P95MS)
+			appendMetric(perEngine[label], "qps", r.Latency.QPS)
 			if r.Quality != nil {
-				appendMetric(perEngine[r.Engine], "recall", r.Quality.RecallAtK)
-				appendMetric(perEngine[r.Engine], "ndcg", r.Quality.NDCGAtK)
-				appendMetric(perEngine[r.Engine], "mrr", r.Quality.MRR)
+				appendMetric(perEngine[label], "recall", r.Quality.RecallAtK)
+				appendMetric(perEngine[label], "ndcg", r.Quality.NDCGAtK)
+				appendMetric(perEngine[label], "mrr", r.Quality.MRR)
 			}
 		}
 	}
 	engines := sortedKeys(perEngine)
 	for _, engine := range engines {
 		metricsMap := perEngine[engine]
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			engine,
+		base, query := splitRecordLabel(engine)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			base,
+			query,
 			formatRange(metricsMap["build_s"], 2),
 			formatRange(metricsMap["p50"], 3),
 			formatRange(metricsMap["p95"], 3),
@@ -140,11 +143,11 @@ func renderAxis(w io.Writer, title string, runs map[string][]metrics.Record) {
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintf(tw, "\n%s\n", title)
-	_, _ = fmt.Fprintln(tw, "SCENARIO\tENGINE\tBUILD(s)\tp50(ms)\tp95(ms)\tp99(ms)\tQPS\tRecall@k\tnDCG@k\tMRR")
+	_, _ = fmt.Fprintln(tw, "SCENARIO\tENGINE\tQUERY\tBUILD(s)\tp50(ms)\tp95(ms)\tp99(ms)\tQPS\tRecall@k\tnDCG@k\tMRR")
 	labels := sortedKeys(runs)
 	for _, label := range labels {
 		recs := append([]metrics.Record(nil), runs[label]...)
-		sort.Slice(recs, func(i, j int) bool { return recs[i].Engine < recs[j].Engine })
+		sort.Slice(recs, func(i, j int) bool { return recordLabel(recs[i]) < recordLabel(recs[j]) })
 		for _, r := range recs {
 			recall, ndcg, mrr := "-", "-", "-"
 			if r.Quality != nil {
@@ -152,9 +155,14 @@ func renderAxis(w io.Writer, title string, runs map[string][]metrics.Record) {
 				ndcg = fmt.Sprintf("%.4f", r.Quality.NDCGAtK)
 				mrr = fmt.Sprintf("%.4f", r.Quality.MRR)
 			}
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%.2f\t%.3f\t%.3f\t%.3f\t%.0f\t%s\t%s\t%s\n",
+			queryClass := r.QueryClass
+			if queryClass == "" {
+				queryClass = "-"
+			}
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%.2f\t%.3f\t%.3f\t%.3f\t%.0f\t%s\t%s\t%s\n",
 				label,
 				r.Engine,
+				queryClass,
 				float64(r.Index.BuildDurationMS)/1000.0,
 				r.Latency.P50MS,
 				r.Latency.P95MS,
@@ -195,6 +203,21 @@ func formatRange(values []float64, decimals int) string {
 		return fmt.Sprintf("%.*f", decimals, v)
 	}
 	return fmt.Sprintf("%s [%s..%s]", fmtNum(med), fmtNum(lo), fmtNum(hi))
+}
+
+func recordLabel(r metrics.Record) string {
+	if r.QueryClass == "" {
+		return r.Engine
+	}
+	return r.Engine + "|" + r.QueryClass
+}
+
+func splitRecordLabel(label string) (string, string) {
+	parts := strings.SplitN(label, "|", 2)
+	if len(parts) == 1 {
+		return label, "-"
+	}
+	return parts[0], parts[1]
 }
 
 func median(values []float64) float64 {

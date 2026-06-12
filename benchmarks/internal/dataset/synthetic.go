@@ -14,6 +14,14 @@ type Corpus struct {
 	Docs    []harness.Document
 	Queries []harness.Query
 	Qrels   quality.Qrels
+	Groups  []QueryGroup
+	Meta    map[string]any
+}
+
+type QueryGroup struct {
+	Name    string
+	Queries []harness.Query
+	Qrels   quality.Qrels
 }
 
 type SyntheticConfig struct {
@@ -68,7 +76,7 @@ func Synthetic(cfg SyntheticConfig) *Corpus {
 				relevant[docID] = 1
 			}
 		}
-		queries[i] = harness.Query{ID: queryID, Text: strings.Join(terms, " "), K: cfg.K}
+		queries[i] = harness.Query{ID: queryID, Kind: harness.QueryKindText, Text: strings.Join(terms, " "), K: cfg.K}
 		if len(relevant) > 0 {
 			qrels[queryID] = relevant
 		}

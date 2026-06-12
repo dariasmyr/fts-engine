@@ -52,13 +52,26 @@ type Report struct {
 }
 
 func Run(ctx context.Context, eng Engine, docs []Document, queries []Query, cfg RunConfig) (*Report, error) {
+	prep, err := Prepare(ctx, eng, docs, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer eng.Close()
+	return RunQueries(ctx, eng, queries, cfg, prep)
+}
+
+func Prepare(ctx context.Context, eng Engine, docs []Document, cfg RunConfig) (_ *Report, err error) {
 	cfg = cfg.withDefaults()
-	rep := &Report{Engine: eng.Name(), NumDocs: len(docs), NumQueries: len(queries)}
+	rep := &Report{Engine: eng.Name(), NumDocs: len(docs)}
 
 	if err := eng.Open(ctx, cfg.Dir); err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
-	defer eng.Close()
+	defer func() {
+		if err != nil {
+			_ = eng.Close()
+		}
+	}()
 
 	buildStart := time.Now()
 	for i := 0; i < len(docs); i += cfg.BatchSize {
@@ -77,6 +90,18 @@ func Run(ctx context.Context, eng Engine, docs []Document, queries []Query, cfg 
 
 	if size, err := eng.IndexSizeBytes(); err == nil {
 		rep.IndexBytes = size
+	}
+
+	return rep, nil
+}
+
+func RunQueries(ctx context.Context, eng Engine, queries []Query, cfg RunConfig, base *Report) (*Report, error) {
+	cfg = cfg.withDefaults()
+	rep := &Report{Engine: eng.Name(), NumQueries: len(queries)}
+	if base != nil {
+		rep.NumDocs = base.NumDocs
+		rep.IndexBuildDur = base.IndexBuildDur
+		rep.IndexBytes = base.IndexBytes
 	}
 
 	shuffled := append([]Query(nil), queries...)
@@ -113,22 +138,22 @@ func Run(ctx context.Context, eng Engine, docs []Document, queries []Query, cfg 
 		jobs := make(chan int)
 		errCh := make(chan error, len(measure))
 		for worker := 0; worker < cfg.Concurrency; worker++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for i := range jobs {
-					q := measure[i]
-					t0 := time.Now()
-					hits, err := eng.Search(ctx, q)
-					dt := time.Since(t0)
-					if err != nil {
-						errCh <- fmt.Errorf("search %q: %w", q.ID, err)
-						continue
+			wg.Go(
+				func() {
+					for i := range jobs {
+						q := measure[i]
+						t0 := time.Now()
+						hits, err := eng.Search(ctx, q)
+						dt := time.Since(t0)
+						if err != nil {
+							errCh <- fmt.Errorf("search %q: %w", q.ID, err)
+							continue
+						}
+						rep.Latencies[i] = dt
+						rep.QueryResults[i] = QueryResult{QueryID: q.ID, Latency: dt, Hits: hits}
 					}
-					rep.Latencies[i] = dt
-					rep.QueryResults[i] = QueryResult{QueryID: q.ID, Latency: dt, Hits: hits}
-				}
-			}()
+				},
+			)
 		}
 		for i := range measure {
 			jobs <- i

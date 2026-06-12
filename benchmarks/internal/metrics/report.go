@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
-	"text/tabwriter"
+	"sort"
 	"time"
 
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
@@ -20,14 +20,15 @@ type ReportFile struct {
 }
 
 type Record struct {
-	Engine  string         `json:"engine"`
-	Run     RunMeta        `json:"run"`
-	Dataset DatasetMeta    `json:"dataset"`
-	Config  map[string]any `json:"config,omitempty"`
-	Index   IndexStats     `json:"index"`
-	Latency LatencyStats   `json:"latency"`
-	Quality *QualityStats  `json:"quality,omitempty"`
-	Extras  map[string]any `json:"extras,omitempty"`
+	Engine     string         `json:"engine"`
+	QueryClass string         `json:"query_class,omitempty"`
+	Run        RunMeta        `json:"run"`
+	Dataset    DatasetMeta    `json:"dataset"`
+	Config     map[string]any `json:"config,omitempty"`
+	Index      IndexStats     `json:"index"`
+	Latency    LatencyStats   `json:"latency"`
+	Quality    *QualityStats  `json:"quality,omitempty"`
+	Extras     map[string]any `json:"extras,omitempty"`
 }
 
 type RunMeta struct {
@@ -128,18 +129,40 @@ func WriteJSON(w io.Writer, recs []Record) error {
 }
 
 func WriteTable(w io.Writer, recs []Record) error {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "ENGINE\tBUILD(s)\tdocs/s\tINDEX(MB)\tp50(ms)\tp95(ms)\tp99(ms)\tQPS\tRecall@k\tnDCG@k\tMRR"); err != nil {
+	ordered := append([]Record(nil), recs...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		leftQuery, rightQuery := normalizedQueryClass(ordered[i]), normalizedQueryClass(ordered[j])
+		leftRank, rightRank := queryClassRank(leftQuery), queryClassRank(rightQuery)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if leftQuery != rightQuery {
+			return leftQuery < rightQuery
+		}
+		return ordered[i].Engine < ordered[j].Engine
+	})
+
+	if _, err := fmt.Fprintf(w, "%-8s  %-11s  %8s  %7s  %9s  %7s  %7s  %7s  %7s  %9s  %7s  %7s\n",
+		"QUERY", "ENGINE", "BUILD(s)", "docs/s", "INDEX(MB)", "p50(ms)", "p95(ms)", "p99(ms)", "QPS", "Recall@k", "nDCG@k", "MRR",
+	); err != nil {
 		return err
 	}
-	for _, r := range recs {
+	prevQuery := ""
+	for i, r := range ordered {
 		recall, ndcg, mrr := "-", "-", "-"
 		if r.Quality != nil {
 			recall = fmt.Sprintf("%.4f", r.Quality.RecallAtK)
 			ndcg = fmt.Sprintf("%.4f", r.Quality.NDCGAtK)
 			mrr = fmt.Sprintf("%.4f", r.Quality.MRR)
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%.2f\t%.0f\t%.1f\t%.3f\t%.3f\t%.3f\t%.0f\t%s\t%s\t%s\n",
+		queryClass := normalizedQueryClass(r)
+		if i > 0 && queryClass != prevQuery {
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(w, "%-8s  %-11s  %8.2f  %7.0f  %9.1f  %7.3f  %7.3f  %7.3f  %7.0f  %9s  %7s  %7s\n",
+			queryClass,
 			r.Engine,
 			float64(r.Index.BuildDurationMS)/1000.0,
 			r.Index.DocsPerSec,
@@ -149,8 +172,37 @@ func WriteTable(w io.Writer, recs []Record) error {
 		); err != nil {
 			return err
 		}
+		prevQuery = queryClass
 	}
-	return tw.Flush()
+	return nil
+}
+
+func normalizedQueryClass(r Record) string {
+	if r.QueryClass == "" {
+		return "-"
+	}
+	return r.QueryClass
+}
+
+func queryClassRank(class string) int {
+	switch class {
+	case "term":
+		return 0
+	case "and-hh":
+		return 1
+	case "and-hl":
+		return 2
+	case "or-hh":
+		return 3
+	case "phrase":
+		return 4
+	case "prefix":
+		return 5
+	case "-":
+		return 100
+	default:
+		return 50
+	}
 }
 
 func ms(d time.Duration) float64 { return float64(d.Nanoseconds()) / 1e6 }

@@ -1,6 +1,6 @@
 module github.com/dariasmyr/fts-engine/benchmarks
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/blevesearch/bleve/v2 v2.4.4
