@@ -306,6 +306,14 @@ res, _ := engine.Search(context.Background(), q, 10)
 fmt.Println(res.TotalResultsCount)
 ```
 
+If you want plain-text bag-of-words behavior without query-string syntax parsing, use `SearchPlainText(...)`:
+
+```go
+res, _ := engine.SearchPlainText(context.Background(), `define: cancer`, 10)
+```
+
+The interactive CUI defaults to plain-text search and can be toggled into query-syntax mode with `Ctrl+T`.
+
 Field-scoped helpers are also available when you want to restrict search to one field without building the AST manually:
 
 ```go

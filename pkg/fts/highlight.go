@@ -94,6 +94,68 @@ func (s *Service) Highlight(query, text string, h Highlighter) []Fragment {
 	return h.Highlight(query, text, s.pipeline, s.keyGen)
 }
 
+func (s *Service) HighlightPlainText(query, text string, h Highlighter) []Fragment {
+	return h.HighlightPlainText(query, text, s.pipeline, s.keyGen)
+}
+
+func (h Highlighter) HighlightPlainText(query, text string, pipeline Pipeline, keyGen KeyGenerator) []Fragment {
+	if text == "" || query == "" {
+		return nil
+	}
+
+	pre, post, maxFrag, fragSize, sep := h.PreTag, h.PostTag, h.MaxFragments, h.FragmentSize, h.Separator
+	if pre == "" {
+		pre = "<mark>"
+	}
+	if post == "" {
+		post = "</mark>"
+	}
+	if maxFrag <= 0 {
+		maxFrag = 3
+	}
+	if fragSize <= 0 {
+		fragSize = 150
+	}
+	if sep == "" {
+		sep = " ... "
+	}
+	if h.Pipeline != nil {
+		pipeline = h.Pipeline
+	}
+	if h.KeyGen != nil {
+		keyGen = h.KeyGen
+	}
+	if pipeline == nil {
+		pipeline = defaultPipeline{}
+	}
+	if keyGen == nil {
+		keyGen = WordKeys
+	}
+
+	plan := highlightPlan{exactKeys: buildKeySet(query, pipeline, keyGen)}
+	if len(plan.exactKeys) == 0 {
+		return nil
+	}
+
+	matches := findHighlightMatches(text, pipeline, keyGen, plan)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	clusters := clusterMatches(matches, fragSize)
+	sort.SliceStable(clusters, func(i, j int) bool { return len(clusters[i]) > len(clusters[j]) })
+	if len(clusters) > maxFrag {
+		clusters = clusters[:maxFrag]
+	}
+	sort.SliceStable(clusters, func(i, j int) bool { return clusters[i][0].start < clusters[j][0].start })
+
+	out := make([]Fragment, 0, len(clusters))
+	for _, cluster := range clusters {
+		out = append(out, renderFragment(text, cluster, fragSize, pre, post, sep))
+	}
+	return out
+}
+
 func buildHighlightPlan(query string, pipeline Pipeline, keyGen KeyGenerator) highlightPlan {
 	if parsed, err := ParseQuery(query); err == nil {
 		plan := highlightPlan{exactKeys: make(map[string]struct{})}

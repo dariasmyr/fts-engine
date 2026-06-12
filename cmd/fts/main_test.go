@@ -28,9 +28,9 @@ func TestServiceAdapterObservesSearchDiagnostics(t *testing.T) {
 	}
 
 	adapter := &serviceAdapter{service: svc, searchStats: ftsstats.NewSearchStats(8)}
-	res, err := adapter.SearchDocuments(ctx, "alpha", 10)
+	res, err := adapter.SearchPlainText(ctx, "alpha", 10)
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchPlainText() error = %v", err)
 	}
 	if res.Diagnostics == nil {
 		t.Fatal("expected projected diagnostics in models.SearchResult")
@@ -57,16 +57,51 @@ func TestServiceAdapterObservesSearchDiagnostics(t *testing.T) {
 	}
 }
 
-func TestServiceAdapterHighlightTextUsesFTSHighlighter(t *testing.T) {
+func TestServiceAdapterHighlightPlainTextUsesFTSHighlighter(t *testing.T) {
 	svc := fts.New(slicedradix.New(), fts.WordKeys)
 	adapter := &serviceAdapter{service: svc}
 
-	got := adapter.HighlightText("obam*", "obama obamacare orbit")
-	if strings.Count(got, "\033[31m") != 2 {
-		t.Fatalf("expected 2 highlighted matches, got %q", got)
+	got := adapter.HighlightPlainText("obam*", "obama obamacare orbit")
+	if strings.Count(got, "\033[31m") != 0 {
+		t.Fatalf("plain-text highlight should not treat '*' as prefix syntax, got %q", got)
 	}
-	if strings.Contains(got, "\033[31morbit\033[0m") {
-		t.Fatalf("unexpected highlight for non-matching word: %q", got)
+	if !strings.Contains(got, "obama obamacare orbit") {
+		t.Fatalf("plain-text highlight should fall back to raw text, got %q", got)
+	}
+
+	got = adapter.HighlightPlainText("obama obamacare", "obama obamacare orbit")
+	if strings.Count(got, "\033[31m") != 2 {
+		t.Fatalf("expected 2 highlighted plain-text matches, got %q", got)
+	}
+}
+
+func TestServiceAdapterHighlightQueryStringUsesSyntax(t *testing.T) {
+	svc := fts.New(slicedradix.New(), fts.WordKeys)
+	adapter := &serviceAdapter{service: svc}
+
+	got := adapter.HighlightQueryString("obam*", "obama obamacare orbit")
+	if strings.Count(got, "\033[31m") != 2 {
+		t.Fatalf("expected 2 highlighted syntax matches, got %q", got)
+	}
+}
+
+func TestServiceAdapterSearchQueryStringUsesParserSemantics(t *testing.T) {
+	svc := fts.New(slicedradix.New(), fts.WordKeys)
+	ctx := context.Background()
+	if err := indexTestDocument(ctx, svc, "doc-a", "barack obama"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
+	}
+	if err := indexTestDocument(ctx, svc, "doc-b", "obama only"); err != nil {
+		t.Fatalf("Index(doc-b) error = %v", err)
+	}
+
+	adapter := &serviceAdapter{service: svc}
+	res, err := adapter.SearchQueryString(ctx, `"barack obama"`, 10)
+	if err != nil {
+		t.Fatalf("SearchQueryString() error = %v", err)
+	}
+	if len(res.ResultData) != 1 || res.ResultData[0].ID != "doc-a" {
+		t.Fatalf("unexpected syntax-mode results: %+v", res.ResultData)
 	}
 }
 

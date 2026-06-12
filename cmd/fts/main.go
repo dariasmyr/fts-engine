@@ -254,7 +254,30 @@ type serviceAdapter struct {
 	searchStats    *ftsstats.SearchStats
 }
 
-func (s *serviceAdapter) HighlightText(query string, text string) string {
+func (s *serviceAdapter) HighlightPlainText(query string, text string) string {
+	if s == nil || s.service == nil || strings.TrimSpace(query) == "" || text == "" {
+		return text
+	}
+
+	fragments := s.service.HighlightPlainText(query, text, pkgfts.Highlighter{
+		PreTag:       "\033[31m",
+		PostTag:      "\033[0m",
+		MaxFragments: 3,
+		FragmentSize: 180,
+		Separator:    " ... ",
+	})
+	if len(fragments) == 0 {
+		return text
+	}
+
+	out := make([]string, 0, len(fragments))
+	for _, fragment := range fragments {
+		out = append(out, fragment.Text)
+	}
+	return strings.Join(out, "\n")
+}
+
+func (s *serviceAdapter) HighlightQueryString(query string, text string) string {
 	if s == nil || s.service == nil || strings.TrimSpace(query) == "" || text == "" {
 		return text
 	}
@@ -277,7 +300,33 @@ func (s *serviceAdapter) HighlightText(query string, text string) string {
 	return strings.Join(out, "\n")
 }
 
-func (s *serviceAdapter) SearchDocuments(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
+func (s *serviceAdapter) SearchPlainText(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
+	ctx = pkgfts.WithDiagnostics(ctx)
+	result, err := s.service.SearchPlainText(ctx, query, maxResults)
+	if s.searchStats != nil {
+		s.searchStats.ObserveResult(query, result, err)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]models.ResultData, 0, len(result.Results))
+	for _, item := range result.Results {
+		out = append(out, models.ResultData{
+			ID:            string(item.ID),
+			UniqueMatches: item.UniqueMatches,
+			TotalMatches:  item.TotalMatches,
+		})
+	}
+
+	return &models.SearchResult{
+		ResultData:        out,
+		TotalResultsCount: result.TotalResultsCount,
+		Diagnostics:       projectDiagnostics(result.Diagnostics),
+	}, nil
+}
+
+func (s *serviceAdapter) SearchQueryString(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
 	ctx = pkgfts.WithDiagnostics(ctx)
 	result, err := s.service.SearchDocuments(ctx, query, maxResults)
 	if s.searchStats != nil {

@@ -147,9 +147,7 @@ func (a *Adapter) Search(ctx context.Context, q harness.Query) ([]harness.Search
 	if a.cfg.Diagnostics {
 		ctx = fts.WithDiagnostics(ctx)
 	}
-	// Benchmarks compare plain-text relevance, so feed the raw query text through the
-	// engine's analysis pipeline instead of its query-string parser.
-	res, err := a.svc.Search(ctx, fts.TermQuery{Term: q.Text}, q.K)
+	res, err := a.svc.SearchPlainText(ctx, q.Text, q.K)
 	if err != nil {
 		return nil, err
 	}

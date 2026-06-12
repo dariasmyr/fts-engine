@@ -146,3 +146,18 @@ func TestHighlightSupportsPrefixQueries(t *testing.T) {
 		t.Fatalf("mark count = %d, want 2 (got %q)", got, frags[0].Text)
 	}
 }
+
+func TestHighlightPlainTextTreatsFieldLikeTextAsPlainTokens(t *testing.T) {
+	svc := New(newMemoryIndex(), WordKeys)
+
+	frags := svc.HighlightPlainText("title:beta", "title beta gamma", Highlighter{})
+	if len(frags) != 1 {
+		t.Fatalf("frags = %d, want 1", len(frags))
+	}
+	if !strings.Contains(frags[0].Text, "<mark>title</mark>") {
+		t.Fatalf("plain-text highlight should include title token: %q", frags[0].Text)
+	}
+	if !strings.Contains(frags[0].Text, "<mark>beta</mark>") {
+		t.Fatalf("plain-text highlight should include beta token: %q", frags[0].Text)
+	}
+}

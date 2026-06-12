@@ -292,6 +292,45 @@ func TestSearchDocumentsQuotedPhraseUsesPhraseQuery(t *testing.T) {
 	}
 }
 
+func TestSearchPlainTextTreatsQuotedPhraseAsBagOfWords(t *testing.T) {
+	svc := New(newPositionalMemoryIndex(), WordKeys)
+
+	ctx := context.Background()
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama"); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
+	}
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "obama only"); err != nil {
+		t.Fatalf("Index(doc-b) error = %v", err)
+	}
+	if err := indexDefaultDoc(ctx, svc, "doc-c", "barack only"); err != nil {
+		t.Fatalf("Index(doc-c) error = %v", err)
+	}
+
+	res, err := svc.SearchPlainText(ctx, `"barack obama"`, 10)
+	if err != nil {
+		t.Fatalf("SearchPlainText() error = %v", err)
+	}
+	if len(res.Results) != 3 {
+		t.Fatalf("len(Results) = %d, want 3", len(res.Results))
+	}
+}
+
+func TestSearchPlainTextDoesNotTreatMustNotAsSyntax(t *testing.T) {
+	idx := newMemoryIndex()
+
+	svc := New(idx, WordKeys)
+	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1}, namedPosting{"doc-c", 1})
+	idx.entries["beta"] = refsForIDs(svc.registry, namedPosting{"doc-b", 1}, namedPosting{"doc-c", 1})
+
+	res, err := svc.SearchPlainText(context.Background(), "alpha -beta", 10)
+	if err != nil {
+		t.Fatalf("SearchPlainText() error = %v", err)
+	}
+	if len(res.Results) != 3 {
+		t.Fatalf("len(Results) = %d, want 3", len(res.Results))
+	}
+}
+
 func TestIndexDocumentReturnsErrorWhenFilterAddFails(t *testing.T) {
 	idx := newMemoryIndex()
 	svc := New(idx, WordKeys, WithFilter(rejectingFilter{}))

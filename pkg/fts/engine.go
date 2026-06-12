@@ -160,12 +160,24 @@ func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults 
 	return s.searchQueryString(ctx, query, "", queryFieldScope{}, maxResults)
 }
 
+func (s *Service) SearchPlainText(ctx context.Context, query string, maxResults int) (*SearchResult, error) {
+	return s.searchPlainText(ctx, query, "", queryFieldScope{}, maxResults)
+}
+
 func (s *Service) SearchField(ctx context.Context, field string, query string, maxResults int) (*SearchResult, error) {
 	return s.searchQueryString(ctx, query, field, queryFieldScope{}, maxResults)
 }
 
+func (s *Service) SearchPlainTextField(ctx context.Context, field string, query string, maxResults int) (*SearchResult, error) {
+	return s.searchPlainText(ctx, query, field, queryFieldScope{}, maxResults)
+}
+
 func (s *Service) SearchFields(ctx context.Context, fields []string, query string, maxResults int) (*SearchResult, error) {
 	return s.searchQueryString(ctx, query, "", newQueryFieldScope(fields), maxResults)
+}
+
+func (s *Service) SearchPlainTextFields(ctx context.Context, fields []string, query string, maxResults int) (*SearchResult, error) {
+	return s.searchPlainText(ctx, query, "", newQueryFieldScope(fields), maxResults)
 }
 
 func (s *Service) searchQueryString(ctx context.Context, query string, defaultField string, scope queryFieldScope, maxResults int) (*SearchResult, error) {
@@ -185,6 +197,26 @@ func (s *Service) searchQueryString(ctx context.Context, query string, defaultFi
 	exec.observePreprocess(preStart)
 
 	res, err := s.searchResultForQuery(ctx, parsed, maxResults, scope)
+	if err != nil {
+		return nil, err
+	}
+	exec.observeTotal(start)
+	return attachDiagnostics(ctx, res), nil
+}
+
+func (s *Service) searchPlainText(ctx context.Context, query string, defaultField string, scope queryFieldScope, maxResults int) (*SearchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ctx, exec := ensureDiagnosticsContext(ctx)
+
+	start := exec.startTimer()
+
+	preStart := exec.startTimer()
+	plain := bindDefaultField(TermQuery{Term: query}, defaultField)
+	exec.observePreprocess(preStart)
+
+	res, err := s.searchResultForQuery(ctx, plain, maxResults, scope)
 	if err != nil {
 		return nil, err
 	}
