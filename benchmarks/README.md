@@ -40,6 +40,7 @@ Recommended synthetic baseline (heavier comparison run):
   -dataset=synthetic \
   -synth-docs=10000 \
   -synth-queries=200 \
+  -concurrency=1 \
   -out=./results/local/synthetic-baseline.json \
   -k=10)
 ```
@@ -53,7 +54,7 @@ MS MARCO run:
   -msmarco-dir=./data/msmarco \
   -max-docs=100000 \
   -max-queries=2000 \
-  -concurrency=8 \
+  -concurrency=1 \
   -persist=snapshot \
   -out=./results/local/msmarco.json \
   -k=10)
@@ -70,7 +71,7 @@ Wiki typed run:
   -max-docs=50000 \
   -typed-queries=200 \
   -query-types=term,and-hh,and-hl,or-hh,phrase,prefix \
-  -concurrency=8 \
+  -concurrency=1 \
   -persist=snapshot \
   -out=./results/local/wiki-typed.json \
   -k=10)
