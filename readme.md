@@ -135,7 +135,7 @@ Supported query-string syntax:
 - `title:hotel`
 - `title:"hotel barge"`
 - `bar*`
-- `+(title:barack title:french) -market`
+- `+(title:hotel title:french) -market`
 
 Programmatic queries are available through the AST types in `pkg/fts` such as `TermQuery`, `PhraseQuery`, `PrefixQuery`, and `BooleanQuery`.
 

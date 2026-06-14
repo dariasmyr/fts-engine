@@ -152,10 +152,10 @@ func TestIndexSearchReturnsSeqOrder(t *testing.T) {
 func TestSearchPrefix(t *testing.T) {
 	idx := New()
 	inserts := map[string][]string{
-		"barack": {"doc-a", "doc-a"},
+		"barley": {"doc-a", "doc-a"},
 		"banana": {"doc-b"},
 		"barge":  {"doc-c"},
-		"obama":  {"doc-a"},
+		"market": {"doc-a"},
 		"russia": {"doc-d"},
 	}
 	for word, docs := range inserts {
@@ -203,9 +203,9 @@ func TestSearchPrefixNoMatch(t *testing.T) {
 
 func TestSearchPrefixExactKey(t *testing.T) {
 	idx := New()
-	insertOrd(t, idx, "barack", "doc-1", 0)
+	insertOrd(t, idx, "barley", "doc-1", 0)
 
-	refs, err := idx.SearchPrefix("barack")
+	refs, err := idx.SearchPrefix("barley")
 	if err != nil {
 		t.Fatalf("SearchPrefix() error = %v", err)
 	}
