@@ -1,56 +1,44 @@
 # Fast Turtle Search Engine
 
-Reusable full-text search engine in Go with configurable indexes, filters, stemming pipeline, and snapshot support.
+Reusable full-text search library for Go.
 
-<p align="center"><img src="docs/logo.png" alt="Logo" width="50%"></p>
+It provides:
 
-### Demo Cast
+- mutable in-memory search via `pkg/fts`
+- built-in indexes in `pkg/index/slicedradix` and `pkg/index/hamt`
+- query-string, phrase, boolean, field-scoped, and prefix search
+- optional pipelines, stemming, and language presets via `pkg/textproc` and `pkg/ftspreset`
+- mutable snapshots and sealed read-only segments via `pkg/ftspersist`
+- per-request diagnostics and aggregated search stats via `pkg/ftsstats`
 
-![Demo](docs/demo.gif)
+## Public API Surface
 
-## What this repository provides
+For external integrations, prefer these public packages:
 
+- `pkg/fts` - core engine, document model, query API
+- `pkg/index/slicedradix` - exact, positional, and prefix index
+- `pkg/index/hamt` - exact and positional index
+- `pkg/keygen` - token-to-key generators
+- `pkg/ftspersist` - recommended snapshot and segment persistence API
+- `pkg/segment` - lower-level sealed segment API
+- `pkg/textproc` - tokenizers and filters
+- `pkg/ftspreset` - ready-to-use pipeline presets
+- `pkg/filter` - bloom, cuckoo, and ribbon filters
+- `pkg/ftsstats` - aggregated search observability
 
-The repository has two distinct layers:
+`cmd/*`, `internal/*`, and `benchmarks/*` are repository-owned tooling, not the main library surface.
 
-- Public library surface:
-  - `pkg/fts`
-  - `pkg/index/*`
-  - `pkg/textproc`
-  - `pkg/keygen`
-  - `pkg/filter`
-  - `pkg/ftsstats`
-- Repository-local app/tooling:
-  - `cmd/fts` demo app
-  - `cmd/bench` repo-specific benchmark/evaluation CLI
-  - `internal/adapters/cui` terminal UI for the demo app
-  - `internal/bench` benchmark harness used by the legacy benchmark CLI
-  - `benchmarks/` cross-engine benchmark suite
+## Requirements
 
-- Public library API in `pkg/fts`.
-- Public index implementations in `pkg/index/*`:
-	- `slicedradix` (exact + positional + prefix)
-	- `hamt` (exact + positional)
-- Public text processing pipeline in `pkg/textproc`.
-- Public key generators in `pkg/keygen`.
-- Public probabilistic filters in `pkg/filter`.
-- Public diagnostics observer in `pkg/ftsstats`.
-- Repository demo app in `cmd/fts` with:
-  - `prod` mode (run with configurable filters and interactive CUI)
-  - `experiment` mode (collect indexing metrics)
-- Repository benchmark tooling split into:
-  - legacy repo-specific evaluation in `cmd/bench` and `internal/bench`
-  - cross-engine suite in `benchmarks/`
+- Go `1.25+`
 
-## Library usage
-
-### 1) Install
+## Install
 
 ```bash
 go get github.com/dariasmyr/fts-engine@latest
 ```
 
-### 2) Quickstart
+## Quickstart
 
 ```go
 package main
@@ -68,191 +56,51 @@ func main() {
 	engine := fts.New(slicedradix.New(), keygen.Word)
 
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Wikipedia: Rosa is a French hotel barge"}}})
-	res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Rosa runs hotel operations in France"}}})
 
-	fmt.Println(res.TotalResultsCount)
-}
-```
-
-### 3) Persistence Modes
-
-The project currently exposes two different persistence models:
-
-- `snapshot`: mutable persistence for restoring an index and continuing writes
-- `segment`: immutable persistence for restoring a sealed read-only search index
-
-`mmap` belongs only to the `segment` model. It is a way to open raw segment files, not a separate persistence format.
-
-#### Snapshot Files (`pkg/fts`)
-
-Use snapshot files when you want to restore an index and continue indexing after process restart.
-
-- writable after restore
-- based on registered index/filter snapshot codecs
-- best default when you need mutable runtime behavior
-
-Manual codec registration via `init()` + split files. If you enable scorer-aware ranking, prefer `SaveIndexSnapshotWithStats(...)` so restore can recover collection stats.
-
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"io"
-	"os"
-
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
-)
-
-func init() {
-	_ = fts.RegisterIndexSnapshotCodec("slicedradix",
-		func(index fts.Index, w io.Writer) error {
-			s, ok := index.(fts.Serializable)
-			if !ok {
-				return fmt.Errorf("slicedradix: index does not implement Serializable")
-			}
-			return s.Serialize(w)
-		},
-		slicedradix.Load,
-	)
-}
-
-func main() {
-	svc := fts.New(slicedradix.New(), keygen.Word, fts.WithScorer(fts.BM25()))
-	_ = svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "snapshot demo"}}})
-	idx, _ := svc.SnapshotComponents()
-	stats := svc.SnapshotCollectionStats()
-
-	// export to file
-	idxOut, _ := os.Create("./data/segments/default.index.fidx")
-	defer idxOut.Close()
-	_ = fts.SaveIndexSnapshotWithStats(idxOut, "slicedradix", idx, stats)
-
-	
-	// open from file
-	idxIn, _ := os.Open("./data/segments/default.index.fidx")
-	defer idxIn.Close()
-	loadedIndex, _ := fts.LoadIndexSnapshot(idxIn)
-	restored := fts.New(
-		loadedIndex.Index,
-		keygen.Word,
-		fts.WithScorer(fts.BM25()),
-		fts.WithCollectionStatsSnapshot(loadedIndex.CollectionStats),
-	)
-
-	res, _ := restored.SearchDocuments(context.Background(), "snapshot", 10)
-	fmt.Println(res.TotalResultsCount)
-}
-```
-
-If you use scorer-aware restore, prefer `SaveIndexSnapshotWithStats(...)` / `SaveMultiIndexSnapshotWithStats(...)` so `CollectionStats` are preserved.
-
-The current client-library file persistence examples under:
-
-- `examples/client-library/snapshot-save-files/main.go`
-- `examples/client-library/snapshot-load-files/main.go`
-- `examples/client-library/snapshot-load-files-low-level/main.go`
-
-demonstrate mutable `snapshot` export/restore for a service created with `fts.New(...)`, including both a high-level restore path and an explicit low-level restore path.
-
-#### Segment Files (`pkg/segment`)
-
-Use segments when you want to export a sealed read-only index for search.
-
-- read-only after restore
-- built from mutable indexes that implement `segment.Source`
-- suitable for file-backed loading and raw segment `mmap`
-
-The current client-library file persistence examples under:
-
-- `examples/client-library/segment-save-files/main.go`
-- `examples/client-library/segment-load-files/main.go`
-- `examples/client-library/segment-load-files-low-level/main.go`
-- `examples/client-library/segment-load-mmap/main.go`
-
-demonstrate `segment` export/restore for a service created with `fts.New(...)`, including file-based high-level restore, explicit low-level restore, and `mmap` loading.
-
-Format compatibility rules:
-
-- snapshot files must be loaded with `fts.LoadIndexSnapshot(...)` or `fts.LoadMultiIndexSnapshot(...)`
-- segment files must be loaded with `pkg/segment` APIs
-- a snapshot file cannot be opened as a segment file
-- a segment file cannot be loaded as a snapshot file
-
-Example:
-
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"os"
-
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
-)
-
-func main() {
-	svc := fts.New(slicedradix.New(), keygen.Word, fts.WithScorer(fts.BM25()))
-	_ = svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "segment demo"}}})
-
-	if err := os.MkdirAll("./data/segments", 0o755); err != nil {
-		panic(err)
-	}
-
-	if err := ftspersist.SaveSegment(ftspersist.SegmentPaths{Dir: "./data/segments/default"}, svc, "", ftspersist.SaveOptions{SyncFile: true}); err != nil {
-		panic(err)
-	}
-
-	loaded, err := ftspersist.LoadSegment(ftspersist.SegmentPaths{Dir: "./data/segments/default"}, keygen.Word, ftspersist.SegmentLoadOptions{Access: ftspersist.AccessFile}, fts.WithScorer(fts.BM25()))
+	res, err := engine.SearchDocuments(context.Background(), "french hotel", 10)
 	if err != nil {
 		panic(err)
 	}
-	defer loaded.Close()
 
-	res, _ := loaded.Service.SearchDocuments(context.Background(), "segment", 10)
-	fmt.Println(res.TotalResultsCount)
+	fmt.Printf("results=%d\n", res.TotalResultsCount)
+	for _, item := range res.Results {
+		fmt.Printf("id=%s unique=%d total=%d\n", item.ID, item.UniqueMatches, item.TotalMatches)
+	}
 }
 ```
 
-Important:
+Notes:
 
-- this restores a read-only search service
-- the current client-library examples use a manifest-backed segment directory layout
-- raw `segment.OpenFile(...)` is a lower-level API for opening raw segment files directly
+- `fts.New(...)` creates a single-field service backed by `fts.DefaultField`
+- in practice that means the regular single-field index uses the field name `_default`
+- if you do not set a pipeline, the default behavior is alphanumeric tokenization plus lowercasing
+- add `fts.WithScorer(fts.BM25())` or `fts.WithScorer(fts.TFIDF())` when you want score-based ranking
 
-#### `mmap` and Segments
+## Choosing an Index
 
-Raw segment files can be opened with `segment.OpenFile(...)`.
+| Index | Capabilities | When to use |
+| --- | --- | --- |
+| `slicedradix` | exact, positional, prefix | best default if you need prefix queries |
+| `hamt` | exact, positional | use when you do not need prefix queries |
 
-- this is available only for raw segment files
-- `segment.Reader` stays read-only
-- `examples/client-library/segment-load-mmap/main.go` shows the manifest-based `mmap` path
+Prefix queries require an index that implements `fts.PrefixIndex`. Among the built-in mutable indexes, that means `slicedradix`.
 
-Today, `mmap` is a low-level `pkg/segment` API rather than the main persistence flow used by the CLI.
+## Pipelines and Presets
 
-### 4) Custom pipeline and language presets
-
-Default preset shortcut:
+Use a preset when the defaults fit your language mix:
 
 ```go
-engine := fts.New(slicedradix.New(), keygen.Word, ftspreset.English())
+engine := fts.New(slicedradix.New(), keygen.Word, ftspreset.Multilingual())
 ```
 
 Available presets:
 
-- `textproc.DefaultEnglishPipeline()`
-- `textproc.DefaultRussianPipeline()`
-- `textproc.DefaultMultilingualPipeline()`
-- `ftspreset.English()` / `ftspreset.Russian()` / `ftspreset.Multilingual()`
+- `ftspreset.English()`
+- `ftspreset.Russian()`
+- `ftspreset.Multilingual()`
 
-Custom pipeline:
+Use `pkg/textproc` when you want an explicit pipeline:
 
 ```go
 pipe := textproc.NewPipeline(
@@ -266,501 +114,153 @@ pipe := textproc.NewPipeline(
 engine := fts.New(slicedradix.New(), keygen.Word, fts.WithPipeline(pipe))
 ```
 
-### 5) Query types
+Each `fts.Field` can also override the service-level pipeline with its own `Field.Pipeline`.
 
-String query parsing via `SearchDocuments(...)` supports:
+## Search API
 
-- term query: `hotel`
-- multiple terms as independent SHOULD clauses: `french hotel`
-- phrase query: `"hotel barge"`
-- required term: `+hotel`
-- excluded term: `-market`
-- field-scoped term: `title:hotel`
-- field-scoped phrase: `title:"hotel barge"`
-- prefix query: `bar*`
-- grouped boolean clauses: `+(title:barack title:russia) -market`
+Use:
 
-Examples:
+- `SearchDocuments(...)` for query-string parsing
+- `SearchPlainText(...)` for bag-of-words input without query syntax
+- `SearchField(...)`, `SearchFields(...)` for field-scoped search
+- `SearchPhrase(...)`, `SearchPhraseNear(...)` and field variants for phrase queries
+- `SearchFieldClauses(...)` when different fields need different subqueries
+
+Supported query-string syntax:
+
+- `hotel`
+- `french hotel`
+- `"hotel barge"`
+- `+hotel -market`
+- `title:hotel`
+- `title:"hotel barge"`
+- `bar*`
+- `+(title:barack title:french) -market`
+
+Programmatic queries are available through the AST types in `pkg/fts` such as `TermQuery`, `PhraseQuery`, `PrefixQuery`, and `BooleanQuery`.
+
+Field behavior summary:
+
+- with `fts.New(...)`, documents are indexed only into `_default`
+- with `fts.NewMultiField(...)`, the service keeps a separate index per field name
+- field indexes in multi-field mode are created lazily on first indexing of that field
+- searching a field that has no index does not return an error; it returns zero matches
+
+What that means for different search entry points:
+
+- `SearchDocuments(...)` on a single-field service searches only `_default`
+- `SearchDocuments(...)` on a multi-field service searches across the currently existing field indexes
+- `SearchField(...)`, `SearchPhraseField(...)`, `SearchPhraseNearField(...)`, and field-scoped query syntax like `title:hotel` return zero matches when that field has never been indexed
+- `SearchFields(...)`, `SearchPhraseFields(...)`, `SearchPhraseNearFields(...)`, and `SearchQueryFields(...)` search only the provided fields that currently exist; missing fields are ignored
+- `SearchFieldClauses(...)` behaves the same way per clause: a clause targeting a missing field contributes no matches
+- prefix search behaves the same with one extra rule: if the field exists but its index does not support prefix search, that field contributes no prefix matches
+
+## Multi-Field Services
+
+Use `fts.NewMultiField(...)` when documents have separate searchable fields:
 
 ```go
-// Two independent SHOULD terms.
-res, _ := engine.SearchDocuments(context.Background(), "french hotel", 10)
+factory := func(string) (fts.Index, error) {
+	return slicedradix.New(), nil
+}
 
-// Exact phrase search.
-res, _ = engine.SearchDocuments(context.Background(), `"french hotel"`, 10)
+engine := fts.NewMultiField(factory, keygen.Word)
 
-// Boolean syntax with required, excluded, and grouped clauses.
-res, _ = engine.SearchDocuments(context.Background(), `+(title:barack title:french) -market`, 10)
-```
+_ = engine.Index(context.Background(), fts.Document{
+	ID: "doc-1",
+	Fields: map[string]fts.Field{
+		"title": {Value: "French hotel"},
+		"body":  {Value: "Rosa runs hotel operations in France"},
+	},
+})
 
-If you want to build queries programmatically, use the AST API:
-
-```go
-q := &fts.BooleanQuery{Clauses: []fts.BoolClause{
-	fts.MustClause(fts.TermQuery{Term: "hotel"}),
-	fts.ShouldClause(fts.PhraseQuery{Phrase: "french barge"}),
-	fts.MustNotClause(fts.TermQuery{Term: "market"}),
-}}
-
-res, _ := engine.Search(context.Background(), q, 10)
+res, _ := engine.SearchField(context.Background(), "title", "hotel", 10)
 fmt.Println(res.TotalResultsCount)
 ```
 
-If you want plain-text bag-of-words behavior without query-string syntax parsing, use `SearchPlainText(...)`:
+In this mode, you usually create one index per field through the factory. The engine calls the factory the first time a field needs to be indexed and then reuses that index for future documents in the same field.
 
-```go
-res, _ := engine.SearchPlainText(context.Background(), `define: cancer`, 10)
-```
+## Persistence
 
-The interactive CUI defaults to plain-text search and can be toggled into query-syntax mode with `Ctrl+T`.
+The recommended persistence surface for library consumers is `pkg/ftspersist`.
 
-Field-scoped helpers are also available when you want to restrict search to one field without building the AST manually:
+| Mode | Writable after load | Recommended API | Notes |
+| --- | --- | --- | --- |
+| snapshot | yes | `SaveSnapshot`, `LoadSnapshot` | restores a mutable service |
+| segment | no | `SaveSegment`, `LoadSegment` | restores a sealed read-only service |
 
-```go
-res, _ := engine.SearchField(context.Background(), "title", "hotel", 10)
-res, _ = engine.SearchPhraseField(context.Background(), "title", "hotel barge", 10)
-res, _ = engine.SearchPhraseNearField(context.Background(), "body", "barack obama", 1, 10)
-```
+Important details:
 
-If you want to search across a specific subset of fields, use the `...Fields` variants:
+- snapshot and segment formats are different and not interchangeable
+- `mmap` is available only for segments via `ftspersist.SegmentLoadOptions{Access: ftspersist.AccessMmap}`
+- `pkg/segment` is a lower-level API for raw segment files; prefer `pkg/ftspersist` unless you need direct segment access
+- if you persist built-in indexes through snapshots, or built-in filters through snapshots or segments, call `ftsbuiltin.RegisterSnapshotCodecs()` once at startup
 
-```go
-res, _ := engine.SearchFields(context.Background(), []string{"title", "body"}, "hotel", 10)
-res, _ = engine.SearchPhraseFields(context.Background(), []string{"title", "body"}, "hotel barge", 10)
-res, _ = engine.SearchPhraseNearFields(context.Background(), []string{"title", "body"}, "barack obama", 1, 10)
-```
+Current working persistence examples:
 
-If you want different subqueries for different fields without building the AST manually, use field clauses:
+- `examples/client-library/snapshot-save-files/main.go`
+- `examples/client-library/snapshot-load-files/main.go`
+- `examples/client-library/snapshot-load-files-low-level/main.go`
+- `examples/client-library/segment-save-files/main.go`
+- `examples/client-library/segment-load-files/main.go`
+- `examples/client-library/segment-load-files-low-level/main.go`
+- `examples/client-library/segment-load-mmap/main.go`
 
-```go
-res, _ := engine.SearchFieldClauses(context.Background(), []fts.FieldQueryClause{
-	fts.MustFieldQuery("title", "barack"),
-	fts.MustFieldQuery("body", `"french hotel"`),
-	fts.MustNotFieldQuery("body", "market"),
-}, 10)
-```
+See `examples/client-library/README.md` for the exact run order. The load examples expect artifacts created by the corresponding save examples.
 
-Prefix queries require an index that implements `fts.PrefixIndex`.
-Among the built-in public indexes, `slicedradix` currently supports prefix search.
+## Diagnostics and Stats
 
-### 6) Diagnostics and aggregated stats
-
-Per-request diagnostics are opt-in. Regular search methods return `SearchResult.Diagnostics == nil` unless you enable diagnostics for the request context with `fts.WithDiagnostics(ctx)`.
-
-Useful methods include:
-
-- `Search(...)`
-- `SearchDocuments(...)`
-- `SearchField(...)`
-- `SearchFields(...)`
-- `SearchFieldClauses(...)`
-- `SearchPhrase(...)`
-- `SearchPhraseNear(...)`
-
-Example:
+Per-request diagnostics are opt-in:
 
 ```go
 ctx := fts.WithDiagnostics(context.Background())
-res, _ := engine.SearchDocuments(ctx, "postgres wal checkpoint", 10)
+res, _ := engine.SearchDocuments(ctx, "postgres checkpoint", 10)
 
 fmt.Println(res.Diagnostics.LogicalQueryType)
 fmt.Println(res.Diagnostics.ExecutionStrategy)
-fmt.Println(res.Diagnostics.StrategySkipReason)
 fmt.Println(res.Diagnostics.Timings.Total)
-fmt.Println(res.Diagnostics.PostingEntriesRead)
 ```
 
-If you want aggregated observability across many requests, use `pkg/ftsstats`.
+For aggregated observability across many requests, use `pkg/ftsstats`:
 
 ```go
-package main
-
-import (
-	"context"
-	"fmt"
-
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
-)
-
-func main() {
-	engine := fts.New(slicedradix.New(), keygen.Word)
-	stats := ftsstats.NewSearchStats(64)
-
-	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "postgres wal checkpoint tuning"}}})
-	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "checkpoint and recovery internals"}}})
-
-	ctx := fts.WithDiagnostics(context.Background())
-	res, err := engine.SearchDocuments(ctx, "postgres checkpoint", 10)
-	stats.ObserveResult("postgres checkpoint", res, err)
-
-	snap := stats.Snapshot()
-	for strategy, st := range snap.ByStrategy {
-		fmt.Println(strategy, st.Count, st.AvgDuration(), st.MaxDuration)
-	}
-
-	for _, ev := range stats.Recent(5) {
-		fmt.Println(ev.QueryHash, ev.ExecutionStrategy, ev.TotalDuration)
-	}
-}
+stats := ftsstats.NewSearchStats(64)
+stats.ObserveResult("postgres checkpoint", res, nil)
+snap := stats.Snapshot()
+fmt.Println(len(snap.ByStrategy))
 ```
 
-`pkg/ftsstats` is the recommended programmatic surface for agents and library consumers that need:
+## Client Examples
 
-- recent search events without storing raw query text by default;
-- aggregated stats by execution strategy;
-- structured observability without depending on `cmd/fts` or any HTTP/debug transport layer.
+`examples/client-library` contains the examples that match the current public API.
 
-`ObserveResult(...)` is tolerant: it always records base request/error information, uses `SearchResult` fields like `TotalResultsCount` and returned hit count even when diagnostics are disabled, and fills diagnostics-dependent fields only when `res.Diagnostics` is non-nil.
+- `default` - minimal in-memory usage
+- `preset` - preset pipeline via `pkg/ftspreset`
+- `custom-options` - custom pipeline and filter
+- `snapshot-*` - mutable snapshot save and restore
+- `segment-*` - sealed segment save and restore, including `mmap`
 
-## Usage Modes
+All of these examples currently build and run from repository root.
 
-The repository currently supports these top-level usage patterns:
+## Repository Tooling
 
-- library mode in memory: create `fts.New(...)` or `fts.NewMultiField(...)` and manage indexing/search yourself
-- library mode with mutable snapshots: use `pkg/fts` snapshot save/load helpers
-- library mode with immutable segments: use `pkg/segment` export/load helpers
-- repository demo app mode: run `cmd/fts` and let the repository app manage startup/build persistence
-- repository benchmark mode:
-  - run `cmd/bench` for wiki/custom-ground-truth evaluation
-  - run the suite under `benchmarks/` for synthetic, MS MARCO, and cross-engine evaluation
+This repository also contains project-specific tooling:
 
-For external integrations, prefer the public `pkg/*` packages. Treat `cmd/*` and `internal/*` here as repository-owned tooling rather than the main product surface.
+- `cmd/fts` - demo app
+- `benchmarks/` - benchmark suite and reports
 
-## Run Demo App
-
-Use this only when you want to test the repository demo app itself (`cmd/fts`), not when embedding the library into your service.
-
-Download the Wikipedia dump from:
-
-`https://archive.org/download/enwiki-20210820`
-
-1) Create config from template:
-
-```bash
-cp ./config/config_local_example.yaml ./config/config_local.yaml
-```
-
-2) Run with config:
-
-```bash
-go run ./cmd/fts --config=./config/config_local.yaml
-```
-
-Important config fields:
-
-```yaml
-fts:
-  index: "slicedradix" # slicedradix|hamt
-  keygen: "word"
-  scorer: "none"       # none|bm25|tfidf
-  filter: "none"       # none|bloom|cuckoo|ribbon
-  persistence:
-    enabled: true
-    format: "snapshot"   # snapshot|segment
-    access: "file"       # file|mmap (snapshot supports only file)
-    path: "./data/fts/default"
-    load_on_start: true
-    save_on_build: true
-    buffer_size: 1048576
-    flush_threshold: 262144
-    sync_file: true
-  bloom:
-    expected_items: 1000000
-    bits_per_item: 10
-    k: 7
-  cuckoo:
-    bucket_count: 262144
-    bucket_size: 4
-    max_kicks: 500
-  ribbon:
-    expected_items: 1000000
-    extra_cells: 250000
-    window_size: 24      # 1..32
-    seed: 0
-    max_attempts: 5
-  pipeline:
-    lowercase: true
-    stopwords_en: true
-    stopwords_ru: false
-    stem_en: true
-    stem_ru: false
-    min_length: 3
-mode:
-  type: "prod"        # prod|experiment
-```
-
-Persistence fields in the current CLI config (`fts.persistence`):
-
-- `enabled`: enable persistence flow in CLI prod mode.
-- `format`: `snapshot` for mutable restore, `segment` for read-only restore.
-- `access`: `file` or `mmap`; `snapshot` supports only `file`.
-- `path`: base persistence path. For `snapshot`, the CLI uses `<path>/index.fidx` and `<path>/filter.fidx`. For `segment`, the CLI uses `<path>/` as the segment directory.
-- `load_on_start`: if true and persisted state exists, load it and skip rebuild.
-- `save_on_build`: if true, save persisted state after indexing finishes.
-- `buffer_size`: writer buffer size used during save.
-- `flush_threshold`: buffered flush threshold used by the built-in save helper.
-- `sync_file`: fsync temp file before atomic rename.
-
-## CLI modes
-
-- `prod`:
-  - runs the repository demo app with configurable pipeline and interactive CUI search,
-  - if `fts.persistence.enabled=true` and `load_on_start=true` and persisted state exists: loads it and skips re-index,
-  - otherwise indexes documents and (if `save_on_build=true`) persists state atomically.
-- `experiment`:
-  - always indexes current input and prints demo-app memory/index stats,
-  - does not run CUI persistence restore flow.
-
-## Benchmarks
-
-This repository uses four benchmark types:
-
-- legacy repo-specific end-to-end bench: `go run ./cmd/bench ...`
-- suite runs under `benchmarks/`
-- engine microbench: `go test -run '^$' -bench . ./pkg/fts`
-- index microbench: `go test -run '^$' -bench . ./pkg/index/...`
-
-Use the legacy `cmd/bench` flow when you want repo-specific evaluation on the wiki/custom-ground-truth path.
-
-Use the `benchmarks/` module when you want cross-engine comparisons, synthetic runs, MS MARCO quality evaluation, or aggregated suite runs.
-
-Quick examples from the repository root:
-
-```bash
-(cd benchmarks && go run ./cmd/bench -engines=fts-engine,bleve,bluge -dataset=synthetic -synth-docs=5000 -synth-queries=500 -k=10)
-```
-
-```bash
-./benchmarks/scripts/fetch-msmarco.sh ./benchmarks/data/msmarco
-MSMARCO_DIR=./data/msmarco ./benchmarks/scripts/run-suite.sh
-```
-
-For the full benchmark workflow and report format, see `benchmarks/README.md`.
-
-### 2) Engine Microbench
-
-Use the engine microbench when you want to measure the `pkg/fts` search engine in isolation from the end-to-end CLI flow.
-
-It typically measures:
-
-- `ns/op`
-- `B/op`
-- `allocs/op`
-
-Useful `go test` flags:
-
-- `-bench .`: run all benchmarks in the package
-- `-benchmem`: print allocation stats
-- `-count=5`: repeat the benchmark 5 times
-- `-run '^$'`: skip regular unit tests
-
-Example:
-
-```bash
-go test -run '^$' -bench . -benchmem -count=5 ./pkg/fts | tee before-engine.txt
-```
-
-### 3) Index Microbench
-
-Use the index microbench when you want to measure low-level index operations in the concrete index implementations.
-
-It typically measures:
-
-- exact lookup cost
-- positional lookup cost
-- insert cost
-- positional insert cost
-- allocations per operation
-
-It uses the same `go test` flags as the engine microbench.
-
-Example across all current public indexes:
-
-```bash
-go test -run '^$' -bench . -benchmem -count=5 \
-	./pkg/index/slicedradix \
-	./pkg/index/hamt | tee before-indexes.txt
-```
-
-If you want one command that runs both microbench groups together, use:
-
-```bash
-go test -run '^$' -bench . -benchmem -count=5 \
-	./pkg/fts \
-	./pkg/index/slicedradix \
-	./pkg/index/hamt | tee before-micro-all.txt
-```
-
-### Benchmark Baselines
-
-For fair before/after comparisons:
-
-1. Run the same benchmark type before the change.
-2. Save the output into `before-*` files.
-3. Rerun the same commands after the change and save them into `after-*` files.
-4. Compare like-for-like outputs only.
-
-For end-to-end comparisons keep these flags unchanged between runs:
-
-- `-limit`
-- `-index`
-- `-lang`
-- `-field`
-- `-scorer`
-- `-k`
-- `-warmup`
-- `-repeat`
-- `-shuffle`
-- `-diagnostics`
-- `-observer`
-
-Recommended minimum baseline before a feature branch:
-
-1. Run the engine microbench.
-2. Run the index microbench if you touched index code.
-3. Run the benchmark suite on a representative local dataset.
-
-Compare these outputs:
-
-- microbench: `ns/op`, `B/op`, `allocs/op`
-- `benchmarks/`: indexing duration, latency `p50/p95/p99`, throughput, on-disk size, `nDCG`, `MRR`, `Recall`, plus optional `fts-engine` diagnostics extras
-
-## Ribbon filter usage
-
-Ribbon is a static filter. In `fts` it is used via `BufferedStaticFilter`.
-
-Preferred build API is stream-based (`BuildWithRetriesFromKeyStream`).
-
-```go
-expectedItems := uint32(1_000_000) // estimated unique keys
-extraCells := uint32(250_000)
-windowSize := uint32(16)
-seed := uint64(0)
-maxAttempts := uint32(5)
-
-rf, _ := filter.NewRibbonFilter(
-	expectedItems,
-	extraCells,
-	windowSize,
-	seed,
-)
-
-stream := func(emit func([]byte) bool) error {
-	keys := []string{"alpha", "hotel", "market"}
-	for _, key := range keys {
-		if !emit([]byte(key)) {
-			break
-		}
-	}
-	return nil
-}
-
-_ = rf.BuildWithRetriesFromKeyStream(stream, maxAttempts)
-
-out, _ := os.Create("./data/segments/ribbon.filter.fidx")
-defer out.Close()
-_ = rf.Serialize(out)
-```
-
-If your keys come from files, add a thin adapter in client code that converts file parsing to stream emission.
-
-Minimal parser adapter example (line-by-line keys):
-
-```go
-func parseKeysFile(path string, emit func([]byte) bool) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		key := strings.TrimSpace(s.Text())
-		if key == "" {
-			continue
-		}
-		if !emit([]byte(key)) {
-			break
-		}
-	}
-
-	return s.Err()
-}
-```
-
-Load ribbon filter from file:
-
-```go
-in, _ := os.Open("./data/segments/ribbon.filter.fidx")
-defer in.Close()
-
-ribbonFilter, _ := filter.LoadRibbonFilter(in)
-
-fmt.Println(ribbonFilter.Contains([]byte("market")))
-```
-
-### Standalone filter `Contains` with normalization
-
-Use this when you store normalized keys in filter and later want to check a raw user word.
-
-Example: indexed key is `beauty`, user enters `beautiful`.
-With stemming, both become `beauti`, so normalized check returns `true`.
-
-```go
-pipe := textproc.NewPipeline(
-	textproc.AlnumTokenizer{},
-	textproc.LowercaseFilter{},
-	textproc.EnglishStemFilter{},
-)
-
-indexedTerms := []string{"beauty", "hotel"}
-normalizedKeys := make([]string, 0, len(indexedTerms))
-for _, term := range indexedTerms {
-	keys, _ := fts.NormalizeToKeys(term, pipe, keygen.Word)
-	normalizedKeys = append(normalizedKeys, keys...)
-}
-
-rf, _ := filter.NewRibbonFilter(uint32(len(normalizedKeys)), 32, 24, 0)
-stream := func(emit func([]byte) bool) error {
-	for _, key := range normalizedKeys {
-		if !emit([]byte(key)) {
-			break
-		}
-	}
-	return nil
-}
-
-_ = rf.BuildWithRetriesFromKeyStream(stream, 5)
-
-raw := rf.Contains([]byte("beautiful")) // false: filter stores normalized keys
-
-normalized, _ := fts.ContainsNormalized(rf, "beautiful", pipe, keygen.Word)
-
-fmt.Println("raw", raw, "normalized", normalized) // raw=false normalized=true
-```
-
-`ContainsNormalized` applies pipeline + keygen and checks all normalized keys via `Contains`.
+If you need those flows, use their local docs instead of treating them as the main library entry point.
 
 ## Tests
 
-Run all tests:
-
-```bash
-go test ./...
-```
-
-Run only public packages:
+Run public-package tests:
 
 ```bash
 go test ./pkg/...
 ```
 
-Run microbenchmarks for the FTS engine and all current index implementations:
+Run all tests:
 
 ```bash
-go test -run '^$' -bench . -benchmem ./pkg/fts ./pkg/index/slicedradix ./pkg/index/hamt
+go test ./...
 ```

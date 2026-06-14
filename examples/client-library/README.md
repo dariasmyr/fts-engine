@@ -12,7 +12,7 @@ cd my-fts-app
 go mod init example.com/my-fts-app
 ```
 
-2. Add dependency:
+2. Add the dependency:
 
 ```bash
 go get github.com/dariasmyr/fts-engine@latest
@@ -24,44 +24,65 @@ go get github.com/dariasmyr/fts-engine@latest
 go run .
 ```
 
-If you test against local source, add a `replace` in your project's `go.mod`:
+If you want to test against local source, add a `replace` to your project's `go.mod`:
 
 ```go
 replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
 ```
 
-## Examples in this folder
+## Example groups
 
-The examples currently cover three usage styles:
+Standalone examples:
 
-- in-memory library usage
-- immutable segment export/restore
-- custom runtime configuration
+- `default/main.go` - minimal in-memory setup with defaults
+- `preset/main.go` - in-memory setup with a language preset from `pkg/ftspreset`
+- `custom-options/main.go` - in-memory setup with a custom pipeline and filter
 
-Current example list:
+Snapshot examples:
 
-- `default/main.go` — minimal in-memory setup with defaults.
-- `preset/main.go` — in-memory setup with language preset via `pkg/ftspreset`.
-- `custom-options/main.go` — in-memory setup with custom pipeline and extra options.
-- `snapshot-save-files/main.go` — save mutable snapshot files for a service created with `fts.New(...)`.
-- `snapshot-load-files/main.go` — restore mutable snapshot files through the high-level `ftspersist.LoadSnapshot(...)` API.
-- `snapshot-load-files-low-level/main.go` — restore mutable snapshot files through `LoadSnapshotData(...)` and assemble `fts.New(...)` manually.
-- `segment-save-files/main.go` — export a sealed `segment` directory for a service created with `fts.New(...)`.
-- `segment-load-files/main.go` — restore a sealed `segment` directory through the high-level `ftspersist.LoadSegment(...)` API.
-- `segment-load-files-low-level/main.go` — restore a sealed `segment` directory through `LoadSegmentData(...)` and `RestoreSegmentService(...)` explicitly.
-- `segment-load-mmap/main.go` — restore a sealed `segment` directory through the high-level `ftspersist.LoadSegment(...)` API with `mmap` access.
+- `snapshot-save-files/main.go` - save a mutable snapshot
+- `snapshot-load-files/main.go` - restore it with the high-level `ftspersist.LoadSnapshot(...)` API
+- `snapshot-load-files-low-level/main.go` - restore it with `LoadSnapshotData(...)` and assemble `fts.New(...)` manually
 
-Run each example from repository root:
+Segment examples:
+
+- `segment-save-files/main.go` - export a sealed read-only segment directory
+- `segment-load-files/main.go` - restore it with the high-level `ftspersist.LoadSegment(...)` API
+- `segment-load-files-low-level/main.go` - restore it with `LoadSegmentData(...)` and `RestoreSegmentService(...)`
+- `segment-load-mmap/main.go` - restore it with `ftspersist.LoadSegment(...)` using `mmap`
+
+## Running from this repository
+
+Run examples from repository root.
+
+Standalone examples can be run independently:
 
 ```bash
 go run ./examples/client-library/default
 go run ./examples/client-library/preset
 go run ./examples/client-library/custom-options
+```
+
+Snapshot restore examples depend on files created by the snapshot save example:
+
+```bash
 go run ./examples/client-library/snapshot-save-files
 go run ./examples/client-library/snapshot-load-files
 go run ./examples/client-library/snapshot-load-files-low-level
+```
+
+Segment restore examples depend on files created by the segment save example:
+
+```bash
 go run ./examples/client-library/segment-save-files
 go run ./examples/client-library/segment-load-files
 go run ./examples/client-library/segment-load-files-low-level
 go run ./examples/client-library/segment-load-mmap
 ```
+
+Notes:
+
+- the persistence examples write under `./data/segments`
+- snapshot restore returns a writable service
+- segment restore returns a read-only service
+- `mmap` applies only to segment loading
