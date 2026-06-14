@@ -25,7 +25,7 @@ func mkDoc(id, title, abstract string) models.Document {
 func TestCorpusTitleIndex(t *testing.T) {
 	corpus := Corpus{
 		mkDoc("1", "  Rosa Barge  ", "french hotel barge"),
-		mkDoc("2", "Obama Speech", "presidential address"),
+		mkDoc("2", "Climate Speech", "presidential address"),
 		mkDoc("3", "", "no title"),
 	}
 
@@ -39,7 +39,7 @@ func TestCorpusTitleIndex(t *testing.T) {
 }
 
 func TestResolveRelevant(t *testing.T) {
-	titleIdx := map[string]string{"rosa barge": "1", "obama speech": "2"}
+	titleIdx := map[string]string{"rosa barge": "1", "climate speech": "2"}
 	q := Query{
 		RelevantIDs:    []string{"raw-id-3"},
 		RelevantTitles: []string{"Rosa Barge", "Unknown Title"},
@@ -68,7 +68,7 @@ func TestIndexAndRunQueriesEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	corpus := Corpus{
 		mkDoc("1", "Rosa Barge", "Rosa is a French hotel barge on the Canal du Midi"),
-		mkDoc("2", "Barack Obama", "Obama delivered a speech on climate change"),
+		mkDoc("2", "Climate Policy", "A minister delivered a speech on climate change"),
 		mkDoc("3", "Empty", "unrelated content about cats and dogs"),
 	}
 
@@ -83,7 +83,7 @@ func TestIndexAndRunQueriesEndToEnd(t *testing.T) {
 
 	gt := &GroundTruth{Queries: []Query{
 		{Query: "french hotel barge", RelevantTitles: []string{"Rosa Barge"}},
-		{Query: "obama speech", RelevantTitles: []string{"Barack Obama"}},
+		{Query: "climate speech", RelevantTitles: []string{"Climate Policy"}},
 	}}
 
 	titleIdx := corpus.TitleIndex()

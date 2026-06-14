@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -39,6 +40,44 @@ const (
 const (
 	_readinessDrainDelay = 5 * time.Second
 )
+
+var version = ""
+
+func buildVersion() string {
+	if version != "" {
+		return version
+	}
+
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+
+	var rev string
+	var dirty bool
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return "dev"
+	}
+	if len(rev) > 7 {
+		rev = rev[:7]
+	}
+	v := "dev-" + rev
+	if dirty {
+		v += "+dirty"
+	}
+	return v
+}
 
 func ensureDir(p string) {
 	os.MkdirAll(p, 0755)
@@ -111,12 +150,16 @@ func main() {
 	documents, err := dumpLoader.LoadDocuments(ctx)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			log.Warn("Dump file not found; starting with an empty corpus", "path", cfg.DumpPath)
+			log.Warn("Dump file not found", "path", cfg.DumpPath)
 			documents = nil
 		} else {
 			log.Error("Failed to load documents", "error", sl.Err(err))
 			return
 		}
+	}
+	if err := validateStartupCorpus(cfg, ftsEngine.snapshotLoaded, err); err != nil {
+		log.Error("Cannot start CUI", "error", sl.Err(err))
+		return
 	}
 
 	duration := time.Since(startTime)
@@ -160,7 +203,12 @@ func main() {
 		}
 	}
 
-	appCUI := cui.New(ctx, log, ftsEngine, documentsByID, 10)
+	appCUI := cui.New(ctx, log, ftsEngine, documentsByID, 10, cui.Info{
+		Engine:  "pkg/fts",
+		Index:   cfg.FTS.Index,
+		Filter:  cfg.FTS.Filter,
+		Version: buildVersion(),
+	})
 
 	cuiErr := appCUI.Start()
 	if cuiErr != nil {
@@ -629,6 +677,43 @@ func persistenceAccessMode(cfg *config.Config) ftspersist.AccessMode {
 		return ftspersist.AccessMmap
 	default:
 		return ftspersist.AccessFile
+	}
+}
+
+func validateStartupCorpus(cfg *config.Config, snapshotLoaded bool, dumpErr error) error {
+	if cfg == nil || cfg.Mode.Type != "prod" {
+		return nil
+	}
+	if snapshotLoaded || !errors.Is(dumpErr, os.ErrNotExist) {
+		return nil
+	}
+
+	hints := []string{
+		fmt.Sprintf("set dump_path to an existing dump file (current: %s)", cfg.DumpPath),
+	}
+	if hasPersistedState(cfg) {
+		hints = append(hints, fmt.Sprintf("or enable fts.persistence.load_on_start=true to load the existing persisted index from %s", cfg.FTS.Persistence.Path))
+	} else if cfg.FTS.Persistence.Enabled {
+		hints = append(hints, fmt.Sprintf("or create persistence first; current persistence path is %s", cfg.FTS.Persistence.Path))
+	}
+
+	return fmt.Errorf("no search corpus available: dump file is missing and no persisted index was loaded; %s", strings.Join(hints, "; "))
+}
+
+func hasPersistedState(cfg *config.Config) bool {
+	if cfg == nil || !cfg.FTS.Persistence.Enabled || cfg.FTS.Persistence.Path == "" {
+		return false
+	}
+
+	switch cfg.FTS.Persistence.Format {
+	case "snapshot":
+		_, err := os.Stat(persistenceSnapshotIndexPath(cfg))
+		return err == nil
+	case "segment":
+		_, err := os.Stat(cfg.FTS.Persistence.Path)
+		return err == nil
+	default:
+		return false
 	}
 }
 

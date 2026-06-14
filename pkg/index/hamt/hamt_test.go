@@ -129,9 +129,9 @@ func TestPhraseSearchWithHAMT(t *testing.T) {
 
 	ctx := context.Background()
 	docs := map[string]string{
-		"doc-a": "barack obama gave a speech",
-		"doc-b": "obama speech today barack was there",
-		"doc-c": "barack obama said barack obama again",
+		"doc-a": "hotel barge gave a speech",
+		"doc-b": "barge speech today hotel was there",
+		"doc-c": "hotel barge said hotel barge again",
 	}
 	for id, content := range docs {
 		if err := svc.Index(ctx, fts.Document{ID: fts.DocID(id), Fields: map[string]fts.Field{fts.DefaultField: {Value: content}}}); err != nil {
@@ -139,7 +139,7 @@ func TestPhraseSearchWithHAMT(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchPhrase(ctx, "barack obama", 10)
+	res, err := svc.SearchPhrase(ctx, "hotel barge", 10)
 	if err != nil {
 		t.Fatalf("SearchPhrase() error = %v", err)
 	}
