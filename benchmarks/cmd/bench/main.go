@@ -80,7 +80,7 @@ func parseFlags(args []string) (config, error) {
 		work          = fs.String("work", "./work", "work directory for engine state")
 		batch         = fs.Int("batch", 1000, "indexing batch size")
 		warmup        = fs.Float64("warmup", 0.10, "warmup fraction in [0, 0.5]")
-		concurrency   = fs.Int("concurrency", 8, "search concurrency")
+		concurrency   = fs.Int("concurrency", 1, "search concurrency")
 		seed          = fs.Uint64("seed", 0xC0FFEE, "deterministic seed")
 		msmarcoDir    = fs.String("msmarco-dir", "", "directory with collection.tsv, queries.dev.small.tsv, qrels.dev.small.tsv")
 		wikiDump      = fs.String("wiki-dump", "", "path to real-data wiki dump (.xml|.xml.gz|.xml.bz2) for -dataset=wiki-typed")

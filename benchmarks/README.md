@@ -7,7 +7,7 @@ The repository also still has a separate legacy benchmark flow under root `cmd/b
 
 Current default baseline:
 
-- `-concurrency=8`
+- `-concurrency=1`
 - `fts-engine -persist=snapshot`
 
 ## What It Can Run
@@ -38,9 +38,10 @@ Recommended synthetic baseline (heavier comparison run):
 (cd benchmarks && go run ./cmd/bench \
   -engines=fts-engine,bleve,bluge \
   -dataset=synthetic \
-  -synth-docs=10000 \
-  -synth-queries=200 \
+  -synth-docs=100000 \
+  -synth-queries=2000 \
   -concurrency=1 \
+  -persist=snapshot \
   -out=./results/local/synthetic-baseline.json \
   -k=10)
 ```
@@ -180,7 +181,7 @@ Available for all dataset modes:
 - `-work=./work`
 - `-batch=1000`
 - `-warmup=0.10`
-- `-concurrency=8`
+- `-concurrency=1`
 - `-seed=0xC0FFEE`
 
 What they mean:
@@ -316,7 +317,7 @@ For `wiki-typed`:
 
 If you do not pass overrides, this suite currently assumes:
 
-- `-concurrency=8`
+- `-concurrency=1`
 - `-warmup=0.10`
 - `-batch=1000`
 - `-k=10`
