@@ -8,8 +8,6 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/filter"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/index/hamt"
-	"github.com/dariasmyr/fts-engine/pkg/index/hamtpointered"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 )
 
@@ -55,16 +53,10 @@ func registerSnapshotCodecs() error {
 }
 
 func RegisterIndexes() error {
-	if err := fts.RegisterIndexSnapshotCodec("radix", saveSerializableIndex, radix.Load); err != nil {
-		return err
-	}
 	if err := fts.RegisterIndexSnapshotCodec("slicedradix", saveSerializableIndex, slicedradix.Load); err != nil {
 		return err
 	}
 	if err := fts.RegisterIndexSnapshotCodec("hamt", saveSerializableIndex, hamt.Load); err != nil {
-		return err
-	}
-	if err := fts.RegisterIndexSnapshotCodec("hamtpointered", saveSerializableIndex, hamtpointered.Load); err != nil {
 		return err
 	}
 
@@ -87,14 +79,10 @@ func RegisterFilters() error {
 
 func BuildIndex(name string) (fts.Index, error) {
 	switch name {
-	case "radix":
-		return radix.New(), nil
 	case "slicedradix":
 		return slicedradix.New(), nil
 	case "hamt":
 		return hamt.New(), nil
-	case "hamtpointered":
-		return hamtpointered.New(), nil
 	default:
 		return nil, fmt.Errorf("unknown index %q", name)
 	}

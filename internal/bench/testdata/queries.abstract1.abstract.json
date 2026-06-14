@@ -1,0 +1,16 @@
+{
+  "queries": [
+    {
+      "query": "\"conspiracy theory popularized by a 1995 memo\"",
+      "relevant_titles": ["Wikipedia: Vast right-wing conspiracy"]
+    },
+    {
+      "query": "\"application of science and engineering principles\"",
+      "relevant_titles": ["Wikipedia: Fire protection engineering"]
+    },
+    {
+      "query": "\"cold salty water found deep below the surface\"",
+      "relevant_titles": ["Wikipedia: Deep ocean water"]
+    }
+  ]
+}

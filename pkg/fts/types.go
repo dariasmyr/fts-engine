@@ -1,33 +1,71 @@
 package fts
 
 import (
-	"context"
 	"io"
 )
 
 type DocID string
 
-type DocRef struct {
-	ID    DocID
+type DocOrd uint32
+
+type Posting struct {
+	Ord   DocOrd
 	Count uint32
+	Seq   uint32
 }
+
+type DocRef = Posting
 
 type Result struct {
 	ID            DocID
 	UniqueMatches int
 	TotalMatches  int
+	Score         float64
 }
 
 type SearchResult struct {
 	Results           []Result
 	TotalResultsCount int
-	Timings           map[string]string
+	Diagnostics       *QueryDiagnostics
+}
+
+const DefaultField = "_default"
+
+type Document struct {
+	ID     DocID
+	Fields map[string]Field
+}
+
+type Field struct {
+	Value    string
+	Pipeline Pipeline
 }
 
 type Index interface {
-	Insert(key string, id DocID) error
-	Search(key string) ([]DocRef, error)
+	Insert(key string, ord DocOrd) error
+	Search(key string) ([]Posting, error)
 }
+
+type PrefixIndex interface {
+	Index
+	SearchPrefix(prefix string) ([]Posting, error)
+}
+
+type PositionalPosting struct {
+	Ord DocOrd
+	// Positions may share backing storage with the index and must be treated as read-only.
+	Positions []uint32
+}
+
+type PositionalDocRef = PositionalPosting
+
+type PositionalIndex interface {
+	Index
+	InsertAt(key string, position uint32, ord DocOrd) error
+	SearchPositional(key string) ([]PositionalPosting, error)
+}
+
+type IndexFactory func(fieldName string) (Index, error)
 
 type Analyzer interface {
 	Analyze() Stats
@@ -64,11 +102,6 @@ type StaticFilter interface {
 type RetryableStaticFilter interface {
 	StaticFilter
 	BuildWithRetriesFromKeyStream(stream func(func([]byte) bool) error, maxAttempts uint32) error
-}
-
-type Engine interface {
-	IndexDocument(ctx context.Context, docID DocID, content string) error
-	SearchDocuments(ctx context.Context, query string, maxResults int) (*SearchResult, error)
 }
 
 func WordKeys(token string) ([]string, error) {

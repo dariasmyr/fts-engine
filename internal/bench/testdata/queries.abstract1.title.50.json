@@ -1,0 +1,304 @@
+{
+  "queries": [
+    {
+      "query": "\"abraham lincoln\"",
+      "relevant_titles": [
+        "Wikipedia: Abraham Lincoln"
+      ]
+    },
+    {
+      "query": "\"academy awards\"",
+      "relevant_titles": [
+        "Wikipedia: Academy Awards"
+      ]
+    },
+    {
+      "query": "\"international atomic time\"",
+      "relevant_titles": [
+        "Wikipedia: International Atomic Time"
+      ]
+    },
+    {
+      "query": "\"ayn rand\"",
+      "relevant_titles": [
+        "Wikipedia: Ayn Rand"
+      ]
+    },
+    {
+      "query": "\"alain connes\"",
+      "relevant_titles": [
+        "Wikipedia: Alain Connes"
+      ]
+    },
+    {
+      "query": "\"allan dwan\"",
+      "relevant_titles": [
+        "Wikipedia: Allan Dwan"
+      ]
+    },
+    {
+      "query": "\"agricultural science\"",
+      "relevant_titles": [
+        "Wikipedia: Agricultural science"
+      ]
+    },
+    {
+      "query": "\"andre agassi\"",
+      "relevant_titles": [
+        "Wikipedia: Andre Agassi"
+      ]
+    },
+    {
+      "query": "\"austroasiatic languages\"",
+      "relevant_titles": [
+        "Wikipedia: Austroasiatic languages"
+      ]
+    },
+    {
+      "query": "\"afroasiatic languages\"",
+      "relevant_titles": [
+        "Wikipedia: Afroasiatic languages"
+      ]
+    },
+    {
+      "query": "\"arithmetic mean\"",
+      "relevant_titles": [
+        "Wikipedia: Arithmetic mean"
+      ]
+    },
+    {
+      "query": "\"american football conference\"",
+      "relevant_titles": [
+        "Wikipedia: American Football Conference"
+      ]
+    },
+    {
+      "query": "\"animal farm\"",
+      "relevant_titles": [
+        "Wikipedia: Animal Farm"
+      ]
+    },
+    {
+      "query": "\"aldous huxley\"",
+      "relevant_titles": [
+        "Wikipedia: Aldous Huxley"
+      ]
+    },
+    {
+      "query": "\"appellate court\"",
+      "relevant_titles": [
+        "Wikipedia: Appellate court"
+      ]
+    },
+    {
+      "query": "\"assistive technology\"",
+      "relevant_titles": [
+        "Wikipedia: Assistive technology"
+      ]
+    },
+    {
+      "query": "\"american national standards institute\"",
+      "relevant_titles": [
+        "Wikipedia: American National Standards Institute"
+      ]
+    },
+    {
+      "query": "\"alkali metal\"",
+      "relevant_titles": [
+        "Wikipedia: Alkali metal"
+      ]
+    },
+    {
+      "query": "\"atomic number\"",
+      "relevant_titles": [
+        "Wikipedia: Atomic number"
+      ]
+    },
+    {
+      "query": "\"andrei tarkovsky\"",
+      "relevant_titles": [
+        "Wikipedia: Andrei Tarkovsky"
+      ]
+    },
+    {
+      "query": "\"atlantic ocean\"",
+      "relevant_titles": [
+        "Wikipedia: Atlantic Ocean"
+      ]
+    },
+    {
+      "query": "\"arthur schopenhauer\"",
+      "relevant_titles": [
+        "Wikipedia: Arthur Schopenhauer"
+      ]
+    },
+    {
+      "query": "\"angolan armed forces\"",
+      "relevant_titles": [
+        "Wikipedia: Angolan Armed Forces"
+      ]
+    },
+    {
+      "query": "\"albert sidney johnston\"",
+      "relevant_titles": [
+        "Wikipedia: Albert Sidney Johnston"
+      ]
+    },
+    {
+      "query": "\"albert einstein\"",
+      "relevant_titles": [
+        "Wikipedia: Albert Einstein"
+      ]
+    },
+    {
+      "query": "\"amateur astronomy\"",
+      "relevant_titles": [
+        "Wikipedia: Amateur astronomy"
+      ]
+    },
+    {
+      "query": "\"american revolutionary war\"",
+      "relevant_titles": [
+        "Wikipedia: American Revolutionary War"
+      ]
+    },
+    {
+      "query": "\"annual plant\"",
+      "relevant_titles": [
+        "Wikipedia: Annual plant"
+      ]
+    },
+    {
+      "query": "\"alfred korzybski\"",
+      "relevant_titles": [
+        "Wikipedia: Alfred Korzybski"
+      ]
+    },
+    {
+      "query": "\"alfred hitchcock\"",
+      "relevant_titles": [
+        "Wikipedia: Alfred Hitchcock"
+      ]
+    },
+    {
+      "query": "\"altaic languages\"",
+      "relevant_titles": [
+        "Wikipedia: Altaic languages"
+      ]
+    },
+    {
+      "query": "\"austrian german\"",
+      "relevant_titles": [
+        "Wikipedia: Austrian German"
+      ]
+    },
+    {
+      "query": "\"aegean sea\"",
+      "relevant_titles": [
+        "Wikipedia: Aegean Sea"
+      ]
+    },
+    {
+      "query": "\"alfred nobel\"",
+      "relevant_titles": [
+        "Wikipedia: Alfred Nobel"
+      ]
+    },
+    {
+      "query": "\"alexander graham bell\"",
+      "relevant_titles": [
+        "Wikipedia: Alexander Graham Bell"
+      ]
+    },
+    {
+      "query": "\"aztlan underground\"",
+      "relevant_titles": [
+        "Wikipedia: Aztlan Underground"
+      ]
+    },
+    {
+      "query": "\"american civil war\"",
+      "relevant_titles": [
+        "Wikipedia: American Civil War"
+      ]
+    },
+    {
+      "query": "\"andy warhol\"",
+      "relevant_titles": [
+        "Wikipedia: Andy Warhol"
+      ]
+    },
+    {
+      "query": "\"alp arslan\"",
+      "relevant_titles": [
+        "Wikipedia: Alp Arslan"
+      ]
+    },
+    {
+      "query": "\"american film institute\"",
+      "relevant_titles": [
+        "Wikipedia: American Film Institute"
+      ]
+    },
+    {
+      "query": "\"akira kurosawa\"",
+      "relevant_titles": [
+        "Wikipedia: Akira Kurosawa"
+      ]
+    },
+    {
+      "query": "\"ancient egypt\"",
+      "relevant_titles": [
+        "Wikipedia: Ancient Egypt"
+      ]
+    },
+    {
+      "query": "\"analog brothers\"",
+      "relevant_titles": [
+        "Wikipedia: Analog Brothers"
+      ]
+    },
+    {
+      "query": "\"motor neuron disease\"",
+      "relevant_titles": [
+        "Wikipedia: Motor neuron disease"
+      ]
+    },
+    {
+      "query": "\"anna kournikova\"",
+      "relevant_titles": [
+        "Wikipedia: Anna Kournikova"
+      ]
+    },
+    {
+      "query": "\"alfons maria jakob\"",
+      "relevant_titles": [
+        "Wikipedia: Alfons Maria Jakob"
+      ]
+    },
+    {
+      "query": "\"arable land\"",
+      "relevant_titles": [
+        "Wikipedia: Arable land"
+      ]
+    },
+    {
+      "query": "\"advanced chemistry\"",
+      "relevant_titles": [
+        "Wikipedia: Advanced Chemistry"
+      ]
+    },
+    {
+      "query": "\"anglican communion\"",
+      "relevant_titles": [
+        "Wikipedia: Anglican Communion"
+      ]
+    },
+    {
+      "query": "\"arne kaijser\"",
+      "relevant_titles": [
+        "Wikipedia: Arne Kaijser"
+      ]
+    }
+  ]
+}

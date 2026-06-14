@@ -1,6 +1,6 @@
 module github.com/dariasmyr/fts-engine
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/ilyakaznacheev/cleanenv v1.5.0

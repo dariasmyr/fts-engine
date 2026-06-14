@@ -6,7 +6,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/filter"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/radix"
+	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
@@ -21,14 +21,14 @@ func main() {
 	bloom := filter.NewBloomFilter(100_000, 10, 7)
 
 	engine := fts.New(
-		radix.New(),
+		slicedradix.New(),
 		keygen.Word,
 		fts.WithPipeline(pipe),
 		fts.WithFilter(bloom),
 	)
 
-	_ = engine.IndexDocument(context.Background(), "doc-1", "Search with custom index")
-	_ = engine.IndexDocument(context.Background(), "doc-2", "Another searchable document")
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Search with custom index"}}})
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Another searchable document"}}})
 
 	res, err := engine.SearchDocuments(context.Background(), "searchable", 5)
 	if err != nil {

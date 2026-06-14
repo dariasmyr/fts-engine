@@ -8,7 +8,7 @@ import (
 	"github.com/dariasmyr/fts-engine/internal/lib/logger/sl"
 	"log/slog"
 	"os"
-	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -16,16 +16,36 @@ import (
 )
 
 type SearchEngine interface {
-	IndexDocument(
-		ctx context.Context,
-		docID string,
-		content string,
-	) error
-	SearchDocuments(
+	HighlightPlainText(query string, text string) string
+	HighlightQueryString(query string, text string) string
+	SearchPlainText(
 		ctx context.Context,
 		query string,
 		maxResults int,
 	) (*models.SearchResult, error)
+	SearchQueryString(
+		ctx context.Context,
+		query string,
+		maxResults int,
+	) (*models.SearchResult, error)
+}
+
+type searchMode string
+
+const (
+	searchModePlain  searchMode = "plain"
+	searchModeSyntax searchMode = "syntax"
+)
+
+func (m searchMode) toggle() searchMode {
+	if m == searchModeSyntax {
+		return searchModePlain
+	}
+	return searchModeSyntax
+}
+
+func (m searchMode) inputTitle() string {
+	return fmt.Sprintf("Search [%s | Ctrl+T toggle]", m)
 }
 
 type CUI struct {
@@ -35,6 +55,7 @@ type CUI struct {
 	documents  map[string]models.Document
 	log        *slog.Logger
 	maxResults int
+	mode       searchMode
 }
 
 func New(ctx context.Context, log *slog.Logger, ftsService SearchEngine, documents map[string]models.Document, maxResults int) *CUI {
@@ -50,6 +71,7 @@ func New(ctx context.Context, log *slog.Logger, ftsService SearchEngine, documen
 		documents:  documents,
 		log:        log,
 		maxResults: maxResults,
+		mode:       searchModePlain,
 	}
 }
 
@@ -81,6 +103,9 @@ func (c *CUI) Start() error {
 	if err := c.cui.SetKeybinding("maxResults", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
 		return c.setMaxResults(g, v)
 	}); err != nil {
+		c.log.Error("Failed to set keybinding:", "error", sl.Err(err))
+	}
+	if err := c.cui.SetKeybinding("", gocui.KeyCtrlT, gocui.ModNone, c.toggleSearchMode); err != nil {
 		c.log.Error("Failed to set keybinding:", "error", sl.Err(err))
 	}
 
@@ -147,6 +172,7 @@ func (c *CUI) layout(g *gocui.Gui) error {
 		v.Title = "Time Measurements"
 		v.Wrap = true
 		v.Frame = true
+		c.renderTimeView(v, nil)
 	}
 
 	if v, err := g.SetView("input", maxX/4+1, 2, maxX-2, 4); err != nil {
@@ -154,9 +180,11 @@ func (c *CUI) layout(g *gocui.Gui) error {
 			return err
 		}
 		v.Editable = true
-		v.Title = "Search"
 		v.Wrap = true
 		_, _ = g.SetCurrentView("input")
+	}
+	if v, err := g.View("input"); err == nil {
+		v.Title = c.mode.inputTitle()
 	}
 
 	if v, err := g.SetView("maxResults", maxX/4+1, 5, maxX/2, 7); err != nil {
@@ -185,18 +213,45 @@ func (c *CUI) layout(g *gocui.Gui) error {
 func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQuery string) error {
 	searchQuery = strings.TrimSpace(v.Buffer())
 
-	results, elapsedTime, totalResultsCount, err := c.performSearch(searchQuery, ctx)
+	results, diagnostics, totalResultsCount, err := c.performSearch(searchQuery, ctx)
 
 	timeView, err := g.View("time")
 	if err != nil {
 		return err
 	}
-	timeView.Clear()
-
-	fmt.Fprintln(timeView, "\033[33mSearch Time:\033[0m")
-
-	for phase, duration := range elapsedTime {
-		fmt.Fprintf(timeView, "\033[32m%s: %s\033[0m\n", phase, duration)
+	c.renderTimeView(timeView, diagnostics)
+	if diagnostics != nil {
+		fmt.Fprintf(timeView, "\033[32mquery_type: %s\033[0m\n", diagnostics.LogicalQueryType)
+		fmt.Fprintf(timeView, "\033[32mstrategy: %s\033[0m\n", diagnostics.ExecutionStrategy)
+		if diagnostics.StrategySkipReason != "" {
+			fmt.Fprintf(timeView, "\033[32mskip_reason: %s\033[0m\n", diagnostics.StrategySkipReason)
+		}
+		for _, phase := range []string{"preprocess", "search_tokens", "total"} {
+			if duration, ok := diagnostics.Timings[phase]; ok {
+				fmt.Fprintf(timeView, "\033[32m%s: %s\033[0m\n", phase, duration)
+			}
+		}
+		extraTimingKeys := make([]string, 0, len(diagnostics.Timings))
+		for phase := range diagnostics.Timings {
+			if phase == "preprocess" || phase == "search_tokens" || phase == "total" {
+				continue
+			}
+			extraTimingKeys = append(extraTimingKeys, phase)
+		}
+		sort.Strings(extraTimingKeys)
+		for _, phase := range extraTimingKeys {
+			fmt.Fprintf(timeView, "\033[32m%s: %s\033[0m\n", phase, diagnostics.Timings[phase])
+		}
+		fmt.Fprintf(timeView, "\033[32mprocessed_tokens: %d\033[0m\n", diagnostics.ProcessedTokens)
+		fmt.Fprintf(timeView, "\033[32mfields_visited: %d\033[0m\n", diagnostics.FieldsVisited)
+		fmt.Fprintf(timeView, "\033[32mgenerated_keys: %d\033[0m\n", diagnostics.GeneratedKeys)
+		fmt.Fprintf(timeView, "\033[32mindex_searches: %d\033[0m\n", diagnostics.IndexSearches)
+		fmt.Fprintf(timeView, "\033[32mfilter_checks: %d\033[0m\n", diagnostics.FilterChecks)
+		fmt.Fprintf(timeView, "\033[32mfilter_rejects: %d\033[0m\n", diagnostics.FilterRejects)
+		fmt.Fprintf(timeView, "\033[32mpostings_read: %d\033[0m\n", diagnostics.PostingEntriesRead)
+		fmt.Fprintf(timeView, "\033[32mcandidate_docs: %d\033[0m\n", diagnostics.CandidateDocs)
+		fmt.Fprintf(timeView, "\033[32mmatched_docs: %d\033[0m\n", diagnostics.MatchedDocs)
+		fmt.Fprintf(timeView, "\033[32mreturned_docs: %d\033[0m\n", diagnostics.ReturnedDocs)
 	}
 
 	outputView, err := g.View("output")
@@ -216,7 +271,7 @@ func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQue
 			result.ID, result.UniqueMatches, result.TotalMatches)
 		fmt.Fprintf(outputView, "%s\n", highlightedHeader)
 
-		highlightQueryInResult(&result.Document, searchQuery)
+		result.Document.Abstract = c.highlightQuery(searchQuery, result.Document.Abstract)
 		fmt.Fprintf(outputView, "%s\n%s\n\n", result.Document.URL, result.Document.Abstract)
 	}
 
@@ -224,20 +279,8 @@ func (c *CUI) search(g *gocui.Gui, v *gocui.View, ctx context.Context, searchQue
 	return nil
 }
 
-func highlightQueryInResult(document *models.Document, query string) {
-	words := strings.Fields(query)
-	for _, word := range words {
-		re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(word) + `\b`)
-		document.Abstract = re.ReplaceAllString(document.Abstract, "\033[31m$0\033[0m")
-	}
-}
-
-func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, map[string]string, int, error) {
-	searchResult, err := c.ftsService.SearchDocuments(
-		ctx,
-		query,
-		c.maxResults,
-	)
+func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultData, *models.SearchDiagnostics, int, error) {
+	searchResult, err := c.searchWithMode(ctx, query)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("failed to search documents: %v", err)
 	}
@@ -251,7 +294,40 @@ func (c *CUI) performSearch(query string, ctx context.Context) ([]models.ResultD
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	return searchResult.ResultData, searchResult.Timings, searchResult.TotalResultsCount, nil
+	return searchResult.ResultData, searchResult.Diagnostics, searchResult.TotalResultsCount, nil
+}
+
+func (c *CUI) renderTimeView(v *gocui.View, diagnostics *models.SearchDiagnostics) {
+	v.Clear()
+	fmt.Fprintln(v, "\033[33mSearch Diagnostics:\033[0m")
+	fmt.Fprintf(v, "\033[32mmode: %s\033[0m\n", c.mode)
+	if diagnostics == nil {
+		fmt.Fprintln(v, "\033[32mhint: Ctrl+T toggles plain/syntax mode\033[0m")
+		return
+	}
+	fmt.Fprintln(v, "\033[32mhint: Ctrl+T toggles plain/syntax mode\033[0m")
+}
+
+func (c *CUI) searchWithMode(ctx context.Context, query string) (*models.SearchResult, error) {
+	if c.mode == searchModeSyntax {
+		return c.ftsService.SearchQueryString(ctx, query, c.maxResults)
+	}
+	return c.ftsService.SearchPlainText(ctx, query, c.maxResults)
+}
+
+func (c *CUI) highlightQuery(query string, text string) string {
+	if c.mode == searchModeSyntax {
+		return c.ftsService.HighlightQueryString(query, text)
+	}
+	return c.ftsService.HighlightPlainText(query, text)
+}
+
+func (c *CUI) toggleSearchMode(g *gocui.Gui, _ *gocui.View) error {
+	c.mode = c.mode.toggle()
+	if inputView, err := g.View("input"); err == nil {
+		inputView.Title = c.mode.inputTitle()
+	}
+	return nil
 }
 
 func quit(g *gocui.Gui, v *gocui.View) error {
