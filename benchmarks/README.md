@@ -344,6 +344,10 @@ Run the built-in suite script:
 MSMARCO_DIR=./data/msmarco ./benchmarks/scripts/run-suite.sh
 ```
 
+`run-suite.sh` runs benchmark commands from the `benchmarks/` module, so
+`MSMARCO_DIR=./data/msmarco` points at `./benchmarks/data/msmarco` when the script
+is launched from the repository root.
+
 Aggregate JSON shards:
 
 ```bash
