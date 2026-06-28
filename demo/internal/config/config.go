@@ -1,7 +1,7 @@
 package config
 
 import (
-	"flag"
+	"fmt"
 	"os"
 
 	"github.com/ilyakaznacheev/cleanenv"
@@ -77,16 +77,8 @@ type PipelineConfig struct {
 	MinLength   int  `yaml:"min_length"`
 }
 
-func MustLoad() (*Config, string) {
-	return mustLoad()
-}
-
-func mustLoad() (*Config, string) {
-	configPathFlag := flag.String("config", "", "Path to the config file")
-	flag.Parse()
-
+func Load(configPath string) (*Config, string, error) {
 	cfg := defaultConfig()
-	configPath := *configPathFlag
 	if configPath == "" {
 		configPath = fetchConfigPath()
 	}
@@ -94,15 +86,19 @@ func mustLoad() (*Config, string) {
 	if configPath != "" {
 		if _, err := os.Stat(configPath); err == nil {
 			if err := cleanenv.ReadConfig(configPath, &cfg); err != nil {
-				panic("error loading config file: " + err.Error())
+				return nil, "", fmt.Errorf("read config %q: %w", configPath, err)
 			}
-			validateConfig(&cfg)
-			return &cfg, configPath
+			if err := validateConfig(&cfg); err != nil {
+				return nil, "", err
+			}
+			return &cfg, configPath, nil
 		}
 	}
 
-	validateConfig(&cfg)
-	return &cfg, "defaults"
+	if err := validateConfig(&cfg); err != nil {
+		return nil, "", err
+	}
+	return &cfg, "defaults", nil
 }
 
 // fetchConfigPath fetches domain path from environment variable or default if it was not set in command line flag.
@@ -170,7 +166,7 @@ func defaultConfig() Config {
 	}
 }
 
-func validateConfig(cfg *Config) {
+func validateConfig(cfg *Config) error {
 	defaults := defaultConfig()
 
 	if cfg.Env == "" {
@@ -226,78 +222,80 @@ func validateConfig(cfg *Config) {
 	}
 
 	if cfg.FTS.Compaction.LoadFactor < 0 || cfg.FTS.Compaction.LoadFactor > 1 {
-		panic("compaction load_factor must be in range [0..1]")
+		return fmt.Errorf("compaction load_factor must be in range [0..1]")
 	}
 
 	switch cfg.FTS.Index {
 	case "slicedradix", "hamt":
 	default:
-		panic("unknown index type: " + cfg.FTS.Index)
+		return fmt.Errorf("unknown index type: %s", cfg.FTS.Index)
 	}
 
 	switch cfg.FTS.KeyGen {
 	case "word":
 	default:
-		panic("unknown keygen type: " + cfg.FTS.KeyGen)
+		return fmt.Errorf("unknown keygen type: %s", cfg.FTS.KeyGen)
 	}
 
 	switch cfg.FTS.Scorer {
 	case "none", "bm25", "tfidf":
 	default:
-		panic("unknown scorer type: " + cfg.FTS.Scorer)
+		return fmt.Errorf("unknown scorer type: %s", cfg.FTS.Scorer)
 	}
 
 	switch cfg.FTS.Filter {
 	case "none", "bloom", "cuckoo", "ribbon":
 	default:
-		panic("unknown filter type: " + cfg.FTS.Filter)
+		return fmt.Errorf("unknown filter type: %s", cfg.FTS.Filter)
 	}
 
 	switch cfg.FTS.Persistence.Format {
 	case "snapshot", "segment":
 	default:
-		panic("unknown persistence format: " + cfg.FTS.Persistence.Format)
+		return fmt.Errorf("unknown persistence format: %s", cfg.FTS.Persistence.Format)
 	}
 
 	switch cfg.FTS.Persistence.Access {
 	case "file", "mmap":
 	default:
-		panic("unknown persistence access: " + cfg.FTS.Persistence.Access)
+		return fmt.Errorf("unknown persistence access: %s", cfg.FTS.Persistence.Access)
 	}
 
 	if cfg.FTS.Persistence.Format == "snapshot" && cfg.FTS.Persistence.Access != "file" {
-		panic("snapshot persistence supports only file access")
+		return fmt.Errorf("snapshot persistence supports only file access")
 	}
 
 	if cfg.FTS.Cuckoo.BucketCount <= 0 {
-		panic("cuckoo bucket_count must be > 0")
+		return fmt.Errorf("cuckoo bucket_count must be > 0")
 	}
 
 	if cfg.FTS.Cuckoo.BucketSize <= 0 {
-		panic("cuckoo bucket_size must be > 0")
+		return fmt.Errorf("cuckoo bucket_size must be > 0")
 	}
 
 	if cfg.FTS.Cuckoo.MaxKicks < 0 {
-		panic("cuckoo max_kicks must be >= 0")
+		return fmt.Errorf("cuckoo max_kicks must be >= 0")
 	}
 
 	if cfg.FTS.Filter == "ribbon" {
 		if cfg.FTS.Ribbon.ExpectedItems == 0 {
-			panic("ribbon expected_items must be > 0")
+			return fmt.Errorf("ribbon expected_items must be > 0")
 		}
 
 		if cfg.FTS.Ribbon.WindowSize == 0 || cfg.FTS.Ribbon.WindowSize > 32 {
-			panic("ribbon window_size must be in range [1..32]")
+			return fmt.Errorf("ribbon window_size must be in range [1..32]")
 		}
 
 		if cfg.FTS.Ribbon.MaxAttempts == 0 {
-			panic("ribbon max_attempts must be > 0")
+			return fmt.Errorf("ribbon max_attempts must be > 0")
 		}
 	}
 
 	switch cfg.Mode.Type {
 	case "prod", "experiment":
 	default:
-		panic("unknown mode type: " + cfg.Mode.Type)
+		return fmt.Errorf("unknown mode type: %s", cfg.Mode.Type)
 	}
+
+	return nil
 }

@@ -2,6 +2,7 @@ package config
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -21,7 +22,9 @@ func TestValidateConfigAppliesFallbacksFromDefaultConfig(t *testing.T) {
 	cfg.FTS.Pipeline.MinLength = 0
 	cfg.Mode.Type = ""
 
-	validateConfig(&cfg)
+	if err := validateConfig(&cfg); err != nil {
+		t.Fatalf("validateConfig() error = %v", err)
+	}
 
 	if !reflect.DeepEqual(cfg, defaultConfig()) {
 		t.Fatalf("validateConfig() defaults mismatch\n got: %+v\nwant: %+v", cfg, defaultConfig())
@@ -33,13 +36,13 @@ func TestValidateConfigRejectsSnapshotMmap(t *testing.T) {
 	cfg.FTS.Persistence.Format = "snapshot"
 	cfg.FTS.Persistence.Access = "mmap"
 
-	defer func() {
-		if recover() == nil {
-			t.Fatal("validateConfig() panic = nil, want panic for snapshot+mmap")
-		}
-	}()
-
-	validateConfig(&cfg)
+	err := validateConfig(&cfg)
+	if err == nil {
+		t.Fatal("validateConfig() error = nil, want error for snapshot+mmap")
+	}
+	if !strings.Contains(err.Error(), "snapshot persistence supports only file access") {
+		t.Fatalf("validateConfig() error = %q, want snapshot persistence error", err)
+	}
 }
 
 func TestValidateConfigAllowsSegmentMmap(t *testing.T) {
@@ -47,7 +50,9 @@ func TestValidateConfigAllowsSegmentMmap(t *testing.T) {
 	cfg.FTS.Persistence.Format = "segment"
 	cfg.FTS.Persistence.Access = "mmap"
 
-	validateConfig(&cfg)
+	if err := validateConfig(&cfg); err != nil {
+		t.Fatalf("validateConfig() error = %v", err)
+	}
 
 	if got, want := cfg.FTS.Persistence.Format, "segment"; got != want {
 		t.Fatalf("Persistence.Format = %q, want %q", got, want)
