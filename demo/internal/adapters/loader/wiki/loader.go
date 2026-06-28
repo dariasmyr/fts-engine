@@ -6,10 +6,11 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/xml"
-	"github.com/dariasmyr/fts-engine/internal/domain/models"
 	"io"
 	"log/slog"
 	"os"
+
+	"github.com/dariasmyr/fts-engine/demo/internal/domain/models"
 )
 
 type Loader struct {

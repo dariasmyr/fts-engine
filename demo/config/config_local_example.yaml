@@ -1,0 +1,43 @@
+env: "local"
+dump_path: "./data/enwiki-latest-abstract1.xml.gz"
+fts:
+  index: "slicedradix" # slicedradix|hamt
+  keygen: "word"
+  scorer: "none"       # none|bm25|tfidf
+  filter: "ribbon"
+  persistence:
+    enabled: true
+    format: "snapshot"   # snapshot|segment
+    access: "file"       # file|mmap (snapshot supports only file)
+    path: "./data/fts/local"
+    load_on_start: false
+    save_on_build: true
+    buffer_size: 1048576
+    flush_threshold: 262144
+    sync_file: true
+  compaction:
+    load_factor: 0      # 0 disables compaction threshold checks, otherwise use 0..1
+    auto_check: true    # run threshold checks automatically after delete/update
+  bloom:
+    expected_items: 1000000
+    bits_per_item: 20
+    k: 14
+  cuckoo:
+    bucket_count: 327680
+    bucket_size: 4
+    max_kicks: 500
+  ribbon:
+    expected_items: 1000000
+    extra_cells: 250000
+    window_size: 16
+    seed: 0
+    max_attempts: 50
+  pipeline:
+    lowercase: true
+    stopwords_en: true
+    stopwords_ru: false
+    stem_en: true
+    stem_ru: false
+    min_length: 3
+mode:
+  type: "prod"

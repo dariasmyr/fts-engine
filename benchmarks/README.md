@@ -2,8 +2,9 @@
 
 Cross-engine benchmark suite for `fts-engine`, `bleve`, and `bluge`.
 
-This module is the newer benchmark layer under `benchmarks/`.
-The repository also still has a separate legacy benchmark flow under root `cmd/bench` and `internal/bench`.
+This module is the repository benchmark layer under `benchmarks/`.
+
+It is intended to run inside the repository root workspace defined by `../go.work`. Its `go.mod` also keeps a local `replace ../` fallback so module-local commands keep resolving the root library module.
 
 Current default baseline:
 

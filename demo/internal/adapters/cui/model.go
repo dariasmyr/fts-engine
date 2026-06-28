@@ -13,7 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/dariasmyr/fts-engine/internal/domain/models"
+	"github.com/dariasmyr/fts-engine/demo/internal/domain/models"
 )
 
 type focusArea int
