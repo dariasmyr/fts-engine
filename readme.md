@@ -246,7 +246,7 @@ All of these examples currently build and run from repository root.
 
 This repository also contains project-specific tooling:
 
-- `cmd/fts` - demo app
+- `demo/` - demo app module
 - `benchmarks/` - benchmark suite and reports
 
 If you need those flows, use their local docs instead of treating them as the main library entry point.
@@ -264,3 +264,34 @@ Run all tests:
 ```bash
 go test ./...
 ```
+
+The repository uses a root `go.work` workspace. Run multi-module commands from repository root or from a submodule directory inside this workspace. The child modules also keep a local `replace ../` fallback so current Go tooling can resolve the root library module consistently during module-local commands.
+
+Run the demo module tests:
+
+```bash
+(cd demo && go test ./...)
+```
+
+Run the benchmarks module tests:
+
+```bash
+(cd benchmarks && go test ./...)
+```
+
+After Go build/test checks pass, run repository dependency policy checks:
+
+```bash
+go run ./tools/depcheck
+```
+
+`depcheck` is a post-toolchain architecture check. It validates only the repository's stable architecture boundaries:
+
+- `pkg/*` may depend only on `pkg/*` inside this repository
+- `examples/*` may import only public `pkg/*`
+- `demo/*` may import only public `pkg/*` and `demo/internal/*`
+- `benchmarks/*` may import only public `pkg/*`, `benchmarks/internal/*`, and `benchmarks/adapters/*`
+
+`depcheck` does not try to validate every possible external dependency or historical path name. Its scope is the permanent internal module and package boundary policy.
+
+It also does not duplicate `internal` import restrictions that the Go toolchain already enforces during `go build` and `go test`.

@@ -1,0 +1,6 @@
+.idea
+.DS_Store
+config/config_local.yaml
+build/
+data/
+/fts
