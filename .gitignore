@@ -4,4 +4,4 @@ config/config_local.yaml
 storage/
 build/
 data/
-fts
+/fts
