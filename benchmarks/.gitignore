@@ -1,3 +1,4 @@
+/data/
 /results/*.json
 /results/**/*.json
 /work/
