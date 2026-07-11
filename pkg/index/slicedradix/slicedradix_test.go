@@ -152,11 +152,11 @@ func TestIndexSearchReturnsSeqOrder(t *testing.T) {
 func TestSearchPrefix(t *testing.T) {
 	idx := New()
 	inserts := map[string][]string{
-		"barley": {"doc-a", "doc-a"},
-		"banana": {"doc-b"},
-		"barge":  {"doc-c"},
-		"market": {"doc-a"},
-		"russia": {"doc-d"},
+		"barley":    {"doc-a", "doc-a"},
+		"banana":    {"doc-b"},
+		"barge":     {"doc-c"},
+		"market":    {"doc-a"},
+		"australia": {"doc-d"},
 	}
 	for word, docs := range inserts {
 		for _, docID := range docs {

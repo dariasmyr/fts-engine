@@ -40,10 +40,10 @@ func buildExecService(t *testing.T) *Service {
 	svc := NewMultiField(factory, WordKeys)
 	ctx := context.Background()
 	seed := map[string]map[string]string{
-		"doc-a": {"title": "barack obama", "body": "speech at inauguration"},
-		"doc-b": {"title": "banana split", "body": "barack said banana is tasty"},
-		"doc-c": {"title": "russia", "body": "barack visited russia"},
-		"doc-d": {"title": "mars rover", "body": "barack likes mars exploration"},
+		"doc-a": {"title": "james doe", "body": "speech at inauguration"},
+		"doc-b": {"title": "banana split", "body": "james said banana is tasty"},
+		"doc-c": {"title": "australia", "body": "james visited australia"},
+		"doc-d": {"title": "mars rover", "body": "james likes mars exploration"},
 	}
 	for id, fields := range seed {
 		docFields := make(map[string]Field, len(fields))
@@ -60,7 +60,7 @@ func buildExecService(t *testing.T) *Service {
 func TestSearchAPITermQuery(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), TermQuery{Term: "barack"}, 10)
+	res, err := svc.Search(context.Background(), TermQuery{Term: "james"}, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -72,7 +72,7 @@ func TestSearchAPITermQuery(t *testing.T) {
 func TestSearchAPIFieldScopedTerm(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), TermQuery{Field: "title", Term: "barack"}, 10)
+	res, err := svc.Search(context.Background(), TermQuery{Field: "title", Term: "james"}, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -84,7 +84,7 @@ func TestSearchAPIFieldScopedTerm(t *testing.T) {
 func TestSearchAPIPhraseQuery(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), PhraseQuery{Phrase: "barack obama"}, 10)
+	res, err := svc.Search(context.Background(), PhraseQuery{Phrase: "james doe"}, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -96,7 +96,7 @@ func TestSearchAPIPhraseQuery(t *testing.T) {
 func TestSearchAPIPrefixQuery(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), PrefixQuery{Field: "title", Prefix: "ba"}, 10)
+	res, err := svc.Search(context.Background(), PrefixQuery{Field: "title", Prefix: "j"}, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -104,7 +104,7 @@ func TestSearchAPIPrefixQuery(t *testing.T) {
 	for _, r := range res.Results {
 		ids[r.ID] = true
 	}
-	if !ids["doc-a"] || !ids["doc-b"] || ids["doc-c"] || ids["doc-d"] {
+	if !ids["doc-a"] || ids["doc-b"] || ids["doc-c"] || ids["doc-d"] {
 		t.Fatalf("unexpected prefix results: %+v", res.Results)
 	}
 }
@@ -112,8 +112,8 @@ func TestSearchAPIPrefixQuery(t *testing.T) {
 func TestSearchAPIBooleanMustIntersects(t *testing.T) {
 	svc := buildExecService(t)
 	q := &BooleanQuery{Clauses: []BoolClause{
-		MustClause(TermQuery{Term: "barack"}),
-		MustClause(TermQuery{Term: "russia"}),
+		MustClause(TermQuery{Term: "james"}),
+		MustClause(TermQuery{Term: "australia"}),
 	}}
 
 	res, err := svc.Search(context.Background(), q, 10)
@@ -128,8 +128,8 @@ func TestSearchAPIBooleanMustIntersects(t *testing.T) {
 func TestSearchAPIBooleanMustNotExcludes(t *testing.T) {
 	svc := buildExecService(t)
 	q := &BooleanQuery{Clauses: []BoolClause{
-		ShouldClause(TermQuery{Term: "barack"}),
-		MustNotClause(TermQuery{Term: "russia"}),
+		ShouldClause(TermQuery{Term: "james"}),
+		MustNotClause(TermQuery{Term: "australia"}),
 	}}
 
 	res, err := svc.Search(context.Background(), q, 10)
@@ -159,7 +159,7 @@ func TestSearchAPINilQueryReturnsEmpty(t *testing.T) {
 
 func TestSearchAPIParsedQuery(t *testing.T) {
 	svc := buildExecService(t)
-	q, err := ParseQuery(`+barack -russia "barack obama"`)
+	q, err := ParseQuery(`+james -australia "james doe"`)
 	if err != nil {
 		t.Fatalf("ParseQuery() error = %v", err)
 	}
@@ -180,7 +180,7 @@ func TestSearchAPIParsedQuery(t *testing.T) {
 
 func TestSearchAPIParsedNestedQuery(t *testing.T) {
 	svc := buildExecService(t)
-	q, err := ParseQuery(`+(title:barack title:russia) +body:visited`)
+	q, err := ParseQuery(`+(title:james title:australia) +body:visited`)
 	if err != nil {
 		t.Fatalf("ParseQuery() error = %v", err)
 	}

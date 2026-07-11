@@ -63,11 +63,6 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 		}
 	}
 
-	index, err := selectIndex(cfg.FTS.Index)
-	if err != nil {
-		return nil, false, err
-	}
-
 	searchFilter, err := selectFilter(cfg)
 	if err != nil {
 		return nil, false, err
@@ -77,7 +72,9 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 		serviceOpts = append(serviceOpts, pkgfts.WithFilter(searchFilter))
 	}
 
-	svc := pkgfts.New(index, keyGen, serviceOpts...)
+	svc := pkgfts.NewMultiField(func(string) (pkgfts.Index, error) {
+		return selectIndex(cfg.FTS.Index)
+	}, keyGen, serviceOpts...)
 	return svc, false, nil
 }
 

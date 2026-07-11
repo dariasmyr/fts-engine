@@ -114,6 +114,9 @@ func (m model) renderHelpPanel() string {
 		m.renderModeOverview(width-4),
 		"",
 		divider(width),
+		m.renderFieldHelp(width-4),
+		"",
+		divider(width),
 		m.renderSyntaxHelp(width-4),
 	)
 	return panelStyle(false).Width(width).Render(panelTitle("Help", false) + "\n" + body)
@@ -180,6 +183,41 @@ func (m model) renderSyntaxHelp(width int) string {
 	return strings.Join(rows, "\n")
 }
 
+func (m model) renderFieldHelp(width int) string {
+	rows := []string{sectionTitle.Render("Fields")}
+	if len(m.fields) == 0 {
+		rows = append(rows, mutedStyle.Render("no indexed fields reported"))
+		return strings.Join(rows, "\n")
+	}
+	if m.isSingleFieldIndex() {
+		rows = append(rows,
+			kv("shape", "single-field"),
+			mutedStyle.Width(width).Render("Search runs over the document text as one field."),
+			kv("example", "hotel barge"),
+		)
+		return strings.Join(rows, "\n")
+	}
+
+	rows = append(rows,
+		kv("shape", "multi-field"),
+		mutedStyle.Width(width).Render(strings.Join(m.fields, ", ")),
+	)
+	if m.mode != searchModeSyntax {
+		rows = append(rows, mutedStyle.Width(width).Render("Press Ctrl+T to use field syntax like title:hotel."))
+		return strings.Join(rows, "\n")
+	}
+
+	rows = append(rows, kv("syntax", m.fields[0]+":hotel"))
+	if len(m.fields) > 1 {
+		rows = append(rows, kv("combine", "+"+m.fields[0]+":hotel +"+m.fields[1]+":france"))
+	}
+	return strings.Join(rows, "\n")
+}
+
+func (m model) isSingleFieldIndex() bool {
+	return len(m.fields) == 1 && m.fields[0] == "_default"
+}
+
 func (m model) renderResultsPanel() string {
 	title := panelTitle("Results", m.focus == focusResults)
 	if m.lastQuery != "" {
@@ -240,6 +278,11 @@ func (m model) renderResults() string {
 		if result.Document.URL != "" {
 			builder.WriteString(accentBar.Render("  "))
 			builder.WriteString(urlStyle.Render(truncateSingleLine(result.Document.URL, max(m.resultsView.Width-2, 24))))
+			builder.WriteString("\n")
+		}
+		if result.Document.Title != "" {
+			builder.WriteString(accentBar.Render("  "))
+			builder.WriteString(inputTextStyle.Render(truncateSingleLine(result.Document.Title, max(m.resultsView.Width-2, 24))))
 			builder.WriteString("\n")
 		}
 
@@ -327,10 +370,32 @@ func (m model) sectionSystem(width int) string {
 		kv("engine", orDash(m.info.Engine)),
 		kv("index", orDash(m.info.Index)),
 		kv("filter", orDash(m.info.Filter)),
+		kv("shape", m.indexShape()),
+		kv("fields", m.fieldListLabel(width)),
 		kvVal("docs", statStyle.Render(fmtInt(m.docCount))),
 		kvVal("limit", statStyle.Render(fmt.Sprintf("%d", m.maxResults))),
 		kv("uptime", fmtDuration(m.now.Sub(m.startTime))),
 	}, "\n")
+}
+
+func (m model) indexShape() string {
+	if m.isSingleFieldIndex() {
+		return "single-field"
+	}
+	if len(m.fields) > 0 {
+		return fmt.Sprintf("multi-field (%d)", len(m.fields))
+	}
+	return "unknown"
+}
+
+func (m model) fieldListLabel(width int) string {
+	if m.isSingleFieldIndex() {
+		return "all text"
+	}
+	if len(m.fields) == 0 {
+		return "-"
+	}
+	return truncateSingleLine(strings.Join(m.fields, ", "), max(width-10, 12))
 }
 
 func (m model) sectionStats(width int) string {

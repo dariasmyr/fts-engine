@@ -276,14 +276,14 @@ func TestSearchDocumentsQuotedPhraseUsesPhraseQuery(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama"); err != nil {
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "james doe"); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := indexDefaultDoc(ctx, svc, "doc-b", "obama barack"); err != nil {
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "doe james"); err != nil {
 		t.Fatalf("Index(doc-b) error = %v", err)
 	}
 
-	res, err := svc.SearchDocuments(ctx, `"barack obama"`, 10)
+	res, err := svc.SearchDocuments(ctx, `"james doe"`, 10)
 	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}
@@ -296,17 +296,17 @@ func TestSearchPlainTextTreatsQuotedPhraseAsBagOfWords(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama"); err != nil {
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "james doe"); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := indexDefaultDoc(ctx, svc, "doc-b", "obama only"); err != nil {
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "doe only"); err != nil {
 		t.Fatalf("Index(doc-b) error = %v", err)
 	}
-	if err := indexDefaultDoc(ctx, svc, "doc-c", "barack only"); err != nil {
+	if err := indexDefaultDoc(ctx, svc, "doc-c", "james only"); err != nil {
 		t.Fatalf("Index(doc-c) error = %v", err)
 	}
 
-	res, err := svc.SearchPlainText(ctx, `"barack obama"`, 10)
+	res, err := svc.SearchPlainText(ctx, `"james doe"`, 10)
 	if err != nil {
 		t.Fatalf("SearchPlainText() error = %v", err)
 	}

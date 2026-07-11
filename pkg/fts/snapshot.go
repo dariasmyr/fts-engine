@@ -9,9 +9,7 @@ import (
 	"sync"
 )
 
-const snapshotVersionLegacy uint16 = 1
 const snapshotVersion uint16 = 2
-const multiIndexSnapshotVersionLegacy uint16 = 2
 const multiIndexSnapshotVersion uint16 = 3
 
 type IndexSnapshotSaver func(index Index, w io.Writer) error
@@ -176,7 +174,7 @@ func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
 		return nil, fmt.Errorf("fts: load index snapshot: decode envelope: %w", err)
 	}
 
-	if envelope.Version != snapshotVersionLegacy && envelope.Version != snapshotVersion {
+	if envelope.Version != snapshotVersion {
 		return nil, fmt.Errorf("fts: load index snapshot: unsupported version %d", envelope.Version)
 	}
 	if envelope.IndexName == "" {
@@ -274,7 +272,7 @@ func LoadMultiIndexSnapshot(r io.Reader) (*LoadedMultiIndexSnapshot, error) {
 		return nil, fmt.Errorf("fts: load multi-index snapshot: decode envelope: %w", err)
 	}
 
-	if envelope.Version != multiIndexSnapshotVersionLegacy && envelope.Version != multiIndexSnapshotVersion {
+	if envelope.Version != multiIndexSnapshotVersion {
 		return nil, fmt.Errorf("fts: load multi-index snapshot: unsupported version %d", envelope.Version)
 	}
 

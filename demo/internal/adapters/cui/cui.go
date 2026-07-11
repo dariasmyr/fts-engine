@@ -11,6 +11,7 @@ import (
 )
 
 type SearchEngine interface {
+	Fields() []string
 	HighlightPlainText(query string, text string) string
 	HighlightQueryString(query string, text string) string
 	SearchPlainText(
@@ -69,7 +70,7 @@ func New(ctx context.Context, log *slog.Logger, ftsService SearchEngine, documen
 		documents:  documents,
 		log:        log,
 		maxResults: maxResults,
-		mode:       searchModePlain,
+		mode:       searchModeSyntax,
 		info:       info,
 	}
 }

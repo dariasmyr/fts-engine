@@ -75,8 +75,6 @@ type Serializable interface {
 	Serialize(w io.Writer) error
 }
 
-type IndexLoader func(r io.Reader) (Index, error)
-
 type KeyGenerator func(token string) ([]string, error)
 
 type Pipeline interface {

@@ -36,6 +36,13 @@ type serviceAdapter struct {
 	searchStats    *ftsstats.SearchStats
 }
 
+func (s *serviceAdapter) Fields() []string {
+	if s == nil || s.service == nil {
+		return nil
+	}
+	return s.service.Fields()
+}
+
 func (s *serviceAdapter) HighlightPlainText(query string, text string) string {
 	if s == nil || s.service == nil || strings.TrimSpace(query) == "" || text == "" {
 		return text

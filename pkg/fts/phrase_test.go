@@ -67,9 +67,9 @@ func TestSearchPhraseMatchesExactOrder(t *testing.T) {
 
 	ctx := context.Background()
 	docs := map[string]string{
-		"doc-a": "barack obama gave a speech",
-		"doc-b": "obama speech today barack was there",
-		"doc-c": "barack obama said barack obama again",
+		"doc-a": "james doe gave a speech",
+		"doc-b": "doe speech today james was there",
+		"doc-c": "james doe said james doe again",
 	}
 	for id, content := range docs {
 		if err := indexDefaultDoc(ctx, svc, DocID(id), content); err != nil {
@@ -77,7 +77,7 @@ func TestSearchPhraseMatchesExactOrder(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchPhrase(ctx, "barack obama", 10)
+	res, err := svc.SearchPhrase(ctx, "james doe", 10)
 	if err != nil {
 		t.Fatalf("SearchPhrase() error = %v", err)
 	}
@@ -134,11 +134,11 @@ func TestSearchPhraseSkipsNonPositionalIndexes(t *testing.T) {
 	svc := New(newMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama"); err != nil {
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "james doe"); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhrase(ctx, "barack obama", 10)
+	res, err := svc.SearchPhrase(ctx, "james doe", 10)
 	if err != nil {
 		t.Fatalf("SearchPhrase() error = %v", err)
 	}
@@ -154,11 +154,11 @@ func TestSearchPhraseMergesMultipleKeys(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), keyGen)
 
 	ctx := context.Background()
-	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama barack obama"); err != nil {
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "james doe james doe"); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhrase(ctx, "barack obama", 10)
+	res, err := svc.SearchPhrase(ctx, "james doe", 10)
 	if err != nil {
 		t.Fatalf("SearchPhrase() error = %v", err)
 	}

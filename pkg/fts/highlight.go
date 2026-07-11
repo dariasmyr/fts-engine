@@ -32,7 +32,7 @@ type highlightMatch struct {
 	end   int
 }
 
-func (h Highlighter) Highlight(query, text string, pipeline Pipeline, keyGen KeyGenerator) []Fragment {
+func highlight(query, text string, h Highlighter, pipeline Pipeline, keyGen KeyGenerator) []Fragment {
 	if text == "" || query == "" {
 		return nil
 	}
@@ -91,14 +91,14 @@ func (h Highlighter) Highlight(query, text string, pipeline Pipeline, keyGen Key
 }
 
 func (s *Service) Highlight(query, text string, h Highlighter) []Fragment {
-	return h.Highlight(query, text, s.pipeline, s.keyGen)
+	return highlight(query, text, h, s.pipeline, s.keyGen)
 }
 
 func (s *Service) HighlightPlainText(query, text string, h Highlighter) []Fragment {
-	return h.HighlightPlainText(query, text, s.pipeline, s.keyGen)
+	return highlightPlainText(query, text, h, s.pipeline, s.keyGen)
 }
 
-func (h Highlighter) HighlightPlainText(query, text string, pipeline Pipeline, keyGen KeyGenerator) []Fragment {
+func highlightPlainText(query, text string, h Highlighter, pipeline Pipeline, keyGen KeyGenerator) []Fragment {
 	if text == "" || query == "" {
 		return nil
 	}

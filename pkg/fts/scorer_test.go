@@ -200,8 +200,8 @@ func TestSearchPhraseWithTFIDFScoresAcrossFields(t *testing.T) {
 
 	ctx := context.Background()
 	docs := []Document{
-		{ID: "doc-a", Fields: map[string]Field{"title": {Value: "barack obama"}}},
-		{ID: "doc-b", Fields: map[string]Field{"body": {Value: "barack obama barack obama"}}},
+		{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james doe"}}},
+		{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james doe james doe"}}},
 		{ID: "doc-c", Fields: map[string]Field{"title": {Value: "speech only"}}},
 		{ID: "doc-d", Fields: map[string]Field{"body": {Value: "speech only"}}},
 	}
@@ -211,7 +211,7 @@ func TestSearchPhraseWithTFIDFScoresAcrossFields(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchDocuments(ctx, `"barack obama"`, 10)
+	res, err := svc.SearchDocuments(ctx, `"james doe"`, 10)
 	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}

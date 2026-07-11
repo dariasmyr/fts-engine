@@ -18,7 +18,7 @@ func runExperimentMode(ctx context.Context, log *slog.Logger, cfg *config.Config
 	startedAt := time.Now()
 	memStats := utils.MeasureMemory(func() {
 		for _, doc := range documents {
-			_ = indexAbstractDocument(ctx, service, doc.ID, doc.Abstract)
+			_ = indexDocument(ctx, service, doc)
 		}
 	})
 	duration := time.Since(startedAt)
@@ -43,7 +43,7 @@ func populateDocuments(rootCtx context.Context, ctx context.Context, log *slog.L
 			log.Info("Received shutdown signal, shutting down...")
 			return true
 		default:
-			if err := indexAbstractDocument(ctx, service, doc.ID, doc.Abstract); err != nil {
+			if err := indexDocument(ctx, service, doc); err != nil {
 				log.Error("could not index document:", "error", err)
 			}
 		}
@@ -52,15 +52,26 @@ func populateDocuments(rootCtx context.Context, ctx context.Context, log *slog.L
 	return false
 }
 
-func indexAbstractDocument(ctx context.Context, service *pkgfts.Service, docID string, content string) error {
+func indexDocument(ctx context.Context, service *pkgfts.Service, doc models.Document) error {
 	if service == nil {
 		return fmt.Errorf("nil service")
 	}
+	fields := make(map[string]pkgfts.Field, 3)
+	if doc.Title != "" {
+		fields["title"] = pkgfts.Field{Value: doc.Title}
+	}
+	if doc.Abstract != "" {
+		fields["abstract"] = pkgfts.Field{Value: doc.Abstract}
+	}
+	if doc.Extract != "" {
+		fields["extract"] = pkgfts.Field{Value: doc.Extract}
+	}
+	if len(fields) == 0 {
+		return nil
+	}
 	return service.Index(ctx, pkgfts.Document{
-		ID: pkgfts.DocID(docID),
-		Fields: map[string]pkgfts.Field{
-			pkgfts.DefaultField: {Value: content},
-		},
+		ID:     pkgfts.DocID(doc.ID),
+		Fields: fields,
 	})
 }
 

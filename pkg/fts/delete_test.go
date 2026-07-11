@@ -99,7 +99,7 @@ func TestDeleteFiltersAllSearchPathsAndUpdatesStats(t *testing.T) {
 		id      DocID
 		content string
 	}{
-		{id: "doc-a", content: "alpha beta barack obama barge"},
+		{id: "doc-a", content: "alpha beta james doe barge"},
 		{id: "doc-b", content: "alpha beta hotel"},
 		{id: "doc-c", content: "alpha gamma bar"},
 	} {
@@ -128,7 +128,7 @@ func TestDeleteFiltersAllSearchPathsAndUpdatesStats(t *testing.T) {
 		t.Fatalf("unexpected prefix results after delete: %+v", prefixRes.Results)
 	}
 
-	phraseRes, err := svc.SearchDocuments(ctx, `"barack obama"`, 10)
+	phraseRes, err := svc.SearchDocuments(ctx, `"james doe"`, 10)
 	if err != nil {
 		t.Fatalf("SearchDocuments(phrase) error = %v", err)
 	}
