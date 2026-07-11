@@ -140,7 +140,23 @@ func TestRibbonFilterBuildFromFile(t *testing.T) {
 	}
 
 	stream := func(emit func([]byte) bool) error {
-		return ParseLineKeys(path, emit)
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		s := bufio.NewScanner(f)
+		for s.Scan() {
+			key := strings.TrimSpace(s.Text())
+			if key == "" {
+				continue
+			}
+			if !emit([]byte(key)) {
+				break
+			}
+		}
+		return s.Err()
 	}
 
 	if err := rf.BuildWithRetriesFromKeyStream(stream, 10); err != nil {
