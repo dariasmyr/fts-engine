@@ -148,6 +148,17 @@ Required flags:
 - `-dataset=wiki-typed`
 - `-wiki-dump=/path/to/wiki.xml|wiki.xml.gz|wiki.xml.bz2`
 
+Download the Simple English Wikipedia dump used by the examples:
+
+```bash
+mkdir -p benchmarks/data/wiki
+curl -fL \
+  https://dumps.wikimedia.org/simplewiki/latest/simplewiki-latest-pages-articles.xml.bz2 \
+  -o benchmarks/data/wiki/simplewiki-latest-pages-articles.xml.bz2
+```
+
+`benchmarks/data/` is ignored by git, so fresh checkouts need to download the dump locally before running `wiki-typed`.
+
 Useful flags:
 
 - `-wiki-cache-dir`

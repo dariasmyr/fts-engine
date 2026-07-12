@@ -8,13 +8,13 @@ import (
 func TestHighlightTermMatch(t *testing.T) {
 	svc := New(newMemoryIndex(), WordKeys)
 
-	text := "Barack Obama gave a long speech in the rose garden today."
-	frags := svc.Highlight("Obama", text, Highlighter{})
+	text := "james doe gave a long speech in the rose garden today."
+	frags := svc.Highlight("doe", text, Highlighter{})
 	if len(frags) != 1 {
 		t.Fatalf("frags = %d, want 1", len(frags))
 	}
-	if !strings.Contains(frags[0].Text, "<mark>Obama</mark>") {
-		t.Fatalf("expected wrapped 'Obama', got %q", frags[0].Text)
+	if !strings.Contains(frags[0].Text, "<mark>doe</mark>") {
+		t.Fatalf("expected wrapped 'doe', got %q", frags[0].Text)
 	}
 	if frags[0].Matches != 1 {
 		t.Fatalf("Matches = %d, want 1", frags[0].Matches)
@@ -24,8 +24,8 @@ func TestHighlightTermMatch(t *testing.T) {
 func TestHighlightMultipleMatches(t *testing.T) {
 	svc := New(newMemoryIndex(), WordKeys)
 
-	text := "The Obama foundation was founded by Obama himself."
-	frags := svc.Highlight("obama", text, Highlighter{})
+	text := "The doe foundation was founded by doe himself."
+	frags := svc.Highlight("doe", text, Highlighter{})
 	if len(frags) != 1 {
 		t.Fatalf("frags = %d, want 1 (clustered)", len(frags))
 	}
@@ -40,10 +40,10 @@ func TestHighlightMultipleMatches(t *testing.T) {
 func TestHighlightSplitsDistantMatches(t *testing.T) {
 	svc := New(newMemoryIndex(), WordKeys)
 
-	prefix := "obama. " + strings.Repeat("filler word ", 40)
-	text := prefix + "obama again."
+	prefix := "doe. " + strings.Repeat("filler word ", 40)
+	text := prefix + "doe again."
 
-	frags := svc.Highlight("obama", text, Highlighter{FragmentSize: 50})
+	frags := svc.Highlight("doe", text, Highlighter{FragmentSize: 50})
 	if len(frags) < 2 {
 		t.Fatalf("want >=2 fragments for distant matches, got %d (%q)", len(frags), frags)
 	}
@@ -86,10 +86,10 @@ func TestHighlightRespectsMaxFragments(t *testing.T) {
 
 	var sb strings.Builder
 	for i := 0; i < 10; i++ {
-		sb.WriteString("obama ")
+		sb.WriteString("doe ")
 		sb.WriteString(strings.Repeat("filler ", 30))
 	}
-	frags := svc.Highlight("obama", sb.String(), Highlighter{FragmentSize: 50, MaxFragments: 2})
+	frags := svc.Highlight("doe", sb.String(), Highlighter{FragmentSize: 50, MaxFragments: 2})
 	if len(frags) != 2 {
 		t.Fatalf("want 2 fragments (capped), got %d", len(frags))
 	}
@@ -138,7 +138,7 @@ func TestHighlightSkipsMustNotClauses(t *testing.T) {
 func TestHighlightSupportsPrefixQueries(t *testing.T) {
 	svc := New(newMemoryIndex(), WordKeys)
 
-	frags := svc.Highlight("obam*", "obama obamacare orbit", Highlighter{})
+	frags := svc.Highlight("doe*", "doe doecare orbit", Highlighter{})
 	if len(frags) != 1 {
 		t.Fatalf("frags = %d, want 1", len(frags))
 	}

@@ -10,10 +10,10 @@ func TestSearchPhraseNearMatchesOrderedWindow(t *testing.T) {
 
 	ctx := context.Background()
 	docs := map[string]string{
-		"doc-a": "barack hussein obama",
-		"doc-b": "obama barack",
-		"doc-c": "barack speech today now obama",
-		"doc-d": "barack obama barack x obama",
+		"doc-a": "james hussein doe",
+		"doc-b": "doe james",
+		"doc-c": "james speech today now doe",
+		"doc-d": "james doe james x doe",
 	}
 	for id, content := range docs {
 		if err := indexDefaultDoc(ctx, svc, DocID(id), content); err != nil {
@@ -21,7 +21,7 @@ func TestSearchPhraseNearMatchesOrderedWindow(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "barack obama", 1, 10)
+	res, err := svc.SearchPhraseNear(ctx, "james doe", 1, 10)
 	if err != nil {
 		t.Fatalf("SearchPhraseNear() error = %v", err)
 	}
@@ -52,11 +52,11 @@ func TestSearchPhraseNearDistanceZeroMatchesAdjacency(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama barack x obama"); err != nil {
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "james doe james x doe"); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "barack obama", 0, 10)
+	res, err := svc.SearchPhraseNear(ctx, "james doe", 0, 10)
 	if err != nil {
 		t.Fatalf("SearchPhraseNear() error = %v", err)
 	}
@@ -69,7 +69,7 @@ func TestSearchPhraseNearRejectsNegativeDistance(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	_, err := svc.SearchPhraseNear(ctx, "barack obama", -1, 10)
+	_, err := svc.SearchPhraseNear(ctx, "james doe", -1, 10)
 	if err == nil {
 		t.Fatalf("expected negative distance error")
 	}
@@ -79,11 +79,11 @@ func TestSearchPhraseNearSkipsNonPositionalIndexes(t *testing.T) {
 	svc := New(newMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama"); err != nil {
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "james doe"); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "barack obama", 1, 10)
+	res, err := svc.SearchPhraseNear(ctx, "james doe", 1, 10)
 	if err != nil {
 		t.Fatalf("SearchPhraseNear() error = %v", err)
 	}
@@ -99,11 +99,11 @@ func TestSearchPhraseNearMergesMultipleKeys(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), keyGen)
 
 	ctx := context.Background()
-	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack x obama"); err != nil {
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "james x doe"); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "barack obama", 1, 10)
+	res, err := svc.SearchPhraseNear(ctx, "james doe", 1, 10)
 	if err != nil {
 		t.Fatalf("SearchPhraseNear() error = %v", err)
 	}
@@ -117,11 +117,11 @@ func TestSearchPhraseNearMatchesThreeTokenWindow(t *testing.T) {
 
 	ctx := context.Background()
 	docs := map[string]string{
-		"doc-a": "barack x obama speech",
-		"doc-b": "barack x y obama speech",
-		"doc-c": "barack obama x speech",
-		"doc-d": "speech barack x obama",
-		"doc-e": "barack x obama speech barack obama x speech",
+		"doc-a": "james x doe speech",
+		"doc-b": "james x y doe speech",
+		"doc-c": "james doe x speech",
+		"doc-d": "speech james x doe",
+		"doc-e": "james x doe speech james doe x speech",
 	}
 	for id, content := range docs {
 		if err := indexDefaultDoc(ctx, svc, DocID(id), content); err != nil {
@@ -129,7 +129,7 @@ func TestSearchPhraseNearMatchesThreeTokenWindow(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "barack obama speech", 1, 10)
+	res, err := svc.SearchPhraseNear(ctx, "james doe speech", 1, 10)
 	if err != nil {
 		t.Fatalf("SearchPhraseNear() error = %v", err)
 	}
@@ -163,11 +163,11 @@ func TestSearchPhraseNearDistanceZeroMatchesExactPhrase(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	if err := indexDefaultDoc(ctx, svc, "doc-a", "barack obama speech barack x obama speech"); err != nil {
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "james doe speech james x doe speech"); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "barack obama speech", 0, 10)
+	res, err := svc.SearchPhraseNear(ctx, "james doe speech", 0, 10)
 	if err != nil {
 		t.Fatalf("SearchPhraseNear() error = %v", err)
 	}

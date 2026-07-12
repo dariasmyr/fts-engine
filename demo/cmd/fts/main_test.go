@@ -61,15 +61,15 @@ func TestServiceAdapterHighlightPlainTextUsesFTSHighlighter(t *testing.T) {
 	svc := fts.New(slicedradix.New(), fts.WordKeys)
 	adapter := &serviceAdapter{service: svc}
 
-	got := adapter.HighlightPlainText("obam*", "obama obamacare orbit")
+	got := adapter.HighlightPlainText("jane*", "doe doecare orbit")
 	if strings.Count(got, "\033[31m") != 0 {
 		t.Fatalf("plain-text highlight should not treat '*' as prefix syntax, got %q", got)
 	}
-	if !strings.Contains(got, "obama obamacare orbit") {
+	if !strings.Contains(got, "doe doecare orbit") {
 		t.Fatalf("plain-text highlight should fall back to raw text, got %q", got)
 	}
 
-	got = adapter.HighlightPlainText("obama obamacare", "obama obamacare orbit")
+	got = adapter.HighlightPlainText("doe doecare", "doe doecare orbit")
 	if strings.Count(got, "\033[31m") != 2 {
 		t.Fatalf("expected 2 highlighted plain-text matches, got %q", got)
 	}
@@ -79,7 +79,7 @@ func TestServiceAdapterHighlightQueryStringUsesSyntax(t *testing.T) {
 	svc := fts.New(slicedradix.New(), fts.WordKeys)
 	adapter := &serviceAdapter{service: svc}
 
-	got := adapter.HighlightQueryString("obam*", "obama obamacare orbit")
+	got := adapter.HighlightQueryString("doe*", "doe doecare orbit")
 	if strings.Count(got, "\033[31m") != 2 {
 		t.Fatalf("expected 2 highlighted syntax matches, got %q", got)
 	}
@@ -88,20 +88,51 @@ func TestServiceAdapterHighlightQueryStringUsesSyntax(t *testing.T) {
 func TestServiceAdapterSearchQueryStringUsesParserSemantics(t *testing.T) {
 	svc := fts.New(slicedradix.New(), fts.WordKeys)
 	ctx := context.Background()
-	if err := indexTestDocument(ctx, svc, "doc-a", "barack obama"); err != nil {
+	if err := indexTestDocument(ctx, svc, "doc-a", "james doe"); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := indexTestDocument(ctx, svc, "doc-b", "obama only"); err != nil {
+	if err := indexTestDocument(ctx, svc, "doc-b", "doe only"); err != nil {
 		t.Fatalf("Index(doc-b) error = %v", err)
 	}
 
 	adapter := &serviceAdapter{service: svc}
-	res, err := adapter.SearchQueryString(ctx, `"barack obama"`, 10)
+	res, err := adapter.SearchQueryString(ctx, `"james doe"`, 10)
 	if err != nil {
 		t.Fatalf("SearchQueryString() error = %v", err)
 	}
 	if len(res.ResultData) != 1 || res.ResultData[0].ID != "doc-a" {
 		t.Fatalf("unexpected syntax-mode results: %+v", res.ResultData)
+	}
+}
+
+func TestIndexDocumentUsesNamedFields(t *testing.T) {
+	svc := fts.NewMultiField(func(string) (fts.Index, error) {
+		return slicedradix.New(), nil
+	}, fts.WordKeys)
+	doc := models.Document{
+		DocumentBase: models.DocumentBase{
+			Title:    "James Doe",
+			Abstract: "Australian hotel",
+		},
+		ID:      "doc-a",
+		Extract: "Long biography extract",
+	}
+
+	if err := indexDocument(context.Background(), svc, doc); err != nil {
+		t.Fatalf("indexDocument() error = %v", err)
+	}
+
+	fields := svc.Fields()
+	if len(fields) != 3 || fields[0] != "abstract" || fields[1] != "extract" || fields[2] != "title" {
+		t.Fatalf("Fields() = %v, want [abstract extract title]", fields)
+	}
+
+	res, err := svc.SearchDocuments(context.Background(), "title:james", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments(title:james) error = %v", err)
+	}
+	if len(res.Results) != 1 || res.Results[0].ID != "doc-a" {
+		t.Fatalf("unexpected title field results: %+v", res.Results)
 	}
 }
 

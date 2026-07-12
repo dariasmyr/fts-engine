@@ -9,9 +9,7 @@ import (
 	"sync"
 )
 
-const snapshotVersionLegacy uint16 = 1
 const snapshotVersion uint16 = 2
-const multiIndexSnapshotVersionLegacy uint16 = 2
 const multiIndexSnapshotVersion uint16 = 3
 
 type IndexSnapshotSaver func(index Index, w io.Writer) error
@@ -129,16 +127,6 @@ func RegisterFilterSnapshotCodec(name string, saver FilterSnapshotSaver, loader 
 	return nil
 }
 
-// SaveIndexSnapshot saves an index snapshot without collection stats.
-// Deprecated: use SaveIndexSnapshotWithStats so scorer-aware restores can recover collection stats.
-func SaveIndexSnapshot(w io.Writer, indexName string, index Index) error {
-	return SaveIndexSnapshotWithStats(w, indexName, index, nil)
-}
-
-func SaveIndexSnapshotWithStats(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot) error {
-	return SaveIndexSnapshotWithState(w, indexName, index, stats, nil, nil)
-}
-
 func SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64) error {
 	if w == nil {
 		return fmt.Errorf("fts: save index snapshot: nil writer")
@@ -186,7 +174,7 @@ func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
 		return nil, fmt.Errorf("fts: load index snapshot: decode envelope: %w", err)
 	}
 
-	if envelope.Version != snapshotVersionLegacy && envelope.Version != snapshotVersion {
+	if envelope.Version != snapshotVersion {
 		return nil, fmt.Errorf("fts: load index snapshot: unsupported version %d", envelope.Version)
 	}
 	if envelope.IndexName == "" {
@@ -210,16 +198,6 @@ func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
 		Registry:        append([]DocID(nil), envelope.Registry...),
 		Tombstones:      append([]uint64(nil), envelope.Tombstones...),
 	}, nil
-}
-
-// SaveMultiIndexSnapshot saves a multi-index snapshot without collection stats.
-// Deprecated: use SaveMultiIndexSnapshotWithStats so scorer-aware restores can recover collection stats.
-func SaveMultiIndexSnapshot(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index) error {
-	return SaveMultiIndexSnapshotWithStats(w, fieldCodecs, indexes, nil)
-}
-
-func SaveMultiIndexSnapshotWithStats(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot) error {
-	return SaveMultiIndexSnapshotWithState(w, fieldCodecs, indexes, stats, nil, nil)
 }
 
 func SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64) error {
@@ -294,7 +272,7 @@ func LoadMultiIndexSnapshot(r io.Reader) (*LoadedMultiIndexSnapshot, error) {
 		return nil, fmt.Errorf("fts: load multi-index snapshot: decode envelope: %w", err)
 	}
 
-	if envelope.Version != multiIndexSnapshotVersionLegacy && envelope.Version != multiIndexSnapshotVersion {
+	if envelope.Version != multiIndexSnapshotVersion {
 		return nil, fmt.Errorf("fts: load multi-index snapshot: unsupported version %d", envelope.Version)
 	}
 

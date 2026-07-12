@@ -57,6 +57,7 @@ type model struct {
 	engine    SearchEngine
 	documents map[string]models.Document
 	info      Info
+	fields    []string
 
 	searchInput textinput.Model
 	limitInput  textinput.Model
@@ -112,11 +113,14 @@ func newModel(ctx context.Context, engine SearchEngine, documents map[string]mod
 
 	now := time.Now()
 
+	fields := append([]string(nil), engine.Fields()...)
+
 	m := model{
 		ctx:       ctx,
 		engine:    engine,
 		documents: documents,
 		info:      info,
+		fields:    fields,
 
 		searchInput: searchInput,
 		limitInput:  limitInput,

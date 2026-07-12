@@ -70,10 +70,6 @@ func loadRecords(path string) ([]metrics.Record, error) {
 	if err := json.Unmarshal(data, &report); err == nil && len(report.Records) > 0 {
 		return report.Records, nil
 	}
-	var legacy []metrics.Record
-	if err := json.Unmarshal(data, &legacy); err == nil && len(legacy) > 0 {
-		return legacy, nil
-	}
 	return nil, fmt.Errorf("unsupported benchmark JSON format")
 }
 

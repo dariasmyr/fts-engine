@@ -278,38 +278,12 @@ func TestSearchFieldsRestrictsExplicitFieldToSubset(t *testing.T) {
 	}
 }
 
-func TestSearchQueryFieldsRestrictsASTQueryToSubset(t *testing.T) {
-	title := newMemoryIndex()
-	body := newMemoryIndex()
-	registry := NewDocRegistry()
-	title.entries["barack"] = refsForIDs(registry, namedPosting{"doc-1", 1})
-	body.entries["obama"] = refsForIDs(registry, namedPosting{"doc-1", 1}, namedPosting{"doc-2", 1})
-
-	svc := NewMultiFieldFromIndexes(map[string]Index{
-		"title": title,
-		"body":  body,
-	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
-
-	q := &BooleanQuery{Clauses: []BoolClause{
-		MustClause(TermQuery{Term: "barack"}),
-		MustClause(TermQuery{Term: "obama"}),
-	}}
-
-	res, err := svc.SearchQueryFields(context.Background(), []string{"title"}, q, 10)
-	if err != nil {
-		t.Fatalf("SearchQueryFields() error = %v", err)
-	}
-	if len(res.Results) != 0 {
-		t.Fatalf("expected body clause to be excluded by subset scope, got %+v", res.Results)
-	}
-}
-
 func TestSearchFieldClausesCombinesDifferentQueriesAcrossFields(t *testing.T) {
 	title := newMemoryIndex()
 	body := newMemoryIndex()
 	registry := NewDocRegistry()
-	title.entries["barack"] = refsForIDs(registry, namedPosting{"doc-1", 1}, namedPosting{"doc-2", 1})
-	body.entries["obama"] = refsForIDs(registry, namedPosting{"doc-3", 1}, namedPosting{"doc-2", 1})
+	title.entries["james"] = refsForIDs(registry, namedPosting{"doc-1", 1}, namedPosting{"doc-2", 1})
+	body.entries["doe"] = refsForIDs(registry, namedPosting{"doc-3", 1}, namedPosting{"doc-2", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
@@ -317,8 +291,8 @@ func TestSearchFieldClausesCombinesDifferentQueriesAcrossFields(t *testing.T) {
 	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
 	res, err := svc.SearchFieldClauses(context.Background(), []FieldQueryClause{
-		MustFieldQuery("title", "barack"),
-		MustFieldQuery("body", "obama"),
+		MustFieldQuery("title", "james"),
+		MustFieldQuery("body", "doe"),
 	}, 10)
 	if err != nil {
 		t.Fatalf("SearchFieldClauses() error = %v", err)
@@ -328,26 +302,53 @@ func TestSearchFieldClausesCombinesDifferentQueriesAcrossFields(t *testing.T) {
 	}
 }
 
+func TestSearchFieldClausesSupportsShouldClauses(t *testing.T) {
+	title := newMemoryIndex()
+	body := newMemoryIndex()
+	registry := NewDocRegistry()
+	title.entries["james"] = refsForIDs(registry, namedPosting{"doc-1", 1}, namedPosting{"doc-2", 1})
+	body.entries["doe"] = refsForIDs(registry, namedPosting{"doc-3", 1}, namedPosting{"doc-2", 1})
+
+	svc := NewMultiFieldFromIndexes(map[string]Index{
+		"title": title,
+		"body":  body,
+	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
+
+	res, err := svc.SearchFieldClauses(context.Background(), []FieldQueryClause{
+		ShouldFieldQuery("title", "james"),
+		ShouldFieldQuery("body", "doe"),
+	}, 10)
+	if err != nil {
+		t.Fatalf("SearchFieldClauses() error = %v", err)
+	}
+	if res.TotalResultsCount != 3 || len(res.Results) != 3 {
+		t.Fatalf("expected union of SHOULD field clauses, got %+v", res.Results)
+	}
+	if res.Results[0].ID != "doc-2" {
+		t.Fatalf("expected doc-2 to rank first with two field matches, got %+v", res.Results)
+	}
+}
+
 func TestSearchFieldClausesSupportsFieldSpecificPhraseAndExclusion(t *testing.T) {
 	factory := func(name string) (Index, error) { return newPositionalMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
 	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{
-		"title": {Value: "barack"},
+		"title": {Value: "james"},
 		"body":  {Value: "french hotel"},
 	}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{
-		"title": {Value: "barack"},
+		"title": {Value: "james"},
 		"body":  {Value: "market hotel"},
 	}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
 	res, err := svc.SearchFieldClauses(ctx, []FieldQueryClause{
-		MustFieldQuery("title", "barack"),
+		MustFieldQuery("title", "james"),
 		MustFieldQuery("body", `"french hotel"`),
 		MustNotFieldQuery("body", "market"),
 	}, 10)
@@ -363,15 +364,15 @@ func TestSearchDocumentsMustAcrossFieldsIntersectsByDocID(t *testing.T) {
 	title := newMemoryIndex()
 	body := newMemoryIndex()
 	registry := NewDocRegistry()
-	title.entries["barack"] = refsForIDs(registry, namedPosting{"doc-1", 1}, namedPosting{"doc-2", 1})
-	body.entries["obama"] = refsForIDs(registry, namedPosting{"doc-3", 1}, namedPosting{"doc-2", 1})
+	title.entries["james"] = refsForIDs(registry, namedPosting{"doc-1", 1}, namedPosting{"doc-2", 1})
+	body.entries["doe"] = refsForIDs(registry, namedPosting{"doc-3", 1}, namedPosting{"doc-2", 1})
 
 	svc := NewMultiFieldFromIndexes(map[string]Index{
 		"title": title,
 		"body":  body,
 	}, WordKeys, WithDocRegistrySnapshot(registry.Snapshot()))
 
-	res, err := svc.SearchDocuments(context.Background(), "+title:barack +body:obama", 10)
+	res, err := svc.SearchDocuments(context.Background(), "+title:james +body:doe", 10)
 	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}
@@ -385,14 +386,14 @@ func TestSearchDocumentsQuotedPhraseAcrossFields(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "barack obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "barack obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
-	res, err := svc.SearchDocuments(ctx, `"barack obama"`, 10)
+	res, err := svc.SearchDocuments(ctx, `"james doe"`, 10)
 	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}
@@ -406,14 +407,14 @@ func TestSearchPhraseNearAcrossFields(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "barack x obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "barack x obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "barack obama", 1, 10)
+	res, err := svc.SearchPhraseNear(ctx, "james doe", 1, 10)
 	if err != nil {
 		t.Fatalf("SearchPhraseNear() error = %v", err)
 	}
@@ -427,14 +428,14 @@ func TestSearchPhraseFieldRestrictsToOneField(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "barack obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "barack obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseField(ctx, "title", "barack obama", 10)
+	res, err := svc.SearchPhraseField(ctx, "title", "james doe", 10)
 	if err != nil {
 		t.Fatalf("SearchPhraseField() error = %v", err)
 	}
@@ -448,14 +449,14 @@ func TestSearchPhraseFieldsRestrictsToSubset(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "barack obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "barack obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseFields(ctx, []string{"title"}, "barack obama", 10)
+	res, err := svc.SearchPhraseFields(ctx, []string{"title"}, "james doe", 10)
 	if err != nil {
 		t.Fatalf("SearchPhraseFields() error = %v", err)
 	}
@@ -469,14 +470,14 @@ func TestSearchPhraseNearFieldRestrictsToOneField(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "barack x obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "barack x obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNearField(ctx, "title", "barack obama", 1, 10)
+	res, err := svc.SearchPhraseNearField(ctx, "title", "james doe", 1, 10)
 	if err != nil {
 		t.Fatalf("SearchPhraseNearField() error = %v", err)
 	}
@@ -490,14 +491,14 @@ func TestSearchPhraseNearFieldsRestrictsToSubset(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "barack x obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "barack x obama"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNearFields(ctx, []string{"title"}, "barack obama", 1, 10)
+	res, err := svc.SearchPhraseNearFields(ctx, []string{"title"}, "james doe", 1, 10)
 	if err != nil {
 		t.Fatalf("SearchPhraseNearFields() error = %v", err)
 	}

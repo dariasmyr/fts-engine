@@ -22,15 +22,6 @@ func (s *Service) Search(ctx context.Context, q Query, maxResults int) (*SearchR
 	return attachDiagnostics(ctx, res), nil
 }
 
-func (s *Service) SearchQueryFields(ctx context.Context, fields []string, q Query, maxResults int) (*SearchResult, error) {
-	ctx, _ = ensureDiagnosticsContext(ctx)
-	res, err := s.searchResultForQuery(ctx, q, maxResults, newQueryFieldScope(fields))
-	if err != nil {
-		return nil, err
-	}
-	return attachDiagnostics(ctx, res), nil
-}
-
 func (s *Service) searchResultForQuery(ctx context.Context, q Query, maxResults int, scope queryFieldScope) (*SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

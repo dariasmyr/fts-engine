@@ -28,7 +28,7 @@ func requireDiagnostics(t *testing.T, res *SearchResult) *QueryDiagnostics {
 func TestSearchDiagnosticsTermStrategy(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(diagnosticsContext(), TermQuery{Term: "barack"}, 10)
+	res, err := svc.Search(diagnosticsContext(), TermQuery{Term: "james"}, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -139,7 +139,7 @@ func TestSearchDiagnosticsBooleanOrWandStrategy(t *testing.T) {
 func TestSearchDiagnosticsPhraseStrategy(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(diagnosticsContext(), PhraseQuery{Phrase: "barack obama"}, 10)
+	res, err := svc.Search(diagnosticsContext(), PhraseQuery{Phrase: "james doe"}, 10)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -159,7 +159,7 @@ func TestSearchDiagnosticsBooleanFallbackStrategy(t *testing.T) {
 	svc := buildExecService(t)
 	svc.scorer = TFIDF()
 	q := &BooleanQuery{Clauses: []BoolClause{
-		ShouldClause(PhraseQuery{Phrase: "barack obama"}),
+		ShouldClause(PhraseQuery{Phrase: "james doe"}),
 		ShouldClause(TermQuery{Term: "banana"}),
 	}}
 
@@ -182,7 +182,7 @@ func TestSearchDiagnosticsBooleanFallbackStrategy(t *testing.T) {
 func TestSearchDiagnosticsBooleanAndFastStrategy(t *testing.T) {
 	svc := buildExecService(t)
 	q := &BooleanQuery{Clauses: []BoolClause{
-		MustClause(TermQuery{Field: "body", Term: "barack"}),
+		MustClause(TermQuery{Field: "body", Term: "james"}),
 		MustClause(TermQuery{Field: "body", Term: "mars"}),
 	}}
 
@@ -306,7 +306,7 @@ func TestSearchDiagnosticsWandSkipReasonWithoutScorer(t *testing.T) {
 func TestSearchDocumentsDiagnosticsNonNil(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.SearchDocuments(diagnosticsContext(), "barack", 10)
+	res, err := svc.SearchDocuments(diagnosticsContext(), "james", 10)
 	if err != nil {
 		t.Fatalf("SearchDocuments() error = %v", err)
 	}
@@ -323,8 +323,8 @@ func TestSearchFieldClausesDiagnosticsNonNil(t *testing.T) {
 	svc := buildExecService(t)
 
 	res, err := svc.SearchFieldClauses(diagnosticsContext(), []FieldQueryClause{
-		MustFieldQuery("title", "barack"),
-		MustNotFieldQuery("body", "russia"),
+		MustFieldQuery("title", "james"),
+		MustNotFieldQuery("body", "australia"),
 	}, 10)
 	if err != nil {
 		t.Fatalf("SearchFieldClauses() error = %v", err)
@@ -347,13 +347,13 @@ func TestSearchPhrasePublicMethodsDiagnosticsNonNil(t *testing.T) {
 		run  func() (*SearchResult, error)
 	}{
 		{name: "SearchPhrase", run: func() (*SearchResult, error) {
-			return svc.SearchPhrase(ctx, "barack obama", 10)
+			return svc.SearchPhrase(ctx, "james doe", 10)
 		}},
 		{name: "SearchPhraseField", run: func() (*SearchResult, error) {
-			return svc.SearchPhraseField(ctx, "title", "barack obama", 10)
+			return svc.SearchPhraseField(ctx, "title", "james doe", 10)
 		}},
 		{name: "SearchPhraseFields", run: func() (*SearchResult, error) {
-			return svc.SearchPhraseFields(ctx, []string{"title", "body"}, "barack obama", 10)
+			return svc.SearchPhraseFields(ctx, []string{"title", "body"}, "james doe", 10)
 		}},
 	}
 
@@ -378,13 +378,13 @@ func TestSearchPhraseNearPublicMethodsDiagnosticsNonNil(t *testing.T) {
 		run  func() (*SearchResult, error)
 	}{
 		{name: "SearchPhraseNear", run: func() (*SearchResult, error) {
-			return svc.SearchPhraseNear(ctx, "barack obama", 1, 10)
+			return svc.SearchPhraseNear(ctx, "james doe", 1, 10)
 		}},
 		{name: "SearchPhraseNearField", run: func() (*SearchResult, error) {
-			return svc.SearchPhraseNearField(ctx, "title", "barack obama", 1, 10)
+			return svc.SearchPhraseNearField(ctx, "title", "james doe", 1, 10)
 		}},
 		{name: "SearchPhraseNearFields", run: func() (*SearchResult, error) {
-			return svc.SearchPhraseNearFields(ctx, []string{"title", "body"}, "barack obama", 1, 10)
+			return svc.SearchPhraseNearFields(ctx, []string{"title", "body"}, "james doe", 1, 10)
 		}},
 	}
 

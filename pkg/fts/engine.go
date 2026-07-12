@@ -3,7 +3,6 @@ package fts
 import (
 	"context"
 	"fmt"
-	"io"
 	"sync"
 	"time"
 )
@@ -103,19 +102,6 @@ func newService(keyGen KeyGenerator, opts ...Option) *Service {
 	return s
 }
 
-func NewFromReader(r io.Reader, loader IndexLoader, keyGen KeyGenerator, opts ...Option) (*Service, error) {
-	if loader == nil {
-		return nil, fmt.Errorf("fts: nil index loader")
-	}
-
-	index, err := loader(r)
-	if err != nil {
-		return nil, fmt.Errorf("fts: load index: %w", err)
-	}
-
-	return New(index, keyGen, opts...), nil
-}
-
 func (s *Service) Delete(docID DocID) bool {
 	return s.delete(docID, true)
 }
@@ -168,16 +154,8 @@ func (s *Service) SearchField(ctx context.Context, field string, query string, m
 	return s.searchQueryString(ctx, query, field, queryFieldScope{}, maxResults)
 }
 
-func (s *Service) SearchPlainTextField(ctx context.Context, field string, query string, maxResults int) (*SearchResult, error) {
-	return s.searchPlainText(ctx, query, field, queryFieldScope{}, maxResults)
-}
-
 func (s *Service) SearchFields(ctx context.Context, fields []string, query string, maxResults int) (*SearchResult, error) {
 	return s.searchQueryString(ctx, query, "", newQueryFieldScope(fields), maxResults)
-}
-
-func (s *Service) SearchPlainTextFields(ctx context.Context, fields []string, query string, maxResults int) (*SearchResult, error) {
-	return s.searchPlainText(ctx, query, "", newQueryFieldScope(fields), maxResults)
 }
 
 func (s *Service) searchQueryString(ctx context.Context, query string, defaultField string, scope queryFieldScope, maxResults int) (*SearchResult, error) {

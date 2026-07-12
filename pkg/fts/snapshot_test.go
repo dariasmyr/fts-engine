@@ -110,7 +110,7 @@ func TestSaveLoadSplitSnapshotsRoundTrip(t *testing.T) {
 
 	var indexSnap bytes.Buffer
 	if err := SaveIndexSnapshotWithState(&indexSnap, indexCodecName, index, nil, registry, tombstones); err != nil {
-		t.Fatalf("SaveIndexSnapshotWithStats() error = %v", err)
+		t.Fatalf("SaveIndexSnapshotWithState() error = %v", err)
 	}
 
 	var filterSnap bytes.Buffer
@@ -169,7 +169,7 @@ func TestSaveLoadIndexSnapshotWithCollectionStatsRoundTrip(t *testing.T) {
 
 	var snap bytes.Buffer
 	if err := SaveIndexSnapshotWithState(&snap, indexCodecName, index, stats, registry, tombstones); err != nil {
-		t.Fatalf("SaveIndexSnapshotWithStats() error = %v", err)
+		t.Fatalf("SaveIndexSnapshotWithState() error = %v", err)
 	}
 
 	loaded, err := LoadIndexSnapshot(bytes.NewReader(snap.Bytes()))
@@ -203,9 +203,9 @@ func TestSaveLoadIndexSnapshotWithCollectionStatsRoundTrip(t *testing.T) {
 
 func TestSaveIndexSnapshotUnknownCodec(t *testing.T) {
 	var snap bytes.Buffer
-	err := SaveIndexSnapshotWithStats(&snap, "unknown", newSnapshotIndex(), nil)
+	err := SaveIndexSnapshotWithState(&snap, "unknown", newSnapshotIndex(), nil, nil, nil)
 	if err == nil {
-		t.Fatal("SaveIndexSnapshotWithStats() error = nil, want non-nil")
+		t.Fatal("SaveIndexSnapshotWithState() error = nil, want non-nil")
 	}
 }
 
@@ -229,10 +229,10 @@ func TestSaveIndexSnapshotWritesPayload(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := SaveIndexSnapshotWithState(&out, indexCodecName, index, nil, registry, tombstones); err != nil {
-		t.Fatalf("SaveIndexSnapshotWithStats() error = %v", err)
+		t.Fatalf("SaveIndexSnapshotWithState() error = %v", err)
 	}
 	if out.Len() == 0 {
-		t.Fatal("SaveIndexSnapshotWithStats() wrote empty payload")
+		t.Fatal("SaveIndexSnapshotWithState() wrote empty payload")
 	}
 }
 
@@ -330,10 +330,10 @@ func TestSaveLoadMultiIndexSnapshotRoundTrip(t *testing.T) {
 
 	var snap bytes.Buffer
 	if err := SaveMultiIndexSnapshotWithState(&snap, codecs, indexes, nil, registry, tombstones); err != nil {
-		t.Fatalf("SaveMultiIndexSnapshotWithStats() error = %v", err)
+		t.Fatalf("SaveMultiIndexSnapshotWithState() error = %v", err)
 	}
 	if snap.Len() == 0 {
-		t.Fatal("SaveMultiIndexSnapshotWithStats() wrote empty payload")
+		t.Fatal("SaveMultiIndexSnapshotWithState() wrote empty payload")
 	}
 
 	loaded, err := LoadMultiIndexSnapshot(bytes.NewReader(snap.Bytes()))
@@ -410,7 +410,7 @@ func TestSaveLoadMultiIndexSnapshotWithCollectionStatsRoundTrip(t *testing.T) {
 
 	var snap bytes.Buffer
 	if err := SaveMultiIndexSnapshotWithState(&snap, codecs, indexes, stats, registry, tombstones); err != nil {
-		t.Fatalf("SaveMultiIndexSnapshotWithStats() error = %v", err)
+		t.Fatalf("SaveMultiIndexSnapshotWithState() error = %v", err)
 	}
 
 	loaded, err := LoadMultiIndexSnapshot(bytes.NewReader(snap.Bytes()))
@@ -451,9 +451,9 @@ func TestSaveLoadMultiIndexSnapshotWithCollectionStatsRoundTrip(t *testing.T) {
 }
 
 func TestSaveMultiIndexSnapshotUnknownCodec(t *testing.T) {
-	err := SaveMultiIndexSnapshotWithStats(&bytes.Buffer{}, map[string]string{"title": "unknown"}, map[string]Index{"title": newSnapshotIndex()}, nil)
+	err := SaveMultiIndexSnapshotWithState(&bytes.Buffer{}, map[string]string{"title": "unknown"}, map[string]Index{"title": newSnapshotIndex()}, nil, nil, nil)
 	if err == nil {
-		t.Fatal("SaveMultiIndexSnapshotWithStats() error = nil, want non-nil")
+		t.Fatal("SaveMultiIndexSnapshotWithState() error = nil, want non-nil")
 	}
 }
 
