@@ -1,6 +1,9 @@
 package fts
 
-import "math"
+import (
+	"context"
+	"math"
+)
 
 type TermStats struct {
 	Field string
@@ -21,6 +24,36 @@ type FieldStats struct {
 
 type Scorer interface {
 	Score(TermStats, DocStats, FieldStats) float64
+}
+
+type RankProfile struct {
+	Name         string
+	Base         Scorer
+	FieldWeights map[string]float64
+}
+
+type WeightedScorer struct {
+	Base          Scorer
+	FieldWeights  map[string]float64
+	DefaultWeight float64
+}
+
+func (s WeightedScorer) Score(t TermStats, d DocStats, f FieldStats) float64 {
+	if s.Base == nil {
+		return 0
+	}
+	return s.Base.Score(t, d, f) * s.fieldWeight(t.Field)
+}
+
+func (s WeightedScorer) fieldWeight(field string) float64 {
+	weight := s.DefaultWeight
+	if weight == 0 {
+		weight = 1
+	}
+	if fieldWeight, ok := s.FieldWeights[field]; ok {
+		weight = fieldWeight
+	}
+	return weight
 }
 
 type BM25Scorer struct {
@@ -82,19 +115,57 @@ func (s *Service) fieldStatsFor(field string) FieldStats {
 	}
 }
 
-func (s *Service) scoreTermHit(field string, term string, ord DocOrd, tf uint32, df uint32, stats FieldStats) float64 {
+func (s *Service) scoreTermHit(ctx context.Context, field string, term string, ord DocOrd, tf uint32, df uint32, stats FieldStats) float64 {
 	if s.scorer == nil || s.collection == nil {
 		return 0
 	}
 	ts := TermStats{Field: field, Term: term, TF: tf, DF: df}
 	ds := DocStats{Ord: ord, Length: s.collection.DocLen(field, ord)}
-	return s.scorer.Score(ts, ds, stats)
+	baseScore, weight, score := scoreWithBreakdown(s.scorer, ts, ds, stats)
+	if exp := explanationFromContext(ctx); exp != nil {
+		exp.add(ord, ScoreContribution{
+			Field:          field,
+			Term:           term,
+			TF:             tf,
+			DF:             df,
+			DocLength:      ds.Length,
+			FieldDocs:      stats.N,
+			AvgFieldLength: stats.AvgLength,
+			BaseScore:      baseScore,
+			FieldWeight:    weight,
+			Score:          score,
+		})
+	}
+	return score
 }
 
-func (s *Service) scoreTermExpansionDoc(exp termExpansion, doc DocRef) float64 {
-	return s.scoreTermHit(exp.field, exp.term, doc.Ord, doc.Count, exp.df, exp.fieldStats)
+func (s *Service) scoreTermExpansionDoc(ctx context.Context, exp termExpansion, doc DocRef) float64 {
+	return s.scoreTermHit(ctx, exp.field, exp.term, doc.Ord, doc.Count, exp.df, exp.fieldStats)
 }
 
-func (s *Service) scoreTermExpansionTF(exp termExpansion, ord DocOrd, tf uint32) float64 {
-	return s.scoreTermHit(exp.field, exp.term, ord, tf, exp.df, exp.fieldStats)
+func (s *Service) scoreTermExpansionTF(ctx context.Context, exp termExpansion, ord DocOrd, tf uint32) float64 {
+	return s.scoreTermHit(ctx, exp.field, exp.term, ord, tf, exp.df, exp.fieldStats)
+}
+
+func scoreWithBreakdown(scorer Scorer, t TermStats, d DocStats, f FieldStats) (baseScore float64, fieldWeight float64, score float64) {
+	fieldWeight = 1
+	switch scorer := scorer.(type) {
+	case WeightedScorer:
+		if scorer.Base == nil {
+			return 0, scorer.fieldWeight(t.Field), 0
+		}
+		baseScore = scorer.Base.Score(t, d, f)
+		fieldWeight = scorer.fieldWeight(t.Field)
+		return baseScore, fieldWeight, baseScore * fieldWeight
+	case *WeightedScorer:
+		if scorer == nil || scorer.Base == nil {
+			return 0, 1, 0
+		}
+		baseScore = scorer.Base.Score(t, d, f)
+		fieldWeight = scorer.fieldWeight(t.Field)
+		return baseScore, fieldWeight, baseScore * fieldWeight
+	default:
+		score = scorer.Score(t, d, f)
+		return score, 1, score
+	}
 }

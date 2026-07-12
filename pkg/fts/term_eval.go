@@ -72,7 +72,7 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldSco
 					seenInGroup[ord] = struct{}{}
 				}
 				accum.TotalMatches += int(doc.Count)
-				accum.Score += s.scoreTermExpansionDoc(expansion, doc)
+				accum.Score += s.scoreTermExpansionDoc(ctx, expansion, doc)
 				hits[ord] = accum
 			}
 		}

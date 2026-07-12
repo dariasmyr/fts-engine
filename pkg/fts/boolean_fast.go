@@ -252,14 +252,14 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 			}
 
 			// Start with the current driver expansion; other expansions may add more TF for the same clause.
-			accum := docAccum{UniqueMatches: 1, TotalMatches: int(driverDoc.Count), Score: s.scoreTermExpansionDoc(*driverExpansion, driverDoc)}
+			accum := docAccum{UniqueMatches: 1, TotalMatches: int(driverDoc.Count), Score: s.scoreTermExpansionDoc(ctx, *driverExpansion, driverDoc)}
 			for siblingExpansionIdx := range driverGroup.expansions {
 				if siblingExpansionIdx == driverExpansionIdx {
 					continue
 				}
 				if tf, ok := driverGroup.expansions[siblingExpansionIdx].lookup(driverOrd); ok {
 					accum.TotalMatches += int(tf)
-					accum.Score += s.scoreTermExpansionTF(driverGroup.expansions[siblingExpansionIdx], driverOrd, tf)
+					accum.Score += s.scoreTermExpansionTF(ctx, driverGroup.expansions[siblingExpansionIdx], driverOrd, tf)
 				}
 			}
 
@@ -273,7 +273,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 					}
 					matchedAny = true
 					accum.TotalMatches += int(tf)
-					accum.Score += s.scoreTermExpansionTF(otherGroups[i].expansions[expansionIdx], driverOrd, tf)
+					accum.Score += s.scoreTermExpansionTF(ctx, otherGroups[i].expansions[expansionIdx], driverOrd, tf)
 				}
 				if matchedAny {
 					accum.UniqueMatches++
@@ -358,7 +358,7 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, sco
 				}
 				// TotalMatches still sums TF from every matching expansion.
 				accum.TotalMatches += int(doc.Count)
-				accum.Score += s.scoreTermExpansionDoc(expansion, doc)
+				accum.Score += s.scoreTermExpansionDoc(ctx, expansion, doc)
 				combined[ord] = accum
 			}
 		}
@@ -428,7 +428,7 @@ loop:
 				d := exps[i].docs[ptrs[i]]
 				accum.UniqueMatches++
 				accum.TotalMatches += int(d.Count)
-				accum.Score += s.scoreTermExpansionDoc(*exps[i], d)
+				accum.Score += s.scoreTermExpansionDoc(ctx, *exps[i], d)
 			}
 			combined[docOrd] = accum
 		}

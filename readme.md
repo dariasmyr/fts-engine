@@ -180,6 +180,74 @@ fmt.Println(res.TotalResultsCount)
 
 In this mode, you usually create one index per field through the factory. The engine calls the factory the first time a field needs to be indexed and then reuses that index for future documents in the same field.
 
+## Weighted Field Scoring
+
+Use `fts.RankProfile` when some fields should contribute more to ranking than
+others. A rank profile applies field multipliers on top of an existing scorer such
+as BM25 or TF-IDF:
+
+```go
+engine := fts.NewMultiField(
+	factory,
+	keygen.Word,
+	fts.WithRankProfile(fts.RankProfile{
+		Name: "docs",
+		Base: fts.BM25(),
+		FieldWeights: map[string]float64{
+			"title": 3.0,
+			"tags":  2.0,
+			"body":  1.0,
+		},
+	}),
+)
+```
+
+The weights are relative ranking multipliers. They are not universal defaults and
+they are not score thresholds. For example, `"title": 3.0` means each title match
+contributes three times its base BM25/TF-IDF score. It does not mean the final
+document score is capped at `3.0`.
+
+For lower-level composition, `fts.WeightedScorer` can also be passed directly to
+`fts.WithScorer(...)`.
+
+The lower-level scorer API is still available when you want to choose a scorer
+implementation directly:
+
+```go
+engine := fts.NewMultiField(
+	factory,
+	keygen.Word,
+	fts.WithScorer(fts.BM25()),
+)
+```
+
+## Score Explanation
+
+Use `Explain(...)` to inspect why a specific document received its score for a
+query:
+
+```go
+explanation, err := engine.Explain(context.Background(), "postgres backup", "doc-1")
+if err != nil {
+	panic(err)
+}
+
+fmt.Printf("id=%s matched=%t score=%.4f\n", explanation.ID, explanation.Matched, explanation.Score)
+for _, c := range explanation.Contributions {
+	fmt.Printf(
+		"field=%s term=%s base=%.4f weight=%.2f score=%.4f\n",
+		c.Field,
+		c.Term,
+		c.BaseScore,
+		c.FieldWeight,
+		c.Score,
+	)
+}
+```
+
+For weighted scoring, each contribution includes both the base BM25/TF-IDF score
+and the applied field weight.
+
 ## Persistence
 
 The recommended persistence surface for library consumers is `pkg/ftspersist`.
@@ -237,6 +305,7 @@ fmt.Println(len(snap.ByStrategy))
 - `default` - minimal in-memory usage
 - `preset` - preset pipeline via `pkg/ftspreset`
 - `custom-options` - custom pipeline and filter
+- `rank-profile` - multi-field ranking with weighted field scoring
 - `snapshot-*` - mutable snapshot save and restore
 - `segment-*` - sealed segment save and restore, including `mmap`
 

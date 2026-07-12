@@ -82,7 +82,7 @@ func (s *Service) evalScoredPhraseTokenHits(ctx context.Context, fields []string
 			accum := hits[ord]
 			accum.UniqueMatches = 1
 			accum.TotalMatches += int(count)
-			accum.Score += s.scoreTermHit(fieldMatch.field, phraseTerm, ord, count, df, fieldStats)
+			accum.Score += s.scoreTermHit(ctx, fieldMatch.field, phraseTerm, ord, count, df, fieldStats)
 			hits[ord] = accum
 		}
 	}

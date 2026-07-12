@@ -164,7 +164,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 				d := c.currentDoc()
 				accum.UniqueMatches++
 				accum.TotalMatches += int(d.Count)
-				accum.Score += s.scoreTermExpansionDoc(*c.exp, d)
+				accum.Score += s.scoreTermExpansionDoc(ctx, *c.exp, d)
 			}
 
 			if _, skip := exclude[matchedDocOrd]; !skip {
