@@ -19,6 +19,7 @@ type ScoreExplanation struct {
 type ScoreContribution struct {
 	Field          string
 	Term           string
+	MatchType      MatchType
 	TF             uint32
 	DF             uint32
 	DocLength      uint32
@@ -26,6 +27,7 @@ type ScoreContribution struct {
 	AvgFieldLength float64
 	BaseScore      float64
 	FieldWeight    float64
+	MatchWeight    float64
 	Score          float64
 }
 
@@ -109,6 +111,9 @@ func (e *explanationCollector) snapshot() []ScoreContribution {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Field != out[j].Field {
 			return out[i].Field < out[j].Field
+		}
+		if out[i].MatchType != out[j].MatchType {
+			return out[i].MatchType < out[j].MatchType
 		}
 		if out[i].Term != out[j].Term {
 			return out[i].Term < out[j].Term

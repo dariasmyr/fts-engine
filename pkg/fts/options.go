@@ -27,6 +27,7 @@ func WithRankProfile(profile RankProfile) Option {
 		s.scorer = WeightedScorer{
 			Base:         profile.Base,
 			FieldWeights: profile.FieldWeights,
+			MatchWeights: profile.MatchWeights,
 		}
 	}
 }

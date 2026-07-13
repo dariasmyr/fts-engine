@@ -82,9 +82,13 @@ Notes:
 | Index | Capabilities | When to use |
 | --- | --- | --- |
 | `slicedradix` | exact, positional, prefix | best default if you need prefix queries |
-| `hamt` | exact, positional | use when you do not need prefix queries |
+| `hamt` | exact, positional, prefix via term scan | use when you do not need prefix-heavy queries |
 
-Prefix queries require an index that implements `fts.PrefixIndex`. Among the built-in mutable indexes, that means `slicedradix`.
+Prefix queries require an index that implements `fts.PrefixIndex`. Both built-in
+mutable indexes support prefix queries, but with different performance profiles:
+`slicedradix` performs structural prefix lookup, while `hamt` scans stored terms
+and filters them with `strings.HasPrefix`. Prefer `slicedradix` for prefix-heavy
+workloads.
 
 ## Pipelines and Presets
 
@@ -198,6 +202,11 @@ engine := fts.NewMultiField(
 			"tags":  2.0,
 			"body":  1.0,
 		},
+		MatchWeights: fts.MatchWeights{
+			Term:   1.0,
+			Prefix: 0.6,
+			Phrase: 4.0,
+		},
 	}),
 )
 ```
@@ -206,6 +215,9 @@ The weights are relative ranking multipliers. They are not universal defaults an
 they are not score thresholds. For example, `"title": 3.0` means each title match
 contributes three times its base BM25/TF-IDF score. It does not mean the final
 document score is capped at `3.0`.
+
+Match weights are also relative multipliers. They are useful for mixed queries,
+where exact terms, phrases, and prefixes can compete in the same result set.
 
 For lower-level composition, `fts.WeightedScorer` can also be passed directly to
 `fts.WithScorer(...)`.
@@ -235,18 +247,20 @@ if err != nil {
 fmt.Printf("id=%s matched=%t score=%.4f\n", explanation.ID, explanation.Matched, explanation.Score)
 for _, c := range explanation.Contributions {
 	fmt.Printf(
-		"field=%s term=%s base=%.4f weight=%.2f score=%.4f\n",
+		"field=%s term=%s match=%s base=%.4f field_weight=%.2f match_weight=%.2f score=%.4f\n",
 		c.Field,
 		c.Term,
+		c.MatchType,
 		c.BaseScore,
 		c.FieldWeight,
+		c.MatchWeight,
 		c.Score,
 	)
 }
 ```
 
 For weighted scoring, each contribution includes both the base BM25/TF-IDF score
-and the applied field weight.
+and the applied field and match type weights.
 
 ## Persistence
 
