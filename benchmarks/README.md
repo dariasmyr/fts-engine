@@ -213,7 +213,7 @@ What they mean:
 These matter only for `fts-engine` runs:
 
 - `-index=slicedradix|hamt`
-- `-scorer=none|bm25|tfidf`
+- `-scorer=none|bm25|tfidf|rank-profile-default`
 - `-lang=none|en|ru|multi`
 - `-filter=none|bloom|cuckoo|ribbon`
 - `-persist=none|snapshot|segment`
