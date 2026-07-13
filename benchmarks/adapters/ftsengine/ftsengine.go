@@ -347,6 +347,20 @@ func selectScorer(kind string) (fts.Option, error) {
 		return fts.WithScorer(fts.BM25()), nil
 	case "tfidf":
 		return fts.WithScorer(fts.TFIDF()), nil
+	case "rank-profile-default":
+		return fts.WithRankProfile(fts.RankProfile{
+			Name: "default",
+			Base: fts.BM25(),
+			FieldWeights: map[string]float64{
+				fts.DefaultField: 1,
+			},
+			MatchWeights: fts.MatchWeights{
+				Term:       1,
+				Prefix:     1,
+				Phrase:     1,
+				NearPhrase: 1,
+			},
+		}), nil
 	default:
 		return nil, fmt.Errorf("unknown scorer %q", kind)
 	}

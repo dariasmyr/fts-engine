@@ -25,6 +25,7 @@ For external integrations, prefer these public packages:
 - `pkg/ftspreset` - ready-to-use pipeline presets
 - `pkg/filter` - bloom, cuckoo, and ribbon filters
 - `pkg/ftsstats` - aggregated search observability
+- `pkg/ftseval` - lightweight ranking evaluation metrics
 
 `cmd/*`, `internal/*`, and `benchmarks/*` are repository-owned tooling, not the main library surface.
 
@@ -261,6 +262,43 @@ for _, c := range explanation.Contributions {
 
 For weighted scoring, each contribution includes both the base BM25/TF-IDF score
 and the applied field and match type weights.
+
+## Rank Evaluation
+
+Use `pkg/ftseval` to compare rank profiles against representative queries and
+relevance judgments:
+
+```go
+queries := []ftseval.Query{
+	{
+		Query: "postgres backup",
+		Relevant: map[fts.DocID]float64{
+			"doc-1": 2,
+			"doc-7": 1,
+		},
+	},
+}
+
+report, err := ftseval.Evaluate(context.Background(), queries, 10, func(ctx context.Context, query string, k int) ([]fts.DocID, error) {
+	res, err := engine.SearchDocuments(ctx, query, k)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]fts.DocID, 0, len(res.Results))
+	for _, item := range res.Results {
+		ids = append(ids, item.ID)
+	}
+	return ids, nil
+})
+if err != nil {
+	panic(err)
+}
+
+fmt.Println(report.MRR, report.NDCGAtK, report.PrecisionAtK)
+```
+
+The first version is intentionally offline and explicit: it does not learn
+weights automatically and does not ingest production telemetry.
 
 ## Persistence
 

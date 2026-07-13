@@ -101,7 +101,7 @@ func parseFlags(args []string) (config, error) {
 		prefixMinExp  = fs.Int("prefix-min-expand", 2, "minimum number of term expansions for generated prefix queries")
 		prefixMaxExp  = fs.Int("prefix-max-expand", 32, "maximum number of term expansions for generated prefix queries")
 		index         = fs.String("index", "slicedradix", "fts-engine index: slicedradix|hamt")
-		scorer        = fs.String("scorer", "bm25", "fts-engine scorer: none|bm25|tfidf")
+		scorer        = fs.String("scorer", "bm25", "fts-engine scorer: none|bm25|tfidf|rank-profile-default")
 		lang          = fs.String("lang", "en", "fts-engine language preset: en|ru|multi|none")
 		filter        = fs.String("filter", "none", "fts-engine filter: none|bloom|cuckoo|ribbon")
 		persist       = fs.String("persist", "snapshot", "fts-engine persistence: none|snapshot|segment")
@@ -441,7 +441,7 @@ func validateFTSEngineConfig(cfg config) error {
 		return fmt.Errorf("bench: unsupported -index %q", cfg.Index)
 	}
 	switch cfg.Scorer {
-	case "", "none", "bm25", "tfidf":
+	case "", "none", "bm25", "tfidf", "rank-profile-default":
 	default:
 		return fmt.Errorf("bench: unsupported -scorer %q", cfg.Scorer)
 	}
