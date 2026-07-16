@@ -71,6 +71,43 @@ func TestMinLengthOrNumericFilter(t *testing.T) {
 	}
 }
 
+func TestMinLengthOrNumericFilterCountsRunes(t *testing.T) {
+	f := MinLengthOrNumericFilter{MinLength: 3}
+	got := f.Apply([]string{"go", "юю", "api", "ошибка"})
+	want := []string{"api", "ошибка"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Apply() = %v, want %v", got, want)
+	}
+}
+
+func TestObservabilityPipelineGolden(t *testing.T) {
+	p := ObservabilityPipeline()
+	got := p.Process("request not found 10.0.0.1 io.EOF checkout-api/v2")
+	want := []string{
+		"request", "not", "found",
+		"10.0.0.1", "10", "0", "1",
+		"io.eof", "io", "eof",
+		"checkout-api/v2", "checkout", "api", "v2",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Process() = %v, want %v", got, want)
+	}
+	if got := p.Descriptor(); got.Name != "observability" || got.Version != 1 || len(got.Fingerprint) != 64 {
+		t.Fatalf("Descriptor() = %+v", got)
+	}
+}
+
+func TestPipelineDescriptorStable(t *testing.T) {
+	a := DefaultMultilingualPipeline().Descriptor()
+	b := DefaultMultilingualPipeline().Descriptor()
+	if a != b || a.Fingerprint == "" {
+		t.Fatalf("descriptors differ: %+v != %+v", a, b)
+	}
+	if a == ObservabilityPipeline().Descriptor() {
+		t.Fatal("different pipelines have the same descriptor")
+	}
+}
+
 func TestRussianStopwordFilter(t *testing.T) {
 	f := RussianStopwordFilter{}
 

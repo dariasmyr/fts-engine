@@ -3,6 +3,8 @@ package filter
 import (
 	"bufio"
 	"bytes"
+	"encoding/gob"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -85,6 +87,87 @@ func TestRibbonFilterSerializeLoadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRibbonFilterRejectsUnbuiltPersistence(t *testing.T) {
+	var nilFilter *RibbonFilter
+	if !nilFilter.Contains([]byte("anything")) {
+		t.Fatal("nil filter must fail open")
+	}
+
+	rf, err := NewRibbonFilter(8, 8, 8, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rf.Contains([]byte("anything")) {
+		t.Fatal("unbuilt filter must fail open")
+	}
+	if err := rf.Serialize(&bytes.Buffer{}); err == nil {
+		t.Fatal("Serialize() error = nil for unbuilt filter")
+	}
+
+	var legacy bytes.Buffer
+	if err := gob.NewEncoder(&legacy).Encode(ribbonSnapshot{M: 16, W: 8, Span: 9, Cells: make([]uint16, 16)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRibbonFilter(bytes.NewReader(legacy.Bytes())); err == nil {
+		t.Fatal("LoadRibbonFilter() error = nil for unbuilt legacy filter")
+	}
+}
+
+func TestNewRibbonFilterRejectsCellCountOverflow(t *testing.T) {
+	if _, err := NewRibbonFilter(^uint32(0), ^uint32(0), 32, 1); err == nil {
+		t.Fatal("NewRibbonFilter() error = nil for overflowing cell count")
+	}
+}
+
+func TestRibbonFilterRejectsCorruptV2(t *testing.T) {
+	rf, err := NewRibbonFilter(32, 32, 24, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rf.BuildWithRetriesFromKeyStream(func(emit func([]byte) bool) error {
+		emit([]byte("alpha"))
+		return nil
+	}, 10); err != nil {
+		t.Fatal(err)
+	}
+	var payload bytes.Buffer
+	if err := rf.Serialize(&payload); err != nil {
+		t.Fatal(err)
+	}
+	data := payload.Bytes()
+	data[len(data)/2] ^= 0xff
+	if _, err := LoadRibbonFilter(bytes.NewReader(data)); err == nil {
+		t.Fatal("LoadRibbonFilter() error = nil for corrupt snapshot")
+	}
+}
+
+func TestRibbonFilterLoadsBuiltLegacySnapshot(t *testing.T) {
+	rf, err := NewRibbonFilter(32, 32, 24, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rf.BuildWithRetriesFromKeyStream(func(emit func([]byte) bool) error {
+		emit([]byte("alpha"))
+		return nil
+	}, 10); err != nil {
+		t.Fatal(err)
+	}
+	var legacy bytes.Buffer
+	if err := gob.NewEncoder(&legacy).Encode(ribbonSnapshot{
+		M: rf.m, W: rf.w, Seed: rf.seed, Span: rf.span,
+		Cells: append([]uint16(nil), rf.cells...), Built: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadRibbonFilter(bytes.NewReader(legacy.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Contains([]byte("alpha")) {
+		t.Fatal("legacy round trip lost membership")
+	}
+}
+
 func TestRibbonFilterAsFTSFilterViaLazyAdapter(t *testing.T) {
 	rf, err := NewRibbonFilter(64, 64, 24, 11)
 	if err != nil {
@@ -139,12 +222,12 @@ func TestRibbonFilterBuildFromFile(t *testing.T) {
 		t.Fatalf("NewRibbonFilter() error = %v", err)
 	}
 
-	stream := func(emit func([]byte) bool) error {
+	stream := func(emit func([]byte) bool) (streamErr error) {
 		f, err := os.Open(path)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() { streamErr = errors.Join(streamErr, f.Close()) }()
 
 		s := bufio.NewScanner(f)
 		for s.Scan() {
@@ -177,12 +260,12 @@ func TestRibbonFilterBuildFromFileWithCustomParser(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	parser := func(path string, emit func([]byte) bool) error {
+	parser := func(path string, emit func([]byte) bool) (parseErr error) {
 		f, err := os.Open(path)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() { parseErr = errors.Join(parseErr, f.Close()) }()
 
 		s := bufio.NewScanner(f)
 		for s.Scan() {

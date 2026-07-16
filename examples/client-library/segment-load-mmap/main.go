@@ -24,7 +24,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer loaded.Close()
+	defer func() {
+		if err := loaded.Close(); err != nil {
+			panic(err)
+		}
+	}()
 
 	res, err := loaded.Service.SearchDocuments(context.Background(), "snapshot", 10)
 	if err != nil {

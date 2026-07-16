@@ -97,10 +97,6 @@ func (s *Service) fieldNames() []string {
 	return names
 }
 
-func (s *Service) resolveFields(explicit string) []string {
-	return s.resolveScopedFields(explicit, queryFieldScope{})
-}
-
 func (s *Service) lookupIndex(name string) (Index, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

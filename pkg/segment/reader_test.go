@@ -1,6 +1,7 @@
 package segment
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -108,6 +109,69 @@ func TestOpenFileRoundTrip(t *testing.T) {
 	}
 }
 
+func TestOpenFileReaderRoundTripWithoutHoldingFileBytes(t *testing.T) {
+	data := mustBuildSingleTerm(t, "alpha", 11)
+	path := filepath.Join(t.TempDir(), "segment.fidx")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	r, err := OpenFileReader(path)
+	if err != nil {
+		t.Fatalf("OpenFileReader() error = %v", err)
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+	if r.Bytes() != nil {
+		t.Fatal("Bytes() is non-nil for file-backed reader")
+	}
+	postings, err := r.Search("alpha")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(postings) != 1 || postings[0].Ord != 11 {
+		t.Fatalf("Search() = %+v, want ord=11", postings)
+	}
+}
+
+func TestOpenRejectsVersion2Corruption(t *testing.T) {
+	data := mustBuildSingleTerm(t, "alpha", 7)
+	data[headerLen+1] ^= 0xff
+	if _, err := Open(data); err == nil {
+		t.Fatal("Open(corrupt) error = nil, want checksum error")
+	}
+}
+
+func TestOpenReadsLegacyVersion1Segment(t *testing.T) {
+	legacy := toLegacyVersion1(t, mustBuildSingleTerm(t, "alpha", 13))
+	r, err := Open(legacy)
+	if err != nil {
+		t.Fatalf("Open(v1) error = %v", err)
+	}
+	postings, err := r.Search("alpha")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(postings) != 1 || postings[0].Ord != 13 {
+		t.Fatalf("Search() = %+v, want ord=13", postings)
+	}
+}
+
+func TestSearchRejectsMalformedLegacyPostings(t *testing.T) {
+	legacy := toLegacyVersion1(t, mustBuildSingleTerm(t, "alpha", 7))
+	legacy[headerLen] = 2
+	r, err := Open(legacy)
+	if err != nil {
+		t.Fatalf("Open(v1) error = %v", err)
+	}
+	if _, err := r.Search("alpha"); err == nil {
+		t.Fatal("Search(malformed) error = nil, want decode error")
+	}
+}
+
 func TestReaderIsReadOnly(t *testing.T) {
 	r, err := Open(mustBuildSingleTerm(t, "alpha", 1))
 	if err != nil {
@@ -128,4 +192,19 @@ func mustBuildSingleTerm(t *testing.T, term string, ord fts.DocOrd) []byte {
 		t.Fatalf("Build() error = %v", err)
 	}
 	return data
+}
+
+func toLegacyVersion1(t *testing.T, current []byte) []byte {
+	t.Helper()
+	if len(current) < footerLen {
+		t.Fatal("current segment is too short")
+	}
+	currentFooter := current[len(current)-footerLen:]
+	legacy := append([]byte(nil), current[:len(current)-footerLen]...)
+	binary.LittleEndian.PutUint16(legacy[4:6], legacyVersion)
+	var footer [legacyFooterLen]byte
+	copy(footer[0:16], currentFooter[0:16])
+	copy(footer[16:20], magic)
+	binary.LittleEndian.PutUint16(footer[20:22], legacyVersion)
+	return append(legacy, footer[:]...)
 }

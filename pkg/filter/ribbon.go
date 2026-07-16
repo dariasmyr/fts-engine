@@ -1,10 +1,12 @@
 package filter
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"hash/fnv"
 	"io"
 	"math/bits"
@@ -61,6 +63,8 @@ const (
 	// При XOR после выравнивания двух окон нужен диапазон до (2*w - 1) бит.
 	// Чтобы избежать потери битов в uint64, лучше поставить лимит окна 32: 2*w - 1 <= 64 => w <= 32.
 	maxRibbonWindow uint32 = 32
+	ribbonMagic            = "RIB2"
+	maxRibbonCells  uint32 = 32 << 20
 )
 
 // makeRow запечатывает все необходимое для XOR уравнения
@@ -128,9 +132,13 @@ func NewRibbonFilter(expectedItems uint32, extraCells uint32, w uint32, seed uin
 	if w == 0 || w > maxRibbonWindow {
 		return nil, errors.New("w must be in range [1..32]")
 	}
+	cellCount := uint64(expectedItems) + uint64(extraCells) + uint64(w)
+	if cellCount > uint64(maxRibbonCells) {
+		return nil, fmt.Errorf("ribbon: cell count %d exceeds limit %d", cellCount, maxRibbonCells)
+	}
 
 	// Количество cells должно быть слегка выше количества expectedItems и не меньше минимального размера окна
-	m := expectedItems + extraCells + w
+	m := uint32(cellCount)
 
 	// Верхняя граница, больше которой start (начало локального окна) не может быть
 	span := m - w + 1
@@ -295,8 +303,8 @@ func (rf *RibbonFilter) BuildFromKeyStream(stream func(func([]byte) bool) error)
 // true  => возможно есть (возможны ложноположительные срабатывания)
 // false => точно нет
 func (rf *RibbonFilter) Contains(item []byte) bool {
-	if !rf.built {
-		return false
+	if rf == nil || !rf.built {
+		return true
 	}
 
 	// По ключу считаем start/mask/fingerprint (те же правила, что и в Build).
@@ -316,6 +324,9 @@ func (rf *RibbonFilter) Contains(item []byte) bool {
 	// Сравниваем полученный XOR с fingerprint.
 	return acc == fp
 }
+
+// Ready reports whether Contains can return definitive negative answers.
+func (rf *RibbonFilter) Ready() bool { return rf != nil && rf.built }
 
 // leadingColumn определяет индекс первой cell в окне
 func (r row) leadingColumn() uint32 {
@@ -401,25 +412,83 @@ func hash64(data []byte, seed uint64) uint64 {
 }
 
 func (rf *RibbonFilter) Serialize(w io.Writer) error {
-	snapshot := ribbonSnapshot{
-		M:     rf.m,
-		W:     rf.w,
-		Seed:  rf.seed,
-		Span:  rf.span,
-		Cells: append([]uint16(nil), rf.cells...),
-		Built: rf.built,
+	if w == nil {
+		return errors.New("ribbon: serialize: nil writer")
+	}
+	if rf == nil || !rf.built {
+		return errors.New("ribbon: serialize: filter is not built")
+	}
+	if rf.m == 0 || rf.m > maxRibbonCells || len(rf.cells) != int(rf.m) {
+		return errors.New("ribbon: serialize: invalid cell count")
 	}
 
-	if err := gob.NewEncoder(w).Encode(snapshot); err != nil {
+	payload := make([]byte, 0, 28+len(rf.cells)*2+4)
+	payload = append(payload, ribbonMagic...)
+	payload = binary.LittleEndian.AppendUint32(payload, rf.m)
+	payload = binary.LittleEndian.AppendUint32(payload, rf.w)
+	payload = binary.LittleEndian.AppendUint64(payload, rf.seed)
+	payload = binary.LittleEndian.AppendUint32(payload, rf.span)
+	payload = binary.LittleEndian.AppendUint32(payload, uint32(len(rf.cells)))
+	for _, cell := range rf.cells {
+		payload = binary.LittleEndian.AppendUint16(payload, cell)
+	}
+	payload = binary.LittleEndian.AppendUint32(payload, crc32.ChecksumIEEE(payload))
+	if _, err := w.Write(payload); err != nil {
 		return fmt.Errorf("ribbon: serialize: %w", err)
 	}
-
 	return nil
 }
 
 func LoadRibbonFilter(r io.Reader) (*RibbonFilter, error) {
+	if r == nil {
+		return nil, errors.New("ribbon: load: nil reader")
+	}
+	maxBytes := int64(28) + int64(maxRibbonCells)*2 + 4
+	payload, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("ribbon: load: read: %w", err)
+	}
+	if int64(len(payload)) > maxBytes {
+		return nil, errors.New("ribbon: load: snapshot exceeds size limit")
+	}
+	if len(payload) >= 4 && string(payload[:4]) == ribbonMagic {
+		return loadRibbonV2(payload)
+	}
+	return loadLegacyRibbon(payload)
+}
+
+func loadRibbonV2(payload []byte) (*RibbonFilter, error) {
+	if len(payload) < 32 {
+		return nil, errors.New("ribbon: load: truncated v2 snapshot")
+	}
+	body, sum := payload[:len(payload)-4], payload[len(payload)-4:]
+	if crc32.ChecksumIEEE(body) != binary.LittleEndian.Uint32(sum) {
+		return nil, errors.New("ribbon: load: checksum mismatch")
+	}
+	m := binary.LittleEndian.Uint32(body[4:8])
+	w := binary.LittleEndian.Uint32(body[8:12])
+	seed := binary.LittleEndian.Uint64(body[12:20])
+	span := binary.LittleEndian.Uint32(body[20:24])
+	cellCount := binary.LittleEndian.Uint32(body[24:28])
+	if m == 0 || m > maxRibbonCells || cellCount != m {
+		return nil, errors.New("ribbon: load: invalid cell count")
+	}
+	if w == 0 || w > maxRibbonWindow || m < w || span != m-w+1 {
+		return nil, errors.New("ribbon: load: invalid geometry")
+	}
+	if len(body) != 28+int(cellCount)*2 {
+		return nil, errors.New("ribbon: load: invalid payload length")
+	}
+	cells := make([]uint16, cellCount)
+	for i := range cells {
+		cells[i] = binary.LittleEndian.Uint16(body[28+i*2:])
+	}
+	return &RibbonFilter{m: m, w: w, seed: seed, span: span, cells: cells, built: true}, nil
+}
+
+func loadLegacyRibbon(payload []byte) (*RibbonFilter, error) {
 	var snap ribbonSnapshot
-	if err := gob.NewDecoder(r).Decode(&snap); err != nil {
+	if err := gob.NewDecoder(bytes.NewReader(payload)).Decode(&snap); err != nil {
 		return nil, fmt.Errorf("ribbon: load: %w", err)
 	}
 
@@ -434,6 +503,12 @@ func LoadRibbonFilter(r io.Reader) (*RibbonFilter, error) {
 	}
 	if len(snap.Cells) != int(snap.M) {
 		return nil, errors.New("ribbon: load: invalid cells length")
+	}
+	if snap.M > maxRibbonCells {
+		return nil, errors.New("ribbon: load: cell count exceeds limit")
+	}
+	if !snap.Built {
+		return nil, errors.New("ribbon: load: filter is not built")
 	}
 
 	expectedSpan := snap.M - snap.W + 1

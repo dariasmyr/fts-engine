@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"sort"
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
@@ -23,14 +24,38 @@ type TermPostings struct {
 // each term must already be sorted by Ord.
 func Build(terms []TermPostings) ([]byte, error) {
 	for i := range terms {
+		if terms[i].Term == "" {
+			return nil, fmt.Errorf("segment: empty term")
+		}
+		if len(terms[i].Postings) == 0 {
+			return nil, fmt.Errorf("segment: term %q has no postings", terms[i].Term)
+		}
 		if !ordsAreSorted(terms[i].Postings) {
-			return nil, fmt.Errorf("segment: term %q postings not sorted by Ord", terms[i].Term)
+			return nil, fmt.Errorf("segment: term %q postings not strictly sorted by Ord", terms[i].Term)
+		}
+		for _, posting := range terms[i].Postings {
+			if posting.Count == 0 {
+				return nil, fmt.Errorf("segment: term %q has a zero posting count", terms[i].Term)
+			}
+		}
+		if len(terms[i].Positions) > len(terms[i].Postings) {
+			return nil, fmt.Errorf("segment: term %q has more position lists than postings", terms[i].Term)
+		}
+		for _, positions := range terms[i].Positions {
+			if !positionsAreSorted(positions) {
+				return nil, fmt.Errorf("segment: term %q positions not sorted", terms[i].Term)
+			}
 		}
 	}
 
 	sorted := make([]TermPostings, len(terms))
 	copy(sorted, terms)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Term < sorted[j].Term })
+	for i := 1; i < len(sorted); i++ {
+		if sorted[i].Term == sorted[i-1].Term {
+			return nil, fmt.Errorf("segment: duplicate term %q", sorted[i].Term)
+		}
+	}
 
 	var buf bytes.Buffer
 	writeHeader(&buf)
@@ -111,9 +136,10 @@ func writeFooter(buf *bytes.Buffer, indexOff, indexLen uint64) {
 	var ftr [footerLen]byte
 	binary.LittleEndian.PutUint64(ftr[0:8], indexOff)
 	binary.LittleEndian.PutUint64(ftr[8:16], indexLen)
-	copy(ftr[16:20], magic)
-	binary.LittleEndian.PutUint16(ftr[20:22], version)
-	binary.LittleEndian.PutUint16(ftr[22:24], 0)
+	binary.LittleEndian.PutUint32(ftr[16:20], crc32.ChecksumIEEE(buf.Bytes()))
+	copy(ftr[24:28], magic)
+	binary.LittleEndian.PutUint16(ftr[28:30], version)
+	binary.LittleEndian.PutUint16(ftr[30:32], 0)
 	buf.Write(ftr[:])
 }
 
@@ -149,7 +175,16 @@ func writePositions(buf *bytes.Buffer, postings []fts.Posting, positions [][]uin
 
 func ordsAreSorted(postings []fts.Posting) bool {
 	for i := 1; i < len(postings); i++ {
-		if postings[i].Ord < postings[i-1].Ord {
+		if postings[i].Ord <= postings[i-1].Ord {
+			return false
+		}
+	}
+	return true
+}
+
+func positionsAreSorted(positions []uint32) bool {
+	for i := 1; i < len(positions); i++ {
+		if positions[i] < positions[i-1] {
 			return false
 		}
 	}

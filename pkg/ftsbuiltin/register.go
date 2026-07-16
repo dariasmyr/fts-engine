@@ -7,6 +7,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/filter"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/index/flat"
 	"github.com/dariasmyr/fts-engine/pkg/index/hamt"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 )
@@ -53,6 +54,9 @@ func registerSnapshotCodecs() error {
 }
 
 func RegisterIndexes() error {
+	if err := fts.RegisterIndexSnapshotCodec("flat", saveSerializableIndex, flat.Load); err != nil {
+		return err
+	}
 	if err := fts.RegisterIndexSnapshotCodec("slicedradix", saveSerializableIndex, slicedradix.Load); err != nil {
 		return err
 	}
@@ -79,6 +83,8 @@ func RegisterFilters() error {
 
 func BuildIndex(name string) (fts.Index, error) {
 	switch name {
+	case "flat":
+		return flat.New(), nil
 	case "slicedradix":
 		return slicedradix.New(), nil
 	case "hamt":

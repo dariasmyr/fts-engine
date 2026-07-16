@@ -38,3 +38,40 @@ func (AlnumTokenizer) Tokenize(text string) []string {
 
 	return tokens
 }
+
+// ObservabilityTokenizer emits exact technical atoms together with their
+// alphanumeric components. For example, "10.0.0.1" produces the complete IP
+// plus 10/0/0/1, while ordinary words are emitted once.
+type ObservabilityTokenizer struct{}
+
+func (ObservabilityTokenizer) Tokenize(text string) []string {
+	if text == "" {
+		return nil
+	}
+	fields := strings.Fields(text)
+	tokens := make([]string, 0, len(fields)*2)
+	alnum := AlnumTokenizer{}
+	for _, field := range fields {
+		atom := strings.TrimFunc(field, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		})
+		if atom == "" {
+			continue
+		}
+		parts := alnum.Tokenize(atom)
+		if hasTechnicalSeparator(atom) {
+			tokens = append(tokens, atom)
+		}
+		tokens = append(tokens, parts...)
+	}
+	return tokens
+}
+
+func hasTechnicalSeparator(token string) bool {
+	for _, r := range token {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
+}

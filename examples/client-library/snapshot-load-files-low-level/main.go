@@ -22,7 +22,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer loaded.Close()
+	defer func() {
+		if err := loaded.Close(); err != nil {
+			panic(err)
+		}
+	}()
 
 	// Low-level restore keeps full control over optional restore options.
 	restored := fts.New(

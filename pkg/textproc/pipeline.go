@@ -1,9 +1,13 @@
 package textproc
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	snowballeng "github.com/kljensen/snowball/english"
 	snowballrus "github.com/kljensen/snowball/russian"
@@ -14,18 +18,43 @@ type Filter interface {
 }
 
 type Pipeline struct {
-	tokenizer Tokenizer
-	filters   []Filter
+	tokenizer  Tokenizer
+	filters    []Filter
+	descriptor Descriptor
+}
+
+// Descriptor is the stable identity of an analysis contract. Persisted indexes
+// should store Fingerprint and reject or rebuild on mismatch.
+type Descriptor struct {
+	Name        string
+	Version     uint32
+	Fingerprint string
+}
+
+func NewDescriptor(name string, version uint32) Descriptor {
+	spec := fmt.Sprintf("%s@%d", name, version)
+	sum := sha256.Sum256([]byte(spec))
+	return Descriptor{Name: name, Version: version, Fingerprint: hex.EncodeToString(sum[:])}
 }
 
 func NewPipeline(tokenizer Tokenizer, filters ...Filter) Pipeline {
+	return NewNamedPipeline("custom", 0, tokenizer, filters...)
+}
+
+// NewNamedPipeline creates a pipeline with a caller-owned compatibility ID.
+// Increment version whenever token output can change for the same input.
+func NewNamedPipeline(name string, version uint32, tokenizer Tokenizer, filters ...Filter) Pipeline {
 	if tokenizer == nil {
 		tokenizer = AlnumTokenizer{}
 	}
+	if name == "" {
+		name = "custom"
+	}
 
 	return Pipeline{
-		tokenizer: tokenizer,
-		filters:   filters,
+		tokenizer:  tokenizer,
+		filters:    filters,
+		descriptor: NewDescriptor(name, version),
 	}
 }
 
@@ -40,8 +69,16 @@ func (p Pipeline) Process(text string) []string {
 	return tokens
 }
 
+func (p Pipeline) Descriptor() Descriptor { return p.descriptor }
+
+func (p Pipeline) AnalyzerName() string { return p.descriptor.Name }
+
+func (p Pipeline) AnalyzerVersion() uint32 { return p.descriptor.Version }
+
+func (p Pipeline) AnalyzerFingerprint() string { return p.descriptor.Fingerprint }
+
 func DefaultEnglishPipeline() Pipeline {
-	return NewPipeline(
+	return NewNamedPipeline("english", 1,
 		AlnumTokenizer{},
 		LowercaseFilter{},
 		MinLengthOrNumericFilter{MinLength: 3},
@@ -51,7 +88,7 @@ func DefaultEnglishPipeline() Pipeline {
 }
 
 func DefaultRussianPipeline() Pipeline {
-	return NewPipeline(
+	return NewNamedPipeline("russian", 1,
 		AlnumTokenizer{},
 		LowercaseFilter{},
 		MinLengthOrNumericFilter{MinLength: 3},
@@ -61,12 +98,23 @@ func DefaultRussianPipeline() Pipeline {
 }
 
 func DefaultMultilingualPipeline() Pipeline {
-	return NewPipeline(
+	return NewNamedPipeline("multilingual", 1,
 		AlnumTokenizer{},
 		LowercaseFilter{},
 		MinLengthOrNumericFilter{MinLength: 3},
 		MultilingualStopwordFilter{},
 		MultilingualStemFilter{},
+	)
+}
+
+// ObservabilityPipeline preserves technical identifiers and short diagnostic
+// terms. It deliberately does not remove stopwords or stem tokens.
+func ObservabilityPipeline() Pipeline {
+	return NewNamedPipeline("observability", 1,
+		ObservabilityTokenizer{},
+		LowercaseFilter{},
+		MinLengthOrNumericFilter{MinLength: 2},
+		UniqueFilter{},
 	)
 }
 
@@ -106,9 +154,31 @@ func (f MinLengthOrNumericFilter) Apply(tokens []string) []string {
 		if token == "" {
 			continue
 		}
-		if isNumericToken(token) || len(token) >= minLen {
+		if isNumericToken(token) || utf8.RuneCountInString(token) >= minLen {
 			out = append(out, token)
 		}
+	}
+	return out
+}
+
+// UniqueFilter removes duplicate tokens while preserving first-seen order.
+type UniqueFilter struct{}
+
+func (UniqueFilter) Apply(tokens []string) []string {
+	if len(tokens) < 2 {
+		return tokens
+	}
+	seen := make(map[string]struct{}, len(tokens))
+	out := tokens[:0]
+	for _, token := range tokens {
+		if token == "" {
+			continue
+		}
+		if _, ok := seen[token]; ok {
+			continue
+		}
+		seen[token] = struct{}{}
+		out = append(out, token)
 	}
 	return out
 }
