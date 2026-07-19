@@ -29,6 +29,8 @@ type SearchEngine interface {
 type Info struct {
 	Engine  string
 	Index   string
+	Scorer  string
+	Profile string
 	Filter  string
 	Version string
 }

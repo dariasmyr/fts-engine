@@ -4,6 +4,10 @@ fts:
   index: "slicedradix" # slicedradix|hamt
   keygen: "word"
   scorer: "none"       # none|bm25|tfidf
+  # rank_profile:
+  #   name: "title-1.5"
+  #   field_weights:
+  #     title: 1.5
   filter: "ribbon"
   persistence:
     enabled: true

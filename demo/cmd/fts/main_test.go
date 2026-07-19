@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dariasmyr/fts-engine/demo/internal/config"
 	"github.com/dariasmyr/fts-engine/demo/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
@@ -102,6 +103,72 @@ func TestServiceAdapterSearchQueryStringUsesParserSemantics(t *testing.T) {
 	}
 	if len(res.ResultData) != 1 || res.ResultData[0].ID != "doc-a" {
 		t.Fatalf("unexpected syntax-mode results: %+v", res.ResultData)
+	}
+}
+
+func TestServiceAdapterSearchQueryStringProjectsScoreExplanation(t *testing.T) {
+	svc := fts.NewMultiField(func(string) (fts.Index, error) {
+		return slicedradix.New(), nil
+	}, fts.WordKeys, fts.WithRankProfile(fts.RankProfile{
+		Base:         fts.BM25(),
+		FieldWeights: map[string]float64{"title": 3},
+	}))
+	ctx := context.Background()
+	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.Field{
+		"title": {Value: "alpha"},
+	}}); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
+	}
+
+	adapter := &serviceAdapter{service: svc}
+	res, err := adapter.SearchQueryString(ctx, "title:alpha", 10)
+	if err != nil {
+		t.Fatalf("SearchQueryString() error = %v", err)
+	}
+	if len(res.ResultData) != 1 {
+		t.Fatalf("ResultData len = %d, want 1", len(res.ResultData))
+	}
+	got := res.ResultData[0]
+	if got.Score == 0 {
+		t.Fatalf("expected projected score, got %+v", got)
+	}
+	if got.Explanation == nil || len(got.Explanation.Contributions) != 1 {
+		t.Fatalf("expected projected explanation, got %+v", got.Explanation)
+	}
+	if c := got.Explanation.Contributions[0]; c.Field != "title" || c.FieldWeight != 3 || c.Score == 0 {
+		t.Fatalf("unexpected explanation contribution: %+v", c)
+	}
+}
+
+func TestBuildServiceUsesConfiguredRankProfile(t *testing.T) {
+	opt, err := selectScoringOption(config.FTSConfig{
+		Scorer: "bm25",
+		RankProfile: config.RankProfileConfig{
+			Name:         "title-2",
+			FieldWeights: map[string]float64{"title": 2},
+		},
+	})
+	if err != nil {
+		t.Fatalf("selectScoringOption() error = %v", err)
+	}
+	if opt == nil {
+		t.Fatal("selectScoringOption() = nil, want rank profile option")
+	}
+	svc := fts.NewMultiField(func(string) (fts.Index, error) {
+		return slicedradix.New(), nil
+	}, fts.WordKeys, opt)
+	ctx := context.Background()
+	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.Field{
+		"title": {Value: "alpha"},
+	}}); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
+	}
+	explanation, err := svc.Explain(ctx, "title:alpha", "doc-a")
+	if err != nil {
+		t.Fatalf("Explain() error = %v", err)
+	}
+	if len(explanation.Contributions) != 1 || explanation.Contributions[0].FieldWeight != 2 {
+		t.Fatalf("unexpected explanation: %+v", explanation)
 	}
 }
 

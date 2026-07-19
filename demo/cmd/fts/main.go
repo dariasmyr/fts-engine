@@ -75,6 +75,7 @@ func main() {
 	log.Info("fts", "index", cfg.FTS.Index)
 	log.Info("fts", "keygen", cfg.FTS.KeyGen)
 	log.Info("fts", "scorer", cfg.FTS.Scorer)
+	log.Info("fts", "rank_profile", rankProfileLabel(cfg.FTS.RankProfile), "field_weights", cfg.FTS.RankProfile.FieldWeights)
 	log.Info("fts", "filter", cfg.FTS.Filter)
 	log.Info("fts", "compaction_load_factor", cfg.FTS.Compaction.LoadFactor)
 	log.Info("fts", "compaction_auto_check", cfg.FTS.Compaction.AutoCheck)
@@ -151,7 +152,7 @@ func main() {
 		}
 	}
 
-	if err := runCUI(ctx, log, cfg.FTS.Index, cfg.FTS.Filter, ftsEngine, documentsByID); err != nil {
+	if err := runCUI(ctx, log, cfg.FTS.Index, cfg.FTS.Scorer, rankProfileLabel(cfg.FTS.RankProfile), cfg.FTS.Filter, ftsEngine, documentsByID); err != nil {
 		log.Error("Failed to start appCUI", "error", sl.Err(err))
 		return
 	}

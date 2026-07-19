@@ -13,10 +13,12 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
 )
 
-func runCUI(ctx context.Context, log *slog.Logger, cfgIndex string, cfgFilter string, engine *serviceAdapter, documentsByID map[string]models.Document) error {
+func runCUI(ctx context.Context, log *slog.Logger, cfgIndex string, cfgScorer string, cfgProfile string, cfgFilter string, engine *serviceAdapter, documentsByID map[string]models.Document) error {
 	appCUI := cui.New(ctx, log, engine, documentsByID, 10, cui.Info{
 		Engine:  "pkg/fts",
 		Index:   cfgIndex,
+		Scorer:  cfgScorer,
+		Profile: cfgProfile,
 		Filter:  cfgFilter,
 		Version: buildVersion(),
 	})
@@ -99,17 +101,8 @@ func (s *serviceAdapter) SearchPlainText(ctx context.Context, query string, maxR
 		return nil, err
 	}
 
-	out := make([]models.ResultData, 0, len(result.Results))
-	for _, item := range result.Results {
-		out = append(out, models.ResultData{
-			ID:            string(item.ID),
-			UniqueMatches: item.UniqueMatches,
-			TotalMatches:  item.TotalMatches,
-		})
-	}
-
 	return &models.SearchResult{
-		ResultData:        out,
+		ResultData:        s.projectResults(ctx, query, result, false),
 		TotalResultsCount: result.TotalResultsCount,
 		Diagnostics:       projectDiagnostics(result.Diagnostics),
 	}, nil
@@ -125,20 +118,58 @@ func (s *serviceAdapter) SearchQueryString(ctx context.Context, query string, ma
 		return nil, err
 	}
 
-	out := make([]models.ResultData, 0, len(result.Results))
-	for _, item := range result.Results {
-		out = append(out, models.ResultData{
-			ID:            string(item.ID),
-			UniqueMatches: item.UniqueMatches,
-			TotalMatches:  item.TotalMatches,
-		})
-	}
-
 	return &models.SearchResult{
-		ResultData:        out,
+		ResultData:        s.projectResults(ctx, query, result, true),
 		TotalResultsCount: result.TotalResultsCount,
 		Diagnostics:       projectDiagnostics(result.Diagnostics),
 	}, nil
+}
+
+func (s *serviceAdapter) projectResults(ctx context.Context, query string, result *pkgfts.SearchResult, explain bool) []models.ResultData {
+	if result == nil {
+		return nil
+	}
+	out := make([]models.ResultData, 0, len(result.Results))
+	for _, item := range result.Results {
+		data := models.ResultData{
+			ID:            string(item.ID),
+			UniqueMatches: item.UniqueMatches,
+			TotalMatches:  item.TotalMatches,
+			Score:         item.Score,
+		}
+		if explain && s != nil && s.service != nil {
+			data.Explanation = s.projectExplanation(ctx, query, item.ID)
+		}
+		out = append(out, data)
+	}
+	return out
+}
+
+func (s *serviceAdapter) projectExplanation(ctx context.Context, query string, id pkgfts.DocID) *models.Explain {
+	explanation, err := s.service.Explain(ctx, query, id)
+	if err != nil || explanation == nil || !explanation.Matched {
+		return nil
+	}
+	contributions := make([]models.ScoreContribution, 0, len(explanation.Contributions))
+	for _, c := range explanation.Contributions {
+		contributions = append(contributions, models.ScoreContribution{
+			Field:       c.Field,
+			Term:        c.Term,
+			MatchType:   string(c.MatchType),
+			TF:          c.TF,
+			DF:          c.DF,
+			BaseScore:   c.BaseScore,
+			FieldWeight: c.FieldWeight,
+			MatchWeight: c.MatchWeight,
+			Score:       c.Score,
+		})
+	}
+	return &models.Explain{
+		Score:         explanation.Score,
+		UniqueMatches: explanation.UniqueMatches,
+		TotalMatches:  explanation.TotalMatches,
+		Contributions: contributions,
+	}
 }
 
 func (s *serviceAdapter) AnalyzeStats() (pkgfts.Stats, bool) {

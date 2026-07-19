@@ -66,6 +66,7 @@ func TestConfigStructsDoNotUseEnvDefaults(t *testing.T) {
 	for _, typ := range []reflect.Type{
 		reflect.TypeOf(Config{}),
 		reflect.TypeOf(FTSConfig{}),
+		reflect.TypeOf(RankProfileConfig{}),
 		reflect.TypeOf(CompactionConfig{}),
 		reflect.TypeOf(PersistenceConfig{}),
 		reflect.TypeOf(BloomConfig{}),
@@ -80,5 +81,46 @@ func TestConfigStructsDoNotUseEnvDefaults(t *testing.T) {
 				t.Fatalf("field %s.%s still uses env-default tag %q", typ.Name(), field.Name, tag)
 			}
 		}
+	}
+}
+
+func TestValidateConfigAllowsRankProfileWithScorer(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Scorer = "bm25"
+	cfg.FTS.RankProfile = RankProfileConfig{FieldWeights: map[string]float64{"title": 1.5}}
+
+	if err := validateConfig(&cfg); err != nil {
+		t.Fatalf("validateConfig() error = %v", err)
+	}
+	if cfg.FTS.RankProfile.Name != "demo" {
+		t.Fatalf("RankProfile.Name = %q, want demo", cfg.FTS.RankProfile.Name)
+	}
+}
+
+func TestValidateConfigRejectsRankProfileWithoutScorer(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Scorer = "none"
+	cfg.FTS.RankProfile = RankProfileConfig{FieldWeights: map[string]float64{"title": 1.5}}
+
+	err := validateConfig(&cfg)
+	if err == nil {
+		t.Fatal("validateConfig() error = nil, want rank_profile scorer error")
+	}
+	if !strings.Contains(err.Error(), "rank_profile requires") {
+		t.Fatalf("validateConfig() error = %q, want rank_profile error", err)
+	}
+}
+
+func TestValidateConfigRejectsInvalidRankProfileWeight(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Scorer = "bm25"
+	cfg.FTS.RankProfile = RankProfileConfig{FieldWeights: map[string]float64{"title": -1}}
+
+	err := validateConfig(&cfg)
+	if err == nil {
+		t.Fatal("validateConfig() error = nil, want invalid weight error")
+	}
+	if !strings.Contains(err.Error(), "invalid weight") {
+		t.Fatalf("validateConfig() error = %q, want invalid weight error", err)
 	}
 }

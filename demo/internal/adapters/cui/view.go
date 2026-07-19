@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/dariasmyr/fts-engine/demo/internal/domain/models"
 )
 
 const (
@@ -273,6 +275,14 @@ func (m model) renderResults() string {
 			" ",
 			badgeTotal.Render(fmt.Sprintf("Σ %d total", result.TotalMatches)),
 		)
+		if result.Score > 0 {
+			header = lipgloss.JoinHorizontal(
+				lipgloss.Center,
+				header,
+				" ",
+				statStyle.Render(fmt.Sprintf("score %.4f", result.Score)),
+			)
+		}
 		builder.WriteString(header)
 		builder.WriteString("\n")
 		if result.Document.URL != "" {
@@ -295,6 +305,10 @@ func (m model) renderResults() string {
 		}
 		builder.WriteString(lipgloss.NewStyle().PaddingLeft(2).Render(abstract))
 		builder.WriteString("\n\n")
+		if result.Explanation != nil && len(result.Explanation.Contributions) > 0 {
+			builder.WriteString(m.renderExplanation(result.Explanation))
+			builder.WriteString("\n\n")
+		}
 
 		if i < len(m.lastResults)-1 && i < m.maxResults-1 {
 			builder.WriteString(scrollStyle.Render(strings.Repeat("┄", max(m.resultsView.Width-2, 1))))
@@ -303,6 +317,31 @@ func (m model) renderResults() string {
 	}
 
 	return builder.String()
+}
+
+func (m model) renderExplanation(explanation *models.Explain) string {
+	limit := min(len(explanation.Contributions), 2)
+	rows := make([]string, 0, limit+1)
+	rows = append(rows, mutedStyle.Render(fmt.Sprintf("  explain: score %.4f", explanation.Score)))
+	for i := range limit {
+		c := explanation.Contributions[i]
+		rows = append(rows, mutedStyle.Render(fmt.Sprintf(
+			"  %s:%s %s tf=%d df=%d base %.4f × field %.2f × match %.2f = %.4f",
+			orDash(c.Field),
+			orDash(c.Term),
+			orDash(c.MatchType),
+			c.TF,
+			c.DF,
+			c.BaseScore,
+			c.FieldWeight,
+			c.MatchWeight,
+			c.Score,
+		)))
+	}
+	if extra := len(explanation.Contributions) - limit; extra > 0 {
+		rows = append(rows, mutedStyle.Render(fmt.Sprintf("  ... %d more contribution(s)", extra)))
+	}
+	return strings.Join(rows, "\n")
 }
 
 func (m model) renderStatusBar() string {
@@ -369,6 +408,8 @@ func (m model) sectionSystem(width int) string {
 		kvVal("version", statStyle.Render(orDash(m.info.Version))),
 		kv("engine", orDash(m.info.Engine)),
 		kv("index", orDash(m.info.Index)),
+		kv("scorer", orDash(m.info.Scorer)),
+		kv("profile", orDash(m.info.Profile)),
 		kv("filter", orDash(m.info.Filter)),
 		kv("shape", m.indexShape()),
 		kv("fields", m.fieldListLabel(width)),

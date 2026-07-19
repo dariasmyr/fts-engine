@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 
 	"github.com/ilyakaznacheev/cleanenv"
@@ -18,6 +19,7 @@ type FTSConfig struct {
 	Index       string            `yaml:"index"`
 	KeyGen      string            `yaml:"keygen"`
 	Scorer      string            `yaml:"scorer"`
+	RankProfile RankProfileConfig `yaml:"rank_profile"`
 	Filter      string            `yaml:"filter"`
 	Persistence PersistenceConfig `yaml:"persistence"`
 	Compaction  CompactionConfig  `yaml:"compaction"`
@@ -25,6 +27,11 @@ type FTSConfig struct {
 	Cuckoo      CuckooConfig      `yaml:"cuckoo"`
 	Ribbon      RibbonConfig      `yaml:"ribbon"`
 	Pipeline    PipelineConfig    `yaml:"pipeline"`
+}
+
+type RankProfileConfig struct {
+	Name         string             `yaml:"name"`
+	FieldWeights map[string]float64 `yaml:"field_weights"`
 }
 
 type CompactionConfig struct {
@@ -188,6 +195,9 @@ func validateConfig(cfg *Config) error {
 	if cfg.FTS.Scorer == "" {
 		cfg.FTS.Scorer = defaults.FTS.Scorer
 	}
+	if len(cfg.FTS.RankProfile.FieldWeights) > 0 && cfg.FTS.RankProfile.Name == "" {
+		cfg.FTS.RankProfile.Name = "demo"
+	}
 
 	if cfg.FTS.Filter == "" {
 		cfg.FTS.Filter = defaults.FTS.Filter
@@ -241,6 +251,10 @@ func validateConfig(cfg *Config) error {
 	case "none", "bm25", "tfidf":
 	default:
 		return fmt.Errorf("unknown scorer type: %s", cfg.FTS.Scorer)
+	}
+
+	if err := validateRankProfile(cfg.FTS.RankProfile, cfg.FTS.Scorer); err != nil {
+		return err
 	}
 
 	switch cfg.FTS.Filter {
@@ -297,5 +311,23 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("unknown mode type: %s", cfg.Mode.Type)
 	}
 
+	return nil
+}
+
+func validateRankProfile(profile RankProfileConfig, scorer string) error {
+	if len(profile.FieldWeights) == 0 {
+		return nil
+	}
+	if scorer == "none" {
+		return fmt.Errorf("rank_profile requires fts.scorer to be bm25 or tfidf")
+	}
+	for field, weight := range profile.FieldWeights {
+		if field == "" {
+			return fmt.Errorf("rank_profile field_weights contains an empty field name")
+		}
+		if weight < 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
+			return fmt.Errorf("rank_profile field %q has invalid weight %v", field, weight)
+		}
+	}
 	return nil
 }
