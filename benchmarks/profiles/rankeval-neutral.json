@@ -1,0 +1,9 @@
+{
+  "name": "neutral",
+  "base": "bm25",
+  "field_weights": {
+    "title": 1.0,
+    "tags": 1.0,
+    "body": 1.0
+  }
+}
