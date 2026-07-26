@@ -157,7 +157,7 @@ func TestWeightedScorerFieldWeightOverridesDefault(t *testing.T) {
 	scorer := WeightedScorer{
 		Base:          fixedScorer(2),
 		DefaultWeight: 4,
-		FieldWeights:  map[string]float64{"title": 3},
+		FieldWeights:  FieldWeights{"title": 3},
 	}
 
 	got := scorer.Score(TermStats{Field: "title"}, DocStats{}, FieldStats{})
@@ -166,13 +166,13 @@ func TestWeightedScorerFieldWeightOverridesDefault(t *testing.T) {
 	}
 }
 
-func TestWeightedScorerAppliesMatchWeight(t *testing.T) {
+func TestWeightedScorerAppliesQueryTypeWeight(t *testing.T) {
 	scorer := WeightedScorer{
-		Base:         fixedScorer(2),
-		MatchWeights: MatchWeights{Phrase: 4},
+		Base:             fixedScorer(2),
+		QueryTypeWeights: QueryTypeWeights{Phrase: 4},
 	}
 
-	got := scorer.Score(TermStats{MatchType: MatchPhrase}, DocStats{}, FieldStats{})
+	got := scorer.Score(TermStats{QueryType: QueryTypePhrase}, DocStats{}, FieldStats{})
 	if got != 8 {
 		t.Fatalf("expected phrase-weighted score 8, got %v", got)
 	}
@@ -181,7 +181,7 @@ func TestWeightedScorerAppliesMatchWeight(t *testing.T) {
 func TestWeightedScorerAllowsZeroFieldWeight(t *testing.T) {
 	scorer := WeightedScorer{
 		Base:         fixedScorer(2),
-		FieldWeights: map[string]float64{"hidden": 0},
+		FieldWeights: FieldWeights{"hidden": 0},
 	}
 
 	got := scorer.Score(TermStats{Field: "hidden"}, DocStats{}, FieldStats{})
@@ -191,7 +191,7 @@ func TestWeightedScorerAllowsZeroFieldWeight(t *testing.T) {
 }
 
 func TestWeightedScorerNilBaseReturnsZero(t *testing.T) {
-	scorer := WeightedScorer{FieldWeights: map[string]float64{"title": 3}}
+	scorer := WeightedScorer{FieldWeights: FieldWeights{"title": 3}}
 
 	got := scorer.Score(TermStats{Field: "title"}, DocStats{}, FieldStats{})
 	if got != 0 {
@@ -267,7 +267,7 @@ func TestSearchWithWeightedScorerRanksHigherWeightedFieldFirst(t *testing.T) {
 	factory := func(string) (Index, error) { return newPositionalMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys, WithScorer(WeightedScorer{
 		Base: tfScorer{},
-		FieldWeights: map[string]float64{
+		FieldWeights: FieldWeights{
 			"title": 4,
 			"body":  1,
 		},
@@ -304,7 +304,7 @@ func TestSearchWithRankProfileUsesFieldWeights(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
 		Name: "docs",
 		Base: tfScorer{},
-		FieldWeights: map[string]float64{
+		FieldWeights: FieldWeights{
 			"title": 5,
 			"body":  1,
 		},
@@ -336,12 +336,12 @@ func TestSearchWithRankProfileUsesFieldWeights(t *testing.T) {
 	}
 }
 
-func TestSearchWithRankProfileUsesMatchWeights(t *testing.T) {
+func TestSearchWithRankProfileUsesQueryTypeWeights(t *testing.T) {
 	factory := func(string) (Index, error) { return newPrefixMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
 		Name: "docs",
 		Base: tfScorer{},
-		MatchWeights: MatchWeights{
+		QueryTypeWeights: QueryTypeWeights{
 			Prefix: 0.5,
 			Phrase: 4,
 		},
@@ -372,7 +372,7 @@ func TestSearchWithRankProfileUsesMatchWeights(t *testing.T) {
 		t.Fatalf("expected phrase-weighted doc first, got %+v", res.Results)
 	}
 	if res.Results[0].Score != 4.5 || res.Results[1].Score != 2.5 {
-		t.Fatalf("expected match-weighted scores 4.5 and 2.5, got %+v", res.Results)
+		t.Fatalf("expected query-type-weighted scores 4.5 and 2.5, got %+v", res.Results)
 	}
 }
 
@@ -381,7 +381,7 @@ func TestExplainWithRankProfileShowsWeightedContribution(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
 		Name: "docs",
 		Base: tfScorer{},
-		FieldWeights: map[string]float64{
+		FieldWeights: FieldWeights{
 			"title": 5,
 			"body":  1,
 		},
@@ -418,20 +418,20 @@ func TestExplainWithRankProfileShowsWeightedContribution(t *testing.T) {
 	if c.BaseScore != 1 || c.FieldWeight != 5 || c.Score != 5 {
 		t.Fatalf("unexpected weighted contribution: %+v", c)
 	}
-	if c.MatchType != MatchTerm || c.MatchWeight != 1 {
-		t.Fatalf("unexpected match contribution: %+v", c)
+	if c.QueryType != QueryTypeTerm || c.QueryTypeWeight != 1 {
+		t.Fatalf("unexpected query type contribution: %+v", c)
 	}
 	if c.TF != 1 || c.DF != 1 || c.DocLength != 1 || c.FieldDocs != 1 {
 		t.Fatalf("unexpected contribution stats: %+v", c)
 	}
 }
 
-func TestExplainWithRankProfileShowsMatchWeight(t *testing.T) {
+func TestExplainWithRankProfileShowsQueryTypeWeight(t *testing.T) {
 	factory := func(string) (Index, error) { return newPositionalMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
-		Name:         "docs",
-		Base:         tfScorer{},
-		MatchWeights: MatchWeights{Phrase: 4},
+		Name:             "docs",
+		Base:             tfScorer{},
+		QueryTypeWeights: QueryTypeWeights{Phrase: 4},
 	}))
 
 	ctx := context.Background()
@@ -450,7 +450,7 @@ func TestExplainWithRankProfileShowsMatchWeight(t *testing.T) {
 		t.Fatalf("expected 1 contribution, got %+v", explanation.Contributions)
 	}
 	c := explanation.Contributions[0]
-	if c.MatchType != MatchPhrase || c.MatchWeight != 4 || c.BaseScore != 1 || c.Score != 4 {
+	if c.QueryType != QueryTypePhrase || c.QueryTypeWeight != 4 || c.BaseScore != 1 || c.Score != 4 {
 		t.Fatalf("unexpected phrase contribution: %+v", c)
 	}
 }
