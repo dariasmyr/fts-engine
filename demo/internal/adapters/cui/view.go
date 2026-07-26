@@ -180,6 +180,12 @@ func (m model) renderSyntaxHelp(width int) string {
 		kv("field", "title:hotel"),
 		kv("prefix", "bar*"),
 		kv("group", "+(title:hotel title:french) -market"),
+		"",
+		sectionTitle.Render("Weight Debug"),
+		kv("term", "title:new"),
+		kv("prefix", "title:new*"),
+		kv("phrase", "abstract:\"new york\""),
+		kv("mixed", "+title:new +abstract:\"new york\""),
 		mutedStyle.Width(width).Render("Use syntax mode when you need explicit operators or field-aware queries."),
 	}
 	return strings.Join(rows, "\n")
@@ -326,15 +332,15 @@ func (m model) renderExplanation(explanation *models.Explain) string {
 	for i := range limit {
 		c := explanation.Contributions[i]
 		rows = append(rows, mutedStyle.Render(fmt.Sprintf(
-			"  %s:%s %s tf=%d df=%d base %.4f × field %.2f × match %.2f = %.4f",
+			"  %s:%s query=%s tf=%d df=%d base %.4f × field %.2f × query-type %.2f = %.4f",
 			orDash(c.Field),
 			orDash(c.Term),
-			orDash(c.MatchType),
+			orDash(c.QueryType),
 			c.TF,
 			c.DF,
 			c.BaseScore,
 			c.FieldWeight,
-			c.MatchWeight,
+			c.QueryTypeWeight,
 			c.Score,
 		)))
 	}

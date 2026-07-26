@@ -57,7 +57,7 @@ func run(ctx context.Context, cfg config, stdout io.Writer) error {
 		rep, err := evaluate(ctx, docs, queries, cfg.K, fts.WithRankProfile(fts.RankProfile{
 			Name:         profile.Name,
 			Base:         base,
-			FieldWeights: profile.FieldWeights,
+			FieldWeights: fts.FieldWeights(profile.FieldWeights),
 		}))
 		if err != nil {
 			return fmt.Errorf("evaluate profile %q: %w", profile.Name, err)

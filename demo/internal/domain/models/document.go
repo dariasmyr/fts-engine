@@ -29,15 +29,15 @@ type Explain struct {
 }
 
 type ScoreContribution struct {
-	Field       string  `json:"field"`
-	Term        string  `json:"term"`
-	MatchType   string  `json:"match_type"`
-	TF          uint32  `json:"tf"`
-	DF          uint32  `json:"df"`
-	BaseScore   float64 `json:"base_score"`
-	FieldWeight float64 `json:"field_weight"`
-	MatchWeight float64 `json:"match_weight"`
-	Score       float64 `json:"score"`
+	Field           string  `json:"field"`
+	Term            string  `json:"term"`
+	QueryType       string  `json:"query_type"`
+	TF              uint32  `json:"tf"`
+	DF              uint32  `json:"df"`
+	BaseScore       float64 `json:"base_score"`
+	FieldWeight     float64 `json:"field_weight"`
+	QueryTypeWeight float64 `json:"query_type_weight"`
+	Score           float64 `json:"score"`
 }
 
 type SearchDiagnostics struct {

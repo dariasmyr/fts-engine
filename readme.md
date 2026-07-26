@@ -174,8 +174,8 @@ engine := fts.NewMultiField(factory, keygen.Word)
 _ = engine.Index(context.Background(), fts.Document{
 	ID: "doc-1",
 	Fields: map[string]fts.Field{
-		"title": {Value: "French hotel"},
-		"body":  {Value: "Rosa runs hotel operations in France"},
+		"title":    {Value: "French hotel"},
+		"abstract": {Value: "Rosa runs hotel operations in France"},
 	},
 })
 
@@ -185,11 +185,11 @@ fmt.Println(res.TotalResultsCount)
 
 In this mode, you usually create one index per field through the factory. The engine calls the factory the first time a field needs to be indexed and then reuses that index for future documents in the same field.
 
-## Weighted Field Scoring
+## Rank Profiles
 
-Use `fts.RankProfile` when some fields should contribute more to ranking than
-others. A rank profile applies field multipliers on top of an existing scorer such
-as BM25 or TF-IDF:
+Use `fts.RankProfile` when fields or query types should contribute differently to
+ranking. A rank profile applies multipliers on top of an existing scorer such as
+BM25 or TF-IDF:
 
 ```go
 engine := fts.NewMultiField(
@@ -198,12 +198,11 @@ engine := fts.NewMultiField(
 	fts.WithRankProfile(fts.RankProfile{
 		Name: "docs",
 		Base: fts.BM25(),
-		FieldWeights: map[string]float64{
-			"title": 3.0,
-			"tags":  2.0,
-			"body":  1.0,
+		FieldWeights: fts.FieldWeights{
+			"title":    3.0,
+			"abstract": 1.0,
 		},
-		MatchWeights: fts.MatchWeights{
+		QueryTypeWeights: fts.QueryTypeWeights{
 			Term:   1.0,
 			Prefix: 0.6,
 			Phrase: 4.0,
@@ -217,8 +216,9 @@ they are not score thresholds. For example, `"title": 3.0` means each title matc
 contributes three times its base BM25/TF-IDF score. It does not mean the final
 document score is capped at `3.0`.
 
-Match weights are also relative multipliers. They are useful for mixed queries,
-where exact terms, phrases, and prefixes can compete in the same result set.
+Query type weights are also relative multipliers. They are useful for mixed
+queries, where exact terms, phrases, and prefixes can compete in the same result
+set.
 
 For lower-level composition, `fts.WeightedScorer` can also be passed directly to
 `fts.WithScorer(...)`.
@@ -248,20 +248,20 @@ if err != nil {
 fmt.Printf("id=%s matched=%t score=%.4f\n", explanation.ID, explanation.Matched, explanation.Score)
 for _, c := range explanation.Contributions {
 	fmt.Printf(
-		"field=%s term=%s match=%s base=%.4f field_weight=%.2f match_weight=%.2f score=%.4f\n",
+		"field=%s term=%s query_type=%s base=%.4f field_weight=%.2f query_type_weight=%.2f score=%.4f\n",
 		c.Field,
 		c.Term,
-		c.MatchType,
+		c.QueryType,
 		c.BaseScore,
 		c.FieldWeight,
-		c.MatchWeight,
+		c.QueryTypeWeight,
 		c.Score,
 	)
 }
 ```
 
 For weighted scoring, each contribution includes both the base BM25/TF-IDF score
-and the applied field and match type weights.
+and the applied field and query type weights.
 
 ## Rank Evaluation
 

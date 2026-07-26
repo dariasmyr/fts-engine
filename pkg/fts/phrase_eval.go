@@ -49,16 +49,16 @@ func (s *Service) evalPhraseHits(ctx context.Context, fields []string, phrase st
 }
 
 func (s *Service) evalExactPhraseTokenHits(ctx context.Context, fields []string, tokens []string) (map[DocOrd]docAccum, error) {
-	return s.evalScoredPhraseTokenHits(ctx, fields, tokens, MatchPhrase, s.searchExactPhraseCountsInField)
+	return s.evalScoredPhraseTokenHits(ctx, fields, tokens, QueryTypePhrase, s.searchExactPhraseCountsInField)
 }
 
 func (s *Service) evalNearPhraseTokenHits(ctx context.Context, fields []string, tokens []string, maxGap uint32) (map[DocOrd]docAccum, error) {
-	return s.evalScoredPhraseTokenHits(ctx, fields, tokens, MatchNearPhrase, func(ctx context.Context, positional PositionalIndex, tokens []string) (map[DocOrd]uint32, error) {
+	return s.evalScoredPhraseTokenHits(ctx, fields, tokens, QueryTypeNearPhrase, func(ctx context.Context, positional PositionalIndex, tokens []string) (map[DocOrd]uint32, error) {
 		return s.searchNearPhraseCountsInField(ctx, positional, tokens, maxGap)
 	})
 }
 
-func (s *Service) evalScoredPhraseTokenHits(ctx context.Context, fields []string, tokens []string, matchType MatchType, search positionalPhraseSearch) (map[DocOrd]docAccum, error) {
+func (s *Service) evalScoredPhraseTokenHits(ctx context.Context, fields []string, tokens []string, queryType QueryType, search positionalPhraseSearch) (map[DocOrd]docAccum, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func (s *Service) evalScoredPhraseTokenHits(ctx context.Context, fields []string
 			accum := hits[ord]
 			accum.UniqueMatches = 1
 			accum.TotalMatches += int(count)
-			accum.Score += s.scoreTermHit(ctx, fieldMatch.field, phraseTerm, matchType, ord, count, df, fieldStats)
+			accum.Score += s.scoreTermHit(ctx, fieldMatch.field, phraseTerm, queryType, ord, count, df, fieldStats)
 			hits[ord] = accum
 		}
 	}

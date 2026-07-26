@@ -17,18 +17,18 @@ type ScoreExplanation struct {
 }
 
 type ScoreContribution struct {
-	Field          string
-	Term           string
-	MatchType      MatchType
-	TF             uint32
-	DF             uint32
-	DocLength      uint32
-	FieldDocs      int
-	AvgFieldLength float64
-	BaseScore      float64
-	FieldWeight    float64
-	MatchWeight    float64
-	Score          float64
+	Field           string
+	Term            string
+	QueryType       QueryType
+	TF              uint32
+	DF              uint32
+	DocLength       uint32
+	FieldDocs       int
+	AvgFieldLength  float64
+	BaseScore       float64
+	FieldWeight     float64
+	QueryTypeWeight float64
+	Score           float64
 }
 
 type explanationContextKey struct{}
@@ -112,8 +112,8 @@ func (e *explanationCollector) snapshot() []ScoreContribution {
 		if out[i].Field != out[j].Field {
 			return out[i].Field < out[j].Field
 		}
-		if out[i].MatchType != out[j].MatchType {
-			return out[i].MatchType < out[j].MatchType
+		if out[i].QueryType != out[j].QueryType {
+			return out[i].QueryType < out[j].QueryType
 		}
 		if out[i].Term != out[j].Term {
 			return out[i].Term < out[j].Term

@@ -25,9 +25,9 @@ func WithScorer(scorer Scorer) Option {
 func WithRankProfile(profile RankProfile) Option {
 	return func(s *Service) {
 		s.scorer = WeightedScorer{
-			Base:         profile.Base,
-			FieldWeights: profile.FieldWeights,
-			MatchWeights: profile.MatchWeights,
+			Base:             profile.Base,
+			FieldWeights:     profile.FieldWeights,
+			QueryTypeWeights: profile.QueryTypeWeights,
 		}
 	}
 }

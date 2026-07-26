@@ -153,15 +153,15 @@ func (s *serviceAdapter) projectExplanation(ctx context.Context, query string, i
 	contributions := make([]models.ScoreContribution, 0, len(explanation.Contributions))
 	for _, c := range explanation.Contributions {
 		contributions = append(contributions, models.ScoreContribution{
-			Field:       c.Field,
-			Term:        c.Term,
-			MatchType:   string(c.MatchType),
-			TF:          c.TF,
-			DF:          c.DF,
-			BaseScore:   c.BaseScore,
-			FieldWeight: c.FieldWeight,
-			MatchWeight: c.MatchWeight,
-			Score:       c.Score,
+			Field:           c.Field,
+			Term:            c.Term,
+			QueryType:       string(c.QueryType),
+			TF:              c.TF,
+			DF:              c.DF,
+			BaseScore:       c.BaseScore,
+			FieldWeight:     c.FieldWeight,
+			QueryTypeWeight: c.QueryTypeWeight,
+			Score:           c.Score,
 		})
 	}
 	return &models.Explain{

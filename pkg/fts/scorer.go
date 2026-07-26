@@ -8,18 +8,18 @@ import (
 type TermStats struct {
 	Field     string
 	Term      string
-	MatchType MatchType
+	QueryType QueryType
 	TF        uint32 // term frequency: matches in this document
 	DF        uint32 // document frequency: documents containing the term in this field
 }
 
-type MatchType string
+type QueryType string
 
 const (
-	MatchTerm       MatchType = "term"
-	MatchPrefix     MatchType = "prefix"
-	MatchPhrase     MatchType = "phrase"
-	MatchNearPhrase MatchType = "near_phrase"
+	QueryTypeTerm       QueryType = "term"
+	QueryTypePrefix     QueryType = "prefix"
+	QueryTypePhrase     QueryType = "phrase"
+	QueryTypeNearPhrase QueryType = "near_phrase"
 )
 
 type DocStats struct {
@@ -37,20 +37,22 @@ type Scorer interface {
 }
 
 type RankProfile struct {
-	Name         string
-	Base         Scorer
-	FieldWeights map[string]float64
-	MatchWeights MatchWeights
+	Name             string
+	Base             Scorer
+	FieldWeights     FieldWeights
+	QueryTypeWeights QueryTypeWeights
 }
 
 type WeightedScorer struct {
-	Base          Scorer
-	FieldWeights  map[string]float64
-	MatchWeights  MatchWeights
-	DefaultWeight float64
+	Base             Scorer
+	FieldWeights     FieldWeights
+	QueryTypeWeights QueryTypeWeights
+	DefaultWeight    float64
 }
 
-type MatchWeights struct {
+type FieldWeights map[string]float64
+
+type QueryTypeWeights struct {
 	Term       float64
 	Prefix     float64
 	Phrase     float64
@@ -61,7 +63,7 @@ func (s WeightedScorer) Score(t TermStats, d DocStats, f FieldStats) float64 {
 	if s.Base == nil {
 		return 0
 	}
-	return s.Base.Score(t, d, f) * s.fieldWeight(t.Field) * s.matchWeight(t.MatchType)
+	return s.Base.Score(t, d, f) * s.fieldWeight(t.Field) * s.queryTypeWeight(t.QueryType)
 }
 
 func (s WeightedScorer) fieldWeight(field string) float64 {
@@ -75,30 +77,26 @@ func (s WeightedScorer) fieldWeight(field string) float64 {
 	return weight
 }
 
-func (s WeightedScorer) matchWeight(matchType MatchType) float64 {
-	return s.MatchWeights.weight(matchType)
+func (s WeightedScorer) queryTypeWeight(queryType QueryType) float64 {
+	return s.QueryTypeWeights.weight(queryType)
 }
 
-func (w MatchWeights) weight(matchType MatchType) float64 {
-	switch matchType {
-	case MatchPrefix:
-		if w.Prefix != 0 {
-			return w.Prefix
-		}
-	case MatchPhrase:
-		if w.Phrase != 0 {
-			return w.Phrase
-		}
-	case MatchNearPhrase:
-		if w.NearPhrase != 0 {
-			return w.NearPhrase
-		}
+func (w QueryTypeWeights) weight(queryType QueryType) float64 {
+	var weight float64
+	switch queryType {
+	case QueryTypePrefix:
+		weight = w.Prefix
+	case QueryTypePhrase:
+		weight = w.Phrase
+	case QueryTypeNearPhrase:
+		weight = w.NearPhrase
 	default:
-		if w.Term != 0 {
-			return w.Term
-		}
+		weight = w.Term
 	}
-	return 1
+	if weight == 0 {
+		return 1
+	}
+	return weight
 }
 
 type BM25Scorer struct {
@@ -160,71 +158,71 @@ func (s *Service) fieldStatsFor(field string) FieldStats {
 	}
 }
 
-func (s *Service) scoreTermHit(ctx context.Context, field string, term string, matchType MatchType, ord DocOrd, tf uint32, df uint32, stats FieldStats) float64 {
+func (s *Service) scoreTermHit(ctx context.Context, field string, term string, queryType QueryType, ord DocOrd, tf uint32, df uint32, stats FieldStats) float64 {
 	if s.scorer == nil || s.collection == nil {
 		return 0
 	}
-	if matchType == "" {
-		matchType = MatchTerm
+	if queryType == "" {
+		queryType = QueryTypeTerm
 	}
-	ts := TermStats{Field: field, Term: term, MatchType: matchType, TF: tf, DF: df}
+	ts := TermStats{Field: field, Term: term, QueryType: queryType, TF: tf, DF: df}
 	ds := DocStats{Ord: ord, Length: s.collection.DocLen(field, ord)}
-	baseScore, fieldWeight, matchWeight, score := scoreWithBreakdown(s.scorer, ts, ds, stats)
+	baseScore, fieldWeight, queryTypeWeight, score := scoreWithBreakdown(s.scorer, ts, ds, stats)
 	if exp := explanationFromContext(ctx); exp != nil {
 		exp.add(ord, ScoreContribution{
-			Field:          field,
-			Term:           term,
-			MatchType:      matchType,
-			TF:             tf,
-			DF:             df,
-			DocLength:      ds.Length,
-			FieldDocs:      stats.N,
-			AvgFieldLength: stats.AvgLength,
-			BaseScore:      baseScore,
-			FieldWeight:    fieldWeight,
-			MatchWeight:    matchWeight,
-			Score:          score,
+			Field:           field,
+			Term:            term,
+			QueryType:       queryType,
+			TF:              tf,
+			DF:              df,
+			DocLength:       ds.Length,
+			FieldDocs:       stats.N,
+			AvgFieldLength:  stats.AvgLength,
+			BaseScore:       baseScore,
+			FieldWeight:     fieldWeight,
+			QueryTypeWeight: queryTypeWeight,
+			Score:           score,
 		})
 	}
 	return score
 }
 
 func (s *Service) scoreTermExpansionDoc(ctx context.Context, exp termExpansion, doc DocRef) float64 {
-	return s.scoreTermExpansionDocType(ctx, exp, doc, MatchTerm)
+	return s.scoreTermExpansionDocType(ctx, exp, doc, QueryTypeTerm)
 }
 
-func (s *Service) scoreTermExpansionDocType(ctx context.Context, exp termExpansion, doc DocRef, matchType MatchType) float64 {
-	return s.scoreTermHit(ctx, exp.field, exp.term, matchType, doc.Ord, doc.Count, exp.df, exp.fieldStats)
+func (s *Service) scoreTermExpansionDocType(ctx context.Context, exp termExpansion, doc DocRef, queryType QueryType) float64 {
+	return s.scoreTermHit(ctx, exp.field, exp.term, queryType, doc.Ord, doc.Count, exp.df, exp.fieldStats)
 }
 
 func (s *Service) scoreTermExpansionTF(ctx context.Context, exp termExpansion, ord DocOrd, tf uint32) float64 {
-	return s.scoreTermExpansionTFType(ctx, exp, ord, tf, MatchTerm)
+	return s.scoreTermExpansionTFType(ctx, exp, ord, tf, QueryTypeTerm)
 }
 
-func (s *Service) scoreTermExpansionTFType(ctx context.Context, exp termExpansion, ord DocOrd, tf uint32, matchType MatchType) float64 {
-	return s.scoreTermHit(ctx, exp.field, exp.term, matchType, ord, tf, exp.df, exp.fieldStats)
+func (s *Service) scoreTermExpansionTFType(ctx context.Context, exp termExpansion, ord DocOrd, tf uint32, queryType QueryType) float64 {
+	return s.scoreTermHit(ctx, exp.field, exp.term, queryType, ord, tf, exp.df, exp.fieldStats)
 }
 
-func scoreWithBreakdown(scorer Scorer, t TermStats, d DocStats, f FieldStats) (baseScore float64, fieldWeight float64, matchWeight float64, score float64) {
+func scoreWithBreakdown(scorer Scorer, t TermStats, d DocStats, f FieldStats) (baseScore float64, fieldWeight float64, queryTypeWeight float64, score float64) {
 	fieldWeight = 1
-	matchWeight = 1
+	queryTypeWeight = 1
 	switch scorer := scorer.(type) {
 	case WeightedScorer:
 		if scorer.Base == nil {
-			return 0, scorer.fieldWeight(t.Field), scorer.matchWeight(t.MatchType), 0
+			return 0, scorer.fieldWeight(t.Field), scorer.queryTypeWeight(t.QueryType), 0
 		}
 		baseScore = scorer.Base.Score(t, d, f)
 		fieldWeight = scorer.fieldWeight(t.Field)
-		matchWeight = scorer.matchWeight(t.MatchType)
-		return baseScore, fieldWeight, matchWeight, baseScore * fieldWeight * matchWeight
+		queryTypeWeight = scorer.queryTypeWeight(t.QueryType)
+		return baseScore, fieldWeight, queryTypeWeight, baseScore * fieldWeight * queryTypeWeight
 	case *WeightedScorer:
 		if scorer == nil || scorer.Base == nil {
 			return 0, 1, 1, 0
 		}
 		baseScore = scorer.Base.Score(t, d, f)
 		fieldWeight = scorer.fieldWeight(t.Field)
-		matchWeight = scorer.matchWeight(t.MatchType)
-		return baseScore, fieldWeight, matchWeight, baseScore * fieldWeight * matchWeight
+		queryTypeWeight = scorer.queryTypeWeight(t.QueryType)
+		return baseScore, fieldWeight, queryTypeWeight, baseScore * fieldWeight * queryTypeWeight
 	default:
 		score = scorer.Score(t, d, f)
 		return score, 1, 1, score

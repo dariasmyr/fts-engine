@@ -33,7 +33,7 @@ func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFiel
 				seen[ord] = struct{}{}
 			}
 			accum.TotalMatches += int(doc.Count)
-			accum.Score += s.scoreTermExpansionDocType(ctx, expansion, doc, MatchPrefix)
+			accum.Score += s.scoreTermExpansionDocType(ctx, expansion, doc, QueryTypePrefix)
 			hits[ord] = accum
 		}
 	}

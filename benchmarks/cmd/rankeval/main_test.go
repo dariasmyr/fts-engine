@@ -42,7 +42,7 @@ func TestTitleWeightedProfileImprovesSyntheticRanking(t *testing.T) {
 	candidate, err := evaluate(ctx, docs, queries, 10, fts.WithRankProfile(fts.RankProfile{
 		Name: "title-medium",
 		Base: fts.BM25(),
-		FieldWeights: map[string]float64{
+		FieldWeights: fts.FieldWeights{
 			"title": 3,
 			"tags":  1.5,
 			"body":  1,

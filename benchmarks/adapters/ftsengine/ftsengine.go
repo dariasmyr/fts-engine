@@ -351,10 +351,10 @@ func selectScorer(kind string) (fts.Option, error) {
 		return fts.WithRankProfile(fts.RankProfile{
 			Name: "default",
 			Base: fts.BM25(),
-			FieldWeights: map[string]float64{
+			FieldWeights: fts.FieldWeights{
 				fts.DefaultField: 1,
 			},
-			MatchWeights: fts.MatchWeights{
+			QueryTypeWeights: fts.QueryTypeWeights{
 				Term:       1,
 				Prefix:     1,
 				Phrase:     1,

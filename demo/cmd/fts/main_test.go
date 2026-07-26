@@ -111,7 +111,7 @@ func TestServiceAdapterSearchQueryStringProjectsScoreExplanation(t *testing.T) {
 		return slicedradix.New(), nil
 	}, fts.WordKeys, fts.WithRankProfile(fts.RankProfile{
 		Base:         fts.BM25(),
-		FieldWeights: map[string]float64{"title": 3},
+		FieldWeights: fts.FieldWeights{"title": 3},
 	}))
 	ctx := context.Background()
 	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.Field{
@@ -144,8 +144,9 @@ func TestBuildServiceUsesConfiguredRankProfile(t *testing.T) {
 	opt, err := selectScoringOption(config.FTSConfig{
 		Scorer: "bm25",
 		RankProfile: config.RankProfileConfig{
-			Name:         "title-2",
-			FieldWeights: map[string]float64{"title": 2},
+			Name:             "title-2",
+			FieldWeights:     map[string]float64{"title": 2},
+			QueryTypeWeights: config.QueryTypeWeightsConfig{Phrase: 3},
 		},
 	})
 	if err != nil {
@@ -159,15 +160,15 @@ func TestBuildServiceUsesConfiguredRankProfile(t *testing.T) {
 	}, fts.WordKeys, opt)
 	ctx := context.Background()
 	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.Field{
-		"title": {Value: "alpha"},
+		"title": {Value: "alpha beta"},
 	}}); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	explanation, err := svc.Explain(ctx, "title:alpha", "doc-a")
+	explanation, err := svc.Explain(ctx, `title:"alpha beta"`, "doc-a")
 	if err != nil {
 		t.Fatalf("Explain() error = %v", err)
 	}
-	if len(explanation.Contributions) != 1 || explanation.Contributions[0].FieldWeight != 2 {
+	if len(explanation.Contributions) != 1 || explanation.Contributions[0].FieldWeight != 2 || explanation.Contributions[0].QueryTypeWeight != 3 {
 		t.Fatalf("unexpected explanation: %+v", explanation)
 	}
 }

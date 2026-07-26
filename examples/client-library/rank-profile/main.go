@@ -15,15 +15,15 @@ func main() {
 		{
 			ID: "doc-title",
 			Fields: map[string]fts.Field{
-				"title": {Value: "postgres backup"},
-				"body":  {Value: "short guide"},
+				"title":    {Value: "postgres backup"},
+				"abstract": {Value: "short guide"},
 			},
 		},
 		{
-			ID: "doc-body",
+			ID: "doc-abstract",
 			Fields: map[string]fts.Field{
-				"title": {Value: "database guide"},
-				"body":  {Value: "postgres backup postgres backup postgres backup"},
+				"title":    {Value: "database guide"},
+				"abstract": {Value: "postgres backup postgres backup postgres backup"},
 			},
 		},
 	}
@@ -32,9 +32,9 @@ func main() {
 	weighted := newEngine(fts.WithRankProfile(fts.RankProfile{
 		Name: "docs",
 		Base: fts.BM25(),
-		FieldWeights: map[string]float64{
-			"title": 3.0,
-			"body":  1.0,
+		FieldWeights: fts.FieldWeights{
+			"title":    3.0,
+			"abstract": 1.0,
 		},
 	}))
 
@@ -47,7 +47,7 @@ func main() {
 	}
 
 	printResults(ctx, "baseline BM25", baseline)
-	printResults(ctx, "rank profile title=3 body=1", weighted)
+	printResults(ctx, "rank profile title=3 abstract=1", weighted)
 }
 
 func newEngine(opts ...fts.Option) *fts.Service {

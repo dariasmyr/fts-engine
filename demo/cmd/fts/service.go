@@ -31,14 +31,20 @@ func selectScoringOption(cfg config.FTSConfig) (pkgfts.Option, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(cfg.RankProfile.FieldWeights) > 0 {
+	if rankProfileConfigured(cfg.RankProfile) {
 		if scorer == nil {
 			return nil, fmt.Errorf("rank profile requires scorer")
 		}
 		return pkgfts.WithRankProfile(pkgfts.RankProfile{
 			Name:         cfg.RankProfile.Name,
 			Base:         scorer,
-			FieldWeights: maps.Clone(cfg.RankProfile.FieldWeights),
+			FieldWeights: pkgfts.FieldWeights(maps.Clone(cfg.RankProfile.FieldWeights)),
+			QueryTypeWeights: pkgfts.QueryTypeWeights{
+				Term:       cfg.RankProfile.QueryTypeWeights.Term,
+				Prefix:     cfg.RankProfile.QueryTypeWeights.Prefix,
+				Phrase:     cfg.RankProfile.QueryTypeWeights.Phrase,
+				NearPhrase: cfg.RankProfile.QueryTypeWeights.NearPhrase,
+			},
 		}), nil
 	}
 	if scorer == nil {
@@ -48,13 +54,17 @@ func selectScoringOption(cfg config.FTSConfig) (pkgfts.Option, error) {
 }
 
 func rankProfileLabel(profile config.RankProfileConfig) string {
-	if len(profile.FieldWeights) == 0 {
+	if !rankProfileConfigured(profile) {
 		return ""
 	}
 	if profile.Name != "" {
 		return profile.Name
 	}
 	return "custom"
+}
+
+func rankProfileConfigured(profile config.RankProfileConfig) bool {
+	return len(profile.FieldWeights) > 0 || profile.QueryTypeWeights != (config.QueryTypeWeightsConfig{})
 }
 
 func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
