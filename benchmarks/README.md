@@ -26,11 +26,6 @@ Engines:
 - `bluge`
 - `mock`: internal-only, useful only for harness bring-up
 
-Evaluation commands:
-
-- `cmd/bench`: cross-engine benchmark, intentionally single-field by default
-- `cmd/rankeval`: `fts-engine` rank profile evaluation on a multi-field workload
-
 Output:
 
 - plain-text summary table
@@ -218,7 +213,7 @@ What they mean:
 These matter only for `fts-engine` runs:
 
 - `-index=slicedradix|hamt`
-- `-scorer=none|bm25|tfidf|rank-profile-default`
+- `-scorer=none|bm25|tfidf`
 - `-lang=none|en|ru|multi`
 - `-filter=none|bloom|cuckoo|ribbon`
 - `-persist=none|snapshot|segment`
@@ -261,63 +256,6 @@ Disable persistence for pure in-memory `fts-engine` runs:
   -out=./results/local/fts-inmemory.json \
   -persist=none)
 ```
-
-## Rank Profile Evaluation
-
-Use `cmd/rankeval` when the goal is to tune `fts-engine` field weights, not to
-compare engines. It uses a multi-field synthetic workload with `title`, `tags`,
-and `body` fields, runs a baseline scorer, then runs one or more profile files
-and prints metric deltas.
-
-```bash
-(cd benchmarks && go run ./cmd/rankeval \
-  -profiles=./profiles/rankeval-neutral.json,./profiles/rankeval-title-1_25.json,./profiles/rankeval-title-1_5.json,./profiles/rankeval-title-1_75.json,./profiles/rankeval-body-strong.json \
-  -baseline=bm25 \
-  -queries=100 \
-  -k=10 \
-  -out=./results/local/rankeval-title-grid.json)
-```
-
-The output is focused on ranking quality:
-
-```text
-PROFILE       KIND      BASE  nDCG@k  ΔnDCG    ΔnDCG%   Q+   Q-  Q=   MRR
-bm25          baseline  bm25  0.5478  -        -        -    -   -    0.5000
-neutral       profile   bm25  0.5478  +0.0000  +0.00%   0    0   100  0.5000
-title-1.5     profile   bm25  0.6610  +0.1132  +20.66%  100  0   0    0.5000
-title-1.75    profile   bm25  0.9360  +0.3882  +70.86%  100  0   0    1.0000
-```
-
-`rankeval` also reports per-query movement counts:
-
-- `Q+`: queries where profile nDCG improved over baseline;
-- `Q-`: queries where profile nDCG regressed;
-- `Q=`: queries where profile nDCG stayed the same.
-
-This command is intentionally `fts-engine` only. It isolates the effect of rank
-profile weights. The cross-engine `cmd/bench` suite should remain neutral and
-single-field unless a separate cross-engine multi-field benchmark is added for
-all adapters.
-
-`rankeval` can also run on real wiki dumps with generated title/body relevance
-labels:
-
-```bash
-(cd benchmarks && go run ./cmd/rankeval \
-  -dataset=wiki-multifield \
-  -wiki-dump=./data/wiki/simplewiki-latest-pages-articles.xml.bz2 \
-  -max-docs=50000 \
-  -queries=200 \
-  -profiles=./profiles/rankeval-neutral.json,./profiles/rankeval-title-1_25.json,./profiles/rankeval-title-1_5.json,./profiles/rankeval-title-1_75.json,./profiles/rankeval-body-strong.json \
-  -baseline=bm25 \
-  -k=10 \
-  -out=./results/local/rankeval-wiki-title-grid.json)
-```
-
-For `wiki-multifield`, each document has `title` and `body` fields. Query labels
-are generated from real wiki text: documents with the term in `title` receive a
-higher relevance grade than documents where the term appears only in `body`.
-These are benchmark-side labels, not human relevance judgments.
 
 Enable diagnostics:
 

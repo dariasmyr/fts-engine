@@ -1,9 +1,0 @@
-{
-  "name": "body-strong",
-  "base": "bm25",
-  "field_weights": {
-    "title": 1.0,
-    "tags": 1.0,
-    "body": 3.0
-  }
-}
