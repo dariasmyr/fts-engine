@@ -43,6 +43,16 @@ func TestNDCGUsesGradedRelevanceForIdealRanking(t *testing.T) {
 	}
 }
 
+func TestNDCGPenalizesIncompleteResults(t *testing.T) {
+	hits := []harness.SearchHit{{DocID: "a"}}
+	relevant := map[string]int{"a": 1, "b": 1}
+	got := NDCG(hits, relevant, 2)
+	want := 1 / (1 + 1/math.Log2(3))
+	if !approx(got, want) {
+		t.Fatalf("NDCG() = %v, want %v", got, want)
+	}
+}
+
 func TestCompute(t *testing.T) {
 	results := []harness.QueryResult{{
 		QueryID: "q-1",

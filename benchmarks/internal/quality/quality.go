@@ -75,11 +75,8 @@ func NDCG(hits []harness.SearchHit, relevant map[string]int, k int) float64 {
 	if len(relevant) == 0 || k <= 0 {
 		return 0
 	}
-	if k > len(hits) {
-		k = len(hits)
-	}
 	dcg := 0.0
-	for i := 0; i < k; i++ {
+	for i := 0; i < min(k, len(hits)); i++ {
 		grade := relevant[hits[i].DocID]
 		if grade <= 0 {
 			continue
