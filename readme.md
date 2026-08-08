@@ -82,9 +82,13 @@ Notes:
 | Index | Capabilities | When to use |
 | --- | --- | --- |
 | `slicedradix` | exact, positional, prefix | best default if you need prefix queries |
-| `hamt` | exact, positional | use when you do not need prefix queries |
+| `hamt` | exact, positional, prefix via term scan | use when you do not need prefix-heavy queries |
 
-Prefix queries require an index that implements `fts.PrefixIndex`. Among the built-in mutable indexes, that means `slicedradix`.
+Prefix queries require an index that implements `fts.PrefixIndex`. Both built-in
+mutable indexes support prefix queries, but with different performance profiles:
+`slicedradix` performs structural prefix lookup, while `hamt` scans stored terms
+and filters them with `strings.HasPrefix`. Prefer `slicedradix` for prefix-heavy
+workloads.
 
 ## Pipelines and Presets
 
@@ -169,8 +173,8 @@ engine := fts.NewMultiField(factory, keygen.Word)
 _ = engine.Index(context.Background(), fts.Document{
 	ID: "doc-1",
 	Fields: map[string]fts.Field{
-		"title": {Value: "French hotel"},
-		"body":  {Value: "Rosa runs hotel operations in France"},
+		"title":    {Value: "French hotel"},
+		"abstract": {Value: "Rosa runs hotel operations in France"},
 	},
 })
 
@@ -179,6 +183,84 @@ fmt.Println(res.TotalResultsCount)
 ```
 
 In this mode, you usually create one index per field through the factory. The engine calls the factory the first time a field needs to be indexed and then reuses that index for future documents in the same field.
+
+## Rank Profiles
+
+Use `fts.RankProfile` when fields or query types should contribute differently to
+ranking. A rank profile applies multipliers on top of an existing scorer such as
+BM25 or TF-IDF:
+
+```go
+engine := fts.NewMultiField(
+	factory,
+	keygen.Word,
+	fts.WithRankProfile(fts.RankProfile{
+		Name: "docs",
+		Base: fts.BM25(),
+		FieldWeights: fts.FieldWeights{
+			"title":    3.0,
+			"abstract": 1.0,
+		},
+		QueryTypeWeights: fts.QueryTypeWeights{
+			Term:   1.0,
+			Prefix: 0.6,
+			Phrase: 4.0,
+		},
+	}),
+)
+```
+
+The weights are relative ranking multipliers. They are not universal defaults and
+they are not score thresholds. For example, `"title": 3.0` means each title match
+contributes three times its base BM25/TF-IDF score. It does not mean the final
+document score is capped at `3.0`.
+
+Query type weights are also relative multipliers. They are useful for mixed
+queries, where exact terms, phrases, and prefixes can compete in the same result
+set.
+
+For lower-level composition, `fts.WeightedScorer` can also be passed directly to
+`fts.WithScorer(...)`.
+
+The lower-level scorer API is still available when you want to choose a scorer
+implementation directly:
+
+```go
+engine := fts.NewMultiField(
+	factory,
+	keygen.Word,
+	fts.WithScorer(fts.BM25()),
+)
+```
+
+## Score Explanation
+
+Use `Explain(...)` to inspect why a specific document received its score for a
+query:
+
+```go
+explanation, err := engine.Explain(context.Background(), "postgres backup", "doc-1")
+if err != nil {
+	panic(err)
+}
+
+fmt.Printf("id=%s matched=%t score=%.4f\n", explanation.ID, explanation.Matched, explanation.Score)
+for _, c := range explanation.Contributions {
+	fmt.Printf(
+		"field=%s term=%s query_type=%s base=%.4f field_weight=%.2f query_type_weight=%.2f score=%.4f\n",
+		c.Field,
+		c.Term,
+		c.QueryType,
+		c.BaseScore,
+		c.FieldWeight,
+		c.QueryTypeWeight,
+		c.Score,
+	)
+}
+```
+
+For weighted scoring, each contribution includes both the base BM25/TF-IDF score
+and the applied field and query type weights.
 
 ## Persistence
 
@@ -237,6 +319,7 @@ fmt.Println(len(snap.ByStrategy))
 - `default` - minimal in-memory usage
 - `preset` - preset pipeline via `pkg/ftspreset`
 - `custom-options` - custom pipeline and filter
+- `rank-profile` - multi-field ranking with weighted field scoring
 - `snapshot-*` - mutable snapshot save and restore
 - `segment-*` - sealed segment save and restore, including `mmap`
 

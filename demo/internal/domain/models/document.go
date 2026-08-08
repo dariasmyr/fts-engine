@@ -16,7 +16,28 @@ type ResultData struct {
 	ID            string   `json:"id"`
 	UniqueMatches int      `json:"unique_matches"`
 	TotalMatches  int      `json:"total_matches"`
+	Score         float64  `json:"score"`
+	Explanation   *Explain `json:"explanation,omitempty"`
 	Document      Document `json:"document"`
+}
+
+type Explain struct {
+	Score         float64             `json:"score"`
+	UniqueMatches int                 `json:"unique_matches"`
+	TotalMatches  int                 `json:"total_matches"`
+	Contributions []ScoreContribution `json:"contributions"`
+}
+
+type ScoreContribution struct {
+	Field           string  `json:"field"`
+	Term            string  `json:"term"`
+	QueryType       string  `json:"query_type"`
+	TF              uint32  `json:"tf"`
+	DF              uint32  `json:"df"`
+	BaseScore       float64 `json:"base_score"`
+	FieldWeight     float64 `json:"field_weight"`
+	QueryTypeWeight float64 `json:"query_type_weight"`
+	Score           float64 `json:"score"`
 }
 
 type SearchDiagnostics struct {

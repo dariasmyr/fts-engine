@@ -2,6 +2,7 @@ package quality
 
 import (
 	"math"
+	"sort"
 
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
 )
@@ -74,27 +75,33 @@ func NDCG(hits []harness.SearchHit, relevant map[string]int, k int) float64 {
 	if len(relevant) == 0 || k <= 0 {
 		return 0
 	}
-	if k > len(hits) {
-		k = len(hits)
-	}
 	dcg := 0.0
-	for i := 0; i < k; i++ {
-		rel := relevant[hits[i].DocID]
-		if rel <= 0 {
+	for i := 0; i < min(k, len(hits)); i++ {
+		grade := relevant[hits[i].DocID]
+		if grade <= 0 {
 			continue
 		}
-		dcg += (math.Pow(2, float64(rel)) - 1) / math.Log2(float64(i)+2)
+		dcg += (math.Pow(2, float64(grade)) - 1) / math.Log2(float64(i+2))
 	}
-	idealHits := len(relevant)
-	if idealHits > k {
-		idealHits = k
-	}
-	idcg := 0.0
-	for i := 0; i < idealHits; i++ {
-		idcg += 1 / math.Log2(float64(i)+2)
-	}
+	idcg := idealDCG(relevant, k)
 	if idcg == 0 {
 		return 0
 	}
 	return dcg / idcg
+}
+
+func idealDCG(relevant map[string]int, k int) float64 {
+	grades := make([]int, 0, len(relevant))
+	for _, grade := range relevant {
+		if grade > 0 {
+			grades = append(grades, grade)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(grades)))
+	limit := min(k, len(grades))
+	var sum float64
+	for i, grade := range grades[:limit] {
+		sum += (math.Pow(2, float64(grade)) - 1) / math.Log2(float64(i+2))
+	}
+	return sum
 }

@@ -4,6 +4,15 @@ fts:
   index: "slicedradix" # slicedradix|hamt
   keygen: "word"
   scorer: "none"       # none|bm25|tfidf
+  # rank_profile:
+  #   name: "debug-weights"
+  #   field_weights:
+  #     title: 1.5
+  #   query_type_weights:
+  #     term: 1.5
+  #     prefix: 0.5
+  #     phrase: 1.7
+  #     near_phrase: 1.7
   filter: "ribbon"
   persistence:
     enabled: true

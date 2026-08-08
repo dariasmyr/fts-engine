@@ -1,10 +1,38 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestLoadReadsQueryTypeWeights(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte(`fts:
+  scorer: bm25
+  rank_profile:
+    name: query-types
+    query_type_weights:
+      term: 1.5
+      prefix: 0.5
+      phrase: 1.7
+      near_phrase: 2.0
+`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := QueryTypeWeightsConfig{Term: 1.5, Prefix: 0.5, Phrase: 1.7, NearPhrase: 2}
+	if got := cfg.FTS.RankProfile.QueryTypeWeights; got != want {
+		t.Fatalf("QueryTypeWeights = %+v, want %+v", got, want)
+	}
+}
 
 func TestValidateConfigAppliesFallbacksFromDefaultConfig(t *testing.T) {
 	cfg := defaultConfig()
@@ -66,6 +94,8 @@ func TestConfigStructsDoNotUseEnvDefaults(t *testing.T) {
 	for _, typ := range []reflect.Type{
 		reflect.TypeOf(Config{}),
 		reflect.TypeOf(FTSConfig{}),
+		reflect.TypeOf(RankProfileConfig{}),
+		reflect.TypeOf(QueryTypeWeightsConfig{}),
 		reflect.TypeOf(CompactionConfig{}),
 		reflect.TypeOf(PersistenceConfig{}),
 		reflect.TypeOf(BloomConfig{}),
@@ -80,5 +110,98 @@ func TestConfigStructsDoNotUseEnvDefaults(t *testing.T) {
 				t.Fatalf("field %s.%s still uses env-default tag %q", typ.Name(), field.Name, tag)
 			}
 		}
+	}
+}
+
+func TestValidateConfigAllowsRankProfileWithScorer(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Scorer = "bm25"
+	cfg.FTS.RankProfile = RankProfileConfig{FieldWeights: map[string]float64{"title": 1.5}}
+
+	if err := validateConfig(&cfg); err != nil {
+		t.Fatalf("validateConfig() error = %v", err)
+	}
+	if cfg.FTS.RankProfile.Name != "demo" {
+		t.Fatalf("RankProfile.Name = %q, want demo", cfg.FTS.RankProfile.Name)
+	}
+}
+
+func TestValidateConfigAllowsQueryTypeWeightsWithoutFieldWeights(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Scorer = "bm25"
+	cfg.FTS.RankProfile = RankProfileConfig{
+		QueryTypeWeights: QueryTypeWeightsConfig{Phrase: 1.7},
+	}
+
+	if err := validateConfig(&cfg); err != nil {
+		t.Fatalf("validateConfig() error = %v", err)
+	}
+	if cfg.FTS.RankProfile.Name != "demo" {
+		t.Fatalf("RankProfile.Name = %q, want demo", cfg.FTS.RankProfile.Name)
+	}
+}
+
+func TestValidateConfigRejectsRankProfileWithoutScorer(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Scorer = "none"
+	cfg.FTS.RankProfile = RankProfileConfig{FieldWeights: map[string]float64{"title": 1.5}}
+
+	err := validateConfig(&cfg)
+	if err == nil {
+		t.Fatal("validateConfig() error = nil, want rank_profile scorer error")
+	}
+	if !strings.Contains(err.Error(), "rank_profile requires") {
+		t.Fatalf("validateConfig() error = %q, want rank_profile error", err)
+	}
+}
+
+func TestValidateConfigRejectsQueryTypeWeightsWithoutScorer(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Scorer = "none"
+	cfg.FTS.RankProfile = RankProfileConfig{
+		QueryTypeWeights: QueryTypeWeightsConfig{Term: 1.5},
+	}
+
+	err := validateConfig(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "rank_profile requires") {
+		t.Fatalf("validateConfig() error = %v, want rank_profile scorer error", err)
+	}
+}
+
+func TestValidateConfigRejectsInvalidRankProfileWeight(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Scorer = "bm25"
+	cfg.FTS.RankProfile = RankProfileConfig{FieldWeights: map[string]float64{"title": -1}}
+
+	err := validateConfig(&cfg)
+	if err == nil {
+		t.Fatal("validateConfig() error = nil, want invalid weight error")
+	}
+	if !strings.Contains(err.Error(), "invalid weight") {
+		t.Fatalf("validateConfig() error = %q, want invalid weight error", err)
+	}
+}
+
+func TestValidateConfigRejectsUnsupportedRankProfileField(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Scorer = "bm25"
+	cfg.FTS.RankProfile = RankProfileConfig{FieldWeights: map[string]float64{"body": 1}}
+
+	err := validateConfig(&cfg)
+	if err == nil || !strings.Contains(err.Error(), `unsupported field "body"`) {
+		t.Fatalf("validateConfig() error = %v, want unsupported field error", err)
+	}
+}
+
+func TestValidateConfigRejectsInvalidQueryTypeWeight(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Scorer = "bm25"
+	cfg.FTS.RankProfile = RankProfileConfig{
+		QueryTypeWeights: QueryTypeWeightsConfig{Prefix: -1},
+	}
+
+	err := validateConfig(&cfg)
+	if err == nil || !strings.Contains(err.Error(), `query type "prefix" has invalid weight`) {
+		t.Fatalf("validateConfig() error = %v, want invalid query type weight error", err)
 	}
 }

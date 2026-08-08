@@ -37,6 +37,7 @@ Standalone examples:
 - `default/main.go` - minimal in-memory setup with defaults
 - `preset/main.go` - in-memory setup with a language preset from `pkg/ftspreset`
 - `custom-options/main.go` - in-memory setup with a custom pipeline and filter
+- `rank-profile/main.go` - multi-field ranking with weighted field scoring
 
 Snapshot examples:
 
@@ -61,6 +62,7 @@ Standalone examples can be run independently:
 go run ./examples/client-library/default
 go run ./examples/client-library/preset
 go run ./examples/client-library/custom-options
+go run ./examples/client-library/rank-profile
 ```
 
 Snapshot restore examples depend on files created by the snapshot save example:

@@ -22,6 +22,16 @@ func WithScorer(scorer Scorer) Option {
 	}
 }
 
+func WithRankProfile(profile RankProfile) Option {
+	return func(s *Service) {
+		s.scorer = WeightedScorer{
+			Base:             profile.Base,
+			FieldWeights:     profile.FieldWeights,
+			QueryTypeWeights: profile.QueryTypeWeights,
+		}
+	}
+}
+
 func WithCollectionStatsSnapshot(snapshot *CollectionStatsSnapshot) Option {
 	return func(s *Service) {
 		s.pendingCollectionStatsSnapshot = snapshot

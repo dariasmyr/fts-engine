@@ -8,28 +8,73 @@ import (
 )
 
 type prefixMemoryIndex struct {
-	entries map[string][]DocRef
+	entries   map[string][]DocRef
+	positions map[string]map[DocOrd][]uint32
 }
 
+type fixedScorer float64
+
+func (s fixedScorer) Score(TermStats, DocStats, FieldStats) float64 { return float64(s) }
+
+type tfScorer struct{}
+
+func (tfScorer) Score(t TermStats, _ DocStats, _ FieldStats) float64 { return float64(t.TF) }
+
 func newPrefixMemoryIndex() *prefixMemoryIndex {
-	return &prefixMemoryIndex{entries: make(map[string][]DocRef)}
+	return &prefixMemoryIndex{
+		entries:   make(map[string][]DocRef),
+		positions: make(map[string]map[DocOrd][]uint32),
+	}
 }
 
 func (p *prefixMemoryIndex) Insert(key string, ord DocOrd) error {
+	return p.insert(key, ord, 0, false)
+}
+
+func (p *prefixMemoryIndex) InsertAt(key string, position uint32, ord DocOrd) error {
+	return p.insert(key, ord, position, true)
+}
+
+func (p *prefixMemoryIndex) insert(key string, ord DocOrd, position uint32, hasPosition bool) error {
 	entries := p.entries[key]
 	for i := range entries {
 		if entries[i].Ord == ord {
 			entries[i].Count++
 			p.entries[key] = entries
+			if hasPosition {
+				p.addPosition(key, ord, position)
+			}
 			return nil
 		}
 	}
 	p.entries[key] = append(entries, DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
+	if hasPosition {
+		p.addPosition(key, ord, position)
+	}
 	return nil
+}
+
+func (p *prefixMemoryIndex) addPosition(key string, ord DocOrd, position uint32) {
+	perKey := p.positions[key]
+	if perKey == nil {
+		perKey = make(map[DocOrd][]uint32)
+		p.positions[key] = perKey
+	}
+	perKey[ord] = append(perKey[ord], position)
 }
 
 func (p *prefixMemoryIndex) Search(key string) ([]DocRef, error) {
 	return p.entries[key], nil
+}
+
+func (p *prefixMemoryIndex) SearchPositional(key string) ([]PositionalDocRef, error) {
+	docs := p.entries[key]
+	out := make([]PositionalDocRef, 0, len(docs))
+	perKey := p.positions[key]
+	for _, doc := range docs {
+		out = append(out, PositionalDocRef{Ord: doc.Ord, Positions: perKey[doc.Ord]})
+	}
+	return out, nil
 }
 
 func (p *prefixMemoryIndex) SearchPrefix(prefix string) ([]DocRef, error) {
@@ -87,6 +132,70 @@ func TestTFIDFMonotonicInTF(t *testing.T) {
 
 	if high <= low {
 		t.Fatalf("expected TF-IDF to increase with TF, got low=%v high=%v", low, high)
+	}
+}
+
+func TestWeightedScorerUsesDefaultWeight(t *testing.T) {
+	scorer := WeightedScorer{Base: fixedScorer(2), DefaultWeight: 4}
+
+	got := scorer.Score(TermStats{Field: "body"}, DocStats{}, FieldStats{})
+	if got != 8 {
+		t.Fatalf("expected weighted score 8, got %v", got)
+	}
+}
+
+func TestWeightedScorerDefaultsToOne(t *testing.T) {
+	scorer := WeightedScorer{Base: fixedScorer(2)}
+
+	got := scorer.Score(TermStats{Field: "body"}, DocStats{}, FieldStats{})
+	if got != 2 {
+		t.Fatalf("expected default weight 1, got score %v", got)
+	}
+}
+
+func TestWeightedScorerFieldWeightOverridesDefault(t *testing.T) {
+	scorer := WeightedScorer{
+		Base:          fixedScorer(2),
+		DefaultWeight: 4,
+		FieldWeights:  FieldWeights{"title": 3},
+	}
+
+	got := scorer.Score(TermStats{Field: "title"}, DocStats{}, FieldStats{})
+	if got != 6 {
+		t.Fatalf("expected field weight to override default, got %v", got)
+	}
+}
+
+func TestWeightedScorerAppliesQueryTypeWeight(t *testing.T) {
+	scorer := WeightedScorer{
+		Base:             fixedScorer(2),
+		QueryTypeWeights: QueryTypeWeights{Phrase: 4},
+	}
+
+	got := scorer.Score(TermStats{QueryType: QueryTypePhrase}, DocStats{}, FieldStats{})
+	if got != 8 {
+		t.Fatalf("expected phrase-weighted score 8, got %v", got)
+	}
+}
+
+func TestWeightedScorerAllowsZeroFieldWeight(t *testing.T) {
+	scorer := WeightedScorer{
+		Base:         fixedScorer(2),
+		FieldWeights: FieldWeights{"hidden": 0},
+	}
+
+	got := scorer.Score(TermStats{Field: "hidden"}, DocStats{}, FieldStats{})
+	if got != 0 {
+		t.Fatalf("expected zero field weight to suppress score, got %v", got)
+	}
+}
+
+func TestWeightedScorerNilBaseReturnsZero(t *testing.T) {
+	scorer := WeightedScorer{FieldWeights: FieldWeights{"title": 3}}
+
+	got := scorer.Score(TermStats{Field: "title"}, DocStats{}, FieldStats{})
+	if got != 0 {
+		t.Fatalf("expected zero score without base scorer, got %v", got)
 	}
 }
 
@@ -151,6 +260,210 @@ func TestSearchWithTFIDFRanksRareDocumentFirst(t *testing.T) {
 	}
 	if res.Results[0].Score <= res.Results[1].Score {
 		t.Fatalf("expected scores to be non-increasing, got %v then %v", res.Results[0].Score, res.Results[1].Score)
+	}
+}
+
+func TestSearchWithWeightedScorerRanksHigherWeightedFieldFirst(t *testing.T) {
+	factory := func(string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	svc := NewMultiField(factory, WordKeys, WithScorer(WeightedScorer{
+		Base: tfScorer{},
+		FieldWeights: FieldWeights{
+			"title": 4,
+			"body":  1,
+		},
+	}))
+
+	ctx := context.Background()
+	docs := []Document{
+		{ID: "doc-a", Fields: map[string]Field{"title": {Value: "alpha"}}},
+		{ID: "doc-b", Fields: map[string]Field{"body": {Value: "alpha alpha alpha"}}},
+	}
+	for _, doc := range docs {
+		if err := svc.Index(ctx, doc); err != nil {
+			t.Fatalf("Index(%q) error = %v", doc.ID, err)
+		}
+	}
+
+	res, err := svc.SearchDocuments(ctx, "alpha", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 2 {
+		t.Fatalf("expected 2 results, got %+v", res.Results)
+	}
+	if res.Results[0].ID != "doc-a" {
+		t.Fatalf("expected title-weighted doc-a first, got %+v", res.Results)
+	}
+	if res.Results[0].Score != 4 || res.Results[1].Score != 3 {
+		t.Fatalf("expected weighted scores 4 and 3, got %+v", res.Results)
+	}
+}
+
+func TestSearchWithRankProfileUsesFieldWeights(t *testing.T) {
+	factory := func(string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
+		Name: "docs",
+		Base: tfScorer{},
+		FieldWeights: FieldWeights{
+			"title": 5,
+			"body":  1,
+		},
+	}))
+
+	ctx := context.Background()
+	docs := []Document{
+		{ID: "doc-a", Fields: map[string]Field{"title": {Value: "alpha"}}},
+		{ID: "doc-b", Fields: map[string]Field{"body": {Value: "alpha alpha alpha alpha"}}},
+	}
+	for _, doc := range docs {
+		if err := svc.Index(ctx, doc); err != nil {
+			t.Fatalf("Index(%q) error = %v", doc.ID, err)
+		}
+	}
+
+	res, err := svc.SearchDocuments(ctx, "alpha", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if len(res.Results) != 2 {
+		t.Fatalf("expected 2 results, got %+v", res.Results)
+	}
+	if res.Results[0].ID != "doc-a" {
+		t.Fatalf("expected rank profile to put doc-a first, got %+v", res.Results)
+	}
+	if res.Results[0].Score != 5 || res.Results[1].Score != 4 {
+		t.Fatalf("expected profile scores 5 and 4, got %+v", res.Results)
+	}
+}
+
+func TestSearchWithRankProfileUsesQueryTypeWeights(t *testing.T) {
+	factory := func(string) (Index, error) { return newPrefixMemoryIndex(), nil }
+	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
+		Name: "docs",
+		Base: tfScorer{},
+		QueryTypeWeights: QueryTypeWeights{
+			Prefix: 0.5,
+			Phrase: 4,
+		},
+	}))
+
+	ctx := context.Background()
+	docs := []Document{
+		{ID: "doc-phrase", Fields: map[string]Field{"body": {Value: "alpha beta"}}},
+		{ID: "doc-prefix", Fields: map[string]Field{"body": {Value: "alphabet alphabet alphabet alphabet alphabet"}}},
+	}
+	for _, doc := range docs {
+		if err := svc.Index(ctx, doc); err != nil {
+			t.Fatalf("Index(%q) error = %v", doc.ID, err)
+		}
+	}
+
+	res, err := svc.Search(ctx, &BooleanQuery{Clauses: []BoolClause{
+		ShouldClause(PhraseQuery{Phrase: "alpha beta"}),
+		ShouldClause(PrefixQuery{Prefix: "alph"}),
+	}}, 10)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(res.Results) != 2 {
+		t.Fatalf("expected 2 results, got %+v", res.Results)
+	}
+	if res.Results[0].ID != "doc-phrase" {
+		t.Fatalf("expected phrase-weighted doc first, got %+v", res.Results)
+	}
+	if res.Results[0].Score != 4.5 || res.Results[1].Score != 2.5 {
+		t.Fatalf("expected query-type-weighted scores 4.5 and 2.5, got %+v", res.Results)
+	}
+}
+
+func TestExplainWithRankProfileShowsWeightedContribution(t *testing.T) {
+	factory := func(string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
+		Name: "docs",
+		Base: tfScorer{},
+		FieldWeights: FieldWeights{
+			"title": 5,
+			"body":  1,
+		},
+	}))
+
+	ctx := context.Background()
+	docs := []Document{
+		{ID: "doc-a", Fields: map[string]Field{"title": {Value: "alpha"}}},
+		{ID: "doc-b", Fields: map[string]Field{"body": {Value: "alpha alpha alpha alpha"}}},
+	}
+	for _, doc := range docs {
+		if err := svc.Index(ctx, doc); err != nil {
+			t.Fatalf("Index(%q) error = %v", doc.ID, err)
+		}
+	}
+
+	explanation, err := svc.Explain(ctx, "alpha", "doc-a")
+	if err != nil {
+		t.Fatalf("Explain() error = %v", err)
+	}
+	if !explanation.Matched {
+		t.Fatalf("expected doc-a to match, got %+v", explanation)
+	}
+	if explanation.Score != 5 || explanation.UniqueMatches != 1 || explanation.TotalMatches != 1 {
+		t.Fatalf("unexpected explanation summary: %+v", explanation)
+	}
+	if len(explanation.Contributions) != 1 {
+		t.Fatalf("expected 1 contribution, got %+v", explanation.Contributions)
+	}
+	c := explanation.Contributions[0]
+	if c.Field != "title" || c.Term != "alpha" {
+		t.Fatalf("unexpected contribution identity: %+v", c)
+	}
+	if c.BaseScore != 1 || c.FieldWeight != 5 || c.Score != 5 {
+		t.Fatalf("unexpected weighted contribution: %+v", c)
+	}
+	if c.QueryType != QueryTypeTerm || c.QueryTypeWeight != 1 {
+		t.Fatalf("unexpected query type contribution: %+v", c)
+	}
+	if c.TF != 1 || c.DF != 1 || c.DocLength != 1 || c.FieldDocs != 1 {
+		t.Fatalf("unexpected contribution stats: %+v", c)
+	}
+}
+
+func TestExplainWithRankProfileShowsQueryTypeWeight(t *testing.T) {
+	factory := func(string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
+		Name:             "docs",
+		Base:             tfScorer{},
+		QueryTypeWeights: QueryTypeWeights{Phrase: 4},
+	}))
+
+	ctx := context.Background()
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"body": {Value: "alpha beta"}}}); err != nil {
+		t.Fatalf("Index(doc-a) error = %v", err)
+	}
+
+	explanation, err := svc.Explain(ctx, `"alpha beta"`, "doc-a")
+	if err != nil {
+		t.Fatalf("Explain() error = %v", err)
+	}
+	if !explanation.Matched || explanation.Score != 4 {
+		t.Fatalf("unexpected explanation summary: %+v", explanation)
+	}
+	if len(explanation.Contributions) != 1 {
+		t.Fatalf("expected 1 contribution, got %+v", explanation.Contributions)
+	}
+	c := explanation.Contributions[0]
+	if c.QueryType != QueryTypePhrase || c.QueryTypeWeight != 4 || c.BaseScore != 1 || c.Score != 4 {
+		t.Fatalf("unexpected phrase contribution: %+v", c)
+	}
+}
+
+func TestExplainUnknownDocumentReturnsUnmatched(t *testing.T) {
+	svc := New(newPositionalMemoryIndex(), WordKeys, WithScorer(tfScorer{}))
+
+	explanation, err := svc.Explain(context.Background(), "alpha", "missing")
+	if err != nil {
+		t.Fatalf("Explain() error = %v", err)
+	}
+	if explanation.ID != "missing" || explanation.Matched || explanation.Score != 0 || len(explanation.Contributions) != 0 {
+		t.Fatalf("unexpected explanation for missing doc: %+v", explanation)
 	}
 }
 

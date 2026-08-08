@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"time"
 
 	"github.com/dariasmyr/fts-engine/demo/internal/config"
@@ -12,17 +13,58 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
-func selectScorer(kind string) (pkgfts.Option, error) {
+func selectScorer(kind string) (pkgfts.Scorer, error) {
 	switch kind {
 	case "", "none":
 		return nil, nil
 	case "bm25":
-		return pkgfts.WithScorer(pkgfts.BM25()), nil
+		return pkgfts.BM25(), nil
 	case "tfidf":
-		return pkgfts.WithScorer(pkgfts.TFIDF()), nil
+		return pkgfts.TFIDF(), nil
 	default:
 		return nil, fmt.Errorf("unknown scorer %q", kind)
 	}
+}
+
+func selectScoringOption(cfg config.FTSConfig) (pkgfts.Option, error) {
+	scorer, err := selectScorer(cfg.Scorer)
+	if err != nil {
+		return nil, err
+	}
+	if rankProfileConfigured(cfg.RankProfile) {
+		if scorer == nil {
+			return nil, fmt.Errorf("rank profile requires scorer")
+		}
+		return pkgfts.WithRankProfile(pkgfts.RankProfile{
+			Name:         cfg.RankProfile.Name,
+			Base:         scorer,
+			FieldWeights: pkgfts.FieldWeights(maps.Clone(cfg.RankProfile.FieldWeights)),
+			QueryTypeWeights: pkgfts.QueryTypeWeights{
+				Term:       cfg.RankProfile.QueryTypeWeights.Term,
+				Prefix:     cfg.RankProfile.QueryTypeWeights.Prefix,
+				Phrase:     cfg.RankProfile.QueryTypeWeights.Phrase,
+				NearPhrase: cfg.RankProfile.QueryTypeWeights.NearPhrase,
+			},
+		}), nil
+	}
+	if scorer == nil {
+		return nil, nil
+	}
+	return pkgfts.WithScorer(scorer), nil
+}
+
+func rankProfileLabel(profile config.RankProfileConfig) string {
+	if !rankProfileConfigured(profile) {
+		return ""
+	}
+	if profile.Name != "" {
+		return profile.Name
+	}
+	return "custom"
+}
+
+func rankProfileConfigured(profile config.RankProfileConfig) bool {
+	return len(profile.FieldWeights) > 0 || profile.QueryTypeWeights != (config.QueryTypeWeightsConfig{})
 }
 
 func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
@@ -30,7 +72,7 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 		return nil, false, fmt.Errorf("nil config")
 	}
 
-	scorerOpt, err := selectScorer(cfg.FTS.Scorer)
+	scorerOpt, err := selectScoringOption(cfg.FTS)
 	if err != nil {
 		return nil, false, err
 	}

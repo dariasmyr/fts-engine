@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 
 	"github.com/ilyakaznacheev/cleanenv"
@@ -18,6 +19,7 @@ type FTSConfig struct {
 	Index       string            `yaml:"index"`
 	KeyGen      string            `yaml:"keygen"`
 	Scorer      string            `yaml:"scorer"`
+	RankProfile RankProfileConfig `yaml:"rank_profile"`
 	Filter      string            `yaml:"filter"`
 	Persistence PersistenceConfig `yaml:"persistence"`
 	Compaction  CompactionConfig  `yaml:"compaction"`
@@ -25,6 +27,19 @@ type FTSConfig struct {
 	Cuckoo      CuckooConfig      `yaml:"cuckoo"`
 	Ribbon      RibbonConfig      `yaml:"ribbon"`
 	Pipeline    PipelineConfig    `yaml:"pipeline"`
+}
+
+type RankProfileConfig struct {
+	Name             string                 `yaml:"name"`
+	FieldWeights     map[string]float64     `yaml:"field_weights"`
+	QueryTypeWeights QueryTypeWeightsConfig `yaml:"query_type_weights"`
+}
+
+type QueryTypeWeightsConfig struct {
+	Term       float64 `yaml:"term"`
+	Prefix     float64 `yaml:"prefix"`
+	Phrase     float64 `yaml:"phrase"`
+	NearPhrase float64 `yaml:"near_phrase"`
 }
 
 type CompactionConfig struct {
@@ -188,6 +203,9 @@ func validateConfig(cfg *Config) error {
 	if cfg.FTS.Scorer == "" {
 		cfg.FTS.Scorer = defaults.FTS.Scorer
 	}
+	if cfg.FTS.RankProfile.configured() && cfg.FTS.RankProfile.Name == "" {
+		cfg.FTS.RankProfile.Name = "demo"
+	}
 
 	if cfg.FTS.Filter == "" {
 		cfg.FTS.Filter = defaults.FTS.Filter
@@ -241,6 +259,10 @@ func validateConfig(cfg *Config) error {
 	case "none", "bm25", "tfidf":
 	default:
 		return fmt.Errorf("unknown scorer type: %s", cfg.FTS.Scorer)
+	}
+
+	if err := validateRankProfile(cfg.FTS.RankProfile, cfg.FTS.Scorer); err != nil {
+		return err
 	}
 
 	switch cfg.FTS.Filter {
@@ -298,4 +320,56 @@ func validateConfig(cfg *Config) error {
 	}
 
 	return nil
+}
+
+func validateRankProfile(profile RankProfileConfig, scorer string) error {
+	if !profile.configured() {
+		return nil
+	}
+	if scorer == "none" {
+		return fmt.Errorf("rank_profile requires fts.scorer to be bm25 or tfidf")
+	}
+	if err := validateFieldWeights(profile.FieldWeights); err != nil {
+		return err
+	}
+	return validateQueryTypeWeights(profile.QueryTypeWeights)
+}
+
+func validateFieldWeights(weights map[string]float64) error {
+	for field, weight := range weights {
+		if field == "" {
+			return fmt.Errorf("rank_profile field_weights contains an empty field name")
+		}
+		switch field {
+		case "title", "abstract":
+		default:
+			return fmt.Errorf("rank_profile field_weights contains unsupported field %q", field)
+		}
+		if weight < 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
+			return fmt.Errorf("rank_profile field %q has invalid weight %v", field, weight)
+		}
+	}
+	return nil
+}
+
+func validateQueryTypeWeights(weights QueryTypeWeightsConfig) error {
+	queryTypeWeights := []struct {
+		name   string
+		weight float64
+	}{
+		{name: "term", weight: weights.Term},
+		{name: "prefix", weight: weights.Prefix},
+		{name: "phrase", weight: weights.Phrase},
+		{name: "near_phrase", weight: weights.NearPhrase},
+	}
+	for _, queryType := range queryTypeWeights {
+		if queryType.weight < 0 || math.IsNaN(queryType.weight) || math.IsInf(queryType.weight, 0) {
+			return fmt.Errorf("rank_profile query type %q has invalid weight %v", queryType.name, queryType.weight)
+		}
+	}
+	return nil
+}
+
+func (p RankProfileConfig) configured() bool {
+	return len(p.FieldWeights) > 0 || p.QueryTypeWeights != (QueryTypeWeightsConfig{})
 }

@@ -26,27 +26,24 @@ func main() {
 	}
 
 	index("doc-1", map[string]string{
-		"title": "Distributed systems",
-		"body":  "Raft consensus protocol",
-		"tags":  "published",
+		"title":    "Distributed systems",
+		"abstract": "Raft consensus protocol",
 	})
 	index("doc-2", map[string]string{
-		"title": "Distributed storage",
-		"body":  "Replication overview",
-		"tags":  "published",
+		"title":    "Distributed storage",
+		"abstract": "Replication overview",
 	})
 	index("doc-3", map[string]string{
-		"title": "Distributed systems draft",
-		"body":  "Raft consensus notes",
-		"tags":  "draft",
+		"title":    "Distributed systems draft",
+		"abstract": "Draft Raft consensus notes",
 	})
 
 	fmt.Printf("fields=%v\n", engine.Fields())
 
 	res, err := engine.SearchFieldClauses(ctx, []fts.FieldQueryClause{
 		fts.MustFieldQuery("title", "distributed"),
-		fts.ShouldFieldQuery("body", "consensus"),
-		fts.MustNotFieldQuery("tags", "draft"),
+		fts.ShouldFieldQuery("abstract", "consensus"),
+		fts.MustNotFieldQuery("abstract", "draft"),
 	}, 10)
 	if err != nil {
 		panic(err)
