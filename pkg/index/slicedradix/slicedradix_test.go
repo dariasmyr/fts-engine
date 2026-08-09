@@ -70,6 +70,33 @@ func TestIndexInsertDifferentDocs(t *testing.T) {
 	}
 }
 
+func TestIndexInsertOutOfOrderKeepsPostingsSorted(t *testing.T) {
+	idx := New()
+	for _, ord := range []fts.DocOrd{1, 3, 7, 5, 3, 9} {
+		insertOrd(t, idx, "hotel", "doc", ord)
+	}
+
+	docs, err := idx.Search("hotel")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	want := []fts.DocRef{
+		{Ord: 1, Count: 1, Seq: 1},
+		{Ord: 3, Count: 2, Seq: 3},
+		{Ord: 5, Count: 1, Seq: 5},
+		{Ord: 7, Count: 1, Seq: 7},
+		{Ord: 9, Count: 1, Seq: 9},
+	}
+	if len(docs) != len(want) {
+		t.Fatalf("docs = %+v, want %+v", docs, want)
+	}
+	for i := range want {
+		if docs[i] != want[i] {
+			t.Fatalf("docs[%d] = %+v, want %+v", i, docs[i], want[i])
+		}
+	}
+}
+
 func TestIndexSearchNotFound(t *testing.T) {
 	idx := New()
 
@@ -125,6 +152,47 @@ func TestIndexSearchPositional(t *testing.T) {
 	}
 	if plain[0].Count != 2 {
 		t.Fatalf("plain[0].Count = %d, want 2", plain[0].Count)
+	}
+}
+
+func TestIndexInsertAtOutOfOrderKeepsPositionsAligned(t *testing.T) {
+	idx := New()
+	for _, insert := range []struct {
+		ord fts.DocOrd
+		pos uint32
+	}{
+		{ord: 1, pos: 10},
+		{ord: 1, pos: 11},
+		{ord: 3, pos: 30},
+		{ord: 7, pos: 70},
+		{ord: 5, pos: 50},
+		{ord: 3, pos: 31},
+		{ord: 9, pos: 90},
+	} {
+		insertAtOrd(t, idx, "hotel", "doc", insert.pos, insert.ord)
+	}
+
+	docs, err := idx.SearchPositional("hotel")
+	if err != nil {
+		t.Fatalf("SearchPositional() error = %v", err)
+	}
+	wantOrds := []fts.DocOrd{1, 3, 5, 7, 9}
+	wantPositions := [][]uint32{{10, 11}, {30, 31}, {50}, {70}, {90}}
+	if len(docs) != len(wantOrds) {
+		t.Fatalf("docs = %+v, want ords %v", docs, wantOrds)
+	}
+	for i := range wantOrds {
+		if docs[i].Ord != wantOrds[i] {
+			t.Fatalf("docs[%d].Ord = %d, want %d", i, docs[i].Ord, wantOrds[i])
+		}
+		if len(docs[i].Positions) != len(wantPositions[i]) {
+			t.Fatalf("docs[%d].Positions = %v, want %v", i, docs[i].Positions, wantPositions[i])
+		}
+		for j := range wantPositions[i] {
+			if docs[i].Positions[j] != wantPositions[i][j] {
+				t.Fatalf("docs[%d].Positions = %v, want %v", i, docs[i].Positions, wantPositions[i])
+			}
+		}
 	}
 }
 

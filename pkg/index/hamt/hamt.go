@@ -23,6 +23,24 @@ const (
 type documents []fts.DocRef
 
 func (d documents) Add(ord fts.DocOrd, positions [][]uint32, hasPos bool, pos uint32) (documents, [][]uint32) {
+	last := len(d) - 1
+	if last >= 0 && d[last].Ord == ord {
+		d[last].Count++
+		if hasPos {
+			positions = growPositions(positions, len(d))
+			positions[last] = append(positions[last], pos)
+		}
+		return d, positions
+	}
+	if last < 0 || ord > d[last].Ord {
+		d = append(d, fts.DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
+		if hasPos {
+			positions = growPositions(positions, len(d))
+			positions[len(d)-1] = []uint32{pos}
+		}
+		return d, positions
+	}
+
 	i := sort.Search(len(d), func(i int) bool { return d[i].Ord >= ord })
 	if i < len(d) && d[i].Ord == ord {
 		d[i].Count++
@@ -35,10 +53,13 @@ func (d documents) Add(ord fts.DocOrd, positions [][]uint32, hasPos bool, pos ui
 	d = append(d, fts.DocRef{})
 	copy(d[i+1:], d[i:])
 	d[i] = fts.DocRef{Ord: ord, Count: 1, Seq: uint32(ord)}
-	if hasPos {
+	if hasPos || i < len(positions) {
 		positions = growPositions(positions, len(d))
 		copy(positions[i+1:], positions[i:])
-		positions[i] = []uint32{pos}
+		positions[i] = nil
+		if hasPos {
+			positions[i] = []uint32{pos}
+		}
 	}
 	return d, positions
 }
