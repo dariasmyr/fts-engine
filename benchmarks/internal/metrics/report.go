@@ -12,7 +12,7 @@ import (
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/quality"
 )
 
-const SchemaVersion = "benchmarks.v1alpha1"
+const SchemaVersion = "benchmarks.v1alpha2"
 
 type ReportFile struct {
 	SchemaVersion string   `json:"schema_version"`
@@ -50,9 +50,15 @@ type DatasetMeta struct {
 }
 
 type IndexStats struct {
-	BuildDurationMS int64   `json:"build_duration_ms"`
-	DocsPerSec      float64 `json:"docs_per_sec"`
-	IndexBytes      int64   `json:"index_bytes_on_disk"`
+	BuildDurationMS int64      `json:"build_duration_ms"`
+	DocsPerSec      float64    `json:"docs_per_sec"`
+	IndexBytes      int64      `json:"index_bytes_on_disk"`
+	RetainedHeap    *HeapStats `json:"retained_heap,omitempty"`
+}
+
+type HeapStats struct {
+	AllocBytes int64 `json:"alloc_bytes"`
+	Objects    int64 `json:"objects"`
 }
 
 type LatencyStats struct {
@@ -110,6 +116,12 @@ func Build(rep *harness.Report, q *quality.Scores, meta RunMeta) Record {
 			QPS:    qps,
 		},
 	}
+	if rep.RetainedHeap != nil {
+		rec.Index.RetainedHeap = &HeapStats{
+			AllocBytes: rep.RetainedHeap.AllocBytes,
+			Objects:    rep.RetainedHeap.Objects,
+		}
+	}
 	if q != nil && q.NumScored > 0 {
 		rec.Quality = &QualityStats{
 			K:         q.K,
@@ -142,8 +154,8 @@ func WriteTable(w io.Writer, recs []Record) error {
 		return ordered[i].Engine < ordered[j].Engine
 	})
 
-	if _, err := fmt.Fprintf(w, "%-8s  %-11s  %8s  %7s  %9s  %7s  %7s  %7s  %7s  %9s  %7s  %7s\n",
-		"QUERY", "ENGINE", "BUILD(s)", "docs/s", "INDEX(MB)", "p50(ms)", "p95(ms)", "p99(ms)", "QPS", "Recall@k", "nDCG@k", "MRR",
+	if _, err := fmt.Fprintf(w, "%-8s  %-11s  %8s  %7s  %9s  %9s  %10s  %7s  %7s  %7s  %7s  %9s  %7s  %7s\n",
+		"QUERY", "ENGINE", "BUILD(s)", "docs/s", "INDEX(MB)", "HEAP(MB)", "HEAP_OBJS", "p50(ms)", "p95(ms)", "p99(ms)", "QPS", "Recall@k", "nDCG@k", "MRR",
 	); err != nil {
 		return err
 	}
@@ -155,18 +167,25 @@ func WriteTable(w io.Writer, recs []Record) error {
 			ndcg = fmt.Sprintf("%.4f", r.Quality.NDCGAtK)
 			mrr = fmt.Sprintf("%.4f", r.Quality.MRR)
 		}
+		heapMB, heapObjects := "-", "-"
+		if r.Index.RetainedHeap != nil {
+			heapMB = fmt.Sprintf("%.1f", float64(r.Index.RetainedHeap.AllocBytes)/1e6)
+			heapObjects = fmt.Sprintf("%d", r.Index.RetainedHeap.Objects)
+		}
 		queryClass := normalizedQueryClass(r)
 		if i > 0 && queryClass != prevQuery {
 			if _, err := fmt.Fprintln(w); err != nil {
 				return err
 			}
 		}
-		if _, err := fmt.Fprintf(w, "%-8s  %-11s  %8.2f  %7.0f  %9.1f  %7.3f  %7.3f  %7.3f  %7.0f  %9s  %7s  %7s\n",
+		if _, err := fmt.Fprintf(w, "%-8s  %-11s  %8.2f  %7.0f  %9.1f  %9s  %10s  %7.3f  %7.3f  %7.3f  %7.0f  %9s  %7s  %7s\n",
 			queryClass,
 			r.Engine,
 			float64(r.Index.BuildDurationMS)/1000.0,
 			r.Index.DocsPerSec,
 			float64(r.Index.IndexBytes)/1e6,
+			heapMB,
+			heapObjects,
 			r.Latency.P50MS, r.Latency.P95MS, r.Latency.P99MS, r.Latency.QPS,
 			recall, ndcg, mrr,
 		); err != nil {

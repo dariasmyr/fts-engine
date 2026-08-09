@@ -17,6 +17,7 @@ func TestWriteJSONStableSchema(t *testing.T) {
 		NumQueries:    3,
 		IndexBuildDur: 2 * time.Second,
 		IndexBytes:    12345,
+		RetainedHeap:  &harness.HeapStats{AllocBytes: 12_345_678, Objects: 4567},
 		Latencies: []time.Duration{
 			10 * time.Millisecond,
 			20 * time.Millisecond,
@@ -60,7 +61,7 @@ func TestWriteJSONStableSchema(t *testing.T) {
 
 	got := out.String()
 	checks := []string{
-		`"schema_version": "benchmarks.v1alpha1"`,
+		`"schema_version": "benchmarks.v1alpha2"`,
 		`"engine": "fts-engine"`,
 		`"dataset": {`,
 		`"name": "synthetic"`,
@@ -68,6 +69,9 @@ func TestWriteJSONStableSchema(t *testing.T) {
 		`"warmup_frac": 0.1`,
 		`"index": {`,
 		`"build_duration_ms": 2000`,
+		`"retained_heap": {`,
+		`"alloc_bytes": 12345678`,
+		`"objects": 4567`,
 		`"quality": {`,
 		`"diagnostics_enabled": false`,
 	}
@@ -76,13 +80,16 @@ func TestWriteJSONStableSchema(t *testing.T) {
 			t.Fatalf("WriteJSON() output missing %q\n%s", check, got)
 		}
 	}
+	if rec.Index.RetainedHeap == nil || rec.Index.RetainedHeap.AllocBytes != 12_345_678 || rec.Index.RetainedHeap.Objects != 4567 {
+		t.Fatalf("Build() retained heap = %+v", rec.Index.RetainedHeap)
+	}
 }
 
 func TestWriteTableGroupsByQueryClass(t *testing.T) {
 	recs := []Record{
 		{Engine: "fts-engine", QueryClass: "phrase", Index: IndexStats{BuildDurationMS: 1000, DocsPerSec: 100}, Latency: LatencyStats{P50MS: 1, P95MS: 2, P99MS: 3, QPS: 10}},
 		{Engine: "bleve", QueryClass: "term", Index: IndexStats{BuildDurationMS: 1000, DocsPerSec: 100}, Latency: LatencyStats{P50MS: 1, P95MS: 2, P99MS: 3, QPS: 10}},
-		{Engine: "fts-engine", QueryClass: "term", Index: IndexStats{BuildDurationMS: 1000, DocsPerSec: 100}, Latency: LatencyStats{P50MS: 1, P95MS: 2, P99MS: 3, QPS: 10}},
+		{Engine: "fts-engine", QueryClass: "term", Index: IndexStats{BuildDurationMS: 1000, DocsPerSec: 100, RetainedHeap: &HeapStats{AllocBytes: 12_300_000, Objects: 456}}, Latency: LatencyStats{P50MS: 1, P95MS: 2, P99MS: 3, QPS: 10}},
 		{Engine: "bleve", QueryClass: "phrase", Index: IndexStats{BuildDurationMS: 1000, DocsPerSec: 100}, Latency: LatencyStats{P50MS: 1, P95MS: 2, P99MS: 3, QPS: 10}},
 	}
 
@@ -95,6 +102,10 @@ func TestWriteTableGroupsByQueryClass(t *testing.T) {
 	checks := []string{
 		"QUERY",
 		"ENGINE",
+		"HEAP(MB)",
+		"HEAP_OBJS",
+		"12.3",
+		"456",
 		"term      bleve",
 		"term      fts-engine",
 		"\n\nphrase    bleve",

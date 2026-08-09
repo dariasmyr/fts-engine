@@ -47,14 +47,22 @@ func TestPrepareAndRunQueriesReuseSingleBuiltIndex(t *testing.T) {
 	if eng.indexCalls != 2 {
 		t.Fatalf("indexCalls = %d, want 2", eng.indexCalls)
 	}
+	if prep.RetainedHeap == nil {
+		t.Fatal("Prepare() did not report retained heap")
+	}
 
 	queriesA := []Query{{ID: "q1", Text: "alpha", K: 10}}
 	queriesB := []Query{{ID: "q2", Text: "beta", K: 10}}
-	if _, err := RunQueries(ctx, eng, queriesA, RunConfig{}, prep); err != nil {
+	reportA, err := RunQueries(ctx, eng, queriesA, RunConfig{}, prep)
+	if err != nil {
 		t.Fatalf("RunQueries(A) error = %v", err)
 	}
-	if _, err := RunQueries(ctx, eng, queriesB, RunConfig{}, prep); err != nil {
+	reportB, err := RunQueries(ctx, eng, queriesB, RunConfig{}, prep)
+	if err != nil {
 		t.Fatalf("RunQueries(B) error = %v", err)
+	}
+	if reportA.RetainedHeap != prep.RetainedHeap || reportB.RetainedHeap != prep.RetainedHeap {
+		t.Fatal("RunQueries() did not preserve the prepared retained heap measurement")
 	}
 
 	if eng.openCalls != 1 {
@@ -65,6 +73,24 @@ func TestPrepareAndRunQueriesReuseSingleBuiltIndex(t *testing.T) {
 	}
 	if eng.searchCalls != 2 {
 		t.Fatalf("searchCalls = %d, want 2", eng.searchCalls)
+	}
+}
+
+func TestSignedDelta(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		after, before uint64
+		want          int64
+	}{
+		{name: "positive", after: 15, before: 10, want: 5},
+		{name: "zero", after: 10, before: 10, want: 0},
+		{name: "negative", after: 7, before: 10, want: -3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := signedDelta(tc.after, tc.before); got != tc.want {
+				t.Fatalf("signedDelta(%d, %d) = %d, want %d", tc.after, tc.before, got, tc.want)
+			}
+		})
 	}
 }
 

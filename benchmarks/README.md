@@ -180,7 +180,7 @@ Important notes:
   - `*.qrels.json`
   - `*.manifest.json`
 - the benchmark builds each engine index once per run, then executes all query classes on that ready index
-- `BUILD(s)`, `docs/s`, and `INDEX(MB)` are therefore shared across query classes for the same engine in the same run
+- `BUILD(s)`, `docs/s`, `INDEX(MB)`, `HEAP(MB)`, and `HEAP_OBJS` are therefore shared across query classes for the same engine in the same run
 
 ## Common Flags
 
@@ -212,7 +212,7 @@ What they mean:
 
 These matter only for `fts-engine` runs:
 
-- `-index=slicedradix|hamt`
+- `-index=slicedradix|hamt|hamt-first`
 - `-scorer=none|bm25|tfidf`
 - `-lang=none|en|ru|multi`
 - `-filter=none|bloom|cuckoo|ribbon`
@@ -220,6 +220,14 @@ These matter only for `fts-engine` runs:
 - `-diagnostics`
 
 Default `fts-engine` persistence in this suite is `snapshot`.
+`hamt-first` is an experimental first-plus-rest postings layout used only for
+comparison with the production `hamt`; it is not registered as a built-in index.
+
+Run the focused allocation and latency comparison from the repository root:
+
+```bash
+go test ./pkg/index/hamtcompare -run '^$' -bench . -benchmem -count=5
+```
 
 Examples:
 
@@ -274,18 +282,20 @@ Enable diagnostics:
 
 1. Generate synthetic docs and queries.
 2. Build each engine index.
-3. Run warmup queries.
-4. Run measured queries.
-5. Print table and optionally write JSON.
+3. Force GC and measure retained heap before queries.
+4. Run warmup queries.
+5. Run measured queries.
+6. Print table and optionally write JSON.
 
 ### `msmarco`
 
 1. Load `collection.tsv`, queries, and qrels.
 2. Apply caps from `-max-docs` and `-max-queries`.
 3. Build each engine index.
-4. Run warmup queries.
-5. Run measured queries.
-6. Print table and optionally write JSON.
+4. Force GC and measure retained heap before queries.
+5. Run warmup queries.
+6. Run measured queries.
+7. Print table and optionally write JSON.
 
 ### `wiki-typed`
 
@@ -293,8 +303,9 @@ Enable diagnostics:
 2. Load typed workload from `*.queries.json` + `*.qrels.json`, or regenerate it.
 3. Refresh `*.manifest.json`.
 4. Build each engine index once.
-5. Run each query class separately on the same ready index.
-6. Print grouped table and optionally write JSON.
+5. Force GC and measure retained heap before queries.
+6. Run each query class separately on the same ready index.
+7. Print grouped table and optionally write JSON.
 
 Expected progress logs look like:
 
@@ -316,9 +327,17 @@ Main table columns:
 - `BUILD(s)`: index build duration
 - `docs/s`: indexing throughput
 - `INDEX(MB)`: on-disk index size reported by the adapter
+- `HEAP(MB)`: post-GC retained Go heap delta after index build and commit
+- `HEAP_OBJS`: post-GC retained Go heap object-count delta
 - `p50/p95/p99`: search latency percentiles
 - `QPS`: measured search throughput
 - `Recall@k`, `nDCG@k`, `MRR`: quality metrics
+
+Heap values are measured against a post-GC baseline taken immediately before
+the engine opens. They describe the ready index before warmup/search and are
+retained-memory metrics, not build-time peaks. They exclude mmap, native memory,
+RSS, and filesystem cache. Run index variants in separate processes for the
+most reliable comparison.
 
 For `wiki-typed`:
 

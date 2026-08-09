@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -40,12 +41,18 @@ type QueryResult struct {
 	Hits    []SearchHit
 }
 
+type HeapStats struct {
+	AllocBytes int64
+	Objects    int64
+}
+
 type Report struct {
 	Engine        string
 	NumDocs       int
 	NumQueries    int
 	IndexBuildDur time.Duration
 	IndexBytes    int64
+	RetainedHeap  *HeapStats
 	Latencies     []time.Duration
 	Wall          time.Duration
 	QueryResults  []QueryResult
@@ -63,6 +70,7 @@ func Run(ctx context.Context, eng Engine, docs []Document, queries []Query, cfg 
 func Prepare(ctx context.Context, eng Engine, docs []Document, cfg RunConfig) (_ *Report, err error) {
 	cfg = cfg.withDefaults()
 	rep := &Report{Engine: eng.Name(), NumDocs: len(docs)}
+	before := readHeapSnapshot()
 
 	if err := eng.Open(ctx, cfg.Dir); err != nil {
 		return nil, fmt.Errorf("open: %w", err)
@@ -91,6 +99,13 @@ func Prepare(ctx context.Context, eng Engine, docs []Document, cfg RunConfig) (_
 	if size, err := eng.IndexSizeBytes(); err == nil {
 		rep.IndexBytes = size
 	}
+	after := readHeapSnapshot()
+	runtime.KeepAlive(eng)
+	runtime.KeepAlive(docs)
+	rep.RetainedHeap = &HeapStats{
+		AllocBytes: signedDelta(after.allocBytes, before.allocBytes),
+		Objects:    signedDelta(after.objects, before.objects),
+	}
 
 	return rep, nil
 }
@@ -102,6 +117,7 @@ func RunQueries(ctx context.Context, eng Engine, queries []Query, cfg RunConfig,
 		rep.NumDocs = base.NumDocs
 		rep.IndexBuildDur = base.IndexBuildDur
 		rep.IndexBytes = base.IndexBytes
+		rep.RetainedHeap = base.RetainedHeap
 	}
 
 	shuffled := append([]Query(nil), queries...)
@@ -170,6 +186,25 @@ func RunQueries(ctx context.Context, eng Engine, queries []Query, cfg RunConfig,
 	rep.Wall = time.Since(measureStart)
 
 	return rep, nil
+}
+
+type heapSnapshot struct {
+	allocBytes uint64
+	objects    uint64
+}
+
+func readHeapSnapshot() heapSnapshot {
+	runtime.GC()
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	return heapSnapshot{allocBytes: stats.HeapAlloc, objects: stats.HeapObjects}
+}
+
+func signedDelta(after, before uint64) int64 {
+	if after >= before {
+		return int64(after - before)
+	}
+	return -int64(before - after)
 }
 
 func Percentiles(lats []time.Duration, ps ...float64) []time.Duration {
