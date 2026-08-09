@@ -379,3 +379,12 @@ go run ./tools/depcheck
 `depcheck` does not try to validate every possible external dependency or historical path name. Its scope is the permanent internal module and package boundary policy.
 
 It also does not duplicate `internal` import restrictions that the Go toolchain already enforces during `go build` and `go test`.
+
+## Acknowledgements
+
+Special thanks to:
+
+- [@flrdv](https://github.com/flrdv)
+- [@dmedovich](https://github.com/dmedovich) 
+
+Thank you for helping make `fts-engine` better ❤️
