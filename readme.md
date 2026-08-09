@@ -158,6 +158,7 @@ What that means for different search entry points:
 - `SearchFields(...)`, `SearchPhraseFields(...)`, `SearchPhraseNearFields(...)`, and `SearchQueryFields(...)` search only the provided fields that currently exist; missing fields are ignored
 - `SearchFieldClauses(...)` behaves the same way per clause: a clause targeting a missing field contributes no matches
 - prefix search behaves the same with one extra rule: if the field exists but its index does not support prefix search, that field contributes no prefix matches
+- phrase search behaves the same: if the field exists but its index does not implement `fts.PositionalIndex`, that field contributes no phrase matches
 
 ## Multi-Field Services
 
