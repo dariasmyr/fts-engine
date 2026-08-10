@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/segment"
-	"hash/fnv"
 	"io"
 	"math/bits"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/dariasmyr/fts-engine/internal/fnv"
 )
 
 const (
@@ -223,7 +224,7 @@ func (t *Index) Search(key string) ([]fts.DocRef, error) {
 	defer t.mu.RUnlock()
 
 	n := nodeptr(0)
-	hash := strhash32(key)
+	hash := fnv.Sum32a(key)
 	for range depth - 1 {
 		var ok bool
 		n, ok = t.nextNode(n, hash)
@@ -253,7 +254,7 @@ func (t *Index) SearchPositional(key string) ([]fts.PositionalDocRef, error) {
 	defer t.mu.RUnlock()
 
 	n := nodeptr(0)
-	hash := strhash32(key)
+	hash := fnv.Sum32a(key)
 	for range depth - 1 {
 		var ok bool
 		n, ok = t.nextNode(n, hash)
@@ -327,7 +328,7 @@ func (t *Index) insert(word string, hasPos bool, pos uint32, ord fts.DocOrd) err
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	hash := strhash32(word)
+	hash := fnv.Sum32a(word)
 	n := nodeptr(0)
 	for range depth - 2 {
 		var ok bool
@@ -417,12 +418,6 @@ func (t *Index) nextNode(n nodeptr, hash uint32) (nodeptr, bool) {
 	}
 	index := bits.OnesCount32(node.bitmap & (mask - 1))
 	return node.children[index], true
-}
-
-func strhash32(str string) uint32 {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(str))
-	return h.Sum32()
 }
 
 func (t *Index) Analyze() fts.Stats {

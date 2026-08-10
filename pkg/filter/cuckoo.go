@@ -3,9 +3,10 @@ package filter
 import (
 	"encoding/gob"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"math/rand"
+
+	"github.com/dariasmyr/fts-engine/internal/fnv"
 )
 
 type Bucket struct {
@@ -77,27 +78,18 @@ func LoadCuckooFilter(r io.Reader) (*CuckooFilter, error) {
 	return cf, nil
 }
 
-func (cf *CuckooFilter) fingerprint(key []byte) uint16 {
-	h := fnv.New32a()
-	h.Write(key)
-
-	sum := h.Sum32()
-	fp := uint16(sum>>16) & cf.fingerprintMask
-
-	// zero is skipped and reserved for empty slots
+func (cf *CuckooFilter) fingerprint(hash uint32) uint16 {
+	fp := uint16(hash>>16) & cf.fingerprintMask
 	if fp == 0 {
-		return 1
+		return 1 // zero is reserved for empty slots
 	}
 
 	return fp
 }
 
-// index1 computes the primary bucket index for a key.
-func (cf *CuckooFilter) index1(key []byte) uint32 {
-	h := fnv.New32a()
-	h.Write(key)
-
-	return h.Sum32() % uint32(len(cf.buckets))
+// index1 computes the primary bucket index for a key hash.
+func (cf *CuckooFilter) index1(hash uint32) uint32 {
+	return hash % uint32(len(cf.buckets))
 }
 
 // index2 computes the alternate bucket index using XOR with fingerprint hash.
@@ -108,8 +100,9 @@ func (cf *CuckooFilter) index2(i1 uint32, fp uint16) uint32 {
 
 // findIndexes calculates fingerprint and both candidate bucket indexes for a key.
 func (cf *CuckooFilter) findIndexes(key []byte) (fp uint16, i1, i2 uint32) {
-	fp = cf.fingerprint(key)
-	i1 = cf.index1(key)
+	h := fnv.Sum32a(key)
+	fp = cf.fingerprint(h)
+	i1 = cf.index1(h)
 	i2 = cf.index2(i1, fp)
 
 	return fp, i1, i2
