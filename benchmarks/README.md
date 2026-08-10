@@ -212,7 +212,7 @@ What they mean:
 
 These matter only for `fts-engine` runs:
 
-- `-index=slicedradix|hamt|hamt-first`
+- `-index=slicedradix|hamt`
 - `-scorer=none|bm25|tfidf`
 - `-lang=none|en|ru|multi`
 - `-filter=none|bloom|cuckoo|ribbon`
@@ -220,14 +220,6 @@ These matter only for `fts-engine` runs:
 - `-diagnostics`
 
 Default `fts-engine` persistence in this suite is `snapshot`.
-`hamt-first` is an experimental first-plus-rest postings layout used only for
-comparison with the production `hamt`; it is not registered as a built-in index.
-
-Run the focused allocation and latency comparison from the repository root:
-
-```bash
-go test ./pkg/index/hamtcompare -run '^$' -bench . -benchmem -count=5
-```
 
 Examples:
 

@@ -73,7 +73,7 @@ func (c Config) withDefaults() Config {
 func (a *Adapter) Name() string { return "fts-engine" }
 
 func (a *Adapter) Open(_ context.Context, dir string) error {
-	index, err := buildIndex(a.cfg.Index)
+	index, err := ftsbuiltin.BuildIndex(a.cfg.Index)
 	if err != nil {
 		return fmt.Errorf("build index: %w", err)
 	}
@@ -258,7 +258,7 @@ func (a *Adapter) BenchmarkExtras() map[string]any {
 }
 
 func (a *Adapter) saveSnapshot() error {
-	if err := registerBenchmarkSnapshotCodecs(); err != nil {
+	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
 		return fmt.Errorf("register snapshot codecs: %w", err)
 	}
 	paths := ftspersist.SnapshotPaths{IndexPath: filepath.Join(a.workDir, "default.index.fidx")}
@@ -277,7 +277,7 @@ func (a *Adapter) saveSnapshot() error {
 }
 
 func (a *Adapter) saveSegment() error {
-	if err := registerBenchmarkSnapshotCodecs(); err != nil {
+	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
 		return fmt.Errorf("register snapshot codecs: %w", err)
 	}
 	segmentDir := filepath.Join(a.workDir, "segment")
