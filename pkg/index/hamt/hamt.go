@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/segment"
-	"hash/fnv"
 	"io"
 	"math/bits"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/dariasmyr/fts-engine/internal/fnv"
 )
 
 const (
@@ -23,6 +24,24 @@ const (
 type documents []fts.DocRef
 
 func (d documents) Add(ord fts.DocOrd, positions [][]uint32, hasPos bool, pos uint32) (documents, [][]uint32) {
+	last := len(d) - 1
+	if last >= 0 && d[last].Ord == ord {
+		d[last].Count++
+		if hasPos {
+			positions = growPositions(positions, len(d))
+			positions[last] = append(positions[last], pos)
+		}
+		return d, positions
+	}
+	if last < 0 || ord > d[last].Ord {
+		d = append(d, fts.DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
+		if hasPos {
+			positions = growPositions(positions, len(d))
+			positions[len(d)-1] = []uint32{pos}
+		}
+		return d, positions
+	}
+
 	i := sort.Search(len(d), func(i int) bool { return d[i].Ord >= ord })
 	if i < len(d) && d[i].Ord == ord {
 		d[i].Count++
@@ -35,10 +54,13 @@ func (d documents) Add(ord fts.DocOrd, positions [][]uint32, hasPos bool, pos ui
 	d = append(d, fts.DocRef{})
 	copy(d[i+1:], d[i:])
 	d[i] = fts.DocRef{Ord: ord, Count: 1, Seq: uint32(ord)}
-	if hasPos {
+	if hasPos || i < len(positions) {
 		positions = growPositions(positions, len(d))
 		copy(positions[i+1:], positions[i:])
-		positions[i] = []uint32{pos}
+		positions[i] = nil
+		if hasPos {
+			positions[i] = []uint32{pos}
+		}
 	}
 	return d, positions
 }
@@ -202,7 +224,7 @@ func (t *Index) Search(key string) ([]fts.DocRef, error) {
 	defer t.mu.RUnlock()
 
 	n := nodeptr(0)
-	hash := strhash32(key)
+	hash := fnv.Sum32a(key)
 	for range depth - 1 {
 		var ok bool
 		n, ok = t.nextNode(n, hash)
@@ -232,7 +254,7 @@ func (t *Index) SearchPositional(key string) ([]fts.PositionalDocRef, error) {
 	defer t.mu.RUnlock()
 
 	n := nodeptr(0)
-	hash := strhash32(key)
+	hash := fnv.Sum32a(key)
 	for range depth - 1 {
 		var ok bool
 		n, ok = t.nextNode(n, hash)
@@ -306,7 +328,7 @@ func (t *Index) insert(word string, hasPos bool, pos uint32, ord fts.DocOrd) err
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	hash := strhash32(word)
+	hash := fnv.Sum32a(word)
 	n := nodeptr(0)
 	for range depth - 2 {
 		var ok bool
@@ -396,12 +418,6 @@ func (t *Index) nextNode(n nodeptr, hash uint32) (nodeptr, bool) {
 	}
 	index := bits.OnesCount32(node.bitmap & (mask - 1))
 	return node.children[index], true
-}
-
-func strhash32(str string) uint32 {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(str))
-	return h.Sum32()
 }
 
 func (t *Index) Analyze() fts.Stats {

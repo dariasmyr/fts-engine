@@ -192,7 +192,8 @@ func (t *Index) insert(word string, hasPos bool, pos uint32, ord fts.DocOrd) err
 
 func (t *Index) addDoc(nodeIdx int, ord fts.DocOrd, hasPos bool, pos uint32) {
 	n := &t.nodes[nodeIdx]
-	if last := len(n.docs) - 1; last >= 0 && n.docs[last].Ord == ord {
+	last := len(n.docs) - 1
+	if last >= 0 && n.docs[last].Ord == ord {
 		n.docs[last].Count++
 		if hasPos {
 			t.growPositions(nodeIdx, len(n.docs))
@@ -200,22 +201,35 @@ func (t *Index) addDoc(nodeIdx int, ord fts.DocOrd, hasPos bool, pos uint32) {
 		}
 		return
 	}
-	for i := range n.docs {
-		if n.docs[i].Ord == ord {
-			n.docs[i].Count++
-			if hasPos {
-				t.growPositions(nodeIdx, len(n.docs))
-				n.positions[i] = append(n.positions[i], pos)
-			}
-			return
+	if last < 0 || ord > n.docs[last].Ord {
+		n.docs = append(n.docs, fts.DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
+		if hasPos {
+			t.growPositions(nodeIdx, len(n.docs))
+			n.positions[len(n.docs)-1] = []uint32{pos}
 		}
+		return
 	}
-	seq := uint32(ord)
-	n.docs = append(n.docs, fts.DocRef{Ord: ord, Count: 1, Seq: seq})
-	if hasPos {
+
+	i := sort.Search(len(n.docs), func(i int) bool { return n.docs[i].Ord >= ord })
+	if i < len(n.docs) && n.docs[i].Ord == ord {
+		n.docs[i].Count++
+		if hasPos {
+			t.growPositions(nodeIdx, len(n.docs))
+			n.positions[i] = append(n.positions[i], pos)
+		}
+		return
+	}
+
+	n.docs = append(n.docs, fts.DocRef{})
+	copy(n.docs[i+1:], n.docs[i:])
+	n.docs[i] = fts.DocRef{Ord: ord, Count: 1, Seq: uint32(ord)}
+	if hasPos || i < len(n.positions) {
 		t.growPositions(nodeIdx, len(n.docs))
-		last := len(n.docs) - 1
-		n.positions[last] = append(n.positions[last], pos)
+		copy(n.positions[i+1:], n.positions[i:])
+		n.positions[i] = nil
+		if hasPos {
+			n.positions[i] = []uint32{pos}
+		}
 	}
 }
 
@@ -323,7 +337,6 @@ func (t *Index) exportNodeTerms(current int, prefix string, yield func(segment.T
 	term := prefix + n.prefix
 	if n.isTerminal() {
 		postings, positions := cloneDocsAndPositions(n.docs, n.positions)
-		sortTermDocs(postings, positions)
 		if err := yield(segment.TermPostings{
 			Term:      term,
 			Postings:  postings,
@@ -350,30 +363,6 @@ func cloneDocsAndPositions(docs []fts.DocRef, positions [][]uint32) ([]fts.DocRe
 		cloned[i] = append([]uint32(nil), positions[i]...)
 	}
 	return postings, cloned
-}
-
-func sortTermDocs(postings []fts.DocRef, positions [][]uint32) {
-	if len(postings) < 2 {
-		return
-	}
-	type paired struct {
-		posting   fts.DocRef
-		positions []uint32
-	}
-	pairedDocs := make([]paired, len(postings))
-	for i := range postings {
-		pairedDocs[i] = paired{posting: postings[i]}
-		if i < len(positions) {
-			pairedDocs[i].positions = positions[i]
-		}
-	}
-	sort.SliceStable(pairedDocs, func(i, j int) bool { return pairedDocs[i].posting.Ord < pairedDocs[j].posting.Ord })
-	for i := range pairedDocs {
-		postings[i] = pairedDocs[i].posting
-		if i < len(positions) {
-			positions[i] = pairedDocs[i].positions
-		}
-	}
 }
 
 func addMergedDoc(merged map[fts.DocOrd]fts.DocRef, ord fts.DocOrd, count, seq uint32) {

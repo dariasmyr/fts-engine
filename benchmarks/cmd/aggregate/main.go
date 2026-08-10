@@ -95,7 +95,7 @@ func renderVariability(w io.Writer, runs map[string][]metrics.Record) {
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "\nVariability")
-	_, _ = fmt.Fprintln(tw, "ENGINE\tQUERY\tBUILD(s)\tp50(ms)\tp95(ms)\tQPS\tRecall@k\tnDCG@k\tMRR")
+	_, _ = fmt.Fprintln(tw, "ENGINE\tQUERY\tBUILD(s)\tHEAP(MB)\tHEAP_OBJS\tp50(ms)\tp95(ms)\tQPS\tRecall@k\tnDCG@k\tMRR")
 	perEngine := map[string]map[string][]float64{}
 	for _, recs := range runs {
 		for _, r := range recs {
@@ -104,6 +104,10 @@ func renderVariability(w io.Writer, runs map[string][]metrics.Record) {
 				perEngine[label] = make(map[string][]float64)
 			}
 			appendMetric(perEngine[label], "build_s", float64(r.Index.BuildDurationMS)/1000.0)
+			if r.Index.RetainedHeap != nil {
+				appendMetric(perEngine[label], "heap_mb", float64(r.Index.RetainedHeap.AllocBytes)/1e6)
+				appendMetric(perEngine[label], "heap_objects", float64(r.Index.RetainedHeap.Objects))
+			}
 			appendMetric(perEngine[label], "p50", r.Latency.P50MS)
 			appendMetric(perEngine[label], "p95", r.Latency.P95MS)
 			appendMetric(perEngine[label], "qps", r.Latency.QPS)
@@ -118,10 +122,12 @@ func renderVariability(w io.Writer, runs map[string][]metrics.Record) {
 	for _, engine := range engines {
 		metricsMap := perEngine[engine]
 		base, query := splitRecordLabel(engine)
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			base,
 			query,
 			formatRange(metricsMap["build_s"], 2),
+			formatRange(metricsMap["heap_mb"], 1),
+			formatRange(metricsMap["heap_objects"], 0),
 			formatRange(metricsMap["p50"], 3),
 			formatRange(metricsMap["p95"], 3),
 			formatRange(metricsMap["qps"], 0),
@@ -139,7 +145,7 @@ func renderAxis(w io.Writer, title string, runs map[string][]metrics.Record) {
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintf(tw, "\n%s\n", title)
-	_, _ = fmt.Fprintln(tw, "SCENARIO\tENGINE\tQUERY\tBUILD(s)\tp50(ms)\tp95(ms)\tp99(ms)\tQPS\tRecall@k\tnDCG@k\tMRR")
+	_, _ = fmt.Fprintln(tw, "SCENARIO\tENGINE\tQUERY\tBUILD(s)\tHEAP(MB)\tHEAP_OBJS\tp50(ms)\tp95(ms)\tp99(ms)\tQPS\tRecall@k\tnDCG@k\tMRR")
 	labels := sortedKeys(runs)
 	for _, label := range labels {
 		recs := append([]metrics.Record(nil), runs[label]...)
@@ -151,15 +157,22 @@ func renderAxis(w io.Writer, title string, runs map[string][]metrics.Record) {
 				ndcg = fmt.Sprintf("%.4f", r.Quality.NDCGAtK)
 				mrr = fmt.Sprintf("%.4f", r.Quality.MRR)
 			}
+			heapMB, heapObjects := "-", "-"
+			if r.Index.RetainedHeap != nil {
+				heapMB = fmt.Sprintf("%.1f", float64(r.Index.RetainedHeap.AllocBytes)/1e6)
+				heapObjects = fmt.Sprintf("%d", r.Index.RetainedHeap.Objects)
+			}
 			queryClass := r.QueryClass
 			if queryClass == "" {
 				queryClass = "-"
 			}
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%.2f\t%.3f\t%.3f\t%.3f\t%.0f\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%.2f\t%s\t%s\t%.3f\t%.3f\t%.3f\t%.0f\t%s\t%s\t%s\n",
 				label,
 				r.Engine,
 				queryClass,
 				float64(r.Index.BuildDurationMS)/1000.0,
+				heapMB,
+				heapObjects,
 				r.Latency.P50MS,
 				r.Latency.P95MS,
 				r.Latency.P99MS,
