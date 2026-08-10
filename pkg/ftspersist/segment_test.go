@@ -10,6 +10,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
+	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
 func TestSaveLoadSegmentRoundTripSingleField(t *testing.T) {
@@ -158,5 +159,48 @@ func TestSaveLoadSegmentRoundTripMmap(t *testing.T) {
 	}
 	if err := loaded.Close(); err != nil {
 		t.Fatalf("second Close() error = %v", err)
+	}
+}
+
+func TestSegmentAnalyzerFingerprintGate(t *testing.T) {
+	pipeline := textproc.ObservabilityPipeline()
+	svc := fts.New(slicedradix.New(), keygen.Word, fts.WithPipeline(pipeline))
+	if err := svc.Index(context.Background(), fts.Document{
+		ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "io.EOF"}},
+	}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	paths := ftspersist.SegmentPaths{Dir: filepath.Join(t.TempDir(), "segment")}
+	if err := ftspersist.SaveSegment(paths, svc, "", ftspersist.SaveOptions{}); err != nil {
+		t.Fatalf("SaveSegment() error = %v", err)
+	}
+	descriptor := pipeline.Descriptor()
+	loaded, err := ftspersist.LoadSegmentData(paths, ftspersist.SegmentLoadOptions{
+		Access: ftspersist.AccessFile, ExpectedAnalyzerFingerprint: descriptor.Fingerprint,
+	})
+	if err != nil {
+		t.Fatalf("LoadSegmentData() error = %v", err)
+	}
+	defer func() {
+		if err := loaded.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+	if loaded.DefaultAnalyzer == nil || loaded.DefaultAnalyzer.Fingerprint != descriptor.Fingerprint {
+		t.Fatalf("DefaultAnalyzer = %+v, want fingerprint %q", loaded.DefaultAnalyzer, descriptor.Fingerprint)
+	}
+	if _, err := ftspersist.RestoreSegmentService(loaded, keygen.Word); err == nil {
+		t.Fatal("RestoreSegmentService(default pipeline) error = nil, want analyzer mismatch")
+	}
+	if _, err := ftspersist.RestoreSegmentService(loaded, keygen.Word, fts.WithPipeline(pipeline)); err != nil {
+		t.Fatalf("RestoreSegmentService(observability pipeline) error = %v", err)
+	}
+
+	wrong := textproc.DefaultEnglishPipeline().Descriptor().Fingerprint
+	if _, err := ftspersist.LoadSegmentData(paths, ftspersist.SegmentLoadOptions{
+		Access: ftspersist.AccessFile, ExpectedAnalyzerFingerprint: wrong,
+	}); err == nil {
+		t.Fatal("LoadSegmentData(wrong analyzer) error = nil, want mismatch")
 	}
 }

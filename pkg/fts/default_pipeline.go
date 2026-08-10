@@ -7,6 +7,14 @@ import (
 
 type defaultPipeline struct{}
 
+func (defaultPipeline) AnalyzerName() string { return "default" }
+
+func (defaultPipeline) AnalyzerVersion() uint32 { return 1 }
+
+func (defaultPipeline) AnalyzerFingerprint() string {
+	return NewAnalyzerDescriptor("default", 1).Fingerprint
+}
+
 func (defaultPipeline) Process(text string) []string {
 	if text == "" {
 		return nil

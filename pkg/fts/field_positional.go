@@ -3,7 +3,6 @@ package fts
 import (
 	"context"
 	"fmt"
-	"sort"
 	"sync"
 )
 
@@ -253,34 +252,6 @@ func docPresentInAllPostings(tokenPostings []map[DocOrd][]uint32, ord DocOrd, sk
 		}
 	}
 	return true
-}
-
-func resultsFromCounts(counts map[DocOrd]uint32, scores map[DocOrd]float64, useScore bool, registry *DocRegistry) ([]Result, int) {
-	results := make([]Result, 0, len(counts))
-	for ord, cnt := range counts {
-		id := registry.Lookup(ord)
-		if id == "" {
-			continue
-		}
-		results = append(results, Result{
-			ID:            id,
-			UniqueMatches: 1,
-			TotalMatches:  int(cnt),
-			Score:         scores[ord],
-		})
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		if useScore && results[i].Score != results[j].Score {
-			return results[i].Score > results[j].Score
-		}
-		if results[i].TotalMatches != results[j].TotalMatches {
-			return results[i].TotalMatches > results[j].TotalMatches
-		}
-		return results[i].ID < results[j].ID
-	})
-
-	return results, len(results)
 }
 
 func phraseAlign(tokenPostings []map[DocOrd][]uint32, ord DocOrd, driverIdx int, driverPositions []uint32) uint32 {

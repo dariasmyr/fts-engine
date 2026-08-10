@@ -4,9 +4,11 @@
 package segment
 
 const (
-	magic   = "FTSE"
-	version = uint16(1)
+	magic         = "FTSE"
+	legacyVersion = uint16(1)
+	version       = uint16(2)
 
-	headerLen = 8
-	footerLen = 24
+	headerLen       = 8
+	legacyFooterLen = 24
+	footerLen       = 32
 )

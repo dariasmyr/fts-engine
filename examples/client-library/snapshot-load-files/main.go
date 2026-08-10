@@ -22,7 +22,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer loaded.Close()
+	defer func() {
+		if err := loaded.Close(); err != nil {
+			panic(err)
+		}
+	}()
 
 	restored := loaded.Service
 

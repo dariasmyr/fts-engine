@@ -27,7 +27,8 @@ type SegmentPaths struct {
 }
 
 type SegmentLoadOptions struct {
-	Access AccessMode
+	Access                      AccessMode
+	ExpectedAnalyzerFingerprint string
 }
 
 type LoadedSegment struct {
@@ -38,6 +39,7 @@ type LoadedSegment struct {
 	CollectionStats *fts.CollectionStatsSnapshot
 	Registry        []fts.DocID
 	Tombstones      []uint64
+	DefaultAnalyzer *fts.AnalyzerDescriptor
 	Close           func() error
 }
 
@@ -48,6 +50,7 @@ type segmentManifest struct {
 	Registry        []fts.DocID
 	Tombstones      []uint64
 	Filter          *filterMeta
+	DefaultAnalyzer *fts.AnalyzerDescriptor
 }
 
 type segmentFieldMeta struct {
@@ -61,9 +64,10 @@ type filterMeta struct {
 }
 
 const (
-	segmentManifestVersion uint16 = 1
-	segmentManifestFile           = "manifest.gob"
-	segmentFilterFile             = "filter.fidx"
+	legacySegmentManifestVersion uint16 = 1
+	segmentManifestVersion       uint16 = 2
+	segmentManifestFile                 = "manifest.gob"
+	segmentFilterFile                   = "filter.fidx"
 )
 
 func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts SaveOptions) error {
@@ -91,6 +95,9 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 		CollectionStats: svc.SnapshotCollectionStats(),
 		Registry:        append([]fts.DocID(nil), svc.SnapshotRegistry()...),
 		Tombstones:      append([]uint64(nil), svc.SnapshotTombstones()...),
+	}
+	if descriptor, ok := svc.DefaultAnalyzerDescriptor(); ok {
+		manifest.DefaultAnalyzer = &descriptor
 	}
 
 	for _, fieldName := range fieldNames {
@@ -154,11 +161,45 @@ func LoadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*LoadedSegmen
 	if err := gob.NewDecoder(bytes.NewReader(manifestBytes)).Decode(&manifest); err != nil {
 		return nil, fmt.Errorf("ftspersist: decode segment manifest: %w", err)
 	}
-	if manifest.Version != segmentManifestVersion {
+	if manifest.Version != legacySegmentManifestVersion && manifest.Version != segmentManifestVersion {
 		return nil, fmt.Errorf("ftspersist: load segment: unsupported manifest version %d", manifest.Version)
+	}
+	if load.ExpectedAnalyzerFingerprint != "" {
+		if manifest.DefaultAnalyzer == nil || manifest.DefaultAnalyzer.Fingerprint == "" {
+			return nil, fmt.Errorf("ftspersist: load segment: analyzer fingerprint is missing")
+		}
+		if manifest.DefaultAnalyzer.Fingerprint != load.ExpectedAnalyzerFingerprint {
+			return nil, fmt.Errorf("ftspersist: load segment: analyzer fingerprint mismatch: got %q, want %q", manifest.DefaultAnalyzer.Fingerprint, load.ExpectedAnalyzerFingerprint)
+		}
 	}
 	if len(manifest.Fields) == 0 {
 		return nil, fmt.Errorf("ftspersist: load segment: manifest has no fields")
+	}
+	seenFields := make(map[string]struct{}, len(manifest.Fields))
+	seenFiles := make(map[string]struct{}, len(manifest.Fields))
+	for _, field := range manifest.Fields {
+		if field.FieldName == "" {
+			return nil, fmt.Errorf("ftspersist: load segment: empty field name in manifest")
+		}
+		if _, exists := seenFields[field.FieldName]; exists {
+			return nil, fmt.Errorf("ftspersist: load segment: duplicate field %q", field.FieldName)
+		}
+		seenFields[field.FieldName] = struct{}{}
+		if err := validateSegmentFileName(field.FileName); err != nil {
+			return nil, fmt.Errorf("ftspersist: load segment: invalid file for field %q: %w", field.FieldName, err)
+		}
+		if _, exists := seenFiles[field.FileName]; exists {
+			return nil, fmt.Errorf("ftspersist: load segment: duplicate file %q", field.FileName)
+		}
+		seenFiles[field.FileName] = struct{}{}
+	}
+	if manifest.Filter != nil {
+		if manifest.Filter.FilterName == "" {
+			return nil, fmt.Errorf("ftspersist: load segment: empty filter name")
+		}
+		if err := validateSegmentFileName(manifest.Filter.FileName); err != nil {
+			return nil, fmt.Errorf("ftspersist: load segment: invalid filter file: %w", err)
+		}
 	}
 
 	loaded := &LoadedSegment{
@@ -166,29 +207,26 @@ func LoadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*LoadedSegmen
 		CollectionStats: manifest.CollectionStats,
 		Registry:        append([]fts.DocID(nil), manifest.Registry...),
 		Tombstones:      append([]uint64(nil), manifest.Tombstones...),
+		DefaultAnalyzer: cloneAnalyzerDescriptor(manifest.DefaultAnalyzer),
 		Close:           func() error { return nil },
 	}
 	closers := make([]func() error, 0, len(manifest.Fields))
 
 	for _, field := range manifest.Fields {
-		if field.FieldName == "" {
-			return nil, fmt.Errorf("ftspersist: load segment: empty field name in manifest")
-		}
-		if field.FileName == "" {
-			return nil, fmt.Errorf("ftspersist: load segment: empty file name for field %q", field.FieldName)
-		}
 		segmentPath := filepath.Join(paths.Dir, field.FileName)
 		var reader *segment.Reader
 		switch load.Access {
 		case AccessFile:
-			data, err := os.ReadFile(segmentPath)
+			fileReader, err := segment.OpenFileReader(segmentPath)
 			if err != nil {
+				closeErr := closeAllReverse(closers)
+				if closeErr != nil {
+					return nil, fmt.Errorf("ftspersist: load segment field %q from %q: %w (cleanup: %v)", field.FieldName, segmentPath, err, closeErr)
+				}
 				return nil, fmt.Errorf("ftspersist: load segment field %q from %q: %w", field.FieldName, segmentPath, err)
 			}
-			reader, err = segment.Open(data)
-			if err != nil {
-				return nil, fmt.Errorf("ftspersist: open segment field %q: %w", field.FieldName, err)
-			}
+			reader = fileReader.Reader
+			closers = append(closers, fileReader.Close)
 		case AccessMmap:
 			mapped, err := segment.OpenFile(segmentPath)
 			if err != nil {
@@ -216,11 +254,18 @@ func LoadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*LoadedSegmen
 		filterPath := filepath.Join(paths.Dir, manifest.Filter.FileName)
 		filterFile, err := os.Open(filterPath)
 		if err != nil {
+			_ = loaded.Close()
 			return nil, fmt.Errorf("ftspersist: load segment filter %q: %w", filterPath, err)
 		}
-		loadedFilter, err := fts.LoadFilterSnapshot(filterFile)
-		_ = filterFile.Close()
+		loadedFilter, loadErr := fts.LoadFilterSnapshot(filterFile)
+		closeErr := filterFile.Close()
+		if closeErr != nil {
+			_ = loaded.Close()
+			return nil, fmt.Errorf("ftspersist: close segment filter %q: %w", filterPath, closeErr)
+		}
+		err = loadErr
 		if err != nil {
+			_ = loaded.Close()
 			return nil, fmt.Errorf("ftspersist: decode segment filter %q: %w", filterPath, err)
 		}
 		loaded.FilterName = loadedFilter.FilterName
@@ -228,6 +273,24 @@ func LoadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*LoadedSegmen
 	}
 
 	return loaded, nil
+}
+
+func cloneAnalyzerDescriptor(descriptor *fts.AnalyzerDescriptor) *fts.AnalyzerDescriptor {
+	if descriptor == nil {
+		return nil
+	}
+	cloned := *descriptor
+	return &cloned
+}
+
+func validateSegmentFileName(fileName string) error {
+	if fileName == "" {
+		return fmt.Errorf("empty file name")
+	}
+	if fileName == "." || fileName == ".." || filepath.Base(fileName) != fileName {
+		return fmt.Errorf("file name %q must not contain a path", fileName)
+	}
+	return nil
 }
 
 func RestoreSegmentService(loaded *LoadedSegment, keyGen fts.KeyGenerator, opts ...fts.Option) (*fts.Service, error) {
@@ -252,23 +315,33 @@ func RestoreSegmentService(loaded *LoadedSegment, keyGen fts.KeyGenerator, opts 
 		builtOpts = append(builtOpts, fts.WithCollectionStatsSnapshot(loaded.CollectionStats))
 	}
 
+	var service *fts.Service
 	if len(loaded.Fields) == 1 {
 		if reader := loaded.Fields[fts.DefaultField]; reader != nil {
-			return fts.New(reader, keyGen, builtOpts...), nil
+			service = fts.New(reader, keyGen, builtOpts...)
 		}
 	}
-	if loaded.Segment != nil && len(loaded.Fields) == 0 {
-		return fts.New(loaded.Segment, keyGen, builtOpts...), nil
+	if service == nil && loaded.Segment != nil && len(loaded.Fields) == 0 {
+		service = fts.New(loaded.Segment, keyGen, builtOpts...)
 	}
 
-	indexes := make(map[string]fts.Index, len(loaded.Fields))
-	for fieldName, reader := range loaded.Fields {
-		if reader == nil {
-			return nil, fmt.Errorf("ftspersist: restore segment service: nil reader for field %q", fieldName)
+	if service == nil {
+		indexes := make(map[string]fts.Index, len(loaded.Fields))
+		for fieldName, reader := range loaded.Fields {
+			if reader == nil {
+				return nil, fmt.Errorf("ftspersist: restore segment service: nil reader for field %q", fieldName)
+			}
+			indexes[fieldName] = reader
 		}
-		indexes[fieldName] = reader
+		service = fts.NewMultiFieldFromIndexes(indexes, keyGen, builtOpts...)
 	}
-	return fts.NewMultiFieldFromIndexes(indexes, keyGen, builtOpts...), nil
+	if loaded.DefaultAnalyzer != nil {
+		restored, ok := service.DefaultAnalyzerDescriptor()
+		if !ok || restored.Fingerprint != loaded.DefaultAnalyzer.Fingerprint {
+			return nil, fmt.Errorf("ftspersist: restore segment service: analyzer fingerprint mismatch: got %q, want %q", restored.Fingerprint, loaded.DefaultAnalyzer.Fingerprint)
+		}
+	}
+	return service, nil
 }
 
 func LoadSegment(paths SegmentPaths, keyGen fts.KeyGenerator, load SegmentLoadOptions, opts ...fts.Option) (*LoadedService, error) {

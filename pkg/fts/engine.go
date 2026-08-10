@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 )
 
 type docAccum struct {
@@ -74,6 +73,15 @@ func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opt
 		return nil, fmt.Errorf("fts: field %q was not present in the restored snapshot", name)
 	}
 	return s
+}
+
+// DefaultAnalyzerDescriptor returns the identity of the service's default
+// analyzer. Per-field pipeline overrides are outside this contract.
+func (s *Service) DefaultAnalyzerDescriptor() (AnalyzerDescriptor, bool) {
+	if s == nil {
+		return AnalyzerDescriptor{}, false
+	}
+	return DescribePipeline(s.pipeline)
 }
 
 func newService(keyGen KeyGenerator, opts ...Option) *Service {
@@ -334,13 +342,6 @@ func (s *Service) maybeTriggerCompactionCheck() {
 	if s.compactionCallback != nil {
 		s.compactionCallback(s.CompactionStats())
 	}
-}
-
-func formatDuration(d time.Duration) string {
-	if d < time.Millisecond {
-		return fmt.Sprintf("%dus", d.Microseconds())
-	}
-	return fmt.Sprintf("%dms", d.Milliseconds())
 }
 
 func (s *Service) finalizeRestoreState() {
