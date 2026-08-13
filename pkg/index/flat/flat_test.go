@@ -157,20 +157,6 @@ func TestHighCardinalityTermsRemainSearchable(t *testing.T) {
 	}
 }
 
-func TestIndexAnalyze(t *testing.T) {
-	idx := New()
-	if stats := idx.Analyze(); stats.Nodes != 0 || stats.MaxDepth != 0 || stats.AvgDepth != 0 {
-		t.Fatalf("empty Analyze() = %+v, want zero stats", stats)
-	}
-	if err := idx.Insert("hotel", 0); err != nil {
-		t.Fatalf("Insert() error = %v", err)
-	}
-	stats := idx.Analyze()
-	if stats.Nodes != 1 || stats.Leaves != 1 || stats.TotalDocs != 1 {
-		t.Fatalf("Analyze() = %+v, want one node, leaf, and doc", stats)
-	}
-}
-
 func TestIndexSearchPositional(t *testing.T) {
 	idx := New()
 	for _, item := range []struct {

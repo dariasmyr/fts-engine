@@ -415,52 +415,6 @@ func (t *Index) collectSubtreeDocs(current int, merged map[fts.DocOrd]fts.DocRef
 	}
 }
 
-func (t *Index) Analyze() fts.Stats {
-	var s fts.Stats
-	var totalDepth int
-
-	levelChildrenSum := make(map[int]int)
-	levelNodeCount := make(map[int]int)
-
-	var dfs func(n int, depth int)
-	dfs = func(n int, depth int) {
-		s.Nodes++
-		totalDepth += depth
-		if t.nodes[n].isTerminal() {
-			s.Leaves++
-		}
-		if depth > s.MaxDepth {
-			s.MaxDepth = depth
-		}
-		s.TotalDocs += len(t.nodes[n].docs)
-
-		numChildren := len(t.nodes[n].children)
-		s.TotalChildren += numChildren
-		levelChildrenSum[depth] += numChildren
-		levelNodeCount[depth]++
-
-		for _, c := range t.nodes[n].children {
-			dfs(c, depth+1)
-		}
-	}
-
-	dfs(t.root, 0)
-	if s.Nodes > 0 {
-		s.AvgDepth = float64(totalDepth) / float64(s.Nodes)
-	}
-
-	for depth := 0; depth <= 3; depth++ {
-		if levelNodeCount[depth] > 0 {
-			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel,
-				float64(levelChildrenSum[depth])/float64(levelNodeCount[depth]))
-		} else {
-			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel, 0)
-		}
-	}
-
-	return s
-}
-
 var _ fts.PositionalIndex = (*Index)(nil)
 var _ fts.PrefixIndex = (*Index)(nil)
 var _ fts.Index = (*Index)(nil)

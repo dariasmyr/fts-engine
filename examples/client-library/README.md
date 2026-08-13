@@ -37,6 +37,9 @@ Standalone examples:
 - `default/main.go` - minimal in-memory setup with defaults
 - `preset/main.go` - in-memory setup with a language preset from `pkg/ftspreset`
 - `custom-options/main.go` - in-memory setup with a custom pipeline and filter
+- `field-clauses/main.go` - field-specific query clauses
+- `flat-observability/main.go` - flat index with observability-oriented tokenization
+- `segment-analyzer-compatibility/main.go` - self-contained segment save and analyzer-compatible restore
 - `rank-profile/main.go` - multi-field ranking with weighted field scoring
 
 Snapshot examples:
@@ -62,6 +65,9 @@ Standalone examples can be run independently:
 go run ./examples/client-library/default
 go run ./examples/client-library/preset
 go run ./examples/client-library/custom-options
+go run ./examples/client-library/field-clauses
+go run ./examples/client-library/flat-observability
+go run ./examples/client-library/segment-analyzer-compatibility
 go run ./examples/client-library/rank-profile
 ```
 
@@ -88,3 +94,4 @@ Notes:
 - snapshot restore returns a writable service
 - segment restore returns a read-only service
 - `mmap` applies only to segment loading
+- segment manifests store the default analyzer identity; restore them with the same named pipeline

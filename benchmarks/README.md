@@ -212,14 +212,19 @@ What they mean:
 
 These matter only for `fts-engine` runs:
 
-- `-index=slicedradix|hamt`
+- `-index=slicedradix|hamt|flat`
 - `-scorer=none|bm25|tfidf`
-- `-lang=none|en|ru|multi`
+- `-lang=none|en|ru|multi|observability`
 - `-filter=none|bloom|cuckoo|ribbon`
 - `-persist=none|snapshot|segment`
 - `-diagnostics`
 
 Default `fts-engine` persistence in this suite is `snapshot`.
+
+Despite its historical name, `-lang` selects the `fts-engine` analysis preset.
+The `observability` value uses `textproc.ObservabilityPipeline()` and is intended
+for technical identifiers. It affects only `fts-engine`; the Bleve and Bluge
+adapters retain their own analyzers.
 
 Examples:
 
@@ -233,6 +238,23 @@ Run `fts-engine` on `hamt`:
   -out=./results/local/fts-hamt-msmarco.json \
   -index=hamt)
 ```
+
+Run the flat index with observability analysis:
+
+```bash
+(cd benchmarks && go run ./cmd/bench \
+  -engines=fts-engine \
+  -dataset=synthetic \
+  -synth-docs=5000 \
+  -synth-queries=500 \
+  -index=flat \
+  -lang=observability \
+  -persist=segment)
+```
+
+The synthetic corpus is useful as a functional and performance smoke test, but
+it is not a representative logs/traces corpus. Keep index, analysis preset, and
+dataset independently configurable for controlled comparisons.
 
 Measure persisted `snapshot` output:
 

@@ -2,16 +2,6 @@ package utils
 
 import "runtime"
 
-type TrieStats struct {
-	Nodes               int
-	Leaves              int
-	MaxDepth            int
-	AvgDepth            float64
-	TotalDocs           int
-	AvgChildrenPerLevel []float64 // average children count per level
-	TotalChildren       int
-}
-
 func MeasureMemory(build func()) runtime.MemStats {
 	runtime.GC()
 	runtime.GC()

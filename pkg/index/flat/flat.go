@@ -391,22 +391,6 @@ func (idx *Index) ExportSegmentTerms(yield func(segment.TermPostings) error) err
 	return nil
 }
 
-// Analyze implements fts.Analyzer.
-func (idx *Index) Analyze() fts.Stats {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	totalDocs := 0
-	for i := range idx.entries {
-		totalDocs += len(idx.entries[i].rest) + 1
-	}
-	stats := fts.Stats{Nodes: len(idx.entries), Leaves: len(idx.entries), TotalDocs: totalDocs}
-	if len(idx.entries) > 0 {
-		stats.MaxDepth = 1
-		stats.AvgDepth = 1
-	}
-	return stats
-}
-
 // Serialize writes a versioned, checksummed mutable snapshot.
 func (idx *Index) Serialize(w io.Writer) error {
 	if w == nil {
@@ -601,7 +585,6 @@ var (
 	_ fts.Index           = (*Index)(nil)
 	_ fts.PrefixIndex     = (*Index)(nil)
 	_ fts.PositionalIndex = (*Index)(nil)
-	_ fts.Analyzer        = (*Index)(nil)
 	_ fts.Serializable    = (*Index)(nil)
 	_ segment.Source      = (*Index)(nil)
 )

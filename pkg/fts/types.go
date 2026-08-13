@@ -70,10 +70,6 @@ type PositionalIndex interface {
 
 type IndexFactory func(fieldName string) (Index, error)
 
-type Analyzer interface {
-	Analyze() Stats
-}
-
 type Serializable interface {
 	Serialize(w io.Writer) error
 }

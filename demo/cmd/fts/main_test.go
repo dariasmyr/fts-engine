@@ -173,6 +173,31 @@ func TestBuildServiceUsesConfiguredRankProfile(t *testing.T) {
 	}
 }
 
+func TestBuildPipelineSelectsObservabilityPreset(t *testing.T) {
+	cfg := &config.Config{FTS: config.FTSConfig{Pipeline: config.PipelineConfig{Preset: "observability"}}}
+	pipeline := buildPipeline(cfg)
+	descriptor := pipeline.Descriptor()
+	if descriptor.Name != "observability" || descriptor.Version != 1 {
+		t.Fatalf("Descriptor() = %+v", descriptor)
+	}
+	if got := pipeline.Process("io.EOF"); len(got) != 3 || got[0] != "io.eof" {
+		t.Fatalf("Process(io.EOF) = %v", got)
+	}
+}
+
+func TestBuildPipelineCustomDescriptorTracksConfiguration(t *testing.T) {
+	base := &config.Config{FTS: config.FTSConfig{Pipeline: config.PipelineConfig{
+		Preset: "custom", Lowercase: true, MinLength: 2,
+	}}}
+	changed := &config.Config{FTS: config.FTSConfig{Pipeline: config.PipelineConfig{
+		Preset: "custom", Lowercase: true, MinLength: 3,
+	}}}
+
+	if buildPipeline(base).Descriptor() == buildPipeline(changed).Descriptor() {
+		t.Fatal("custom pipeline descriptors must differ when configuration changes")
+	}
+}
+
 func TestIndexDocumentUsesNamedFields(t *testing.T) {
 	svc := fts.NewMultiField(func(string) (fts.Index, error) {
 		return slicedradix.New(), nil

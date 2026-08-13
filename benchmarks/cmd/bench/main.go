@@ -100,9 +100,9 @@ func parseFlags(args []string) (config, error) {
 		lowPool       = fs.Int("low-pool", 5000, "number of lower/mid-DF terms in the query generator pool")
 		prefixMinExp  = fs.Int("prefix-min-expand", 2, "minimum number of term expansions for generated prefix queries")
 		prefixMaxExp  = fs.Int("prefix-max-expand", 32, "maximum number of term expansions for generated prefix queries")
-		index         = fs.String("index", "slicedradix", "fts-engine index: slicedradix|hamt")
+		index         = fs.String("index", "slicedradix", "fts-engine index: slicedradix|hamt|flat")
 		scorer        = fs.String("scorer", "bm25", "fts-engine scorer: none|bm25|tfidf")
-		lang          = fs.String("lang", "en", "fts-engine language preset: en|ru|multi|none")
+		lang          = fs.String("lang", "en", "fts-engine analysis preset: en|ru|multi|observability|none")
 		filter        = fs.String("filter", "none", "fts-engine filter: none|bloom|cuckoo|ribbon")
 		persist       = fs.String("persist", "snapshot", "fts-engine persistence: none|snapshot|segment")
 		diagnostics   = fs.Bool("diagnostics", false, "enable fts-engine search diagnostics")
@@ -436,7 +436,7 @@ func buildEngineWithConfig(name string, cfg config) (harness.Engine, error) {
 
 func validateFTSEngineConfig(cfg config) error {
 	switch cfg.Index {
-	case "slicedradix", "hamt":
+	case "slicedradix", "hamt", "flat":
 	default:
 		return fmt.Errorf("bench: unsupported -index %q", cfg.Index)
 	}
@@ -446,7 +446,7 @@ func validateFTSEngineConfig(cfg config) error {
 		return fmt.Errorf("bench: unsupported -scorer %q", cfg.Scorer)
 	}
 	switch cfg.Lang {
-	case "", "none", "en", "ru", "multi":
+	case "", "none", "en", "ru", "multi", "observability":
 	default:
 		return fmt.Errorf("bench: unsupported -lang %q", cfg.Lang)
 	}

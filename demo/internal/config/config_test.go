@@ -47,6 +47,7 @@ func TestValidateConfigAppliesFallbacksFromDefaultConfig(t *testing.T) {
 	cfg.FTS.Persistence.Path = ""
 	cfg.FTS.Persistence.BufferSize = 0
 	cfg.FTS.Persistence.FlushThreshold = 0
+	cfg.FTS.Pipeline.Preset = ""
 	cfg.FTS.Pipeline.MinLength = 0
 	cfg.Mode.Type = ""
 
@@ -56,6 +57,26 @@ func TestValidateConfigAppliesFallbacksFromDefaultConfig(t *testing.T) {
 
 	if !reflect.DeepEqual(cfg, defaultConfig()) {
 		t.Fatalf("validateConfig() defaults mismatch\n got: %+v\nwant: %+v", cfg, defaultConfig())
+	}
+}
+
+func TestValidateConfigAllowsFlatObservability(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Index = "flat"
+	cfg.FTS.Pipeline.Preset = "observability"
+
+	if err := validateConfig(&cfg); err != nil {
+		t.Fatalf("validateConfig() error = %v", err)
+	}
+}
+
+func TestValidateConfigRejectsUnknownPipelinePreset(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FTS.Pipeline.Preset = "unknown"
+
+	err := validateConfig(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "unknown pipeline preset") {
+		t.Fatalf("validateConfig() error = %v, want pipeline preset error", err)
 	}
 }
 

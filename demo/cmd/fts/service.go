@@ -172,6 +172,10 @@ func buildFilterIfNeeded(log *slog.Logger, svc *pkgfts.Service) error {
 }
 
 func buildPipeline(cfg *config.Config) textproc.Pipeline {
+	if cfg.FTS.Pipeline.Preset == "observability" {
+		return textproc.ObservabilityPipeline()
+	}
+
 	filters := make([]textproc.Filter, 0, 4)
 
 	if cfg.FTS.Pipeline.Lowercase {
@@ -198,5 +202,14 @@ func buildPipeline(cfg *config.Config) textproc.Pipeline {
 		filters = append(filters, textproc.RussianStemFilter{})
 	}
 
-	return textproc.NewPipeline(textproc.AlnumTokenizer{}, filters...)
+	name := fmt.Sprintf(
+		"demo-custom/lowercase=%t/min=%d/stopwords-en=%t/stopwords-ru=%t/stem-en=%t/stem-ru=%t",
+		cfg.FTS.Pipeline.Lowercase,
+		cfg.FTS.Pipeline.MinLength,
+		cfg.FTS.Pipeline.StopwordsEN,
+		cfg.FTS.Pipeline.StopwordsRU,
+		cfg.FTS.Pipeline.StemEN,
+		cfg.FTS.Pipeline.StemRU,
+	)
+	return textproc.NewNamedPipeline(name, 1, textproc.AlnumTokenizer{}, filters...)
 }

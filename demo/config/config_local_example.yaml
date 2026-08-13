@@ -1,7 +1,7 @@
 env: "local"
 dump_path: "./data/enwiki-latest-abstract1.xml.gz"
 fts:
-  index: "slicedradix" # slicedradix|hamt
+  index: "slicedradix" # slicedradix|hamt|flat
   keygen: "word"
   scorer: "none"       # none|bm25|tfidf
   # rank_profile:
@@ -42,6 +42,7 @@ fts:
     seed: 0
     max_attempts: 50
   pipeline:
+    preset: "custom" # custom|observability; remaining settings apply to custom
     lowercase: true
     stopwords_en: true
     stopwords_ru: false

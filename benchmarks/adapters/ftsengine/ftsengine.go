@@ -12,6 +12,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
 	"github.com/dariasmyr/fts-engine/pkg/ftspreset"
 	"github.com/dariasmyr/fts-engine/pkg/keygen"
+	"github.com/dariasmyr/fts-engine/pkg/textproc"
 
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
 )
@@ -334,8 +335,10 @@ func selectPreset(lang string) (fts.Option, error) {
 		return ftspreset.Russian(), nil
 	case "multi":
 		return ftspreset.Multilingual(), nil
+	case "observability":
+		return fts.WithPipeline(textproc.ObservabilityPipeline()), nil
 	default:
-		return nil, fmt.Errorf("unknown lang preset %q", lang)
+		return nil, fmt.Errorf("unknown analysis preset %q", lang)
 	}
 }
 

@@ -420,68 +420,6 @@ func (t *Index) nextNode(n nodeptr, hash uint32) (nodeptr, bool) {
 	return node.children[index], true
 }
 
-func (t *Index) Analyze() fts.Stats {
-	var s fts.Stats
-	var totalDepth int
-
-	levelChildrenSum := make(map[int]int)
-	levelNodeCount := make(map[int]int)
-
-	var dfs func(ptr nodeptr, currentDepth int, isTerm bool)
-	dfs = func(ptr nodeptr, currentDepth int, isTerm bool) {
-		if isTerm {
-			if int(ptr) >= len(t.terms) {
-				return
-			}
-			term := t.terms[ptr]
-			s.Leaves++
-			for _, e := range term.entries {
-				s.TotalDocs += len(e.docs)
-			}
-			return
-		}
-
-		if int(ptr) >= len(t.nodes) {
-			return
-		}
-		n := t.nodes[ptr]
-		s.Nodes++
-		totalDepth += currentDepth
-		if currentDepth > s.MaxDepth {
-			s.MaxDepth = currentDepth
-		}
-
-		childCount := len(n.children)
-		s.TotalChildren += childCount
-		levelChildrenSum[currentDepth] += childCount
-		levelNodeCount[currentDepth]++
-
-		for _, c := range n.children {
-			if currentDepth == depth-2 {
-				dfs(c, currentDepth+1, true)
-			} else {
-				dfs(c, currentDepth+1, false)
-			}
-		}
-	}
-
-	dfs(0, 0, false)
-	if s.Nodes > 0 {
-		s.AvgDepth = float64(totalDepth) / float64(s.Nodes)
-	}
-
-	for d := 1; d <= depth; d++ {
-		if levelNodeCount[d] > 0 {
-			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel,
-				float64(levelChildrenSum[d])/float64(levelNodeCount[d]))
-		} else {
-			s.AvgChildrenPerLevel = append(s.AvgChildrenPerLevel, 0)
-		}
-	}
-
-	return s
-}
-
 var _ fts.Index = (*Index)(nil)
 var _ fts.PrefixIndex = (*Index)(nil)
 var _ fts.PositionalIndex = (*Index)(nil)

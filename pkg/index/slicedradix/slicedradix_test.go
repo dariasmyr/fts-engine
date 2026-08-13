@@ -109,16 +109,6 @@ func TestIndexSearchNotFound(t *testing.T) {
 	}
 }
 
-func TestIndexAnalyze(t *testing.T) {
-	idx := New()
-	insertOrd(t, idx, "hotel", "doc-1", 0)
-
-	stats := idx.Analyze()
-	if stats.Nodes == 0 {
-		t.Fatalf("stats.Nodes = %d, want > 0", stats.Nodes)
-	}
-}
-
 func TestIndexSearchPositional(t *testing.T) {
 	idx := New()
 

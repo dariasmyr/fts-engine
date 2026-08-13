@@ -128,7 +128,7 @@ func main() {
 	startPprofServer(log)
 
 	if cfg.Mode.Type == "experiment" {
-		runExperimentMode(ctx, log, cfg, ftsEngine, ftsEngine.service, documents)
+		runExperimentMode(ctx, log, ftsEngine.service, documents)
 		return
 	}
 

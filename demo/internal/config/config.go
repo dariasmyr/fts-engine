@@ -84,12 +84,13 @@ type ModeConfig struct {
 }
 
 type PipelineConfig struct {
-	Lowercase   bool `yaml:"lowercase"`
-	StopwordsEN bool `yaml:"stopwords_en"`
-	StopwordsRU bool `yaml:"stopwords_ru"`
-	StemEN      bool `yaml:"stem_en"`
-	StemRU      bool `yaml:"stem_ru"`
-	MinLength   int  `yaml:"min_length"`
+	Preset      string `yaml:"preset"`
+	Lowercase   bool   `yaml:"lowercase"`
+	StopwordsEN bool   `yaml:"stopwords_en"`
+	StopwordsRU bool   `yaml:"stopwords_ru"`
+	StemEN      bool   `yaml:"stem_en"`
+	StemRU      bool   `yaml:"stem_ru"`
+	MinLength   int    `yaml:"min_length"`
 }
 
 func Load(configPath string) (*Config, string, error) {
@@ -169,6 +170,7 @@ func defaultConfig() Config {
 				MaxAttempts:   50,
 			},
 			Pipeline: PipelineConfig{
+				Preset:      "custom",
 				Lowercase:   true,
 				StopwordsEN: true,
 				StopwordsRU: false,
@@ -234,6 +236,9 @@ func validateConfig(cfg *Config) error {
 	if cfg.FTS.Pipeline.MinLength <= 0 {
 		cfg.FTS.Pipeline.MinLength = defaults.FTS.Pipeline.MinLength
 	}
+	if cfg.FTS.Pipeline.Preset == "" {
+		cfg.FTS.Pipeline.Preset = defaults.FTS.Pipeline.Preset
+	}
 
 	if cfg.Mode.Type == "" {
 		cfg.Mode.Type = defaults.Mode.Type
@@ -244,7 +249,7 @@ func validateConfig(cfg *Config) error {
 	}
 
 	switch cfg.FTS.Index {
-	case "slicedradix", "hamt":
+	case "slicedradix", "hamt", "flat":
 	default:
 		return fmt.Errorf("unknown index type: %s", cfg.FTS.Index)
 	}
@@ -263,6 +268,12 @@ func validateConfig(cfg *Config) error {
 
 	if err := validateRankProfile(cfg.FTS.RankProfile, cfg.FTS.Scorer); err != nil {
 		return err
+	}
+
+	switch cfg.FTS.Pipeline.Preset {
+	case "custom", "observability":
+	default:
+		return fmt.Errorf("unknown pipeline preset: %s", cfg.FTS.Pipeline.Preset)
 	}
 
 	switch cfg.FTS.Filter {

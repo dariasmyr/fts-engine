@@ -172,10 +172,6 @@ func (s *serviceAdapter) projectExplanation(ctx context.Context, query string, i
 	}
 }
 
-func (s *serviceAdapter) AnalyzeStats() (pkgfts.Stats, bool) {
-	return s.service.Analyze()
-}
-
 func (s *serviceAdapter) SearchStatsSnapshot() (ftsstats.Snapshot, bool) {
 	if s.searchStats == nil {
 		return ftsstats.Snapshot{}, false

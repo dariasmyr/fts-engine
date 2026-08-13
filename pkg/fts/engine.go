@@ -234,23 +234,6 @@ func (s *Service) SearchPhraseNearFields(ctx context.Context, fields []string, p
 	return s.searchPhraseNearFieldsResult(ctx, fields, phrase, distance, maxResults)
 }
 
-func (s *Service) Analyze() (Stats, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var combined Stats
-	found := false
-	for _, idx := range s.indexes {
-		analyzer, ok := idx.(Analyzer)
-		if !ok {
-			continue
-		}
-		found = true
-		combined = mergeStats(combined, analyzer.Analyze())
-	}
-	return combined, found
-}
-
 func (s *Service) SnapshotComponents() (Index, Filter) {
 	if s == nil {
 		return nil, nil

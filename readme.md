@@ -5,7 +5,7 @@ Reusable full-text search library for Go.
 It provides:
 
 - mutable in-memory search via `pkg/fts`
-- built-in indexes in `pkg/index/slicedradix` and `pkg/index/hamt`
+- built-in indexes in `pkg/index/slicedradix`, `pkg/index/hamt`, and `pkg/index/flat`
 - query-string, phrase, boolean, field-scoped, and prefix search
 - optional pipelines, stemming, and language presets via `pkg/textproc` and `pkg/ftspreset`
 - mutable snapshots and sealed read-only segments via `pkg/ftspersist`
@@ -18,6 +18,7 @@ For external integrations, prefer these public packages:
 - `pkg/fts` - core engine, document model, query API
 - `pkg/index/slicedradix` - exact, positional, and prefix index
 - `pkg/index/hamt` - exact and positional index
+- `pkg/index/flat` - pointer-light exact, positional, and prefix index for high-cardinality data
 - `pkg/keygen` - token-to-key generators
 - `pkg/ftspersist` - recommended snapshot and segment persistence API
 - `pkg/segment` - lower-level sealed segment API
@@ -83,12 +84,18 @@ Notes:
 | --- | --- | --- |
 | `slicedradix` | exact, positional, prefix | best default if you need prefix queries |
 | `hamt` | exact, positional, prefix via term scan | use when you do not need prefix-heavy queries |
+| `flat` | exact, positional, prefix via a lazy sorted term view | high-cardinality data where most terms occur in few documents, especially when building sealed segments |
 
-Prefix queries require an index that implements `fts.PrefixIndex`. Both built-in
+Prefix queries require an index that implements `fts.PrefixIndex`. All built-in
 mutable indexes support prefix queries, but with different performance profiles:
-`slicedradix` performs structural prefix lookup, while `hamt` scans stored terms
-and filters them with `strings.HasPrefix`. Prefer `slicedradix` for prefix-heavy
-workloads.
+`slicedradix` performs structural prefix lookup, `hamt` scans stored terms, and
+`flat` scans a lazily built sorted term view. Prefer `slicedradix` for
+prefix-heavy workloads.
+
+`flat` stores term bytes in a shared arena and keeps the first posting inline.
+This reduces pointer overhead for log and telemetry datasets with many mostly
+unique identifiers. Its first prefix search builds a sorted term view; exact
+search does not require that initialization.
 
 ## Pipelines and Presets
 
@@ -119,6 +126,47 @@ engine := fts.New(slicedradix.New(), keygen.Word, fts.WithPipeline(pipe))
 ```
 
 Each `fts.Field` can also override the service-level pipeline with its own `Field.Pipeline`.
+
+Use a named pipeline when its output will be persisted in a sealed segment:
+
+```go
+pipe := textproc.NewNamedPipeline(
+	"support-events",
+	1,
+	textproc.AlnumTokenizer{},
+	textproc.LowercaseFilter{},
+)
+```
+
+The name and version form a caller-owned compatibility identity. Increment the
+version whenever the same input may produce different tokens. `NewPipeline(...)`
+uses the generic identity `custom@0`, so prefer `NewNamedPipeline(...)` for
+persisted indexes.
+
+### Observability Pipeline
+
+`textproc.ObservabilityPipeline()` is intended for logs and other technical
+text. It keeps complete technical atoms together with searchable components:
+
+```text
+10.0.0.1        -> 10.0.0.1, 10, 0, 1
+io.EOF          -> io.eof, io, eof
+checkout-api/v2 -> checkout-api/v2, checkout, api, v2
+```
+
+```go
+engine := fts.New(
+	flat.New(),
+	keygen.Word,
+	fts.WithPipeline(textproc.ObservabilityPipeline()),
+)
+```
+
+The preset lowercases tokens, keeps numeric and two-character diagnostic terms,
+and deliberately applies no stemming or stop-word removal. It also removes
+duplicate tokens from each processed value. That makes it presence-oriented:
+repeated terms do not increase term frequency, and repeated-token phrase
+semantics are not preserved.
 
 ## Search API
 
@@ -279,6 +327,35 @@ Important details:
 - `pkg/segment` is a lower-level API for raw segment files; prefer `pkg/ftspersist` unless you need direct segment access
 - if you persist built-in indexes through snapshots, or built-in filters through snapshots or segments, call `ftsbuiltin.RegisterSnapshotCodecs()` once at startup
 
+Sealed segment manifests store the service's default analyzer descriptor. Supply
+the same pipeline when restoring the service. An optional expected fingerprint
+can reject an incompatible segment before its field files are opened:
+
+```go
+pipe := textproc.ObservabilityPipeline()
+descriptor := pipe.Descriptor()
+
+loaded, err := ftspersist.LoadSegment(
+	ftspersist.SegmentPaths{Dir: "./data/segments/events"},
+	keygen.Word,
+	ftspersist.SegmentLoadOptions{
+		Access:                      ftspersist.AccessFile,
+		ExpectedAnalyzerFingerprint: descriptor.Fingerprint,
+	},
+	fts.WithPipeline(pipe),
+)
+```
+
+The compatibility gate currently covers sealed segments and the service-level
+default pipeline. It does not describe mutable snapshots, field-level pipeline
+overrides, or the key generator. Rebuild persisted data when any of those token
+or key-generation rules change. Legacy v1 segment manifests remain readable but
+do not contain analyzer metadata.
+
+`AccessFile` keeps the term table resident and reads matching posting ranges from
+the file. `AccessMmap` maps the segment. Opening either mode validates the segment
+checksum, and callers must close the returned loaded service.
+
 Current working persistence examples:
 
 - `examples/client-library/snapshot-save-files/main.go`
@@ -313,6 +390,8 @@ snap := stats.Snapshot()
 fmt.Println(len(snap.ByStrategy))
 ```
 
+Runtime diagnostics are separate from `textproc.ObservabilityPipeline()`.
+
 ## Client Examples
 
 `examples/client-library` contains the examples that match the current public API.
@@ -320,6 +399,8 @@ fmt.Println(len(snap.ByStrategy))
 - `default` - minimal in-memory usage
 - `preset` - preset pipeline via `pkg/ftspreset`
 - `custom-options` - custom pipeline and filter
+- `flat-observability` - flat index with technical-token analysis
+- `segment-analyzer-compatibility` - analyzer-compatible sealed segment restore
 - `rank-profile` - multi-field ranking with weighted field scoring
 - `snapshot-*` - mutable snapshot save and restore
 - `segment-*` - sealed segment save and restore, including `mmap`
