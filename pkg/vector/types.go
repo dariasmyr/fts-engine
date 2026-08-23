@@ -1,7 +1,22 @@
 // Package vector defines shared contracts for dense-vector search indexes.
 package vector
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var (
+	ErrNilContext            = errors.New("vector: nil context")
+	ErrInvalidK              = errors.New("vector: k must be positive")
+	ErrInvalidSearchOptions  = errors.New("vector: search options must not be negative")
+	ErrAcceptSetSizeMismatch = errors.New("vector: accept set size does not match vector count")
+)
+
+const (
+	TerminationComplete   = "complete"
+	TerminationVisitLimit = "visit_limit"
+)
 
 // Metric defines how vectors are ordered. Every supported metric returns a
 // distance where a smaller value is better.

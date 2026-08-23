@@ -34,24 +34,21 @@ func BenchmarkDistancePrepared(b *testing.B) {
 	}
 }
 
-func BenchmarkTopK(b *testing.B) {
-	for _, candidates := range []int{1_000, 10_000, 100_000} {
-		for _, k := range []int{1, 10, 100} {
-			b.Run(fmt.Sprintf("candidates=%d/k=%d", candidates, k), func(b *testing.B) {
-				distances := make([]float64, candidates)
-				rng := rand.New(rand.NewSource(42))
-				for i := range distances {
-					distances[i] = rng.Float64()
-				}
-
-				for b.Loop() {
-					top := NewTopK(k)
-					for i, distance := range distances {
-						top.Add(Hit{Ordinal: Ordinal(i), Distance: distance})
-					}
-					_ = top.Results()
-				}
-			})
+func BenchmarkBitSetWithChanges(b *testing.B) {
+	set := NewFullBitSet(1_000_000)
+	rejected := make([]Ordinal, 32)
+	for i := range rejected {
+		rejected[i] = Ordinal(i * 30_000)
+	}
+	b.ReportAllocs()
+	var next BitSet
+	b.ResetTimer()
+	for b.Loop() {
+		var err error
+		next, err = set.WithChanges(set.Size(), nil, rejected)
+		if err != nil {
+			b.Fatal(err)
 		}
 	}
+	_ = next
 }

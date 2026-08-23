@@ -41,6 +41,7 @@ Standalone examples:
 - `flat-observability/main.go` - flat index with observability-oriented tokenization
 - `segment-analyzer-compatibility/main.go` - self-contained segment save and analyzer-compatible restore
 - `rank-profile/main.go` - multi-field ranking with weighted field scoring
+- `semantic-flat/main.go` - chunk-aware in-memory semantic search with caller-provided vectors
 
 Snapshot examples:
 
@@ -69,6 +70,7 @@ go run ./examples/client-library/field-clauses
 go run ./examples/client-library/flat-observability
 go run ./examples/client-library/segment-analyzer-compatibility
 go run ./examples/client-library/rank-profile
+go run ./examples/client-library/semantic-flat
 ```
 
 Snapshot restore examples depend on files created by the snapshot save example:

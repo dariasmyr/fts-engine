@@ -129,3 +129,55 @@ func TestBitSetMatchesBooleanModel(t *testing.T) {
 		}
 	}
 }
+
+func TestBitSetWithChangesGrowsAndAppliesBatch(t *testing.T) {
+	set, err := NewBitSet(3, 0, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := set.WithChanges(6, []Ordinal{3, 5}, []Ordinal{0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.Size() != 3 || set.Cardinality() != 2 || !set.Contains(0) {
+		t.Fatalf("original set changed: size=%d cardinality=%d", set.Size(), set.Cardinality())
+	}
+	if next.Size() != 6 || next.Cardinality() != 3 {
+		t.Fatalf("next = size %d cardinality %d, want 6 and 3", next.Size(), next.Cardinality())
+	}
+	for _, ord := range []Ordinal{2, 3, 5} {
+		if !next.Contains(ord) {
+			t.Fatalf("ordinal %d is rejected, want accepted", ord)
+		}
+	}
+	if next.Contains(0) || next.Contains(1) || next.Contains(4) {
+		t.Fatal("unexpected accepted ordinal")
+	}
+}
+
+func TestBitSetWithChangesRejectsInvalidChanges(t *testing.T) {
+	set := NewFullBitSet(2)
+	if _, err := set.WithChanges(1, nil, nil); !errors.Is(err, ErrBitSetShrink) {
+		t.Fatalf("shrink error = %v, want ErrBitSetShrink", err)
+	}
+	if _, err := set.WithChanges(3, []Ordinal{2}, []Ordinal{2}); !errors.Is(err, ErrConflictingBits) {
+		t.Fatalf("conflict error = %v, want ErrConflictingBits", err)
+	}
+}
+
+func TestBitSetWithChangesAcrossBlocksKeepsOldSnapshot(t *testing.T) {
+	set := NewFullBitSet(10_000)
+	next, err := set.WithChanges(12_000, []Ordinal{11_999}, []Ordinal{1, 9_000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !set.Contains(1) || !set.Contains(9_000) || set.Size() != 10_000 {
+		t.Fatal("old block snapshot changed")
+	}
+	if next.Contains(1) || next.Contains(9_000) || !next.Contains(11_999) {
+		t.Fatal("cross-block changes were not applied")
+	}
+	if next.Cardinality() != 9_999 {
+		t.Fatalf("cardinality = %d, want 9999", next.Cardinality())
+	}
+}

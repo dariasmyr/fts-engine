@@ -46,33 +46,30 @@ func (s Space) Normalization() Normalization { return s.normalization }
 // Prepare validates value, copies it, canonicalizes signed zero, and applies
 // the space's storage normalization.
 func (s Space) Prepare(value []float32) ([]float32, error) {
-	if err := s.validate(value); err != nil {
+	normSquared, err := s.validate(value)
+	if err != nil {
 		return nil, err
 	}
 
 	prepared := make([]float32, len(value))
-	copy(prepared, value)
-
-	if s.normalization == NormalizationUnitLength {
-		normSquared := dotFloat64(prepared, prepared)
-		if normSquared == 0 {
-			return nil, ErrZeroNorm
-		}
-		if math.IsNaN(normSquared) || math.IsInf(normSquared, 0) {
-			return nil, ErrNonFiniteVector
-		}
-		inverseNorm := 1 / math.Sqrt(normSquared)
-		for i := range prepared {
-			prepared[i] = float32(float64(prepared[i]) * inverseNorm)
-		}
-	}
-	for i := range prepared {
-		if prepared[i] == 0 {
-			prepared[i] = 0 // canonicalize input and normalization-created negative zero
-		}
-	}
-
+	s.prepareIntoValidated(prepared, value, normSquared)
 	return prepared, nil
+}
+
+// PrepareInto validates value and writes its copied, canonicalized, normalized
+// representation into dst without allocating. Batch writers can therefore
+// prepare directly into rows of one preallocated contiguous matrix. dst must
+// have Space.Dimensions elements and may alias value.
+func (s Space) PrepareInto(dst, value []float32) error {
+	if len(dst) != s.dimensions {
+		return fmt.Errorf("%w: destination has %d, want %d", ErrDimensionMismatch, len(dst), s.dimensions)
+	}
+	normSquared, err := s.validate(value)
+	if err != nil {
+		return err
+	}
+	s.prepareIntoValidated(dst, value, normSquared)
+	return nil
 }
 
 // Distance validates and prepares both values before calculating their
@@ -91,8 +88,8 @@ func (s Space) Distance(a, b []float32) (float64, error) {
 }
 
 // DistancePrepared calculates distance without validation or allocation. Both
-// vectors must have Space.Dimensions elements and must have been returned by
-// Prepare for this space.
+// vectors must have Space.Dimensions elements and must have been produced by
+// Prepare or PrepareInto for this space.
 func (s Space) DistancePrepared(a, b []float32) float64 {
 	switch s.metric {
 	case MetricCosine:
@@ -112,20 +109,52 @@ func (s Space) DistancePrepared(a, b []float32) float64 {
 	}
 }
 
-func (s Space) validate(value []float32) error {
+// Validate checks whether value can be prepared for this space without
+// allocating or retaining it.
+func (s Space) Validate(value []float32) error {
+	_, err := s.validate(value)
+	return err
+}
+
+func (s Space) validate(value []float32) (float64, error) {
 	if s.dimensions <= 0 || !s.metric.Valid() {
-		return errors.New("vector: invalid space")
+		return 0, errors.New("vector: invalid space")
 	}
 	if len(value) != s.dimensions {
-		return fmt.Errorf("%w: got %d, want %d", ErrDimensionMismatch, len(value), s.dimensions)
+		return 0, fmt.Errorf("%w: got %d, want %d", ErrDimensionMismatch, len(value), s.dimensions)
 	}
 	for i, component := range value {
 		v := float64(component)
 		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return fmt.Errorf("%w at dimension %d", ErrNonFiniteVector, i)
+			return 0, fmt.Errorf("%w at dimension %d", ErrNonFiniteVector, i)
 		}
 	}
-	return nil
+	var normSquared float64
+	if s.normalization == NormalizationUnitLength {
+		normSquared = dotFloat64(value, value)
+		if normSquared == 0 {
+			return 0, ErrZeroNorm
+		}
+		if math.IsNaN(normSquared) || math.IsInf(normSquared, 0) {
+			return 0, ErrNonFiniteVector
+		}
+	}
+	return normSquared, nil
+}
+
+func (s Space) prepareIntoValidated(dst, value []float32, normSquared float64) {
+	copy(dst, value)
+	if s.normalization == NormalizationUnitLength {
+		inverseNorm := 1 / math.Sqrt(normSquared)
+		for i := range dst {
+			dst[i] = float32(float64(dst[i]) * inverseNorm)
+		}
+	}
+	for i := range dst {
+		if dst[i] == 0 {
+			dst[i] = 0 // canonicalize input and normalization-created negative zero
+		}
+	}
 }
 
 func dotFloat64(a, b []float32) float64 {

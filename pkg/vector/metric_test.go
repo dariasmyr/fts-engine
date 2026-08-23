@@ -65,6 +65,48 @@ func TestSpacePrepareCanonicalizesNormalizationCreatedNegativeZero(t *testing.T)
 	}
 }
 
+func TestSpaceValidateAndPrepareInto(t *testing.T) {
+	space := mustSpace(t, 2, MetricCosine)
+	input := []float32{3, 4}
+	destination := make([]float32, 2)
+	if err := space.Validate(input); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if err := space.PrepareInto(destination, input); err != nil {
+		t.Fatalf("PrepareInto() error = %v", err)
+	}
+	if !closeFloat(float64(destination[0]), 0.6, 1e-7) || !closeFloat(float64(destination[1]), 0.8, 1e-7) {
+		t.Fatalf("destination = %v, want [0.6 0.8]", destination)
+	}
+	input[0] = 10
+	if !closeFloat(float64(destination[0]), 0.6, 1e-7) {
+		t.Fatalf("destination changed after caller mutation: %v", destination)
+	}
+	if err := space.PrepareInto(make([]float32, 1), []float32{3, 4}); !errors.Is(err, ErrDimensionMismatch) {
+		t.Fatalf("destination mismatch error = %v", err)
+	}
+	if err := space.Validate([]float32{0, 0}); !errors.Is(err, ErrZeroNorm) {
+		t.Fatalf("zero norm validation error = %v", err)
+	}
+}
+
+func TestSpaceValidateAndPrepareIntoDoNotAllocate(t *testing.T) {
+	space := mustSpace(t, 3, MetricL2Squared)
+	input := []float32{1, 2, 3}
+	destination := make([]float32, 3)
+	allocations := testing.AllocsPerRun(1_000, func() {
+		if err := space.Validate(input); err != nil {
+			panic(err)
+		}
+		if err := space.PrepareInto(destination, input); err != nil {
+			panic(err)
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("Validate + PrepareInto allocations = %v, want 0", allocations)
+	}
+}
+
 func TestSpacePrepareValidation(t *testing.T) {
 	space := mustSpace(t, 2, MetricCosine)
 	tests := []struct {
