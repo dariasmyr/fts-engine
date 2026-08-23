@@ -36,16 +36,16 @@ func BenchmarkDistancePrepared(b *testing.B) {
 
 func BenchmarkBitSetWithChanges(b *testing.B) {
 	set := NewFullBitSet(1_000_000)
-	rejected := make([]Ordinal, 32)
-	for i := range rejected {
-		rejected[i] = Ordinal(i * 30_000)
+	disallowed := make([]Ordinal, 32)
+	for i := range disallowed {
+		disallowed[i] = Ordinal(i * 30_000)
 	}
 	b.ReportAllocs()
 	var next BitSet
 	b.ResetTimer()
 	for b.Loop() {
 		var err error
-		next, err = set.WithChanges(set.Size(), nil, rejected)
+		next, err = set.WithChanges(set.TotalOrdinalCount(), nil, disallowed)
 		if err != nil {
 			b.Fatal(err)
 		}

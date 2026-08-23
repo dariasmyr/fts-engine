@@ -10,27 +10,42 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-func (s *Service) SearchChunks(ctx context.Context, query []float32, k int) (ChunkSearchResult, error) {
-	if k <= 0 || k > s.config.MaxK {
-		return ChunkSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, s.config.MaxK)
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.searchChunksLocked(ctx, query, k)
+type searchView struct {
+	space                   vector.Space
+	searcher                vector.Searcher
+	live                    vector.BitSet
+	vectorIDs               []VectorID
+	refs                    map[VectorID]chunk.Ref
+	maxK                    int
+	maxChunkCandidates      int
+	maxChunksPerDocumentHit int
 }
 
-func (s *Service) searchChunksLocked(ctx context.Context, query []float32, k int) (ChunkSearchResult, error) {
-	result, err := s.head.Search(ctx, query, k, vector.SearchOptions{Accept: s.live})
+func (s *Service) SearchChunks(ctx context.Context, query []float32, k int) (ChunkSearchResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return searchChunks(ctx, s.searchViewLocked(), query, k)
+}
+
+func searchChunks(ctx context.Context, view searchView, query []float32, k int) (ChunkSearchResult, error) {
+	return searchChunksUpTo(ctx, view, query, k, view.maxK)
+}
+
+func searchChunksUpTo(ctx context.Context, view searchView, query []float32, k, maxK int) (ChunkSearchResult, error) {
+	if k <= 0 || k > maxK {
+		return ChunkSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxK)
+	}
+	result, err := view.searcher.Search(ctx, query, k, vector.SearchOptions{ResultFilter: view.live})
 	if err != nil {
 		return ChunkSearchResult{}, err
 	}
 	hits := make([]ChunkHit, 0, len(result.Hits))
 	for _, hit := range result.Hits {
 		index := int(hit.Ordinal)
-		if index >= len(s.vectorIDs) {
+		if index >= len(view.vectorIDs) {
 			return ChunkSearchResult{}, ErrInternalState
 		}
-		ref, ok := s.refByVector[s.vectorIDs[index]]
+		ref, ok := view.refs[view.vectorIDs[index]]
 		if !ok {
 			return ChunkSearchResult{}, ErrInternalState
 		}
@@ -40,31 +55,34 @@ func (s *Service) searchChunksLocked(ctx context.Context, query []float32, k int
 }
 
 func (s *Service) SearchDocuments(ctx context.Context, query []float32, k int) (DocumentSearchResult, error) {
-	if k <= 0 || k > s.config.MaxK {
-		return DocumentSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, s.config.MaxK)
-	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return searchDocuments(ctx, s.searchViewLocked(), query, k)
+}
 
-	live := s.live.Cardinality()
-	if live == 0 {
+func searchDocuments(ctx context.Context, view searchView, query []float32, k int) (DocumentSearchResult, error) {
+	if k <= 0 || k > view.maxK {
+		return DocumentSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, view.maxK)
+	}
+	liveCount := view.live.AllowedOrdinalCount()
+	if liveCount == 0 {
 		if ctx == nil {
 			return DocumentSearchResult{}, vector.ErrNilContext
 		}
 		if err := ctx.Err(); err != nil {
 			return DocumentSearchResult{}, err
 		}
-		if _, err := s.space.Prepare(query); err != nil {
+		if _, err := view.space.Prepare(query); err != nil {
 			return DocumentSearchResult{}, err
 		}
 		return DocumentSearchResult{Hits: []DocumentHit{}}, nil
 	}
-	budget := min(live, s.config.MaxChunkCandidates)
-	chunks, err := s.searchChunksLocked(ctx, query, budget)
+	budget := min(liveCount, view.maxChunkCandidates)
+	chunks, err := searchChunksUpTo(ctx, view, query, budget, view.maxChunkCandidates)
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
-	documents := s.groupDocuments(chunks.Hits)
+	documents := groupDocuments(chunks.Hits, view.maxChunksPerDocumentHit)
 	distinctDocuments := len(documents)
 	if len(documents) > k {
 		documents = documents[:k]
@@ -73,12 +91,12 @@ func (s *Service) SearchDocuments(ctx context.Context, query []float32, k int) (
 		Hits:               documents,
 		CandidateChunks:    len(chunks.Hits),
 		DistinctDocuments:  distinctDocuments,
-		GroupingIncomplete: budget < live || chunks.Incomplete,
+		GroupingIncomplete: budget < liveCount || chunks.Incomplete,
 		Stats:              chunks.Stats,
 	}, nil
 }
 
-func (s *Service) groupDocuments(hits []ChunkHit) []DocumentHit {
+func groupDocuments(hits []ChunkHit, maxChunksPerDocumentHit int) []DocumentHit {
 	type accumulator struct {
 		distance float64
 		chunks   []ChunkHit
@@ -95,7 +113,7 @@ func (s *Service) groupDocuments(hits []ChunkHit) []DocumentHit {
 			continue
 		}
 		group.seen[hit.Ref.ID] = struct{}{}
-		if len(group.chunks) < s.config.MaxChunksPerDocumentHit {
+		if len(group.chunks) < maxChunksPerDocumentHit {
 			group.chunks = append(group.chunks, hit)
 		}
 	}
@@ -119,4 +137,12 @@ func (s *Service) groupDocuments(hits []ChunkHit) []DocumentHit {
 		return 0
 	})
 	return documents
+}
+
+func (s *Service) searchViewLocked() searchView {
+	return searchView{
+		space: s.space, searcher: s.head, live: s.live, vectorIDs: s.vectorIDs, refs: s.refByVector,
+		maxK: s.config.MaxK, maxChunkCandidates: s.config.MaxChunkCandidates,
+		maxChunksPerDocumentHit: s.config.MaxChunksPerDocumentHit,
+	}
 }

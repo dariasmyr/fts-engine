@@ -6,24 +6,24 @@ import (
 	"testing"
 )
 
-func TestBitSetContainsAndCardinality(t *testing.T) {
+func TestBitSetContainsAndCount(t *testing.T) {
 	set, err := NewBitSet(130, 0, 64, 129, 64)
 	if err != nil {
 		t.Fatalf("NewBitSet() error = %v", err)
 	}
-	if set.Size() != 130 {
-		t.Fatalf("Size() = %d, want 130", set.Size())
+	if set.TotalOrdinalCount() != 130 {
+		t.Fatalf("TotalOrdinalCount() = %d, want 130", set.TotalOrdinalCount())
 	}
-	if set.Cardinality() != 3 {
-		t.Fatalf("Cardinality() = %d, want 3", set.Cardinality())
+	if set.AllowedOrdinalCount() != 3 {
+		t.Fatalf("AllowedOrdinalCount() = %d, want 3", set.AllowedOrdinalCount())
 	}
 	for _, ord := range []Ordinal{0, 64, 129} {
-		if !set.Contains(ord) {
+		if !set.Allows(ord) {
 			t.Fatalf("Contains(%d) = false, want true", ord)
 		}
 	}
-	if set.Contains(63) || set.Contains(130) {
-		t.Fatal("Contains() accepted an unset or out-of-range ordinal")
+	if set.Allows(63) || set.Allows(130) {
+		t.Fatal("Allows() returned true for an unset or out-of-range ordinal")
 	}
 }
 
@@ -35,15 +35,15 @@ func TestNewBitSetRejectsOutOfRangeOrdinal(t *testing.T) {
 
 func TestFullBitSetMasksTrailingBits(t *testing.T) {
 	set := NewFullBitSet(65)
-	if set.Cardinality() != 65 {
-		t.Fatalf("Cardinality() = %d, want 65", set.Cardinality())
+	if set.AllowedOrdinalCount() != 65 {
+		t.Fatalf("AllowedOrdinalCount() = %d, want 65", set.AllowedOrdinalCount())
 	}
 	for ord := range 65 {
-		if !set.Contains(Ordinal(ord)) {
+		if !set.Allows(Ordinal(ord)) {
 			t.Fatalf("Contains(%d) = false, want true", ord)
 		}
 	}
-	if set.Contains(65) {
+	if set.Allows(65) {
 		t.Fatal("Contains(65) = true, want false")
 	}
 }
@@ -62,11 +62,11 @@ func TestBitSetWithDoesNotMutateOldSnapshot(t *testing.T) {
 		t.Fatalf("With(7, true) error = %v", err)
 	}
 
-	if !original.Contains(1) || original.Contains(7) || original.Cardinality() != 2 {
-		t.Fatalf("original snapshot mutated: cardinality=%d", original.Cardinality())
+	if !original.Allows(1) || original.Allows(7) || original.AllowedOrdinalCount() != 2 {
+		t.Fatalf("original snapshot changed: allowed count=%d", original.AllowedOrdinalCount())
 	}
-	if updated.Contains(1) || !updated.Contains(2) || !updated.Contains(7) || updated.Cardinality() != 2 {
-		t.Fatalf("updated snapshot = unexpected state, cardinality=%d", updated.Cardinality())
+	if updated.Allows(1) || !updated.Allows(2) || !updated.Allows(7) || updated.AllowedOrdinalCount() != 2 {
+		t.Fatalf("updated snapshot has unexpected state: allowed count=%d", updated.AllowedOrdinalCount())
 	}
 }
 
@@ -82,13 +82,13 @@ func TestEmptyBitSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBitSet(0) error = %v", err)
 	}
-	if set.Size() != 0 || set.Cardinality() != 0 || set.Contains(0) {
-		t.Fatalf("empty BitSet = size %d cardinality %d", set.Size(), set.Cardinality())
+	if set.TotalOrdinalCount() != 0 || set.AllowedOrdinalCount() != 0 || set.Allows(0) {
+		t.Fatalf("empty BitSet: total count %d, allowed count %d", set.TotalOrdinalCount(), set.AllowedOrdinalCount())
 	}
 
 	full := NewFullBitSet(0)
-	if full.Size() != 0 || full.Cardinality() != 0 || full.Contains(0) {
-		t.Fatalf("empty full BitSet = size %d cardinality %d", full.Size(), full.Cardinality())
+	if full.TotalOrdinalCount() != 0 || full.AllowedOrdinalCount() != 0 || full.Allows(0) {
+		t.Fatalf("empty full BitSet: total count %d, allowed count %d", full.TotalOrdinalCount(), full.AllowedOrdinalCount())
 	}
 }
 
@@ -102,29 +102,29 @@ func TestBitSetMatchesBooleanModel(t *testing.T) {
 		model := make([]bool, size)
 		for step := range 500 {
 			ord := Ordinal(rng.Intn(int(size)))
-			accepted := rng.Intn(2) == 0
+			allowed := rng.Intn(2) == 0
 			previous := set
-			previousValue := previous.Contains(ord)
-			set, err = set.With(ord, accepted)
+			previousValue := previous.Allows(ord)
+			set, err = set.With(ord, allowed)
 			if err != nil {
 				t.Fatalf("size %d step %d With() error = %v", size, step, err)
 			}
-			if previous.Contains(ord) != previousValue {
+			if previous.Allows(ord) != previousValue {
 				t.Fatalf("size %d step %d previous snapshot mutated", size, step)
 			}
-			model[ord] = accepted
+			model[ord] = allowed
 
-			wantCardinality := 0
+			wantCount := 0
 			for i, want := range model {
 				if want {
-					wantCardinality++
+					wantCount++
 				}
-				if got := set.Contains(Ordinal(i)); got != want {
+				if got := set.Allows(Ordinal(i)); got != want {
 					t.Fatalf("size %d step %d Contains(%d) = %t, want %t", size, step, i, got, want)
 				}
 			}
-			if set.Cardinality() != wantCardinality {
-				t.Fatalf("size %d step %d Cardinality() = %d, want %d", size, step, set.Cardinality(), wantCardinality)
+			if set.AllowedOrdinalCount() != wantCount {
+				t.Fatalf("size %d step %d AllowedOrdinalCount() = %d, want %d", size, step, set.AllowedOrdinalCount(), wantCount)
 			}
 		}
 	}
@@ -139,19 +139,19 @@ func TestBitSetWithChangesGrowsAndAppliesBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if set.Size() != 3 || set.Cardinality() != 2 || !set.Contains(0) {
-		t.Fatalf("original set changed: size=%d cardinality=%d", set.Size(), set.Cardinality())
+	if set.TotalOrdinalCount() != 3 || set.AllowedOrdinalCount() != 2 || !set.Allows(0) {
+		t.Fatalf("original set changed: total count=%d allowed count=%d", set.TotalOrdinalCount(), set.AllowedOrdinalCount())
 	}
-	if next.Size() != 6 || next.Cardinality() != 3 {
-		t.Fatalf("next = size %d cardinality %d, want 6 and 3", next.Size(), next.Cardinality())
+	if next.TotalOrdinalCount() != 6 || next.AllowedOrdinalCount() != 3 {
+		t.Fatalf("next = total count %d allowed count %d, want 6 and 3", next.TotalOrdinalCount(), next.AllowedOrdinalCount())
 	}
 	for _, ord := range []Ordinal{2, 3, 5} {
-		if !next.Contains(ord) {
-			t.Fatalf("ordinal %d is rejected, want accepted", ord)
+		if !next.Allows(ord) {
+			t.Fatalf("ordinal %d is disallowed, want allowed", ord)
 		}
 	}
-	if next.Contains(0) || next.Contains(1) || next.Contains(4) {
-		t.Fatal("unexpected accepted ordinal")
+	if next.Allows(0) || next.Allows(1) || next.Allows(4) {
+		t.Fatal("unexpected allowed ordinal")
 	}
 }
 
@@ -160,8 +160,8 @@ func TestBitSetWithChangesRejectsInvalidChanges(t *testing.T) {
 	if _, err := set.WithChanges(1, nil, nil); !errors.Is(err, ErrBitSetShrink) {
 		t.Fatalf("shrink error = %v, want ErrBitSetShrink", err)
 	}
-	if _, err := set.WithChanges(3, []Ordinal{2}, []Ordinal{2}); !errors.Is(err, ErrConflictingBits) {
-		t.Fatalf("conflict error = %v, want ErrConflictingBits", err)
+	if _, err := set.WithChanges(3, []Ordinal{2}, []Ordinal{2}); !errors.Is(err, ErrConflictingOrdinals) {
+		t.Fatalf("conflict error = %v, want ErrConflictingOrdinals", err)
 	}
 }
 
@@ -171,13 +171,35 @@ func TestBitSetWithChangesAcrossBlocksKeepsOldSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !set.Contains(1) || !set.Contains(9_000) || set.Size() != 10_000 {
+	if !set.Allows(1) || !set.Allows(9_000) || set.TotalOrdinalCount() != 10_000 {
 		t.Fatal("old block snapshot changed")
 	}
-	if next.Contains(1) || next.Contains(9_000) || !next.Contains(11_999) {
+	if next.Allows(1) || next.Allows(9_000) || !next.Allows(11_999) {
 		t.Fatal("cross-block changes were not applied")
 	}
-	if next.Cardinality() != 9_999 {
-		t.Fatalf("cardinality = %d, want 9999", next.Cardinality())
+	if next.AllowedOrdinalCount() != 9_999 {
+		t.Fatalf("allowed count = %d, want 9999", next.AllowedOrdinalCount())
+	}
+}
+
+func TestBitSetWordSnapshotRoundTrip(t *testing.T) {
+	set, err := NewBitSet(130, 0, 64, 129)
+	if err != nil {
+		t.Fatal(err)
+	}
+	words := set.SnapshotWords()
+	restored, err := NewBitSetFromWords(130, words)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.AllowedOrdinalCount() != 3 || !restored.Allows(0) || !restored.Allows(64) || !restored.Allows(129) {
+		t.Fatalf("restored set is invalid: allowed count=%d", restored.AllowedOrdinalCount())
+	}
+	words[0] = 0
+	if !restored.Allows(0) {
+		t.Fatal("changing input words changed the restored set")
+	}
+	if _, err := NewBitSetFromWords(65, []uint64{0, 2}); err == nil {
+		t.Fatal("non-zero trailing bits were allowed")
 	}
 }

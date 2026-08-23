@@ -3,6 +3,7 @@ package semantic
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"testing"
@@ -262,6 +263,27 @@ func TestExactGroupingUsesOneCompleteFlatScan(t *testing.T) {
 	}
 	if result.Stats.VisitedNodes != 6 || result.Stats.DistanceComputations != 6 {
 		t.Fatalf("exact stats = %+v, want one complete six-row scan", result.Stats)
+	}
+}
+
+func TestDocumentGroupingCandidateBudgetMayExceedPublicMaxK(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	for i := range 11 {
+		docID := fts.DocID(fmt.Sprintf("doc-%02d", i))
+		if err := service.AddDocument(ctx, []ChunkVector{testChunk(docID, "whole", 0, []float32{float32(i), 0})}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := service.SearchDocuments(ctx, []float32{0, 0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GroupingIncomplete || result.CandidateChunks != 11 || result.DistinctDocuments != 11 {
+		t.Fatalf("grouping result = %+v", result)
+	}
+	if _, err := service.SearchChunks(ctx, []float32{0, 0}, 11); !errors.Is(err, vector.ErrInvalidK) {
+		t.Fatalf("public chunk search error = %v", err)
 	}
 }
 

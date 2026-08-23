@@ -112,15 +112,15 @@ func (s *Service) DeleteDocument(docID fts.DocID) bool {
 	if !exists {
 		return false
 	}
-	rejected := make([]vector.Ordinal, len(ids))
+	staleOrdinals := make([]vector.Ordinal, len(ids))
 	for i, id := range ids {
 		location, ok := s.locationByVector[id]
 		if !ok || location.Component != MutableHeadID {
 			panic(ErrInternalState)
 		}
-		rejected[i] = location.Ordinal
+		staleOrdinals[i] = location.Ordinal
 	}
-	next, err := s.live.WithChanges(s.live.Size(), nil, rejected)
+	next, err := s.live.WithChanges(s.live.TotalOrdinalCount(), nil, staleOrdinals)
 	if err != nil {
 		panic(fmt.Errorf("%w: %v", ErrInternalState, err))
 	}
@@ -130,6 +130,8 @@ func (s *Service) DeleteDocument(docID fts.DocID) bool {
 }
 
 func (s *Service) appendVersionLocked(docID fts.DocID, batch []ChunkVector, old []VectorID) error {
+	// Check capacity and derive new stable IDs without changing service state.
+	// Example: watermark 10 and two new chunks produce IDs 11 and 12.
 	if len(batch) > s.config.MaxVectors-s.head.Len() {
 		return vectorflat.ErrCapacityExceeded
 	}
@@ -137,24 +139,29 @@ func (s *Service) appendVersionLocked(docID fts.DocID, batch []ChunkVector, old 
 	if err != nil {
 		return err
 	}
+	// The append-only flat index assigns the next contiguous ordinal range.
+	// Prepare the corresponding liveness snapshot before mutating the index.
+	// Example replace: with head length 5, two new chunks use ordinals 5 and 6;
+	// old ordinals 2 and 3 become stale but remain in the physical matrix.
 	start := s.head.Len()
-	accepted := make([]vector.Ordinal, len(batch))
-	for i := range accepted {
-		accepted[i] = vector.Ordinal(start + i)
+	newLiveOrdinals := make([]vector.Ordinal, len(batch))
+	for i := range newLiveOrdinals {
+		newLiveOrdinals[i] = vector.Ordinal(start + i)
 	}
-	rejected := make([]vector.Ordinal, len(old))
+	staleOrdinals := make([]vector.Ordinal, len(old))
 	for i, id := range old {
 		location, ok := s.locationByVector[id]
 		if !ok || location.Component != MutableHeadID {
 			return ErrInternalState
 		}
-		rejected[i] = location.Ordinal
+		staleOrdinals[i] = location.Ordinal
 	}
-	nextLive, err := s.live.WithChanges(uint32(start+len(batch)), accepted, rejected)
+	nextLive, err := s.live.WithChanges(uint32(start+len(batch)), newLiveOrdinals, staleOrdinals)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInternalState, err)
 	}
 
+	// AppendBatch prepares and copies every vector, or leaves the index unchanged.
 	vectors := make([][]float32, len(batch))
 	for i := range batch {
 		vectors[i] = batch[i].Vector
@@ -163,6 +170,8 @@ func (s *Service) appendVersionLocked(docID fts.DocID, batch []ChunkVector, old 
 	if err != nil {
 		return err
 	}
+
+	// The assigned range must match the ordinals used to build nextLive.
 	if ordinals.Count != uint32(len(batch)) {
 		return ErrInternalState
 	}
@@ -171,16 +180,23 @@ func (s *Service) appendVersionLocked(docID fts.DocID, batch []ChunkVector, old 
 		if !ok {
 			return ErrInternalState
 		}
-		if ord != accepted[i] {
+		if ord != newLiveOrdinals[i] {
 			return ErrInternalState
 		}
+
+		// Install the mappings while the service lock prevents readers from
+		// observing a partially published document version.
 		id := ids[i]
 		s.vectorIDs = append(s.vectorIDs, id)
 		s.refByVector[id] = batch[i].Ref
 		s.locationByVector[id] = Location{Component: MutableHeadID, Ordinal: ord}
 	}
+	// Switch the document mapping and liveness snapshot to the new version.
+	// Example: doc-A -> [9, 10] becomes doc-A -> [11, 12], while vectors 9
+	// and 10 remain stored but are no longer allowed in search results.
 	s.currentByDoc[docID] = append([]VectorID(nil), ids...)
 	s.live = nextLive
+	// Advance the watermark only after the new version is fully installed.
 	s.highWatermark = ids[len(ids)-1]
 	return nil
 }
@@ -242,12 +258,12 @@ func (s *Service) Statistics() Statistics {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	physical := s.head.Len()
-	live := s.live.Cardinality()
+	liveCount := s.live.AllowedOrdinalCount()
 	return Statistics{
 		Documents:       len(s.currentByDoc),
 		PhysicalVectors: physical,
-		LiveVectors:     live,
-		StaleVectors:    physical - live,
+		LiveVectors:     liveCount,
+		StaleVectors:    physical - liveCount,
 		HighWatermark:   s.highWatermark,
 	}
 }

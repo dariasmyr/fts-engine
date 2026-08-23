@@ -17,6 +17,7 @@ var (
 	ErrDuplicateChunkID  = errors.New("semantic: duplicate chunk ID")
 	ErrVectorIDExhausted = errors.New("semantic: vector ID exhausted")
 	ErrInternalState     = errors.New("semantic: inconsistent internal state")
+	ErrInvalidCheckpoint = errors.New("semantic: invalid checkpoint")
 )
 
 type VectorID uint64
@@ -90,4 +91,22 @@ type Statistics struct {
 	LiveVectors     int
 	StaleVectors    int
 	HighWatermark   VectorID
+}
+
+type DocumentRecord struct {
+	DocID     fts.DocID
+	VectorIDs []VectorID
+}
+
+type RefRecord struct {
+	VectorID VectorID
+	Ref      chunk.Ref
+}
+
+type DuplicateStatistics struct {
+	VectorRows      int
+	UniqueVectors   int
+	DuplicateRows   int
+	DuplicateGroups int
+	MaxFanOut       int
 }

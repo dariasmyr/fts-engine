@@ -414,8 +414,3 @@ func (t *Index) collectSubtreeDocs(current int, merged map[fts.DocOrd]fts.DocRef
 		t.collectSubtreeDocs(child, merged)
 	}
 }
-
-var _ fts.PositionalIndex = (*Index)(nil)
-var _ fts.PrefixIndex = (*Index)(nil)
-var _ fts.Index = (*Index)(nil)
-var _ segment.Source = (*Index)(nil)

@@ -7,10 +7,10 @@ import (
 )
 
 var (
-	ErrNilContext            = errors.New("vector: nil context")
-	ErrInvalidK              = errors.New("vector: k must be positive")
-	ErrInvalidSearchOptions  = errors.New("vector: search options must not be negative")
-	ErrAcceptSetSizeMismatch = errors.New("vector: accept set size does not match vector count")
+	ErrNilContext               = errors.New("vector: nil context")
+	ErrInvalidK                 = errors.New("vector: k must be positive")
+	ErrInvalidSearchOptions     = errors.New("vector: search options must not be negative")
+	ErrResultFilterSizeMismatch = errors.New("vector: result filter size does not match vector count")
 )
 
 const (
@@ -73,20 +73,18 @@ type Hit struct {
 	Distance float64
 }
 
-// AcceptSet is an immutable snapshot that controls result eligibility. Rejected
-// HNSW nodes may still be used for graph traversal. A nil AcceptSet means that
-// every ordinal is accepted. Searchers must reject sets whose Size differs from
-// their vector-row count.
-type AcceptSet interface {
-	Contains(Ordinal) bool
-	Cardinality() int
-	Size() uint32
+// ResultFilter is an immutable snapshot controlling which local ordinals may
+// appear in search hits. TotalOrdinalCount must match the searcher's Len.
+type ResultFilter interface {
+	Allows(Ordinal) bool
+	AllowedOrdinalCount() int
+	TotalOrdinalCount() uint32
 }
 
 type SearchOptions struct {
-	EfSearch   int
-	VisitLimit int
-	Accept     AcceptSet
+	EfSearch     int
+	VisitLimit   int
+	ResultFilter ResultFilter
 }
 
 type SearchStats struct {

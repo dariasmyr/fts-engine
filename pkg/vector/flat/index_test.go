@@ -77,11 +77,11 @@ func TestSearchFiltersOrdersAndCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accept, err := vector.NewBitSet(4, 0, 1, 2)
+	eligible, err := vector.NewBitSet(4, 0, 1, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := idx.Search(context.Background(), []float32{0, 0}, 3, vector.SearchOptions{Accept: accept})
+	result, err := idx.Search(context.Background(), []float32{0, 0}, 3, vector.SearchOptions{ResultFilter: eligible})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,8 +105,8 @@ func TestSearchVisitLimitCancellationAndAcceptSize(t *testing.T) {
 		t.Fatalf("limited result = %+v", result)
 	}
 	wrong := vector.NewFullBitSet(2)
-	if _, err := idx.Search(context.Background(), []float32{0, 0}, 1, vector.SearchOptions{Accept: wrong}); !errors.Is(err, vector.ErrAcceptSetSizeMismatch) {
-		t.Fatalf("accept error = %v", err)
+	if _, err := idx.Search(context.Background(), []float32{0, 0}, 1, vector.SearchOptions{ResultFilter: wrong}); !errors.Is(err, vector.ErrResultFilterSizeMismatch) {
+		t.Fatalf("eligible ordinal error = %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

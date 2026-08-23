@@ -123,67 +123,9 @@ func (idx *Index) AppendBatch(vectors [][]float32) (OrdinalRange, error) {
 }
 
 func (idx *Index) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
-	if ctx == nil {
-		return vector.SearchResult{}, vector.ErrNilContext
-	}
-	if err := ctx.Err(); err != nil {
-		return vector.SearchResult{}, err
-	}
-	if k <= 0 {
-		return vector.SearchResult{}, vector.ErrInvalidK
-	}
-	if k > idx.maxK {
-		return vector.SearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, idx.maxK)
-	}
-	if options.EfSearch < 0 || options.VisitLimit < 0 {
-		return vector.SearchResult{}, vector.ErrInvalidSearchOptions
-	}
-	preparedQuery, err := idx.space.Prepare(query)
-	if err != nil {
-		return vector.SearchResult{}, err
-	}
-
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	count := idx.lenLocked()
-	if options.Accept != nil && uint64(options.Accept.Size()) != uint64(count) {
-		return vector.SearchResult{}, fmt.Errorf("%w: got %d, want %d", vector.ErrAcceptSetSizeMismatch, options.Accept.Size(), count)
-	}
-
-	resultLimit := min(k, count)
-	if options.Accept != nil {
-		resultLimit = min(resultLimit, options.Accept.Cardinality())
-	}
-	top := newExactTopK(resultLimit)
-	stats := vector.SearchStats{Termination: vector.TerminationComplete}
-	incomplete := false
-	for row := 0; row < count; row++ {
-		if options.VisitLimit > 0 && stats.VisitedNodes >= options.VisitLimit {
-			stats.Termination = vector.TerminationVisitLimit
-			incomplete = true
-			break
-		}
-		if row%256 == 0 {
-			if err := ctx.Err(); err != nil {
-				return vector.SearchResult{}, err
-			}
-		}
-
-		stats.VisitedNodes++
-		ord := vector.Ordinal(row)
-		if options.Accept != nil && !options.Accept.Contains(ord) {
-			stats.RejectedNodes++
-			continue
-		}
-		start := row * idx.space.Dimensions()
-		distance := idx.space.DistancePrepared(preparedQuery, idx.values[start:start+idx.space.Dimensions()])
-		stats.DistanceComputations++
-		top.Add(vector.Hit{Ordinal: ord, Distance: distance})
-	}
-	if err := ctx.Err(); err != nil {
-		return vector.SearchResult{}, err
-	}
-	return vector.SearchResult{Hits: top.Results(), Stats: stats, Incomplete: incomplete}, nil
+	return searchExact(ctx, idx.space, idx.values, idx.maxK, query, k, options)
 }
 
 func (idx *Index) Len() int {
@@ -200,4 +142,9 @@ func (idx *Index) Metric() vector.Metric { return idx.space.Metric() }
 // lenLocked returns the number of vectors in the index. The caller must hold a read or write lock.
 func (idx *Index) lenLocked() int { return len(idx.values) / idx.space.Dimensions() }
 
-var _ vector.Searcher = (*Index)(nil)
+// Freeze copies the current matrix into an immutable concurrent reader.
+func (idx *Index) Freeze() *Reader {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	return newReader(idx.space, idx.maxK, append([]float32(nil), idx.values...))
+}
