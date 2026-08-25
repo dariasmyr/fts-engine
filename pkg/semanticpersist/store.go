@@ -53,6 +53,8 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if err != nil {
 		return Generation{}, err
 	}
+	// Serialize the CURRENT check and the complete publication across processes.
+	// Without one lock, two writers could both validate the same base generation.
 	storeLock, err := acquireStoreLock(filepath.Join(paths.root, "LOCK"))
 	if err != nil {
 		return Generation{}, err
@@ -78,6 +80,8 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 		}
 	}
 
+	// Build the immutable segment under its final parent so installing it is one
+	// same-filesystem rename. Until that rename, failures only leave temp work.
 	segmentTemp, err := os.MkdirTemp(paths.segments, ".tmp-seg-")
 	if err != nil {
 		return Generation{}, fmt.Errorf("semanticpersist: create segment temp: %w", err)
@@ -133,6 +137,8 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 		return Generation{}, err
 	}
 	if _, err := os.Lstat(objectPath); err == nil {
+		// Content-addressed reuse is allowed only after the existing files match
+		// the exact sizes and hashes produced by this checkpoint.
 		if err := verifyExistingObject(objectPath, vectorsRef, segmentMetaRef, options.Limits, options.Durability); err != nil {
 			return Generation{}, err
 		}
@@ -162,6 +168,8 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 		return Generation{}, err
 	}
 
+	// A generation binds logical state to one immutable segment object. Installing
+	// its directory does not publish it; CURRENT remains the only commit pointer.
 	generationTemp, err := os.MkdirTemp(paths.generations, ".tmp-gen-")
 	if err != nil {
 		return Generation{}, fmt.Errorf("semanticpersist: create generation temp: %w", err)
@@ -235,6 +243,8 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 		return Generation{}, err
 	}
 
+	// The segment and generation are now complete but still orphaned. Readers
+	// continue opening the previous generation until CURRENT is replaced.
 	if err := beforeStep(ctx, options, StepWriteCurrent); err != nil {
 		return Generation{}, err
 	}
@@ -267,9 +277,13 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if err := beforeStep(ctx, options, StepReplaceCurrent); err != nil {
 		return Generation{}, err
 	}
+	// Commit point: after this atomic replacement, a normal pre-commit failure is
+	// no longer possible because readers may already observe this generation.
 	if err := atomicReplace(currentTempName, filepath.Join(paths.root, currentFileName)); err != nil {
 		return Generation{}, fmt.Errorf("semanticpersist: replace CURRENT: %w", err)
 	}
+	// Ignore caller cancellation after commit and finish reporting durability.
+	// Any post-commit failure is wrapped as ErrIndeterminate.
 	if err := afterStep(context.Background(), options, StepReplaceCurrent, true); err != nil {
 		return Generation{}, err
 	}
@@ -297,6 +311,8 @@ func Open(root string, limits Limits) (*Loaded, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Retain the shared lock in Loaded until Close so no writer can publish or
+	// repair the store while this reader is being opened or used.
 	storeLock, err := acquireStoreReadLock(filepath.Join(paths.root, "LOCK"))
 	if err != nil {
 		return nil, err
@@ -311,6 +327,8 @@ func Open(root string, limits Limits) (*Loaded, error) {
 }
 
 func openCurrent(paths storePaths, limits Limits) (*Loaded, error) {
+	// CURRENT is authoritative. Normal open never scans generation directories or
+	// promotes a newer orphan automatically.
 	currentData, err := readRegularFile(filepath.Join(paths.root, currentFileName), limits.MaxFileBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrCurrentMissing
@@ -346,6 +364,8 @@ func RepairCurrent(root string, generationID uint64, options Options) error {
 		return err
 	}
 	defer storeLock.Close()
+	// Repair validates exactly the caller-selected generation; it does not guess
+	// which orphan is newest or safest.
 	loaded, manifestHash, err := openGenerationForRepair(paths, generationID, options.Limits)
 	if err != nil {
 		return err
@@ -465,6 +485,8 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		return nil, err
 	}
 	manifestHash := sha256.Sum256(manifestData)
+	// This closes the first link in the hash chain: CURRENT identifies not only a
+	// generation number, but the exact manifest bytes expected for that number.
 	if checkHash && manifestHash != expectedManifestHash {
 		return nil, ErrCorrupt
 	}
@@ -475,6 +497,8 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 	if !validObjectID(manifestValue.ObjectID) {
 		return nil, ErrInvalidObjectID
 	}
+	// Reject a generation whose declared files could exceed the total open
+	// allocation budget before reading and decoding those files.
 	if err := validateOpenReferences(manifestData, manifestValue, limits); err != nil {
 		return nil, err
 	}
@@ -528,6 +552,8 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		DuplicateStatistics: segmentMeta.DuplicateStatistics, MaxK: state.MaxK,
 		MaxChunkCandidates: state.MaxChunkCandidates, MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
 	}
+	// OpenCheckpoint performs cross-file validation: vector rows, ordinal IDs,
+	// liveness, refs, current documents, descriptors, and limits must agree.
 	reader, err := semantic.OpenCheckpoint(checkpoint)
 	if err != nil {
 		return nil, err
@@ -707,6 +733,8 @@ func verifyExistingObject(path string, vectors, meta fileReference, limits Limit
 		return err
 	}
 	if durability == DurabilitySynchronous {
+		// Upgrade an object left by an asynchronous publication before allowing a
+		// synchronous generation to depend on it.
 		for _, file := range []string{vectorsPath, metaPath} {
 			if err := syncRegularFile(file); err != nil {
 				return err
@@ -718,6 +746,8 @@ func verifyExistingObject(path string, vectors, meta fileReference, limits Limit
 }
 
 func syncPublishedGeneration(paths storePaths, generationID uint64, objectID string) error {
+	// Repair may select an orphan produced asynchronously. Sync every referenced
+	// file and directory before publishing a synchronous repaired CURRENT.
 	objectPath := filepath.Join(paths.segments, objectID)
 	generationPath := filepath.Join(paths.generations, generationName(generationID))
 	for _, file := range []string{

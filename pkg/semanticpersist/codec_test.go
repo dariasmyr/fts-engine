@@ -86,6 +86,44 @@ func TestStateEncodingCanonicalizesRecordOrder(t *testing.T) {
 	}
 }
 
+func TestSegmentMetaPreservesOptionalDuplicateStatistics(t *testing.T) {
+	checkpoint, _, _ := persistenceFixture(t, false)
+	_, vectors, err := vectorBytes(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flatStats := checkpoint.Segment.ExactDuplicateStats("test-space")
+	stats := semantic.DuplicateStatistics{
+		VectorRows: flatStats.VectorRows, UniqueVectors: flatStats.UniqueVectors, DuplicateRows: flatStats.DuplicateRows,
+		DuplicateGroups: flatStats.DuplicateGroups, MaxFanOut: flatStats.MaxFanOut,
+	}
+	checkpoint.DuplicateStatistics = &stats
+	data, _, err := encodeSegmentMeta(checkpoint, vectors, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeSegmentMeta(data, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalDuplicateStatistics(decoded.DuplicateStatistics, &stats) {
+		t.Fatalf("duplicate statistics = %+v, want %+v", decoded.DuplicateStatistics, stats)
+	}
+
+	checkpoint.DuplicateStatistics = nil
+	data, _, err = encodeSegmentMeta(checkpoint, vectors, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err = decodeSegmentMeta(data, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.DuplicateStatistics != nil {
+		t.Fatalf("duplicate statistics = %+v, want nil", decoded.DuplicateStatistics)
+	}
+}
+
 func FuzzDecodeState(f *testing.F) {
 	checkpoint, _, _ := persistenceFixture(f, false)
 	data, _, _ := encodeState(checkpoint, DefaultLimits())

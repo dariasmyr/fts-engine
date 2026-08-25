@@ -11,15 +11,16 @@ import (
 
 // Checkpoint is one coherent, immutable semantic generation input.
 type Checkpoint struct {
-	Space                   SpaceDescriptor
-	Chunking                ChunkingDescriptor
-	HighWatermark           VectorID
-	Segment                 *vectorflat.Reader
-	VectorIDs               []VectorID
-	Live                    vector.BitSet
-	Documents               []DocumentRecord
-	Refs                    []RefRecord
-	DuplicateStatistics     DuplicateStatistics
+	Space         SpaceDescriptor
+	Chunking      ChunkingDescriptor
+	HighWatermark VectorID
+	Segment       *vectorflat.Reader
+	VectorIDs     []VectorID
+	Live          vector.BitSet
+	Documents     []DocumentRecord
+	Refs          []RefRecord
+	// DuplicateStatistics is nil when optional duplicate collection is disabled.
+	DuplicateStatistics     *DuplicateStatistics
 	MaxK                    int
 	MaxChunkCandidates      int
 	MaxChunksPerDocumentHit int
@@ -50,7 +51,11 @@ func (s *Service) Checkpoint() (Checkpoint, error) {
 		}
 		refs = append(refs, RefRecord{VectorID: id, Ref: ref})
 	}
-	duplicateStats := segment.ExactDuplicateStats(spaceNamespace(s.config.Space))
+	var duplicateStats *DuplicateStatistics
+	if s.config.CollectDuplicateStatistics {
+		stats := duplicateStatistics(segment.ExactDuplicateStats(spaceNamespace(s.config.Space)))
+		duplicateStats = &stats
+	}
 	checkpoint := Checkpoint{
 		Space:                   s.config.Space,
 		Chunking:                s.config.Chunking,
@@ -60,7 +65,7 @@ func (s *Service) Checkpoint() (Checkpoint, error) {
 		Live:                    s.live,
 		Documents:               documents,
 		Refs:                    refs,
-		DuplicateStatistics:     duplicateStatistics(duplicateStats),
+		DuplicateStatistics:     duplicateStats,
 		MaxK:                    s.config.MaxK,
 		MaxChunkCandidates:      s.config.MaxChunkCandidates,
 		MaxChunksPerDocumentHit: s.config.MaxChunksPerDocumentHit,
@@ -142,9 +147,11 @@ func (c Checkpoint) Validate() error {
 	if len(current) != c.Live.AllowedOrdinalCount() {
 		return ErrInvalidCheckpoint
 	}
-	wantDuplicates := duplicateStatistics(c.Segment.ExactDuplicateStats(spaceNamespace(c.Space)))
-	if c.DuplicateStatistics != wantDuplicates {
-		return fmt.Errorf("%w: duplicate statistics mismatch", ErrInvalidCheckpoint)
+	if c.DuplicateStatistics != nil {
+		wantDuplicates := duplicateStatistics(c.Segment.ExactDuplicateStats(spaceNamespace(c.Space)))
+		if *c.DuplicateStatistics != wantDuplicates {
+			return fmt.Errorf("%w: duplicate statistics mismatch", ErrInvalidCheckpoint)
+		}
 	}
 	return nil
 }

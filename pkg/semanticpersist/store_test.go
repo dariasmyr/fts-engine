@@ -55,7 +55,7 @@ func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
 			if !slices.Equal(gotChunks.Hits, wantChunks.Hits) || !equalDocumentHits(gotDocuments.Hits, wantDocuments.Hits) {
 				t.Fatalf("round-trip search mismatch\nchunks=%+v\ndocuments=%+v", gotChunks, gotDocuments)
 			}
-			if loaded.Checkpoint.Space != checkpoint.Space || loaded.Checkpoint.Chunking != checkpoint.Chunking || loaded.Checkpoint.HighWatermark != checkpoint.HighWatermark || loaded.Checkpoint.DuplicateStatistics != checkpoint.DuplicateStatistics {
+			if loaded.Checkpoint.Space != checkpoint.Space || loaded.Checkpoint.Chunking != checkpoint.Chunking || loaded.Checkpoint.HighWatermark != checkpoint.HighWatermark || !equalDuplicateStatistics(loaded.Checkpoint.DuplicateStatistics, checkpoint.DuplicateStatistics) {
 				t.Fatal("checkpoint metadata changed during round trip")
 			}
 			if !slices.Equal(loaded.Checkpoint.VectorIDs, checkpoint.VectorIDs) ||
@@ -497,6 +497,13 @@ func equalDocumentRecords(a, b []semantic.DocumentRecord) bool {
 	return slices.EqualFunc(a, b, func(a, b semantic.DocumentRecord) bool {
 		return a.DocID == b.DocID && slices.Equal(a.VectorIDs, b.VectorIDs)
 	})
+}
+
+func equalDuplicateStatistics(a, b *semantic.DuplicateStatistics) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func durabilityName(mode DurabilityMode) string {

@@ -58,5 +58,9 @@ func cloneCheckpoint(checkpoint Checkpoint) Checkpoint {
 	checkpoint.VectorIDs = append([]VectorID(nil), checkpoint.VectorIDs...)
 	checkpoint.Documents = cloneDocumentRecords(checkpoint.Documents)
 	checkpoint.Refs = append([]RefRecord(nil), checkpoint.Refs...)
+	if checkpoint.DuplicateStatistics != nil {
+		stats := *checkpoint.DuplicateStatistics
+		checkpoint.DuplicateStatistics = &stats
+	}
 	return checkpoint
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func TestCheckpointRoundTripPreservesSearchAndMappings(t *testing.T) {
-	service := newTestService(t)
+	service := newCheckpointTestService(t)
 	ctx := context.Background()
 	if err := service.AddDocument(ctx, []ChunkVector{
 		testChunk("doc-b", "b-1", 0, []float32{1, 0}),
@@ -40,7 +40,7 @@ func TestCheckpointRoundTripPreservesSearchAndMappings(t *testing.T) {
 	if len(checkpoint.Documents) != 2 || checkpoint.Documents[0].DocID != "doc-a" || checkpoint.Documents[1].DocID != "doc-b" {
 		t.Fatalf("documents are not canonical: %+v", checkpoint.Documents)
 	}
-	if checkpoint.Live.AllowedOrdinalCount() != 3 || checkpoint.Segment.Len() != 4 || checkpoint.DuplicateStatistics.DuplicateRows != 1 {
+	if checkpoint.Live.AllowedOrdinalCount() != 3 || checkpoint.Segment.Len() != 4 || checkpoint.DuplicateStatistics == nil || checkpoint.DuplicateStatistics.DuplicateRows != 1 {
 		t.Fatalf("checkpoint statistics/state = %+v", checkpoint)
 	}
 	reader, err := OpenCheckpoint(checkpoint)
@@ -63,7 +63,7 @@ func TestCheckpointRoundTripPreservesSearchAndMappings(t *testing.T) {
 }
 
 func TestCheckpointRejectsDanglingAndDuplicateState(t *testing.T) {
-	service := newTestService(t)
+	service := newCheckpointTestService(t)
 	if err := service.AddDocument(context.Background(), []ChunkVector{testChunk("doc", "chunk", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,9 @@ func TestCheckpointRejectsDanglingAndDuplicateState(t *testing.T) {
 		t.Fatalf("liveness-size error = %v", err)
 	}
 	bad = checkpoint
-	bad.DuplicateStatistics.DuplicateRows++
+	stats := *checkpoint.DuplicateStatistics
+	stats.DuplicateRows++
+	bad.DuplicateStatistics = &stats
 	if err := bad.Validate(); !errors.Is(err, ErrInvalidCheckpoint) {
 		t.Fatalf("duplicate-stat error = %v", err)
 	}
@@ -100,4 +102,29 @@ func TestCheckpointRejectsDanglingAndDuplicateState(t *testing.T) {
 	if err := bad.Validate(); !errors.Is(err, ErrInvalidCheckpoint) {
 		t.Fatalf("segment search-bound error = %v", err)
 	}
+}
+
+func TestCheckpointSkipsDuplicateStatisticsByDefault(t *testing.T) {
+	service := newTestService(t)
+	if err := service.AddDocument(context.Background(), []ChunkVector{testChunk("doc", "chunk", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := service.Checkpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.DuplicateStatistics != nil {
+		t.Fatalf("duplicate statistics = %+v, want nil", checkpoint.DuplicateStatistics)
+	}
+}
+
+func newCheckpointTestService(t *testing.T) *Service {
+	t.Helper()
+	config := testConfig(10, 100)
+	config.CollectDuplicateStatistics = true
+	service, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
 }

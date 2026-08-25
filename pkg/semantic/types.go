@@ -44,8 +44,11 @@ type ChunkingDescriptor struct {
 }
 
 type Config struct {
-	Space                        SpaceDescriptor
-	Chunking                     ChunkingDescriptor
+	Space    SpaceDescriptor
+	Chunking ChunkingDescriptor
+	// CollectDuplicateStatistics enables an O(rows * dimensions) exact-vector
+	// scan during checkpoint creation and validation. It is disabled by default.
+	CollectDuplicateStatistics   bool
 	MaxVectors                   int
 	MaxChunksPerDocument         int
 	MaxK                         int

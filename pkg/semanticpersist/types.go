@@ -26,7 +26,10 @@ var (
 type DurabilityMode uint8
 
 const (
+	// DurabilitySynchronous fsyncs published files and affected directories.
 	DurabilitySynchronous DurabilityMode = iota + 1
+	// DurabilityAsynchronous preserves atomic visibility but does not promise
+	// that the latest generation survives sudden power loss.
 	DurabilityAsynchronous
 )
 
@@ -67,10 +70,12 @@ const (
 )
 
 type Options struct {
-	Durability         DurabilityMode
-	Limits             Limits
-	BeforeStep         func(PublicationStep) error
-	AfterStep          func(PublicationStep) error
+	Durability DurabilityMode
+	Limits     Limits
+	BeforeStep func(PublicationStep) error
+	AfterStep  func(PublicationStep) error
+	// ExpectedGeneration is the CURRENT generation on which this publication is
+	// based. A mismatch rejects a stale writer before any generation is committed.
 	ExpectedGeneration uint64
 }
 
@@ -88,6 +93,8 @@ type Loaded struct {
 	closeErr   error
 }
 
+// Close closes the immutable reader and releases the shared store lock. It is
+// safe to call more than once.
 func (l *Loaded) Close() error {
 	if l == nil {
 		return nil
@@ -139,5 +146,5 @@ type decodedSegmentMeta struct {
 	Live                []uint64
 	LiveSize            uint32
 	Vectors             fileReference
-	DuplicateStatistics semantic.DuplicateStatistics
+	DuplicateStatistics *semantic.DuplicateStatistics
 }

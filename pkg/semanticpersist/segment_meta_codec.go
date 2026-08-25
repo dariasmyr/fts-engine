@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	segmentMetaMagic   = "VSMT"
-	segmentMetaVersion = uint16(1)
+	segmentMetaMagic                  = "VSMT"
+	segmentMetaVersion                = uint16(1)
+	segmentMetaHasDuplicateStatistics = uint32(1)
 )
 
 func encodeSegmentMeta(checkpoint semantic.Checkpoint, vectors fileReference, limits Limits) ([]byte, fileReference, error) {
@@ -21,7 +22,12 @@ func encodeSegmentMeta(checkpoint semantic.Checkpoint, vectors fileReference, li
 			return nil, fileReference{}, ErrCorrupt
 		}
 	}
-	stats := checkpoint.DuplicateStatistics
+	var flags uint32
+	var stats semantic.DuplicateStatistics
+	if checkpoint.DuplicateStatistics != nil {
+		flags = segmentMetaHasDuplicateStatistics
+		stats = *checkpoint.DuplicateStatistics
+	}
 	if stats.VectorRows < 0 || stats.UniqueVectors < 0 || stats.DuplicateRows < 0 || stats.DuplicateGroups < 0 || stats.MaxFanOut < 0 {
 		return nil, fileReference{}, ErrCorrupt
 	}
@@ -30,7 +36,7 @@ func encodeSegmentMeta(checkpoint semantic.Checkpoint, vectors fileReference, li
 	e.u32(uint32(len(checkpoint.VectorIDs)))
 	e.u32(checkpoint.Live.TotalOrdinalCount())
 	e.u32(uint32(len(words)))
-	e.u32(0)
+	e.u32(flags)
 	e.u64(vectors.Size)
 	e.raw(vectors.SHA256[:])
 	e.u64(uint64(stats.VectorRows))
@@ -55,13 +61,20 @@ func decodeSegmentMeta(data []byte, limits Limits) (decodedSegmentMeta, error) {
 	count := int(d.u32())
 	liveSize := d.u32()
 	wordCount := int(d.u32())
-	if d.u32() != 0 || count < 0 || count > limits.MaxVectors || liveSize != uint32(count) || wordCount != (count+63)/64 {
+	flags := d.u32()
+	if flags&^segmentMetaHasDuplicateStatistics != 0 || count < 0 || count > limits.MaxVectors || liveSize != uint32(count) || wordCount != (count+63)/64 {
 		return decodedSegmentMeta{}, ErrCorrupt
 	}
 	vectors := fileReference{Size: d.u64()}
 	copy(vectors.SHA256[:], d.take(len(vectors.SHA256)))
 	stats := semantic.DuplicateStatistics{
 		VectorRows: decodeBoundedInt(d), UniqueVectors: decodeBoundedInt(d), DuplicateRows: decodeBoundedInt(d), DuplicateGroups: decodeBoundedInt(d), MaxFanOut: decodeBoundedInt(d),
+	}
+	var duplicateStats *semantic.DuplicateStatistics
+	if flags&segmentMetaHasDuplicateStatistics != 0 {
+		duplicateStats = &stats
+	} else if stats != (semantic.DuplicateStatistics{}) {
+		return decodedSegmentMeta{}, ErrCorrupt
 	}
 	requiredValues := uint64(count+wordCount) * 8
 	if requiredValues > uint64(d.remaining()) || requiredValues != uint64(d.remaining()) {
@@ -84,7 +97,7 @@ func decodeSegmentMeta(data []byte, limits Limits) (decodedSegmentMeta, error) {
 	if _, err := vector.NewBitSetFromWords(liveSize, words); err != nil {
 		return decodedSegmentMeta{}, ErrCorrupt
 	}
-	return decodedSegmentMeta{VectorIDs: ids, Live: words, LiveSize: liveSize, Vectors: vectors, DuplicateStatistics: stats}, nil
+	return decodedSegmentMeta{VectorIDs: ids, Live: words, LiveSize: liveSize, Vectors: vectors, DuplicateStatistics: duplicateStats}, nil
 }
 
 func decodeBoundedInt(d *decoder) int {

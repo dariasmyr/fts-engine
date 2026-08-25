@@ -9,6 +9,8 @@ It provides:
 - query-string, phrase, boolean, field-scoped, and prefix search
 - optional pipelines, stemming, and language presets via `pkg/textproc` and `pkg/ftspreset`
 - mutable snapshots and sealed read-only segments via `pkg/ftspersist`
+- chunk-aware dense-vector search via `pkg/vector` and `pkg/semantic`
+- immutable semantic generations via `pkg/semanticpersist`
 - per-request diagnostics and aggregated search stats via `pkg/ftsstats`
 
 ## Public API Surface
@@ -26,6 +28,10 @@ For external integrations, prefer these public packages:
 - `pkg/ftspreset` - ready-to-use pipeline presets
 - `pkg/filter` - bloom, cuckoo, and ribbon filters
 - `pkg/ftsstats` - aggregated search observability
+- `pkg/vector` - dense-vector metrics, search contracts, and immutable result filters
+- `pkg/vector/flat` - mutable and immutable exact vector indexes
+- `pkg/semantic` - chunk-aware semantic document search with caller-provided vectors
+- `pkg/semanticpersist` - generation-based persistence for semantic checkpoints
 
 `cmd/*`, `internal/*`, and `benchmarks/*` are repository-owned tooling, not the main library surface.
 
@@ -313,7 +319,11 @@ and the applied field and query type weights.
 
 ## Persistence
 
-The recommended persistence surface for library consumers is `pkg/ftspersist`.
+Lexical and semantic search use separate persistence APIs. Use `pkg/ftspersist`
+for `pkg/fts` snapshots and sealed segments, and `pkg/semanticpersist` for
+immutable semantic generations.
+
+### Lexical Persistence
 
 | Mode | Writable after load | Recommended API | Notes |
 | --- | --- | --- | --- |
@@ -368,6 +378,50 @@ Current working persistence examples:
 
 See `examples/client-library/README.md` for the exact run order. The load examples expect artifacts created by the corresponding save examples.
 
+### Semantic Persistence
+
+`pkg/semantic` accepts embeddings produced by your application or an external
+model; it does not call an embedding model itself. Create a coherent checkpoint
+from the mutable service, publish it, then open the generation selected by
+`CURRENT` as an immutable reader:
+
+```go
+checkpoint, err := service.Checkpoint()
+if err != nil {
+	return err
+}
+
+_, err = semanticpersist.Publish(ctx, "./data/semantic", 1, checkpoint, semanticpersist.Options{
+	ExpectedGeneration: 0,
+	Durability:         semanticpersist.DurabilitySynchronous,
+})
+if err != nil {
+	return err
+}
+
+loaded, err := semanticpersist.Open("./data/semantic", semanticpersist.DefaultLimits())
+if err != nil {
+	return err
+}
+defer loaded.Close()
+
+result, err := loaded.Reader.SearchDocuments(ctx, queryEmbedding, 10)
+```
+
+`Publish` writes a complete immutable generation and atomically replaces
+`CURRENT`, which is the commit point. `ExpectedGeneration` rejects stale
+writers. `Open` holds a shared OS file lock until `Loaded.Close`; publication
+requires the exclusive lock. Synchronous durability uses file and directory
+`fsync`, while asynchronous durability guarantees atomic process-visible
+publication but not survival of sudden power loss.
+
+See the runnable
+[`semantic-persistence` example](examples/client-library/semantic-persistence/main.go)
+and the detailed
+[`semantic persistence guide`](docs/semantic-persistence-guide.md) for the store
+layout, locking, checksums, failure handling, and explicit `RepairCurrent`
+recovery flow.
+
 ## Diagnostics and Stats
 
 Per-request diagnostics are opt-in:
@@ -402,6 +456,8 @@ Runtime diagnostics are separate from `textproc.ObservabilityPipeline()`.
 - `flat-observability` - flat index with technical-token analysis
 - `segment-analyzer-compatibility` - analyzer-compatible sealed segment restore
 - `rank-profile` - multi-field ranking with weighted field scoring
+- `semantic-flat` - chunk-aware in-memory semantic search with caller-provided vectors
+- `semantic-persistence` - checkpoint, publish, open, replace, and republish semantic generations
 - `snapshot-*` - mutable snapshot save and restore
 - `segment-*` - sealed segment save and restore, including `mmap`
 
