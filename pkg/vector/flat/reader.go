@@ -25,6 +25,16 @@ func (r *Reader) Search(ctx context.Context, query []float32, k int, options vec
 	return searchExact(ctx, r.space, r.values, r.maxK, query, k, options)
 }
 
+// Compact returns an immutable reader containing only rows allowed by filter.
+// Retained rows preserve their original order and prepared float32 values.
+func (r *Reader) Compact(ctx context.Context, filter vector.ResultFilter) (*Reader, error) {
+	values, err := compactPrepared(ctx, r.space.Dimensions(), r.values, filter)
+	if err != nil {
+		return nil, err
+	}
+	return newReader(r.space, r.maxK, values), nil
+}
+
 func (r *Reader) Len() int { return len(r.values) / r.space.Dimensions() }
 
 func (r *Reader) Dimensions() int { return r.space.Dimensions() }

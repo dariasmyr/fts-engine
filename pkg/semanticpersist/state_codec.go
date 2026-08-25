@@ -46,7 +46,7 @@ func encodeState(checkpoint semantic.Checkpoint, limits Limits) ([]byte, fileRef
 	e.u32(checkpoint.Space.VectorFormatVersion)
 	e.string(checkpoint.Space.ID, limits.MaxStringBytes)
 	e.string(checkpoint.Chunking.ID, limits.MaxStringBytes)
-	e.u64(uint64(checkpoint.HighWatermark))
+	e.u64(uint64(checkpoint.MaxAllocatedVectorID))
 	e.u32(uint32(checkpoint.MaxK))
 	e.u32(uint32(checkpoint.MaxChunkCandidates))
 	e.u32(uint32(checkpoint.MaxChunksPerDocumentHit))
@@ -83,7 +83,7 @@ func decodeState(data []byte, limits Limits) (decodedState, error) {
 	formatVersion := d.u32()
 	spaceID := d.string()
 	chunkingID := d.string()
-	highWatermark := semantic.VectorID(d.u64())
+	maxAllocatedVectorID := semantic.VectorID(d.u64())
 	maxK := int(d.u32())
 	maxCandidates := int(d.u32())
 	maxChunksHit := int(d.u32())
@@ -136,7 +136,7 @@ func decodeState(data []byte, limits Limits) (decodedState, error) {
 	}
 	return decodedState{
 		Space:    semantic.SpaceDescriptor{ID: spaceID, Dimensions: dimensions, Metric: metric, Normalization: normalization, VectorFormatVersion: formatVersion},
-		Chunking: semantic.ChunkingDescriptor{ID: chunkingID}, HighWatermark: highWatermark,
+		Chunking: semantic.ChunkingDescriptor{ID: chunkingID}, MaxAllocatedVectorID: maxAllocatedVectorID,
 		Documents: documents, Refs: refs, MaxK: maxK, MaxChunkCandidates: maxCandidates, MaxChunksPerDocumentHit: maxChunksHit,
 	}, nil
 }

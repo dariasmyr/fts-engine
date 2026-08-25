@@ -100,7 +100,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if err != nil {
 		return Generation{}, err
 	}
-	if err := afterStep(ctx, options, StepWriteVectors, false); err != nil {
+	if err := afterStep(options, StepWriteVectors, false); err != nil {
 		return Generation{}, err
 	}
 	if vectorsRef.Size > options.Limits.MaxFileBytes || vectorsRef.Size > options.Limits.MaxVectorBytes+128 {
@@ -116,7 +116,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if err := writeDataFile(filepath.Join(segmentTemp, segmentMetaFileName), segmentMetaData, options.Durability); err != nil {
 		return Generation{}, err
 	}
-	if err := afterStep(ctx, options, StepWriteSegmentMeta, false); err != nil {
+	if err := afterStep(options, StepWriteSegmentMeta, false); err != nil {
 		return Generation{}, err
 	}
 	if options.Durability == DurabilitySynchronous {
@@ -126,7 +126,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 		if err := syncDirectory(segmentTemp); err != nil {
 			return Generation{}, err
 		}
-		if err := afterStep(ctx, options, StepSyncSegment, false); err != nil {
+		if err := afterStep(options, StepSyncSegment, false); err != nil {
 			return Generation{}, err
 		}
 	}
@@ -164,7 +164,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 			}
 		}
 	}
-	if err := afterStep(ctx, options, StepRenameSegment, false); err != nil {
+	if err := afterStep(options, StepRenameSegment, false); err != nil {
 		return Generation{}, err
 	}
 
@@ -190,7 +190,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if err := writeDataFile(filepath.Join(generationTemp, stateFileName), stateData, options.Durability); err != nil {
 		return Generation{}, err
 	}
-	if err := afterStep(ctx, options, StepWriteState, false); err != nil {
+	if err := afterStep(options, StepWriteState, false); err != nil {
 		return Generation{}, err
 	}
 	manifestValue := manifest{GenerationID: generationID, ObjectID: objectID, Vectors: vectorsRef, SegmentMeta: segmentMetaRef, State: stateRef}
@@ -207,7 +207,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if err := writeDataFile(filepath.Join(generationTemp, manifestFileName), manifestData, options.Durability); err != nil {
 		return Generation{}, err
 	}
-	if err := afterStep(ctx, options, StepWriteManifest, false); err != nil {
+	if err := afterStep(options, StepWriteManifest, false); err != nil {
 		return Generation{}, err
 	}
 	if options.Durability == DurabilitySynchronous {
@@ -217,7 +217,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 		if err := syncDirectory(generationTemp); err != nil {
 			return Generation{}, err
 		}
-		if err := afterStep(ctx, options, StepSyncGeneration, false); err != nil {
+		if err := afterStep(options, StepSyncGeneration, false); err != nil {
 			return Generation{}, err
 		}
 	}
@@ -239,7 +239,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 			return Generation{}, err
 		}
 	}
-	if err := afterStep(ctx, options, StepRenameGeneration, false); err != nil {
+	if err := afterStep(options, StepRenameGeneration, false); err != nil {
 		return Generation{}, err
 	}
 
@@ -271,7 +271,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if err := currentTemp.Close(); err != nil {
 		return Generation{}, err
 	}
-	if err := afterStep(ctx, options, StepWriteCurrent, false); err != nil {
+	if err := afterStep(options, StepWriteCurrent, false); err != nil {
 		return Generation{}, err
 	}
 	if err := beforeStep(ctx, options, StepReplaceCurrent); err != nil {
@@ -284,7 +284,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	}
 	// Ignore caller cancellation after commit and finish reporting durability.
 	// Any post-commit failure is wrapped as ErrIndeterminate.
-	if err := afterStep(context.Background(), options, StepReplaceCurrent, true); err != nil {
+	if err := afterStep(options, StepReplaceCurrent, true); err != nil {
 		return Generation{}, err
 	}
 
@@ -295,7 +295,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 		if err := syncDirectory(paths.root); err != nil {
 			return Generation{}, fmt.Errorf("%w: %v", ErrIndeterminate, err)
 		}
-		if err := afterStep(context.Background(), options, StepSyncStore, true); err != nil {
+		if err := afterStep(options, StepSyncStore, true); err != nil {
 			return Generation{}, err
 		}
 	}
@@ -547,7 +547,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		return nil, ErrCorrupt
 	}
 	checkpoint := semantic.Checkpoint{
-		Space: state.Space, Chunking: state.Chunking, HighWatermark: state.HighWatermark, Segment: flatReader,
+		Space: state.Space, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID, Segment: flatReader,
 		VectorIDs: segmentMeta.VectorIDs, Live: live, Documents: state.Documents, Refs: state.Refs,
 		DuplicateStatistics: segmentMeta.DuplicateStatistics, MaxK: state.MaxK,
 		MaxChunkCandidates: state.MaxChunkCandidates, MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
@@ -799,9 +799,9 @@ func beforeStep(ctx context.Context, options Options, step PublicationStep) erro
 	return nil
 }
 
-func afterStep(ctx context.Context, options Options, step PublicationStep, committed bool) error {
-	err := ctx.Err()
-	if err == nil && options.AfterStep != nil {
+func afterStep(options Options, step PublicationStep, committed bool) error {
+	var err error
+	if options.AfterStep != nil {
 		err = options.AfterStep(step)
 	}
 	if err != nil && committed {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"testing"
 
@@ -79,7 +80,7 @@ func TestLifecycleChunkSearchGroupingAndStatistics(t *testing.T) {
 		t.Fatalf("doc-a grouping = %+v", documents.Hits[0])
 	}
 	stats := service.Statistics()
-	if stats.Documents != 2 || stats.PhysicalVectors != 3 || stats.LiveVectors != 3 || stats.StaleVectors != 0 || stats.HighWatermark != 3 {
+	if stats.Documents != 2 || stats.PhysicalVectors != 3 || stats.LiveVectors != 3 || stats.StaleVectors != 0 || stats.MaxAllocatedVectorID != 3 {
 		t.Fatalf("statistics = %+v", stats)
 	}
 
@@ -105,8 +106,120 @@ func TestLifecycleChunkSearchGroupingAndStatistics(t *testing.T) {
 		t.Fatal("DeleteDocument result mismatch")
 	}
 	stats = service.Statistics()
-	if stats.Documents != 1 || stats.PhysicalVectors != 4 || stats.LiveVectors != 1 || stats.StaleVectors != 3 || stats.HighWatermark != 4 {
+	if stats.Documents != 1 || stats.PhysicalVectors != 4 || stats.LiveVectors != 1 || stats.StaleVectors != 3 || stats.MaxAllocatedVectorID != 4 {
 		t.Fatalf("post-update statistics = %+v", stats)
+	}
+}
+
+func TestCompactRemovesStaleVectorsAndPreservesStableIDs(t *testing.T) {
+	config := testConfig(3, 3)
+	config.MaxVectors = 3
+	config.MaxChunksPerDocument = 3
+	service, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc-a", "a-old", 0, []float32{0, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ReplaceDocument(ctx, []ChunkVector{testChunk("doc-a", "a-new", 0, []float32{2, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := service.SearchChunks(ctx, []float32{0, 0}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.AddDocument(ctx, []ChunkVector{testChunk("full", "full", 0, []float32{3, 0})}); !errors.Is(err, vectorflat.ErrCapacityExceeded) {
+		t.Fatalf("pre-compaction capacity error = %v", err)
+	}
+
+	if err := service.Compact(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if stats := service.Statistics(); stats.PhysicalVectors != 2 || stats.LiveVectors != 2 || stats.StaleVectors != 0 || stats.MaxAllocatedVectorID != 3 {
+		t.Fatalf("compacted statistics = %+v", stats)
+	}
+	after, err := service.SearchChunks(ctx, []float32{0, 0}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(after.Hits, before.Hits) || after.Stats.RejectedNodes != 0 {
+		t.Fatalf("search changed after compaction\nbefore=%+v\nafter=%+v", before, after)
+	}
+	checkpoint, err := service.Checkpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(checkpoint.VectorIDs, []VectorID{2, 3}) {
+		t.Fatalf("compacted VectorIDs = %v", checkpoint.VectorIDs)
+	}
+	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc-c", "c", 0, []float32{3, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err = service.Checkpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(checkpoint.VectorIDs, []VectorID{2, 3, 4}) || checkpoint.MaxAllocatedVectorID != 4 {
+		t.Fatalf("post-compaction VectorIDs/max allocated ID = %v/%d", checkpoint.VectorIDs, checkpoint.MaxAllocatedVectorID)
+	}
+}
+
+func TestCanceledCompactLeavesServiceUnchanged(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc", "old", 0, []float32{0, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ReplaceDocument(ctx, []ChunkVector{testChunk("doc", "new", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	want := service.Statistics()
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := service.Compact(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled compaction error = %v", err)
+	}
+	if got := service.Statistics(); got != want {
+		t.Fatalf("canceled compaction changed service: got %+v, want %+v", got, want)
+	}
+}
+
+func TestCompactEmptyServiceReclaimsCapacity(t *testing.T) {
+	config := testConfig(1, 1)
+	config.MaxVectors = 1
+	config.MaxChunksPerDocument = 1
+	config.MaxChunksPerDocumentHit = 1
+	service, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := service.AddDocument(ctx, []ChunkVector{testChunk("old", "old", 0, []float32{0, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if !service.DeleteDocument("old") {
+		t.Fatal("DeleteDocument returned false")
+	}
+	if err := service.Compact(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if stats := service.Statistics(); stats.PhysicalVectors != 0 || stats.LiveVectors != 0 || stats.StaleVectors != 0 || stats.MaxAllocatedVectorID != 1 {
+		t.Fatalf("empty compacted statistics = %+v", stats)
+	}
+	if err := service.AddDocument(ctx, []ChunkVector{testChunk("new", "new", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := service.Checkpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(checkpoint.VectorIDs, []VectorID{2}) || checkpoint.MaxAllocatedVectorID != 2 {
+		t.Fatalf("reclaimed VectorIDs/max allocated ID = %v/%d", checkpoint.VectorIDs, checkpoint.MaxAllocatedVectorID)
 	}
 }
 
@@ -145,7 +258,7 @@ func TestDocumentValidationAndExplicitMutationErrors(t *testing.T) {
 	if err := service.ReplaceDocument(ctx, []ChunkVector{testChunk("missing", "one", 0, []float32{0, 0})}); !errors.Is(err, ErrDocumentNotFound) {
 		t.Fatalf("missing replacement error = %v", err)
 	}
-	if stats := service.Statistics(); stats.Documents != 1 || stats.PhysicalVectors != 1 || stats.HighWatermark != 1 {
+	if stats := service.Statistics(); stats.Documents != 1 || stats.PhysicalVectors != 1 || stats.MaxAllocatedVectorID != 1 {
 		t.Fatalf("failed operations changed state: %+v", stats)
 	}
 }
@@ -160,12 +273,12 @@ func TestVectorIDsAreMonotonicAndExhaustionIsAtomic(t *testing.T) {
 	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if stats := service.Statistics(); stats.HighWatermark != 2 || stats.LiveVectors != 1 || stats.StaleVectors != 1 {
+	if stats := service.Statistics(); stats.MaxAllocatedVectorID != 2 || stats.LiveVectors != 1 || stats.StaleVectors != 1 {
 		t.Fatalf("statistics = %+v", stats)
 	}
 
 	config := testConfig(2, 2)
-	config.InitialVectorIDHighWatermark = VectorID(math.MaxUint64 - 1)
+	config.InitialMaxAllocatedVectorID = VectorID(math.MaxUint64 - 1)
 	exhausted, err := New(config)
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +290,7 @@ func TestVectorIDsAreMonotonicAndExhaustionIsAtomic(t *testing.T) {
 	if !errors.Is(err, ErrVectorIDExhausted) {
 		t.Fatalf("exhaustion error = %v", err)
 	}
-	if stats := exhausted.Statistics(); stats.PhysicalVectors != 0 || stats.HighWatermark != VectorID(math.MaxUint64-1) {
+	if stats := exhausted.Statistics(); stats.PhysicalVectors != 0 || stats.MaxAllocatedVectorID != VectorID(math.MaxUint64-1) {
 		t.Fatalf("exhausted state changed: %+v", stats)
 	}
 }
@@ -209,7 +322,7 @@ func TestCapacityFailedReplacementKeepsOldVersion(t *testing.T) {
 	if len(result.Hits) != 1 || result.Hits[0].Ref.ID != "old" {
 		t.Fatalf("old version was not preserved: %+v", result.Hits)
 	}
-	if stats := service.Statistics(); stats.PhysicalVectors != 1 || stats.LiveVectors != 1 || stats.HighWatermark != 1 {
+	if stats := service.Statistics(); stats.PhysicalVectors != 1 || stats.LiveVectors != 1 || stats.MaxAllocatedVectorID != 1 {
 		t.Fatalf("failed replacement changed state: %+v", stats)
 	}
 }

@@ -39,75 +39,38 @@ func main() {
 		panic(err)
 	}
 
-	// These toy vectors stand in for embeddings produced by an external model.
-	if err := service.AddDocument(ctx, []semantic.ChunkVector{chunkVector("doc-a", "a-v1", []float32{0, 0})}); err != nil {
-		panic(err)
-	}
-	if err := service.AddDocument(ctx, []semantic.ChunkVector{chunkVector("doc-b", "b-v1", []float32{5, 0})}); err != nil {
-		panic(err)
-	}
+	// Embeddings are produced by the caller or an external model.
+	must(service.AddDocument(ctx, []semantic.ChunkVector{chunkVector("doc-a", "a-v1", []float32{0, 0})}))
+	must(service.AddDocument(ctx, []semantic.ChunkVector{chunkVector("doc-b", "b-v1", []float32{5, 0})}))
+	must(service.ReplaceDocument(ctx, []semantic.ChunkVector{chunkVector("doc-a", "a-v2", []float32{10, 0})}))
 
-	// A checkpoint freezes vectors, liveness, mappings, and descriptors as one
-	// coherent generation input.
-	checkpoint1, err := service.Checkpoint()
-	if err != nil {
-		panic(err)
-	}
-	generation1, err := semanticpersist.Publish(ctx, root, 1, checkpoint1, semanticpersist.Options{
+	// Replace left one stale physical row. Compact rebuilds the flat head from
+	// live rows before it becomes an immutable checkpoint.
+	must(service.Compact(ctx))
+	checkpoint, err := service.Checkpoint()
+	must(err)
+	generation, err := semanticpersist.Publish(ctx, root, 1, checkpoint, semanticpersist.Options{
 		ExpectedGeneration: 0,
 		Durability:         semanticpersist.DurabilitySynchronous,
 	})
-	if err != nil {
-		panic(err)
-	}
+	must(err)
 
-	openedID, bestDoc, err := openAndSearch(ctx, root, []float32{0, 0})
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("published=%d opened=%d best=%s\n", generation1.ID, openedID, bestDoc)
+	loaded, err := semanticpersist.Open(root, semanticpersist.DefaultLimits())
+	must(err)
+	defer loaded.Close()
+	result, err := loaded.Reader.SearchDocuments(ctx, []float32{0, 0}, 2)
+	must(err)
 
-	// Replace appends a new physical vector and marks doc-a's previous vector
-	// stale. Nothing is durable until the next checkpoint is published.
-	if err := service.ReplaceDocument(ctx, []semantic.ChunkVector{chunkVector("doc-a", "a-v2", []float32{10, 0})}); err != nil {
-		panic(err)
+	fmt.Printf("generation=%d physical=%d live=%d\n", generation.ID, loaded.Checkpoint.Segment.Len(), loaded.Checkpoint.Live.AllowedOrdinalCount())
+	for _, hit := range result.Hits {
+		fmt.Printf("doc=%s distance=%.0f\n", hit.DocID, hit.Distance)
 	}
-	checkpoint2, err := service.Checkpoint()
-	if err != nil {
-		panic(err)
-	}
-	generation2, err := semanticpersist.Publish(ctx, root, 2, checkpoint2, semanticpersist.Options{
-		// Reject this publication if another writer changed CURRENT after generation 1.
-		ExpectedGeneration: generation1.ID,
-		Durability:         semanticpersist.DurabilitySynchronous,
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	openedID, bestDoc, err = openAndSearch(ctx, root, []float32{0, 0})
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("published=%d opened=%d best=%s\n", generation2.ID, openedID, bestDoc)
 }
 
-func openAndSearch(ctx context.Context, root string, query []float32) (uint64, fts.DocID, error) {
-	// Open follows CURRENT and holds a shared store lock until Close.
-	loaded, err := semanticpersist.Open(root, semanticpersist.Limits{})
+func must(err error) {
 	if err != nil {
-		return 0, "", err
+		panic(err)
 	}
-	defer loaded.Close()
-
-	result, err := loaded.Reader.SearchDocuments(ctx, query, 2)
-	if err != nil {
-		return 0, "", err
-	}
-	if len(result.Hits) == 0 {
-		return 0, "", fmt.Errorf("semantic persistence example: no search hits")
-	}
-	return loaded.Generation.ID, result.Hits[0].DocID, nil
 }
 
 func chunkVector(docID fts.DocID, chunkID chunk.ID, embedding []float32) semantic.ChunkVector {

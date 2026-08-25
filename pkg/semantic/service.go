@@ -19,12 +19,12 @@ type Service struct {
 	space  vector.Space
 	head   *vectorflat.Index
 
-	highWatermark    VectorID
-	currentByDoc     map[fts.DocID][]VectorID
-	refByVector      map[VectorID]chunk.Ref
-	locationByVector map[VectorID]Location
-	vectorIDs        []VectorID
-	live             vector.BitSet
+	maxAllocatedVectorID VectorID
+	currentByDoc         map[fts.DocID][]VectorID
+	refByVector          map[VectorID]chunk.Ref
+	locationByVector     map[VectorID]Location
+	vectorIDs            []VectorID
+	live                 vector.BitSet
 }
 
 func New(config Config) (*Service, error) {
@@ -53,13 +53,13 @@ func New(config Config) (*Service, error) {
 		return nil, err
 	}
 	return &Service{
-		config:           config,
-		space:            space,
-		head:             head,
-		highWatermark:    config.InitialVectorIDHighWatermark,
-		currentByDoc:     make(map[fts.DocID][]VectorID),
-		refByVector:      make(map[VectorID]chunk.Ref),
-		locationByVector: make(map[VectorID]Location),
+		config:               config,
+		space:                space,
+		head:                 head,
+		maxAllocatedVectorID: config.InitialMaxAllocatedVectorID,
+		currentByDoc:         make(map[fts.DocID][]VectorID),
+		refByVector:          make(map[VectorID]chunk.Ref),
+		locationByVector:     make(map[VectorID]Location),
 	}, nil
 }
 
@@ -127,6 +127,58 @@ func (s *Service) DeleteDocument(docID fts.DocID) bool {
 	s.live = next
 	delete(s.currentByDoc, docID)
 	return true
+}
+
+// Compact mutates the service by rebuilding its flat head from live vectors.
+// Stable VectorIDs and MaxAllocatedVectorID are preserved while local ordinals
+// are reassigned.
+func (s *Service) Compact(ctx context.Context) error {
+	if ctx == nil {
+		return vector.ErrNilContext
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.live.AllowedOrdinalCount() == s.head.Len() {
+		return ctx.Err()
+	}
+
+	nextHead, err := s.head.Compact(ctx, s.live)
+	if err != nil {
+		return err
+	}
+	nextVectorIDs := make([]VectorID, 0, s.live.AllowedOrdinalCount())
+	nextRefs := make(map[VectorID]chunk.Ref, s.live.AllowedOrdinalCount())
+	nextLocations := make(map[VectorID]Location, s.live.AllowedOrdinalCount())
+	for ordinal, id := range s.vectorIDs {
+		if !s.live.Allows(vector.Ordinal(ordinal)) {
+			continue
+		}
+		ref, ok := s.refByVector[id]
+		if !ok {
+			return ErrInternalState
+		}
+		nextOrdinal := vector.Ordinal(len(nextVectorIDs))
+		nextVectorIDs = append(nextVectorIDs, id)
+		nextRefs[id] = ref
+		nextLocations[id] = Location{Component: MutableHeadID, Ordinal: nextOrdinal}
+	}
+	if len(nextVectorIDs) != nextHead.Len() {
+		return ErrInternalState
+	}
+	for docID, ids := range s.currentByDoc {
+		for _, id := range ids {
+			ref, ok := nextRefs[id]
+			if !ok || ref.DocID != docID {
+				return ErrInternalState
+			}
+		}
+	}
+	s.head = nextHead
+	s.vectorIDs = nextVectorIDs
+	s.refByVector = nextRefs
+	s.locationByVector = nextLocations
+	s.live = vector.NewFullBitSet(uint32(len(nextVectorIDs)))
+	return nil
 }
 
 func (s *Service) appendVersionLocked(docID fts.DocID, batch []ChunkVector, old []VectorID) error {
@@ -197,7 +249,7 @@ func (s *Service) appendVersionLocked(docID fts.DocID, batch []ChunkVector, old 
 	s.currentByDoc[docID] = append([]VectorID(nil), ids...)
 	s.live = nextLive
 	// Advance the watermark only after the new version is fully installed.
-	s.highWatermark = ids[len(ids)-1]
+	s.maxAllocatedVectorID = ids[len(ids)-1]
 	return nil
 }
 
@@ -241,12 +293,12 @@ func (s *Service) validateBatch(ctx context.Context, batch []ChunkVector) (fts.D
 }
 
 func (s *Service) allocateIDsLocked(count int) ([]VectorID, error) {
-	if count <= 0 || uint64(count) > math.MaxUint64-uint64(s.highWatermark) {
+	if count <= 0 || uint64(count) > math.MaxUint64-uint64(s.maxAllocatedVectorID) {
 		return nil, ErrVectorIDExhausted
 	}
 	ids := make([]VectorID, count)
 	for i := range ids {
-		ids[i] = s.highWatermark + VectorID(i) + 1
+		ids[i] = s.maxAllocatedVectorID + VectorID(i) + 1
 		if ids[i] == 0 {
 			return nil, ErrVectorIDExhausted
 		}
@@ -260,10 +312,10 @@ func (s *Service) Statistics() Statistics {
 	physical := s.head.Len()
 	liveCount := s.live.AllowedOrdinalCount()
 	return Statistics{
-		Documents:       len(s.currentByDoc),
-		PhysicalVectors: physical,
-		LiveVectors:     liveCount,
-		StaleVectors:    physical - liveCount,
-		HighWatermark:   s.highWatermark,
+		Documents:            len(s.currentByDoc),
+		PhysicalVectors:      physical,
+		LiveVectors:          liveCount,
+		StaleVectors:         physical - liveCount,
+		MaxAllocatedVectorID: s.maxAllocatedVectorID,
 	}
 }

@@ -128,6 +128,18 @@ func (idx *Index) Search(ctx context.Context, query []float32, k int, options ve
 	return searchExact(ctx, idx.space, idx.values, idx.maxK, query, k, options)
 }
 
+// Compact returns a new mutable index containing only rows allowed by filter.
+// Prepared vector components are copied exactly and are not normalized again.
+func (idx *Index) Compact(ctx context.Context, filter vector.ResultFilter) (*Index, error) {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	values, err := compactPrepared(ctx, idx.space.Dimensions(), idx.values, filter)
+	if err != nil {
+		return nil, err
+	}
+	return &Index{space: idx.space, maxVectors: idx.maxVectors, maxK: idx.maxK, values: values}, nil
+}
+
 func (idx *Index) Len() int {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()

@@ -1,9 +1,11 @@
 package semantic
 
 import (
+	"context"
 	"fmt"
 	"slices"
 
+	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	vectorflat "github.com/dariasmyr/fts-engine/pkg/vector/flat"
@@ -11,14 +13,15 @@ import (
 
 // Checkpoint is one coherent, immutable semantic generation input.
 type Checkpoint struct {
-	Space         SpaceDescriptor
-	Chunking      ChunkingDescriptor
-	HighWatermark VectorID
-	Segment       *vectorflat.Reader
-	VectorIDs     []VectorID
-	Live          vector.BitSet
-	Documents     []DocumentRecord
-	Refs          []RefRecord
+	Space    SpaceDescriptor
+	Chunking ChunkingDescriptor
+	// MaxAllocatedVectorID preserves the monotonic allocator across generations.
+	MaxAllocatedVectorID VectorID
+	Segment              *vectorflat.Reader
+	VectorIDs            []VectorID
+	Live                 vector.BitSet
+	Documents            []DocumentRecord
+	Refs                 []RefRecord
 	// DuplicateStatistics is nil when optional duplicate collection is disabled.
 	DuplicateStatistics     *DuplicateStatistics
 	MaxK                    int
@@ -59,7 +62,7 @@ func (s *Service) Checkpoint() (Checkpoint, error) {
 	checkpoint := Checkpoint{
 		Space:                   s.config.Space,
 		Chunking:                s.config.Chunking,
-		HighWatermark:           s.highWatermark,
+		MaxAllocatedVectorID:    s.maxAllocatedVectorID,
 		Segment:                 segment,
 		VectorIDs:               append([]VectorID(nil), s.vectorIDs...),
 		Live:                    s.live,
@@ -74,6 +77,60 @@ func (s *Service) Checkpoint() (Checkpoint, error) {
 		return Checkpoint{}, err
 	}
 	return checkpoint, nil
+}
+
+// BuildLiveOnly returns a new checkpoint rebuilt from live vectors. It does not
+// change the source checkpoint. Stable VectorIDs and MaxAllocatedVectorID are
+// preserved while local ordinals become dense.
+func (c Checkpoint) BuildLiveOnly(ctx context.Context) (Checkpoint, error) {
+	if ctx == nil {
+		return Checkpoint{}, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return Checkpoint{}, err
+	}
+	if err := c.Validate(); err != nil {
+		return Checkpoint{}, err
+	}
+	if c.Live.AllowedOrdinalCount() == c.Segment.Len() {
+		if err := ctx.Err(); err != nil {
+			return Checkpoint{}, err
+		}
+		return cloneCheckpoint(c), nil
+	}
+
+	segment, err := c.Segment.Compact(ctx, c.Live)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	refsByID := make(map[VectorID]chunk.Ref, len(c.Refs))
+	for _, record := range c.Refs {
+		refsByID[record.VectorID] = record.Ref
+	}
+	vectorIDs := make([]VectorID, 0, c.Live.AllowedOrdinalCount())
+	refs := make([]RefRecord, 0, c.Live.AllowedOrdinalCount())
+	for ordinal, id := range c.VectorIDs {
+		if !c.Live.Allows(vector.Ordinal(ordinal)) {
+			continue
+		}
+		vectorIDs = append(vectorIDs, id)
+		refs = append(refs, RefRecord{VectorID: id, Ref: refsByID[id]})
+	}
+	compacted := Checkpoint{
+		Space: c.Space, Chunking: c.Chunking, MaxAllocatedVectorID: c.MaxAllocatedVectorID,
+		Segment: segment, VectorIDs: vectorIDs, Live: vector.NewFullBitSet(uint32(len(vectorIDs))),
+		Documents: cloneDocumentRecords(c.Documents), Refs: refs,
+		MaxK: c.MaxK, MaxChunkCandidates: c.MaxChunkCandidates,
+		MaxChunksPerDocumentHit: c.MaxChunksPerDocumentHit,
+	}
+	if c.DuplicateStatistics != nil {
+		stats := duplicateStatistics(segment.ExactDuplicateStats(spaceNamespace(c.Space)))
+		compacted.DuplicateStatistics = &stats
+	}
+	if err := compacted.Validate(); err != nil {
+		return Checkpoint{}, err
+	}
+	return compacted, nil
 }
 
 func (c Checkpoint) Validate() error {
@@ -113,7 +170,7 @@ func (c Checkpoint) Validate() error {
 		}
 		refs[record.VectorID] = record
 	}
-	if len(refs) != len(c.VectorIDs) || c.HighWatermark < maxID {
+	if len(refs) != len(c.VectorIDs) || c.MaxAllocatedVectorID < maxID {
 		return ErrInvalidCheckpoint
 	}
 	documents := make(map[fts.DocID]struct{}, len(c.Documents))

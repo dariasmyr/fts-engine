@@ -408,6 +408,15 @@ defer loaded.Close()
 result, err := loaded.Reader.SearchDocuments(ctx, queryEmbedding, 10)
 ```
 
+Replacement and deletion leave stale vectors in the append-only physical
+matrix. Call `service.Compact(ctx)` to synchronously rebuild the mutable flat
+head from live vectors before creating a checkpoint. If maintenance starts from
+an immutable checkpoint, use `checkpoint.BuildLiveOnly(ctx)` and publish the
+returned live-only copy. Both operations preserve stable `VectorID` values and the
+maximum allocated `VectorID` while assigning new dense local ordinals. Compaction does not
+delete old on-disk generations or objects; retention and garbage collection are
+separate operations.
+
 `Publish` writes a complete immutable generation and atomically replaces
 `CURRENT`, which is the commit point. `ExpectedGeneration` rejects stale
 writers. `Open` holds a shared OS file lock until `Loaded.Close`; publication
@@ -457,7 +466,7 @@ Runtime diagnostics are separate from `textproc.ObservabilityPipeline()`.
 - `segment-analyzer-compatibility` - analyzer-compatible sealed segment restore
 - `rank-profile` - multi-field ranking with weighted field scoring
 - `semantic-flat` - chunk-aware in-memory semantic search with caller-provided vectors
-- `semantic-persistence` - checkpoint, publish, open, replace, and republish semantic generations
+- `semantic-persistence` - compact, publish, and open an immutable semantic generation
 - `snapshot-*` - mutable snapshot save and restore
 - `segment-*` - sealed segment save and restore, including `mmap`
 

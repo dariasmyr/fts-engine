@@ -50,10 +50,8 @@ func searchExact(ctx context.Context, space vector.Space, matrix []float32, maxK
 			break
 		}
 		// Check periodically to avoid a context call for every matrix row.
-		if row%contextCheckInterval == 0 {
-			if err := ctx.Err(); err != nil {
-				return vector.SearchResult{}, err
-			}
+		if err := periodicContextError(ctx, row); err != nil {
+			return vector.SearchResult{}, err
 		}
 		stats.VisitedNodes++
 		ordinal := vector.Ordinal(row)
@@ -72,4 +70,50 @@ func searchExact(ctx context.Context, space vector.Space, matrix []float32, maxK
 		return vector.SearchResult{}, err
 	}
 	return vector.SearchResult{Hits: topK.Results(), Stats: stats, Incomplete: incomplete}, nil
+}
+
+func compactPrepared(ctx context.Context, dimensions int, matrix []float32, filter vector.ResultFilter) ([]float32, error) {
+	if ctx == nil {
+		return nil, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rowCount := len(matrix) / dimensions
+	allowedCount := rowCount
+	if filter != nil {
+		if filter.TotalOrdinalCount() != uint32(rowCount) {
+			return nil, fmt.Errorf("%w: got %d, want %d", vector.ErrResultFilterSizeMismatch, filter.TotalOrdinalCount(), rowCount)
+		}
+		allowedCount = filter.AllowedOrdinalCount()
+		if allowedCount < 0 || allowedCount > rowCount {
+			return nil, vector.ErrInvalidSearchOptions
+		}
+	}
+
+	compacted := make([]float32, 0, allowedCount*dimensions)
+	for row := range rowCount {
+		if err := periodicContextError(ctx, row); err != nil {
+			return nil, err
+		}
+		if filter != nil && !filter.Allows(vector.Ordinal(row)) {
+			continue
+		}
+		start := row * dimensions
+		compacted = append(compacted, matrix[start:start+dimensions]...)
+	}
+	if len(compacted)/dimensions != allowedCount {
+		return nil, vector.ErrInvalidSearchOptions
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return compacted, nil
+}
+
+func periodicContextError(ctx context.Context, iteration int) error {
+	if (iteration+1)%contextCheckInterval == 0 {
+		return ctx.Err()
+	}
+	return nil
 }

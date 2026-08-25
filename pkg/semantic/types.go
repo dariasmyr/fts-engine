@@ -48,14 +48,16 @@ type Config struct {
 	Chunking ChunkingDescriptor
 	// CollectDuplicateStatistics enables an O(rows * dimensions) exact-vector
 	// scan during checkpoint creation and validation. It is disabled by default.
-	CollectDuplicateStatistics   bool
-	MaxVectors                   int
-	MaxChunksPerDocument         int
-	MaxK                         int
-	MaxChunkCandidates           int
-	MaxChunksPerDocumentHit      int
-	InitialVectorCapacity        int
-	InitialVectorIDHighWatermark VectorID
+	CollectDuplicateStatistics bool
+	MaxVectors                 int
+	MaxChunksPerDocument       int
+	MaxK                       int
+	MaxChunkCandidates         int
+	MaxChunksPerDocumentHit    int
+	InitialVectorCapacity      int
+	// InitialMaxAllocatedVectorID seeds the allocator; the first new vector gets
+	// the following ID. Use it when continuing an existing ID namespace.
+	InitialMaxAllocatedVectorID VectorID
 }
 
 type ChunkVector struct {
@@ -93,7 +95,8 @@ type Statistics struct {
 	PhysicalVectors int
 	LiveVectors     int
 	StaleVectors    int
-	HighWatermark   VectorID
+	// MaxAllocatedVectorID never decreases after replacement, deletion, or compaction.
+	MaxAllocatedVectorID VectorID
 }
 
 type DocumentRecord struct {

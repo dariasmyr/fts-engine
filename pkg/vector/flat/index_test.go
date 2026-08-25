@@ -115,6 +115,45 @@ func TestSearchVisitLimitCancellationAndAcceptSize(t *testing.T) {
 	}
 }
 
+func TestCompactRebuildsDenseMutableAndImmutableIndexes(t *testing.T) {
+	idx := newTestIndex(t, 10, 10)
+	if _, err := idx.AppendBatch([][]float32{{0, 1}, {2, 3}, {4, 5}, {6, 7}}); err != nil {
+		t.Fatal(err)
+	}
+	live, err := vector.NewBitSet(4, 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	compacted, err := idx.Compact(context.Background(), live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx.Len() != 4 || compacted.Len() != 2 || !slices.Equal(compacted.values, []float32{2, 3, 6, 7}) {
+		t.Fatalf("source/compacted lengths = %d/%d, values = %v", idx.Len(), compacted.Len(), compacted.values)
+	}
+
+	reader, err := idx.Freeze().Compact(context.Background(), live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, firstOK := reader.Vector(0)
+	second, secondOK := reader.Vector(1)
+	if !firstOK || !secondOK || !slices.Equal(first, []float32{2, 3}) || !slices.Equal(second, []float32{6, 7}) {
+		t.Fatalf("compacted reader vectors = %v/%v", first, second)
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := idx.Compact(canceled, live); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled compaction error = %v", err)
+	}
+	wrongSize := vector.NewFullBitSet(3)
+	if _, err := idx.Compact(context.Background(), wrongSize); !errors.Is(err, vector.ErrResultFilterSizeMismatch) {
+		t.Fatalf("wrong-size compaction error = %v", err)
+	}
+}
+
 func TestSearchMatchesFullSort(t *testing.T) {
 	idx := newTestIndex(t, 500, 20)
 	vectors := make([][]float32, 300)

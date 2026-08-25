@@ -55,7 +55,7 @@ func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
 			if !slices.Equal(gotChunks.Hits, wantChunks.Hits) || !equalDocumentHits(gotDocuments.Hits, wantDocuments.Hits) {
 				t.Fatalf("round-trip search mismatch\nchunks=%+v\ndocuments=%+v", gotChunks, gotDocuments)
 			}
-			if loaded.Checkpoint.Space != checkpoint.Space || loaded.Checkpoint.Chunking != checkpoint.Chunking || loaded.Checkpoint.HighWatermark != checkpoint.HighWatermark || !equalDuplicateStatistics(loaded.Checkpoint.DuplicateStatistics, checkpoint.DuplicateStatistics) {
+			if loaded.Checkpoint.Space != checkpoint.Space || loaded.Checkpoint.Chunking != checkpoint.Chunking || loaded.Checkpoint.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID || !equalDuplicateStatistics(loaded.Checkpoint.DuplicateStatistics, checkpoint.DuplicateStatistics) {
 				t.Fatal("checkpoint metadata changed during round trip")
 			}
 			if !slices.Equal(loaded.Checkpoint.VectorIDs, checkpoint.VectorIDs) ||
@@ -200,6 +200,24 @@ func TestFailureAfterCommittedStepsIsIndeterminate(t *testing.T) {
 				t.Fatalf("opened generation %d, want 2", loaded.Generation.ID)
 			}
 		})
+	}
+}
+
+func TestCancellationAfterStepStopsBeforeNextPublicationStage(t *testing.T) {
+	root := t.TempDir()
+	checkpoint, _, _ := persistenceFixture(t, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := Publish(ctx, root, 1, checkpoint, Options{AfterStep: func(step PublicationStep) error {
+		if step == StepWriteVectors {
+			cancel()
+		}
+		return nil
+	}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Publish() error = %v, want context cancellation", err)
+	}
+	if _, err := Open(root, Limits{}); !errors.Is(err, ErrCurrentMissing) {
+		t.Fatalf("Open() error = %v, want missing CURRENT", err)
 	}
 }
 
@@ -444,6 +462,59 @@ func TestObjectIDValidation(t *testing.T) {
 		if validObjectID(id) {
 			t.Fatalf("validObjectID(%q) = true", id)
 		}
+	}
+}
+
+func TestPublishCompactedCheckpointRemovesStaleRows(t *testing.T) {
+	service, err := semantic.New(semantic.Config{
+		Space:    semantic.SpaceDescriptor{ID: "compact-space-v1", Dimensions: 2, Metric: vector.MetricL2Squared, Normalization: vector.NormalizationNone, VectorFormatVersion: 1},
+		Chunking: semantic.ChunkingDescriptor{ID: "compact-chunks-v1"}, MaxVectors: 10,
+		MaxChunksPerDocument: 2, MaxK: 2, MaxChunkCandidates: 10, MaxChunksPerDocumentHit: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := service.AddDocument(ctx, []semantic.ChunkVector{{Ref: chunk.Ref{ID: "old", DocID: "doc", Field: fts.DefaultField, EndByte: 3}, Vector: []float32{0, 0}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ReplaceDocument(ctx, []semantic.ChunkVector{{Ref: chunk.Ref{ID: "new", DocID: "doc", Field: fts.DefaultField, EndByte: 3}, Vector: []float32{1, 0}}}); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := service.Checkpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	first, err := Publish(ctx, root, 1, checkpoint, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compacted, err := checkpoint.BuildLiveOnly(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Publish(ctx, root, 2, compacted, Options{ExpectedGeneration: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ObjectID == second.ObjectID {
+		t.Fatal("compacted generation reused the stale segment object")
+	}
+	loaded, err := Open(root, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer loaded.Close()
+	if loaded.Generation.ID != 2 || loaded.Checkpoint.Segment.Len() != 1 || loaded.Checkpoint.Live.AllowedOrdinalCount() != 1 || len(loaded.Checkpoint.Refs) != 1 {
+		t.Fatalf("opened compacted generation = %+v", loaded.Checkpoint)
+	}
+	result, err := loaded.Reader.SearchChunks(ctx, []float32{0, 0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Hits) != 1 || result.Hits[0].Ref.ID != "new" || result.Stats.RejectedNodes != 0 {
+		t.Fatalf("compacted result = %+v", result)
 	}
 }
 

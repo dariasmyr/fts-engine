@@ -42,7 +42,7 @@ Standalone examples:
 - `segment-analyzer-compatibility/main.go` - self-contained segment save and analyzer-compatible restore
 - `rank-profile/main.go` - multi-field ranking with weighted field scoring
 - `semantic-flat/main.go` - chunk-aware in-memory semantic search with caller-provided vectors
-- `semantic-persistence/main.go` - publish, open, replace, and republish immutable semantic generations
+- `semantic-persistence/main.go` - compact, publish, and open an immutable semantic generation
 
 Snapshot examples:
 

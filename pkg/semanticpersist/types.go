@@ -133,7 +133,7 @@ type currentRecord struct {
 type decodedState struct {
 	Space                   semantic.SpaceDescriptor
 	Chunking                semantic.ChunkingDescriptor
-	HighWatermark           semantic.VectorID
+	MaxAllocatedVectorID    semantic.VectorID
 	Documents               []semantic.DocumentRecord
 	Refs                    []semantic.RefRecord
 	MaxK                    int

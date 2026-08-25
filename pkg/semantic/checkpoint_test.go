@@ -118,6 +118,85 @@ func TestCheckpointSkipsDuplicateStatisticsByDefault(t *testing.T) {
 	}
 }
 
+func TestCheckpointBuildLiveOnlyRemovesStaleRowsAndPreservesSearch(t *testing.T) {
+	service := newCheckpointTestService(t)
+	ctx := context.Background()
+	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc-a", "old", 0, []float32{0, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ReplaceDocument(ctx, []ChunkVector{testChunk("doc-a", "new", 0, []float32{2, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if !service.DeleteDocument("doc-b") {
+		t.Fatal("DeleteDocument returned false")
+	}
+	checkpoint, err := service.Checkpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantReader, err := OpenCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := wantReader.SearchChunks(ctx, []float32{0, 0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	compacted, err := checkpoint.BuildLiveOnly(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.Segment.Len() != 3 || compacted.Segment.Len() != 1 || compacted.Live.TotalOrdinalCount() != 1 || compacted.Live.AllowedOrdinalCount() != 1 {
+		t.Fatalf("source/compacted state = %d/%d, live=%d/%d", checkpoint.Segment.Len(), compacted.Segment.Len(), compacted.Live.AllowedOrdinalCount(), compacted.Live.TotalOrdinalCount())
+	}
+	if compacted.MaxAllocatedVectorID != 3 || !slices.Equal(compacted.VectorIDs, []VectorID{3}) || len(compacted.Refs) != 1 || compacted.Refs[0].VectorID != 3 {
+		t.Fatalf("compacted mappings = %+v", compacted)
+	}
+	if compacted.DuplicateStatistics == nil || compacted.DuplicateStatistics.VectorRows != 1 || compacted.DuplicateStatistics.DuplicateRows != 0 {
+		t.Fatalf("compacted duplicate statistics = %+v", compacted.DuplicateStatistics)
+	}
+	reader, err := OpenCheckpoint(compacted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := reader.SearchChunks(ctx, []float32{0, 0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Hits, want.Hits) || got.Stats.RejectedNodes != 0 {
+		t.Fatalf("compacted search changed\nwant=%+v\ngot=%+v", want, got)
+	}
+}
+
+func TestCheckpointBuildLiveOnlySupportsNoLiveVectors(t *testing.T) {
+	service := newCheckpointTestService(t)
+	ctx := context.Background()
+	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc", "chunk", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if !service.DeleteDocument("doc") {
+		t.Fatal("DeleteDocument returned false")
+	}
+	checkpoint, err := service.Checkpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	compacted, err := checkpoint.BuildLiveOnly(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compacted.Segment.Len() != 0 || compacted.Live.TotalOrdinalCount() != 0 || len(compacted.VectorIDs) != 0 || len(compacted.Refs) != 0 || len(compacted.Documents) != 0 || compacted.MaxAllocatedVectorID != 1 {
+		t.Fatalf("empty compacted checkpoint = %+v", compacted)
+	}
+	if err := compacted.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newCheckpointTestService(t *testing.T) *Service {
 	t.Helper()
 	config := testConfig(10, 100)
