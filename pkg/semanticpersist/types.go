@@ -36,7 +36,11 @@ const (
 type Limits struct {
 	MaxFileBytes         uint64
 	MaxVectorBytes       uint64
+	MaxGraphBytes        uint64
+	MaxGraphLinks        uint64
 	MaxOpenBytes         uint64
+	MaxEfSearch          int
+	MaxVisitLimit        int
 	MaxDimensions        int
 	MaxVectors           int
 	MaxDocuments         int
@@ -47,7 +51,8 @@ type Limits struct {
 
 func DefaultLimits() Limits {
 	return Limits{
-		MaxFileBytes: 512 << 20, MaxVectorBytes: 512 << 20, MaxOpenBytes: 1 << 30, MaxDimensions: 65_536,
+		MaxFileBytes: 512 << 20, MaxVectorBytes: 512 << 20, MaxGraphBytes: 512 << 20, MaxGraphLinks: 100_000_000, MaxOpenBytes: 1 << 30,
+		MaxEfSearch: 1_000_000, MaxVisitLimit: 10_000_000, MaxDimensions: 65_536,
 		MaxVectors: 10_000_000, MaxDocuments: 10_000_000, MaxStringBytes: 1 << 20,
 		MaxChunksPerDocument: 1_000_000, MaxK: 1_000_000,
 	}
@@ -57,7 +62,7 @@ type PublicationStep string
 
 const (
 	StepWriteVectors     PublicationStep = "write_vectors"
-	StepWriteSegmentMeta PublicationStep = "write_segment_meta"
+	StepWriteGraph       PublicationStep = "write_graph"
 	StepSyncSegment      PublicationStep = "sync_segment"
 	StepRenameSegment    PublicationStep = "rename_segment"
 	StepWriteState       PublicationStep = "write_state"
@@ -86,23 +91,20 @@ type Generation struct {
 
 type Loaded struct {
 	Generation Generation
-	Reader     *semantic.Reader
-	Checkpoint semantic.Checkpoint
+	Snapshot   semantic.Snapshot
 	storeLock  *storeLock
 	closeOnce  sync.Once
 	closeErr   error
 }
 
-// Close closes the immutable reader and releases the shared store lock. It is
+// Close closes the immutable snapshot segment and releases the shared store lock. It is
 // safe to call more than once.
 func (l *Loaded) Close() error {
 	if l == nil {
 		return nil
 	}
 	l.closeOnce.Do(func() {
-		if l.Reader != nil {
-			l.closeErr = l.Reader.Close()
-		}
+		l.closeErr = l.Snapshot.Close()
 		if l.storeLock != nil {
 			if err := l.storeLock.Close(); l.closeErr == nil {
 				l.closeErr = err
@@ -118,10 +120,12 @@ type fileReference struct {
 }
 
 type manifest struct {
+	Version      uint16
 	GenerationID uint64
 	ObjectID     string
+	SegmentKind  semantic.SegmentKind
 	Vectors      fileReference
-	SegmentMeta  fileReference
+	Graph        fileReference
 	State        fileReference
 }
 
@@ -134,17 +138,8 @@ type decodedState struct {
 	Space                   semantic.SpaceDescriptor
 	Chunking                semantic.ChunkingDescriptor
 	MaxAllocatedVectorID    semantic.VectorID
-	Documents               []semantic.DocumentRecord
-	Refs                    []semantic.RefRecord
+	Rows                    []semantic.VectorRow
 	MaxK                    int
 	MaxChunkCandidates      int
 	MaxChunksPerDocumentHit int
-}
-
-type decodedSegmentMeta struct {
-	VectorIDs           []semantic.VectorID
-	Live                []uint64
-	LiveSize            uint32
-	Vectors             fileReference
-	DuplicateStatistics *semantic.DuplicateStatistics
 }

@@ -44,12 +44,10 @@ func main() {
 	must(service.AddDocument(ctx, []semantic.ChunkVector{chunkVector("doc-b", "b-v1", []float32{5, 0})}))
 	must(service.ReplaceDocument(ctx, []semantic.ChunkVector{chunkVector("doc-a", "a-v2", []float32{10, 0})}))
 
-	// Replace left one stale physical row. Compact rebuilds the flat head from
-	// live rows before it becomes an immutable checkpoint.
-	must(service.Compact(ctx))
-	checkpoint, err := service.Checkpoint()
+	// Create an immutable HNSW snapshot containing only active vectors.
+	snapshot, err := service.Snapshot(ctx)
 	must(err)
-	generation, err := semanticpersist.Publish(ctx, root, 1, checkpoint, semanticpersist.Options{
+	generation, err := semanticpersist.Publish(ctx, root, 1, snapshot, semanticpersist.Options{
 		ExpectedGeneration: 0,
 		Durability:         semanticpersist.DurabilitySynchronous,
 	})
@@ -58,10 +56,10 @@ func main() {
 	loaded, err := semanticpersist.Open(root, semanticpersist.DefaultLimits())
 	must(err)
 	defer loaded.Close()
-	result, err := loaded.Reader.SearchDocuments(ctx, []float32{0, 0}, 2)
+	result, err := loaded.Snapshot.SearchDocuments(ctx, []float32{0, 0}, 2)
 	must(err)
 
-	fmt.Printf("generation=%d physical=%d live=%d\n", generation.ID, loaded.Checkpoint.Segment.Len(), loaded.Checkpoint.Live.AllowedOrdinalCount())
+	fmt.Printf("generation=%d kind=%d rows=%d\n", generation.ID, loaded.Snapshot.Segment.Kind(), len(loaded.Snapshot.Rows))
 	for _, hit := range result.Hits {
 		fmt.Printf("doc=%s distance=%.0f\n", hit.DocID, hit.Distance)
 	}

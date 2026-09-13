@@ -42,7 +42,8 @@ Standalone examples:
 - `segment-analyzer-compatibility/main.go` - self-contained segment save and analyzer-compatible restore
 - `rank-profile/main.go` - multi-field ranking with weighted field scoring
 - `semantic-flat/main.go` - chunk-aware in-memory semantic search with caller-provided vectors
-- `semantic-persistence/main.go` - compact, publish, and open an immutable semantic generation
+- `hnsw-build/main.go` - observable HNSW build, graph inspection, persistence, and reopen
+- `semantic-persistence/main.go` - checkpoint, publish, and open an immutable semantic generation
 
 Snapshot examples:
 

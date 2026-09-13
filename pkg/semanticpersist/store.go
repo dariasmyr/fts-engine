@@ -13,6 +13,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	vectorflat "github.com/dariasmyr/fts-engine/pkg/vector/flat"
+	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 const (
@@ -21,7 +22,7 @@ const (
 	segmentsDirectory    = "segments"
 	generationsDirectory = "generations"
 	vectorsFileName      = "vectors.bin"
-	segmentMetaFileName  = "segment.meta"
+	graphFileName        = "graph.bin"
 	manifestFileName     = "manifest.bin"
 	stateFileName        = "semantic-state.bin"
 )
@@ -29,7 +30,7 @@ const (
 // Publish writes one complete generation and atomically switches CURRENT.
 // Synchronous mode fsyncs files and affected directories; asynchronous mode
 // only provides atomic process-visible publication, not power-loss durability.
-func Publish(ctx context.Context, root string, generationID uint64, checkpoint semantic.Checkpoint, options Options) (Generation, error) {
+func Publish(ctx context.Context, root string, generationID uint64, snapshot semantic.Snapshot, options Options) (Generation, error) {
 	if ctx == nil {
 		return Generation{}, vector.ErrNilContext
 	}
@@ -43,10 +44,10 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if err := validateLimits(options.Limits); err != nil {
 		return Generation{}, err
 	}
-	if err := validateCheckpointLimits(checkpoint, options.Limits); err != nil {
+	if err := validateSnapshotLimits(snapshot, options.Limits); err != nil {
 		return Generation{}, err
 	}
-	if err := checkpoint.Validate(); err != nil {
+	if err := snapshot.Validate(); err != nil {
 		return Generation{}, err
 	}
 	paths, rootCreated, err := prepareStoreDirectories(root)
@@ -96,7 +97,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if err := beforeStep(ctx, options, StepWriteVectors); err != nil {
 		return Generation{}, err
 	}
-	vectorsRef, err := writeVectorsFile(filepath.Join(segmentTemp, vectorsFileName), checkpoint.Segment, options.Durability)
+	vectorsRef, err := writeVectorsFile(filepath.Join(segmentTemp, vectorsFileName), snapshot.Segment.Vectors(), snapshot.Segment.MaxK(), options.Durability)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -106,18 +107,21 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if vectorsRef.Size > options.Limits.MaxFileBytes || vectorsRef.Size > options.Limits.MaxVectorBytes+128 {
 		return Generation{}, ErrLimitExceeded
 	}
-	if err := beforeStep(ctx, options, StepWriteSegmentMeta); err != nil {
-		return Generation{}, err
-	}
-	segmentMetaData, segmentMetaRef, err := encodeSegmentMeta(checkpoint, vectorsRef, options.Limits)
-	if err != nil {
-		return Generation{}, err
-	}
-	if err := writeDataFile(filepath.Join(segmentTemp, segmentMetaFileName), segmentMetaData, options.Durability); err != nil {
-		return Generation{}, err
-	}
-	if err := afterStep(options, StepWriteSegmentMeta, false); err != nil {
-		return Generation{}, err
+	var graphRef fileReference
+	if snapshot.Segment.Kind() == semantic.SegmentKindChunkHNSW {
+		if err := beforeStep(ctx, options, StepWriteGraph); err != nil {
+			return Generation{}, err
+		}
+		graphRef, err = writeGraphFile(filepath.Join(segmentTemp, graphFileName), snapshot.Segment.HNSW(), vectorsRef, options.Durability)
+		if err != nil {
+			return Generation{}, err
+		}
+		if err := afterStep(options, StepWriteGraph, false); err != nil {
+			return Generation{}, err
+		}
+		if graphRef.Size > min(options.Limits.MaxFileBytes, options.Limits.MaxGraphBytes) {
+			return Generation{}, ErrLimitExceeded
+		}
 	}
 	if options.Durability == DurabilitySynchronous {
 		if err := beforeStep(ctx, options, StepSyncSegment); err != nil {
@@ -131,15 +135,15 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 		}
 	}
 
-	objectID := objectID(vectorsRef.SHA256, segmentMetaRef.SHA256)
+	objectID := segmentObjectID(snapshot.Segment.Kind(), vectorsRef, graphRef)
 	objectPath := filepath.Join(paths.segments, objectID)
 	if err := beforeStep(ctx, options, StepRenameSegment); err != nil {
 		return Generation{}, err
 	}
 	if _, err := os.Lstat(objectPath); err == nil {
 		// Content-addressed reuse is allowed only after the existing files match
-		// the exact sizes and hashes produced by this checkpoint.
-		if err := verifyExistingObject(objectPath, vectorsRef, segmentMetaRef, options.Limits, options.Durability); err != nil {
+		// the exact sizes and hashes produced by this snapshot.
+		if err := verifyExistingObject(objectPath, snapshot.Segment.Kind(), vectorsRef, graphRef, options.Limits, options.Durability); err != nil {
 			return Generation{}, err
 		}
 		if options.Durability == DurabilitySynchronous {
@@ -183,7 +187,7 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if err := beforeStep(ctx, options, StepWriteState); err != nil {
 		return Generation{}, err
 	}
-	stateData, stateRef, err := encodeState(checkpoint, options.Limits)
+	stateData, stateRef, err := encodeState(snapshot, options.Limits)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -193,7 +197,10 @@ func Publish(ctx context.Context, root string, generationID uint64, checkpoint s
 	if err := afterStep(options, StepWriteState, false); err != nil {
 		return Generation{}, err
 	}
-	manifestValue := manifest{GenerationID: generationID, ObjectID: objectID, Vectors: vectorsRef, SegmentMeta: segmentMetaRef, State: stateRef}
+	manifestValue := manifest{
+		Version: manifestVersion, GenerationID: generationID, ObjectID: objectID, SegmentKind: snapshot.Segment.Kind(),
+		Vectors: vectorsRef, Graph: graphRef, State: stateRef,
+	}
 	if err := beforeStep(ctx, options, StepWriteManifest); err != nil {
 		return Generation{}, err
 	}
@@ -374,7 +381,7 @@ func RepairCurrent(root string, generationID uint64, options Options) error {
 		return err
 	}
 	if options.Durability == DurabilitySynchronous {
-		if err := syncPublishedGeneration(paths, generationID, loaded.Generation.ObjectID); err != nil {
+		if err := syncPublishedGeneration(paths, generationID, loaded.Generation.ObjectID, loaded.Snapshot.Segment.Kind() == semantic.SegmentKindChunkHNSW); err != nil {
 			return err
 		}
 	}
@@ -491,11 +498,21 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		return nil, ErrCorrupt
 	}
 	manifestValue, err := decodeManifest(manifestData, limits)
-	if err != nil || manifestValue.GenerationID != generationID {
+	if err != nil {
+		if errors.Is(err, ErrUnsupportedVersion) {
+			return nil, err
+		}
+		return nil, ErrCorrupt
+	}
+	if manifestValue.GenerationID != generationID {
 		return nil, ErrCorrupt
 	}
 	if !validObjectID(manifestValue.ObjectID) {
 		return nil, ErrInvalidObjectID
+	}
+	wantObjectID := segmentObjectID(manifestValue.SegmentKind, manifestValue.Vectors, manifestValue.Graph)
+	if manifestValue.ObjectID != wantObjectID {
+		return nil, ErrCorrupt
 	}
 	// Reject a generation whose declared files could exceed the total open
 	// allocation budget before reading and decoding those files.
@@ -517,23 +534,12 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 	if err := validateDirectory(objectPath); err != nil {
 		return nil, err
 	}
-	metaData, err := readReferencedFile(filepath.Join(objectPath, segmentMetaFileName), manifestValue.SegmentMeta, limits.MaxFileBytes)
-	if err != nil {
-		return nil, err
-	}
-	segmentMeta, err := decodeSegmentMeta(metaData, limits)
-	if err != nil {
-		return nil, err
-	}
-	if segmentMeta.Vectors != manifestValue.Vectors {
-		return nil, ErrCorrupt
-	}
 	vectorFileLimit := min(limits.MaxFileBytes, limits.MaxVectorBytes+128)
 	vectorsData, err := readReferencedFile(filepath.Join(objectPath, vectorsFileName), manifestValue.Vectors, vectorFileLimit)
 	if err != nil {
 		return nil, err
 	}
-	flatReader, vectorMetadata, err := vectorflat.Open(bytes.NewReader(vectorsData), vectorflat.CodecLimits{
+	vectorReader, vectorMetadata, err := vectorflat.Open(bytes.NewReader(vectorsData), vectorflat.CodecLimits{
 		MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes, MaxK: limits.MaxK,
 	})
 	if err != nil {
@@ -542,23 +548,48 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 	if vectorMetadata.Size != manifestValue.Vectors.Size || vectorMetadata.SHA256 != manifestValue.Vectors.SHA256 {
 		return nil, ErrCorrupt
 	}
-	live, err := vector.NewBitSetFromWords(segmentMeta.LiveSize, segmentMeta.Live)
-	if err != nil {
+	var segment *semantic.SealedSegment
+	switch manifestValue.SegmentKind {
+	case semantic.SegmentKindChunkHNSW:
+		graphLimit := min(limits.MaxFileBytes, limits.MaxGraphBytes)
+		graphData, readErr := readReferencedFile(filepath.Join(objectPath, graphFileName), manifestValue.Graph, graphLimit)
+		if readErr != nil {
+			return nil, readErr
+		}
+		graphReader, graphMetadata, openErr := hnsw.OpenGraph(bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{
+			Size: manifestValue.Vectors.Size, SHA256: manifestValue.Vectors.SHA256,
+		}, hnsw.GraphLimits{
+			MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes,
+			MaxGraphBytes: graphLimit, MaxLinks: limits.MaxGraphLinks, MaxK: limits.MaxK,
+			MaxEfSearch: limits.MaxEfSearch, MaxVisitLimit: limits.MaxVisitLimit,
+		})
+		if openErr != nil {
+			return nil, openErr
+		}
+		if graphMetadata.Size != manifestValue.Graph.Size || graphMetadata.SHA256 != manifestValue.Graph.SHA256 {
+			return nil, ErrCorrupt
+		}
+		segment, err = semantic.NewHNSWSegment(semantic.MutableHeadID, vectorReader, graphReader, state.Rows)
+	default:
 		return nil, ErrCorrupt
 	}
-	checkpoint := semantic.Checkpoint{
-		Space: state.Space, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID, Segment: flatReader,
-		VectorIDs: segmentMeta.VectorIDs, Live: live, Documents: state.Documents, Refs: state.Refs,
-		DuplicateStatistics: segmentMeta.DuplicateStatistics, MaxK: state.MaxK,
-		MaxChunkCandidates: state.MaxChunkCandidates, MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
-	}
-	// OpenCheckpoint performs cross-file validation: vector rows, ordinal IDs,
-	// liveness, refs, current documents, descriptors, and limits must agree.
-	reader, err := semantic.OpenCheckpoint(checkpoint)
 	if err != nil {
 		return nil, err
 	}
-	return &Loaded{Generation: Generation{ID: generationID, ObjectID: manifestValue.ObjectID}, Reader: reader, Checkpoint: checkpoint}, nil
+	if segment.Len() != len(state.Rows) {
+		return nil, ErrCorrupt
+	}
+	snapshot := semantic.Snapshot{
+		Space: state.Space, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID, Segment: segment,
+		Rows: state.Rows, MaxK: state.MaxK,
+		MaxChunkCandidates: state.MaxChunkCandidates, MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
+	}
+	// Snapshot validation performs cross-file validation: vector rows, row metadata,
+	// descriptors, and limits must agree.
+	if err := snapshot.Validate(); err != nil {
+		return nil, err
+	}
+	return &Loaded{Generation: Generation{ID: generationID, ObjectID: manifestValue.ObjectID}, Snapshot: snapshot}, nil
 }
 
 func openGenerationForRepair(paths storePaths, generationID uint64, limits Limits) (*Loaded, [sha256.Size]byte, error) {
@@ -575,12 +606,12 @@ func openGenerationForRepair(paths storePaths, generationID uint64, limits Limit
 	return loaded, hash, err
 }
 
-func writeVectorsFile(path string, reader *vectorflat.Reader, durability DurabilityMode) (fileReference, error) {
+func writeVectorsFile(path string, source vector.PreparedVectorSource, maxK int, durability DurabilityMode) (fileReference, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fileReference{}, err
 	}
-	metadata, writeErr := vectorflat.Write(file, reader)
+	metadata, writeErr := vectorflat.WriteSource(file, source, maxK)
 	if writeErr == nil && durability == DurabilitySynchronous {
 		writeErr = file.Sync()
 	}
@@ -594,13 +625,33 @@ func writeVectorsFile(path string, reader *vectorflat.Reader, durability Durabil
 	return fileReference{Size: metadata.Size, SHA256: metadata.SHA256}, nil
 }
 
-func validateCheckpointLimits(checkpoint semantic.Checkpoint, limits Limits) error {
-	if checkpoint.Segment == nil || checkpoint.Segment.Dimensions() > limits.MaxDimensions || checkpoint.Segment.Len() > limits.MaxVectors ||
-		checkpoint.Segment.MaxK() > limits.MaxK || len(checkpoint.VectorIDs) > limits.MaxVectors || len(checkpoint.Refs) > limits.MaxVectors ||
-		len(checkpoint.Documents) > limits.MaxDocuments || checkpoint.MaxK > limits.MaxK || checkpoint.MaxChunkCandidates > limits.MaxK {
+func writeGraphFile(path string, reader *hnsw.Reader, vectors fileReference, durability DurabilityMode) (fileReference, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fileReference{}, err
+	}
+	metadata, writeErr := hnsw.WriteGraph(file, reader, hnsw.VectorFileReference{Size: vectors.Size, SHA256: vectors.SHA256})
+	if writeErr == nil && durability == DurabilitySynchronous {
+		writeErr = file.Sync()
+	}
+	closeErr := file.Close()
+	if writeErr != nil {
+		return fileReference{}, writeErr
+	}
+	if closeErr != nil {
+		return fileReference{}, closeErr
+	}
+	return fileReference{Size: metadata.Size, SHA256: metadata.SHA256}, nil
+}
+
+func validateSnapshotLimits(snapshot semantic.Snapshot, limits Limits) error {
+	if snapshot.Segment == nil || snapshot.Segment.Vectors() == nil ||
+		snapshot.Segment.Dimensions() > limits.MaxDimensions || snapshot.Segment.Len() > limits.MaxVectors ||
+		snapshot.Segment.MaxK() > limits.MaxK || len(snapshot.Rows) > limits.MaxVectors ||
+		snapshot.MaxK > limits.MaxK || snapshot.MaxChunkCandidates > limits.MaxK {
 		return ErrLimitExceeded
 	}
-	components, ok := checkedMultiply64(uint64(checkpoint.Segment.Len()), uint64(checkpoint.Segment.Dimensions()))
+	components, ok := checkedMultiply64(uint64(snapshot.Segment.Len()), uint64(snapshot.Segment.Dimensions()))
 	if !ok {
 		return ErrLimitExceeded
 	}
@@ -608,26 +659,44 @@ func validateCheckpointLimits(checkpoint semantic.Checkpoint, limits Limits) err
 	if !ok || vectorBytes > limits.MaxVectorBytes || limits.MaxFileBytes < 44 || vectorBytes > limits.MaxFileBytes-44 {
 		return ErrLimitExceeded
 	}
+	if snapshot.Segment.Kind() == semantic.SegmentKindChunkHNSW {
+		graph := snapshot.Segment.HNSW()
+		if graph == nil {
+			return ErrLimitExceeded
+		}
+		search := graph.SearchConfig()
+		if search.MaxK > limits.MaxK || search.MaxEfSearch > limits.MaxEfSearch || search.MaxVisitLimit > limits.MaxVisitLimit ||
+			uint64(graph.StorageStats().DirectedLinks) > limits.MaxGraphLinks ||
+			graphFileSize(graph) > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
+			return ErrLimitExceeded
+		}
+	}
 	validString := func(value string) bool { return len(value) <= limits.MaxStringBytes }
-	if !validString(checkpoint.Space.ID) || !validString(checkpoint.Chunking.ID) {
+	if !validString(snapshot.Space.ID) || !validString(snapshot.Space.ModelVersion) || !validString(snapshot.Space.Fingerprint) ||
+		!validString(snapshot.Chunking.ID) || !validString(snapshot.Chunking.Fingerprint) {
 		return ErrLimitExceeded
 	}
-	for _, record := range checkpoint.Refs {
-		if !validString(string(record.Ref.ID)) || !validString(string(record.Ref.DocID)) || !validString(record.Ref.Field) {
+	documentChunks := make(map[string]int)
+	for _, record := range snapshot.Rows {
+		if !validString(string(record.Chunk.ID)) || !validString(string(record.Chunk.DocID)) || !validString(record.Chunk.Field) {
+			return ErrLimitExceeded
+		}
+		docID := string(record.Chunk.DocID)
+		documentChunks[docID]++
+		if documentChunks[docID] > limits.MaxChunksPerDocument {
 			return ErrLimitExceeded
 		}
 	}
-	for _, document := range checkpoint.Documents {
-		if !validString(string(document.DocID)) || len(document.VectorIDs) > limits.MaxChunksPerDocument {
-			return ErrLimitExceeded
-		}
+	if len(documentChunks) > limits.MaxDocuments {
+		return ErrLimitExceeded
 	}
 	return nil
 }
 
 func validateOpenReferences(manifestData []byte, value manifest, limits Limits) error {
 	vectorFileLimit := min(limits.MaxFileBytes, limits.MaxVectorBytes+128)
-	if value.Vectors.Size > vectorFileLimit || value.SegmentMeta.Size > limits.MaxFileBytes || value.State.Size > limits.MaxFileBytes {
+	graphFileLimit := min(limits.MaxFileBytes, limits.MaxGraphBytes)
+	if value.Vectors.Size > vectorFileLimit || value.Graph.Size > graphFileLimit || value.State.Size > limits.MaxFileBytes {
 		return ErrLimitExceeded
 	}
 	// Account conservatively for decoded slices, strings, validation maps, and
@@ -638,7 +707,7 @@ func validateOpenReferences(manifestData []byte, value manifest, limits Limits) 
 		multiplier uint64
 	}{
 		{value.Vectors.Size, 4},
-		{value.SegmentMeta.Size, 128},
+		{value.Graph.Size, 8},
 		{value.State.Size, 16},
 	} {
 		weighted, ok := checkedMultiply64(component.size, component.multiplier)
@@ -649,6 +718,14 @@ func validateOpenReferences(manifestData []byte, value manifest, limits Limits) 
 		if !ok {
 			return ErrLimitExceeded
 		}
+	}
+	scratchBytes, ok := checkedMultiply64(uint64(limits.MaxDimensions), 8)
+	if !ok {
+		return ErrLimitExceeded
+	}
+	estimate, ok = checkedAdd64(estimate, scratchBytes)
+	if !ok {
+		return ErrLimitExceeded
 	}
 	if estimate > limits.MaxOpenBytes {
 		return ErrLimitExceeded
@@ -720,22 +797,28 @@ func readReferencedFile(path string, reference fileReference, limit uint64) ([]b
 	return data, nil
 }
 
-func verifyExistingObject(path string, vectors, meta fileReference, limits Limits, durability DurabilityMode) error {
+func verifyExistingObject(path string, kind semantic.SegmentKind, vectors, graph fileReference, limits Limits, durability DurabilityMode) error {
 	if err := validateDirectory(path); err != nil {
 		return err
 	}
 	vectorsPath := filepath.Join(path, vectorsFileName)
-	metaPath := filepath.Join(path, segmentMetaFileName)
+	graphPath := filepath.Join(path, graphFileName)
 	if _, err := readReferencedFile(vectorsPath, vectors, limits.MaxVectorBytes+128); err != nil {
 		return err
 	}
-	if _, err := readReferencedFile(metaPath, meta, limits.MaxFileBytes); err != nil {
-		return err
+	if kind == semantic.SegmentKindChunkHNSW {
+		if _, err := readReferencedFile(graphPath, graph, min(limits.MaxFileBytes, limits.MaxGraphBytes)); err != nil {
+			return err
+		}
 	}
 	if durability == DurabilitySynchronous {
 		// Upgrade an object left by an asynchronous publication before allowing a
 		// synchronous generation to depend on it.
-		for _, file := range []string{vectorsPath, metaPath} {
+		files := []string{vectorsPath}
+		if kind == semantic.SegmentKindChunkHNSW {
+			files = append(files, graphPath)
+		}
+		for _, file := range files {
 			if err := syncRegularFile(file); err != nil {
 				return err
 			}
@@ -745,15 +828,19 @@ func verifyExistingObject(path string, vectors, meta fileReference, limits Limit
 	return nil
 }
 
-func syncPublishedGeneration(paths storePaths, generationID uint64, objectID string) error {
+func syncPublishedGeneration(paths storePaths, generationID uint64, objectID string, hasGraph bool) error {
 	// Repair may select an orphan produced asynchronously. Sync every referenced
 	// file and directory before publishing a synchronous repaired CURRENT.
 	objectPath := filepath.Join(paths.segments, objectID)
 	generationPath := filepath.Join(paths.generations, generationName(generationID))
-	for _, file := range []string{
-		filepath.Join(objectPath, vectorsFileName), filepath.Join(objectPath, segmentMetaFileName),
+	files := []string{
+		filepath.Join(objectPath, vectorsFileName),
 		filepath.Join(generationPath, stateFileName), filepath.Join(generationPath, manifestFileName),
-	} {
+	}
+	if hasGraph {
+		files = append(files, filepath.Join(objectPath, graphFileName))
+	}
+	for _, file := range files {
 		if err := syncRegularFile(file); err != nil {
 			return err
 		}
@@ -764,6 +851,25 @@ func syncPublishedGeneration(paths storePaths, generationID uint64, objectID str
 		}
 	}
 	return nil
+}
+
+func graphFileSize(reader *hnsw.Reader) uint64 {
+	if reader == nil {
+		return 0
+	}
+	stats := reader.StorageStats()
+	padding := uint64((4 - stats.VectorRows%4) % 4)
+	size, ok := checkedAdd64(164, stats.NodeMetadataBytes)
+	if !ok {
+		return ^uint64(0)
+	}
+	for _, part := range []uint64{padding, stats.OffsetBytes, stats.LinkBytes} {
+		size, ok = checkedAdd64(size, part)
+		if !ok {
+			return ^uint64(0)
+		}
+	}
+	return size
 }
 
 func syncRegularFile(path string) error {

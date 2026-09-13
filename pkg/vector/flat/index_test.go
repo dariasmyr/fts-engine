@@ -115,6 +115,24 @@ func TestSearchVisitLimitCancellationAndAcceptSize(t *testing.T) {
 	}
 }
 
+type invalidCountFilter struct {
+	count int
+}
+
+func (f invalidCountFilter) Allows(vector.Ordinal) bool { return true }
+func (f invalidCountFilter) AllowedOrdinalCount() int   { return f.count }
+func (f invalidCountFilter) TotalOrdinalCount() uint32  { return 3 }
+
+func TestSearchRejectsInvalidFilterCardinality(t *testing.T) {
+	idx := newTestIndex(t, 3, 3)
+	_, _ = idx.AppendBatch([][]float32{{0, 0}, {1, 0}, {2, 0}})
+	for _, count := range []int{-1, 4} {
+		if _, err := idx.Search(context.Background(), []float32{0, 0}, 1, vector.SearchOptions{ResultFilter: invalidCountFilter{count: count}}); !errors.Is(err, vector.ErrInvalidSearchOptions) {
+			t.Fatalf("allowed count %d error = %v", count, err)
+		}
+	}
+}
+
 func TestCompactRebuildsDenseMutableAndImmutableIndexes(t *testing.T) {
 	idx := newTestIndex(t, 10, 10)
 	if _, err := idx.AppendBatch([][]float32{{0, 1}, {2, 3}, {4, 5}, {6, 7}}); err != nil {
@@ -133,7 +151,7 @@ func TestCompactRebuildsDenseMutableAndImmutableIndexes(t *testing.T) {
 		t.Fatalf("source/compacted lengths = %d/%d, values = %v", idx.Len(), compacted.Len(), compacted.values)
 	}
 
-	reader, err := idx.Freeze().Compact(context.Background(), live)
+	reader, err := idx.FreezeCompact(context.Background(), live)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,9 +166,15 @@ func TestCompactRebuildsDenseMutableAndImmutableIndexes(t *testing.T) {
 	if _, err := idx.Compact(canceled, live); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled compaction error = %v", err)
 	}
+	if _, err := idx.FreezeCompact(canceled, live); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled freeze compaction error = %v", err)
+	}
 	wrongSize := vector.NewFullBitSet(3)
 	if _, err := idx.Compact(context.Background(), wrongSize); !errors.Is(err, vector.ErrResultFilterSizeMismatch) {
 		t.Fatalf("wrong-size compaction error = %v", err)
+	}
+	if _, err := idx.FreezeCompact(context.Background(), wrongSize); !errors.Is(err, vector.ErrResultFilterSizeMismatch) {
+		t.Fatalf("wrong-size freeze compaction error = %v", err)
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-const codecFooterSize = 4
+const formatFooterSize = 4
 
 type encoder struct {
 	buffer bytes.Buffer
@@ -88,7 +88,7 @@ type decoder struct {
 }
 
 func newDecoder(data []byte, magic string, version uint16, limits Limits) (*decoder, error) {
-	if len(data) < 8+codecFooterSize || string(data[:4]) != magic {
+	if len(data) < 8+formatFooterSize || string(data[:4]) != magic {
 		return nil, ErrCorrupt
 	}
 	if binary.LittleEndian.Uint16(data[4:6]) != version {
@@ -97,8 +97,8 @@ func newDecoder(data []byte, magic string, version uint16, limits Limits) (*deco
 	if binary.LittleEndian.Uint16(data[6:8]) != 0 {
 		return nil, ErrCorrupt
 	}
-	body := data[:len(data)-codecFooterSize]
-	if crc32.ChecksumIEEE(body) != binary.LittleEndian.Uint32(data[len(data)-codecFooterSize:]) {
+	body := data[:len(data)-formatFooterSize]
+	if crc32.ChecksumIEEE(body) != binary.LittleEndian.Uint32(data[len(data)-formatFooterSize:]) {
 		return nil, ErrCorrupt
 	}
 	return &decoder{data: body, offset: 8, limits: limits}, nil
@@ -184,6 +184,15 @@ func (d *decoder) remaining() int {
 	return len(d.data) - d.offset
 }
 
+func decodeBoundedInt(d *decoder) int {
+	value := d.u64()
+	if value > uint64(math.MaxInt) {
+		d.err = ErrLimitExceeded
+		return 0
+	}
+	return int(value)
+}
+
 func readBounded(reader io.Reader, limit uint64) ([]byte, error) {
 	if reader == nil || limit == 0 || limit >= math.MaxInt64 {
 		return nil, ErrLimitExceeded
@@ -206,8 +215,20 @@ func normalizeLimits(limits Limits) Limits {
 	if limits.MaxVectorBytes == 0 {
 		limits.MaxVectorBytes = defaults.MaxVectorBytes
 	}
+	if limits.MaxGraphBytes == 0 {
+		limits.MaxGraphBytes = defaults.MaxGraphBytes
+	}
+	if limits.MaxGraphLinks == 0 {
+		limits.MaxGraphLinks = defaults.MaxGraphLinks
+	}
 	if limits.MaxOpenBytes == 0 {
 		limits.MaxOpenBytes = defaults.MaxOpenBytes
+	}
+	if limits.MaxEfSearch == 0 {
+		limits.MaxEfSearch = defaults.MaxEfSearch
+	}
+	if limits.MaxVisitLimit == 0 {
+		limits.MaxVisitLimit = defaults.MaxVisitLimit
 	}
 	if limits.MaxDimensions == 0 {
 		limits.MaxDimensions = defaults.MaxDimensions
@@ -232,7 +253,8 @@ func normalizeLimits(limits Limits) Limits {
 
 func validateLimits(limits Limits) error {
 	if limits.MaxFileBytes == 0 || limits.MaxFileBytes >= math.MaxInt64 || limits.MaxVectorBytes == 0 || limits.MaxVectorBytes > math.MaxUint64-128 ||
-		limits.MaxOpenBytes < limits.MaxFileBytes || limits.MaxOpenBytes >= math.MaxInt64 ||
+		limits.MaxGraphBytes == 0 || limits.MaxGraphBytes >= math.MaxInt64 || limits.MaxGraphLinks == 0 ||
+		limits.MaxOpenBytes < limits.MaxFileBytes || limits.MaxOpenBytes >= math.MaxInt64 || limits.MaxEfSearch <= 0 || limits.MaxVisitLimit <= 0 ||
 		limits.MaxDimensions <= 0 || limits.MaxVectors <= 0 || limits.MaxDocuments <= 0 || limits.MaxStringBytes <= 0 ||
 		limits.MaxChunksPerDocument <= 0 || limits.MaxK <= 0 || uint64(limits.MaxVectors) >= math.MaxUint32 ||
 		uint64(limits.MaxDocuments) > math.MaxUint32 || uint64(limits.MaxStringBytes) > math.MaxUint32 ||

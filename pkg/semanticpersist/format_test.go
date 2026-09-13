@@ -3,6 +3,9 @@ package semanticpersist
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"errors"
 	"slices"
 	"testing"
 
@@ -10,7 +13,7 @@ import (
 	vectorflat "github.com/dariasmyr/fts-engine/pkg/vector/flat"
 )
 
-func TestSemanticCodecsRejectTruncationAndTrailingData(t *testing.T) {
+func TestSemanticFormatsRejectTruncationAndTrailingData(t *testing.T) {
 	checkpoint, _, _ := persistenceFixture(t, false)
 	limits := DefaultLimits()
 	state, _, err := encodeState(checkpoint, limits)
@@ -22,11 +25,12 @@ func TestSemanticCodecsRejectTruncationAndTrailingData(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = vectorsData
-	meta, metaRef, err := encodeSegmentMeta(checkpoint, vectorsMeta, limits)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifestData, _, err := encodeManifest(manifest{GenerationID: 1, ObjectID: objectID(vectorsMeta.SHA256, metaRef.SHA256), Vectors: vectorsMeta, SegmentMeta: metaRef, State: fileRef(state)}, limits)
+	stateRef := fileRef(state)
+	graphRef := fileRef([]byte("graph"))
+	manifestData, _, err := encodeManifest(manifest{
+		GenerationID: 1, ObjectID: segmentObjectID(semantic.SegmentKindChunkHNSW, vectorsMeta, graphRef),
+		SegmentKind: semantic.SegmentKindChunkHNSW, Vectors: vectorsMeta, Graph: graphRef, State: stateRef,
+	}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +45,6 @@ func TestSemanticCodecsRejectTruncationAndTrailingData(t *testing.T) {
 		decode func([]byte) error
 	}{
 		{name: "state", data: state, decode: func(data []byte) error { _, err := decodeState(data, limits); return err }},
-		{name: "meta", data: meta, decode: func(data []byte) error { _, err := decodeSegmentMeta(data, limits); return err }},
 		{name: "manifest", data: manifestData, decode: func(data []byte) error { _, err := decodeManifest(data, limits); return err }},
 		{name: "current", data: currentData, decode: func(data []byte) error { _, err := decodeCurrent(data, limits); return err }},
 	}
@@ -62,65 +65,70 @@ func TestSemanticCodecsRejectTruncationAndTrailingData(t *testing.T) {
 	}
 }
 
-func TestStateEncodingCanonicalizesRecordOrder(t *testing.T) {
+func TestStateRoundTripRows(t *testing.T) {
 	checkpoint, _, _ := persistenceFixture(t, true)
 	limits := DefaultLimits()
-	canonical, _, err := encodeState(checkpoint, limits)
+	encoded, _, err := encodeState(checkpoint, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	permuted := checkpoint
-	permuted.Documents = append([]semantic.DocumentRecord(nil), checkpoint.Documents...)
-	permuted.Refs = append([]semantic.RefRecord(nil), checkpoint.Refs...)
-	slices.Reverse(permuted.Documents)
-	slices.Reverse(permuted.Refs)
-	for i := range permuted.Documents {
-		slices.Reverse(permuted.Documents[i].VectorIDs)
-	}
-	encoded, _, err := encodeState(permuted, limits)
+	decoded, err := decodeState(encoded, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(canonical, encoded) {
-		t.Fatal("logically equivalent mappings produced different state bytes")
+	if !slices.Equal(decoded.Rows, checkpoint.Rows) {
+		t.Fatalf("decoded v2 state = %+v", decoded)
 	}
 }
 
-func TestSegmentMetaPreservesOptionalDuplicateStatistics(t *testing.T) {
+func TestSemanticFormatsRejectPreviousVersions(t *testing.T) {
 	checkpoint, _, _ := persistenceFixture(t, false)
+	state, _, err := encodeState(checkpoint, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, vectors, err := vectorBytes(checkpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	flatStats := checkpoint.Segment.ExactDuplicateStats("test-space")
-	stats := semantic.DuplicateStatistics{
-		VectorRows: flatStats.VectorRows, UniqueVectors: flatStats.UniqueVectors, DuplicateRows: flatStats.DuplicateRows,
-		DuplicateGroups: flatStats.DuplicateGroups, MaxFanOut: flatStats.MaxFanOut,
-	}
-	checkpoint.DuplicateStatistics = &stats
-	data, _, err := encodeSegmentMeta(checkpoint, vectors, DefaultLimits())
+	stateRef := fileRef(state)
+	graphRef := fileRef([]byte("graph"))
+	manifestData, _, err := encodeManifest(manifest{
+		GenerationID: 1, ObjectID: segmentObjectID(semantic.SegmentKindChunkHNSW, vectors, graphRef),
+		SegmentKind: semantic.SegmentKindChunkHNSW, Vectors: vectors, Graph: graphRef, State: stateRef,
+	}, DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := decodeSegmentMeta(data, DefaultLimits())
-	if err != nil {
-		t.Fatal(err)
+	for _, test := range []struct {
+		name    string
+		data    []byte
+		version uint16
+		decode  func([]byte) error
+	}{
+		{name: "state v1", data: state, version: 1, decode: func(data []byte) error { _, err := decodeState(data, DefaultLimits()); return err }},
+		{name: "manifest v1", data: manifestData, version: 1, decode: func(data []byte) error { _, err := decodeManifest(data, DefaultLimits()); return err }},
+		{name: "manifest v2", data: manifestData, version: 2, decode: func(data []byte) error { _, err := decodeManifest(data, DefaultLimits()); return err }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data := append([]byte(nil), test.data...)
+			binary.LittleEndian.PutUint16(data[4:6], test.version)
+			if err := test.decode(data); !errors.Is(err, ErrUnsupportedVersion) {
+				t.Fatalf("previous-version error = %v", err)
+			}
+		})
 	}
-	if !equalDuplicateStatistics(decoded.DuplicateStatistics, &stats) {
-		t.Fatalf("duplicate statistics = %+v, want %+v", decoded.DuplicateStatistics, stats)
-	}
+}
 
-	checkpoint.DuplicateStatistics = nil
-	data, _, err = encodeSegmentMeta(checkpoint, vectors, DefaultLimits())
+func TestSemanticFormatGoldenHashes(t *testing.T) {
+	checkpoint, _, _ := persistenceFixture(t, false)
+	state, _, err := encodeState(checkpoint, DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err = decodeSegmentMeta(data, DefaultLimits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decoded.DuplicateStatistics != nil {
-		t.Fatalf("duplicate statistics = %+v, want nil", decoded.DuplicateStatistics)
+	stateHash := sha256.Sum256(state)
+	if got, want := hex.EncodeToString(stateHash[:]), "75488c20ad39bd4eed1cc7bece00073fab81ec0f8a855946ed931543b37fa972"; got != want {
+		t.Fatalf("SSTA v3 SHA-256 = %s, want %s", got, want)
 	}
 }
 
@@ -137,27 +145,14 @@ func FuzzDecodeState(f *testing.F) {
 	})
 }
 
-func FuzzDecodeSegmentMeta(f *testing.F) {
-	checkpoint, _, _ := persistenceFixture(f, false)
-	_, vectors, _ := vectorBytes(checkpoint)
-	data, _, _ := encodeSegmentMeta(checkpoint, vectors, DefaultLimits())
-	f.Add(data)
-	f.Fuzz(func(t *testing.T, data []byte) {
-		limits := DefaultLimits()
-		limits.MaxFileBytes = 64 << 10
-		limits.MaxVectors = 100
-		_, _ = decodeSegmentMeta(data, limits)
-	})
-}
-
 func FuzzDecodeManifestAndCurrent(f *testing.F) {
 	limits := DefaultLimits()
 	manifestData, manifestRef, _ := encodeManifest(manifest{
 		GenerationID: 1,
-		ObjectID:     "seg-" + string(bytes.Repeat([]byte{'a'}, 64)),
-		Vectors:      fileReference{Size: 44},
-		SegmentMeta:  fileReference{Size: 96},
-		State:        fileReference{Size: 64},
+		ObjectID:     "seg-" + string(bytes.Repeat([]byte{'a'}, 64)), SegmentKind: semantic.SegmentKindChunkHNSW,
+		Vectors: fileReference{Size: 44, SHA256: sha256.Sum256([]byte("vectors"))},
+		Graph:   fileReference{Size: 32, SHA256: sha256.Sum256([]byte("graph"))},
+		State:   fileReference{Size: 64, SHA256: sha256.Sum256([]byte("state"))},
 	}, limits)
 	currentData, _, _ := encodeCurrent(currentRecord{GenerationID: 1, ManifestHash: manifestRef.SHA256}, limits)
 	f.Add(uint8(0), manifestData)
@@ -173,8 +168,8 @@ func FuzzDecodeManifestAndCurrent(f *testing.F) {
 	})
 }
 
-func vectorBytes(checkpoint semantic.Checkpoint) ([]byte, fileReference, error) {
-	data, metadata, err := vectorflat.Marshal(checkpoint.Segment)
+func vectorBytes(snapshot semantic.Snapshot) ([]byte, fileReference, error) {
+	data, metadata, err := vectorflat.MarshalSource(snapshot.Segment.Vectors(), snapshot.Segment.MaxK())
 	return data, fileReference{Size: metadata.Size, SHA256: metadata.SHA256}, err
 }
 

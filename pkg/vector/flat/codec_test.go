@@ -57,6 +57,11 @@ func TestCodecRoundTripAndDeterministicBytes(t *testing.T) {
 			if stats.VectorRows != 3 || stats.UniqueVectors != 2 || stats.DuplicateRows != 1 || stats.DuplicateGroups != 1 || stats.MaxFanOut != 2 {
 				t.Fatalf("duplicate stats = %+v", stats)
 			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if _, err := opened.ExactDuplicateStatsContext(ctx, "space/test/v1"); !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled duplicate scan error = %v", err)
+			}
 		})
 	}
 }

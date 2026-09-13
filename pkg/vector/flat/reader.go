@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"slices"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vector/internal/contextcheck"
+	"github.com/dariasmyr/fts-engine/pkg/vector/internal/exactsearch"
 )
 
 // Reader is an immutable exact-search segment backed by a contiguous matrix.
@@ -22,7 +25,7 @@ func newReader(space vector.Space, maxK int, values []float32) *Reader {
 }
 
 func (r *Reader) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
-	return searchExact(ctx, r.space, r.values, r.maxK, query, k, options)
+	return exactsearch.Search(ctx, r.space, r.values, r.maxK, query, k, options)
 }
 
 // Compact returns an immutable reader containing only rows allowed by filter.
@@ -44,6 +47,25 @@ func (r *Reader) Metric() vector.Metric { return r.space.Metric() }
 func (r *Reader) Normalization() vector.Normalization { return r.space.Normalization() }
 
 func (r *Reader) MaxK() int { return r.maxK }
+
+// ReadVectorInto copies one prepared row into dst without exposing reader storage.
+func (r *Reader) ReadVectorInto(ctx context.Context, ord vector.Ordinal, dst []float32) error {
+	if ctx == nil {
+		return vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(dst) != r.Dimensions() {
+		return fmt.Errorf("%w: got %d, want %d", vector.ErrDimensionMismatch, len(dst), r.Dimensions())
+	}
+	value, ok := r.vectorView(ord)
+	if !ok {
+		return fmt.Errorf("%w: %d", vector.ErrOrdinalOutOfRange, ord)
+	}
+	copy(dst, value)
+	return nil
+}
 
 // Vector returns a copy of one prepared vector row.
 func (r *Reader) Vector(ord vector.Ordinal) ([]float32, bool) {
@@ -76,6 +98,19 @@ type DuplicateStats struct {
 // ExactDuplicateStats groups exact prepared float32 rows without coalescing
 // physical storage. namespace should identify the embedding space and format.
 func (r *Reader) ExactDuplicateStats(namespace string) DuplicateStats {
+	stats, _ := r.ExactDuplicateStatsContext(context.Background(), namespace)
+	return stats
+}
+
+// ExactDuplicateStatsContext is ExactDuplicateStats with cancellation for the
+// full row scan.
+func (r *Reader) ExactDuplicateStatsContext(ctx context.Context, namespace string) (DuplicateStats, error) {
+	if ctx == nil {
+		return DuplicateStats{}, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return DuplicateStats{}, err
+	}
 	type group struct {
 		ordinal vector.Ordinal
 		count   int
@@ -84,6 +119,9 @@ func (r *Reader) ExactDuplicateStats(namespace string) DuplicateStats {
 	groups := make([]*group, 0, r.Len())
 	var encoded [4]byte
 	for row := range r.Len() {
+		if err := contextcheck.PeriodicError(ctx, row); err != nil {
+			return DuplicateStats{}, err
+		}
 		vectorValue, _ := r.vectorView(vector.Ordinal(row))
 		hash := sha256.New()
 		_, _ = hash.Write([]byte(namespace))
@@ -118,5 +156,8 @@ func (r *Reader) ExactDuplicateStats(namespace string) DuplicateStats {
 		}
 		stats.MaxFanOut = max(stats.MaxFanOut, group.count)
 	}
-	return stats
+	if err := ctx.Err(); err != nil {
+		return DuplicateStats{}, err
+	}
+	return stats, nil
 }

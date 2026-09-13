@@ -14,6 +14,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	vectorflat "github.com/dariasmyr/fts-engine/pkg/vector/flat"
+	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
@@ -31,7 +32,6 @@ func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
 			for _, path := range []string{
 				filepath.Join(root, currentFileName),
 				filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, vectorsFileName),
-				filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, segmentMetaFileName),
 				filepath.Join(root, generationsDirectory, generationName(42), manifestFileName),
 				filepath.Join(root, generationsDirectory, generationName(42), stateFileName),
 			} {
@@ -44,33 +44,183 @@ func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer loaded.Close()
-			gotChunks, err := loaded.Reader.SearchChunks(context.Background(), []float32{0, 0}, 3)
+			gotChunks, err := loaded.Snapshot.SearchChunks(context.Background(), []float32{0, 0}, 3)
 			if err != nil {
 				t.Fatal(err)
 			}
-			gotDocuments, err := loaded.Reader.SearchDocuments(context.Background(), []float32{0, 0}, 2)
+			gotDocuments, err := loaded.Snapshot.SearchDocuments(context.Background(), []float32{0, 0}, 2)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !slices.Equal(gotChunks.Hits, wantChunks.Hits) || !equalDocumentHits(gotDocuments.Hits, wantDocuments.Hits) {
 				t.Fatalf("round-trip search mismatch\nchunks=%+v\ndocuments=%+v", gotChunks, gotDocuments)
 			}
-			if loaded.Checkpoint.Space != checkpoint.Space || loaded.Checkpoint.Chunking != checkpoint.Chunking || loaded.Checkpoint.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID || !equalDuplicateStatistics(loaded.Checkpoint.DuplicateStatistics, checkpoint.DuplicateStatistics) {
+			if loaded.Snapshot.Space != checkpoint.Space || loaded.Snapshot.Chunking != checkpoint.Chunking || loaded.Snapshot.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID {
 				t.Fatal("checkpoint metadata changed during round trip")
 			}
-			if !slices.Equal(loaded.Checkpoint.VectorIDs, checkpoint.VectorIDs) ||
-				!slices.Equal(loaded.Checkpoint.Live.SnapshotWords(), checkpoint.Live.SnapshotWords()) ||
-				!slices.Equal(loaded.Checkpoint.Refs, checkpoint.Refs) ||
-				!equalDocumentRecords(loaded.Checkpoint.Documents, checkpoint.Documents) {
+			if !slices.Equal(loaded.Snapshot.Rows, checkpoint.Rows) {
 				t.Fatal("checkpoint mappings changed during round trip")
 			}
 		})
 	}
 }
 
+func TestPublishReusesSegmentObjectAndUpgradesDurability(t *testing.T) {
+	checkpoint, _, _ := persistenceFixture(t, false)
+	root := t.TempDir()
+	first, err := Publish(context.Background(), root, 1, checkpoint, Options{Durability: DurabilityAsynchronous})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint.MaxAllocatedVectorID++
+	second, err := Publish(context.Background(), root, 2, checkpoint, Options{
+		Durability: DurabilitySynchronous, ExpectedGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ObjectID != first.ObjectID {
+		t.Fatalf("segment object was not reused: first %q, second %q", first.ObjectID, second.ObjectID)
+	}
+	loaded, err := Open(root, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer loaded.Close()
+	if loaded.Generation.ID != 2 || loaded.Snapshot.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID {
+		t.Fatalf("opened generation/snapshot = %d/%d", loaded.Generation.ID, loaded.Snapshot.MaxAllocatedVectorID)
+	}
+}
+
+func TestPublishOpenChunkHNSWRoundTrip(t *testing.T) {
+	checkpoint, _, _ := persistenceFixture(t, true)
+	checkpoint = withHNSW(t, checkpoint, 7)
+	root := t.TempDir()
+	generation, err := Publish(context.Background(), root, 1, checkpoint, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, graphFileName)); err != nil {
+		t.Fatalf("graph was not published: %v", err)
+	}
+	loaded, err := Open(root, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer loaded.Close()
+	if loaded.Snapshot.Segment.Kind() != semantic.SegmentKindChunkHNSW || loaded.Snapshot.Segment.HNSW() == nil {
+		t.Fatalf("opened segment = kind %d, graph %p", loaded.Snapshot.Segment.Kind(), loaded.Snapshot.Segment.HNSW())
+	}
+	result, err := loaded.Snapshot.SearchChunks(context.Background(), []float32{0, 0}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stats.UsedExactFallback || len(result.Hits) != 2 || result.Hits[0].Ref.DocID != "doc-a" {
+		t.Fatalf("round-trip HNSW result = %+v", result)
+	}
+}
+
+func TestOpenRejectsMissingCorruptAndSubstitutedGraph(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*testing.T, string, Generation, semantic.Snapshot)
+	}{
+		{name: "missing", mutate: func(t *testing.T, root string, generation Generation, _ semantic.Snapshot) {
+			t.Helper()
+			if err := os.Remove(filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, graphFileName)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "corrupt", mutate: func(t *testing.T, root string, generation Generation, _ semantic.Snapshot) {
+			t.Helper()
+			path := filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, graphFileName)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data[len(data)/2] ^= 0xff
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "substituted_identity", mutate: substituteGraphAndReferences},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			checkpoint, _, _ := persistenceFixture(t, true)
+			checkpoint = withHNSW(t, checkpoint, 7)
+			root := t.TempDir()
+			generation, err := Publish(context.Background(), root, 1, checkpoint, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(t, root, generation, checkpoint)
+			if _, err := Open(root, Limits{}); err == nil {
+				t.Fatal("Open accepted invalid graph publication")
+			}
+		})
+	}
+}
+
+func TestGraphPublicationFailureKeepsPreviousGeneration(t *testing.T) {
+	for _, after := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before", true: "after"}[after], func(t *testing.T) {
+			root := t.TempDir()
+			first, _, _ := persistenceFixture(t, false)
+			if _, err := Publish(context.Background(), root, 1, first, Options{}); err != nil {
+				t.Fatal(err)
+			}
+			second, _, _ := persistenceFixture(t, true)
+			second = withHNSW(t, second, 9)
+			injected := errors.New("graph publication failure")
+			options := Options{ExpectedGeneration: 1}
+			if after {
+				options.AfterStep = func(step PublicationStep) error {
+					if step == StepWriteGraph {
+						return injected
+					}
+					return nil
+				}
+			} else {
+				options.BeforeStep = func(step PublicationStep) error {
+					if step == StepWriteGraph {
+						return injected
+					}
+					return nil
+				}
+			}
+			if _, err := Publish(context.Background(), root, 2, second, options); !errors.Is(err, injected) {
+				t.Fatalf("Publish error = %v", err)
+			}
+			loaded, err := Open(root, Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer loaded.Close()
+			if loaded.Generation.ID != 1 {
+				t.Fatalf("opened generation %d", loaded.Generation.ID)
+			}
+		})
+	}
+}
+
+func TestPublishPreflightsGraphLimit(t *testing.T) {
+	checkpoint, _, _ := persistenceFixture(t, true)
+	checkpoint = withHNSW(t, checkpoint, 7)
+	limits := DefaultLimits()
+	limits.MaxGraphBytes = 100
+	called := false
+	_, err := Publish(context.Background(), t.TempDir(), 1, checkpoint, Options{Limits: limits, BeforeStep: func(PublicationStep) error {
+		called = true
+		return nil
+	}})
+	if !errors.Is(err, ErrLimitExceeded) || called {
+		t.Fatalf("Publish error/callback = %v/%v", err, called)
+	}
+}
+
 func TestFailuresBeforeCurrentKeepPreviousGeneration(t *testing.T) {
 	steps := []PublicationStep{
-		StepWriteVectors, StepWriteSegmentMeta, StepSyncSegment, StepRenameSegment,
+		StepWriteVectors, StepSyncSegment, StepRenameSegment,
 		StepWriteState, StepWriteManifest, StepSyncGeneration, StepRenameGeneration,
 		StepWriteCurrent, StepReplaceCurrent,
 	}
@@ -139,7 +289,7 @@ func TestFailureAfterCurrentIsIndeterminateAndPublished(t *testing.T) {
 
 func TestFailuresAfterPreCommitStepsKeepPreviousGeneration(t *testing.T) {
 	steps := []PublicationStep{
-		StepWriteVectors, StepWriteSegmentMeta, StepSyncSegment, StepRenameSegment,
+		StepWriteVectors, StepSyncSegment, StepRenameSegment,
 		StepWriteState, StepWriteManifest, StepSyncGeneration, StepRenameGeneration, StepWriteCurrent,
 	}
 	for _, failedStep := range steps {
@@ -307,9 +457,6 @@ func TestOpenRejectsCorruptReferencedFiles(t *testing.T) {
 		func(root string, generation Generation) string {
 			return filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, vectorsFileName)
 		},
-		func(root string, generation Generation) string {
-			return filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, segmentMetaFileName)
-		},
 		func(root string, _ Generation) string {
 			return filepath.Join(root, generationsDirectory, generationName(1), stateFileName)
 		},
@@ -373,6 +520,26 @@ func TestPublishPreflightsLimitsBeforeWriting(t *testing.T) {
 	}})
 	if !errors.Is(err, ErrLimitExceeded) || called {
 		t.Fatalf("Publish() error = %v, callback called = %v", err, called)
+	}
+}
+
+func TestHNSWSearchWorkLimits(t *testing.T) {
+	checkpoint, _, _ := persistenceFixture(t, false)
+	checkpoint = withHNSW(t, checkpoint, 7)
+
+	for name, limit := range map[string]func(*Limits){
+		"ef search": func(limits *Limits) { limits.MaxEfSearch = checkpoint.Segment.HNSW().SearchConfig().MaxEfSearch - 1 },
+		"visit limit": func(limits *Limits) {
+			limits.MaxVisitLimit = checkpoint.Segment.HNSW().SearchConfig().MaxVisitLimit - 1
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			limits := DefaultLimits()
+			limit(&limits)
+			if _, err := Publish(context.Background(), t.TempDir(), 1, checkpoint, Options{Limits: limits}); !errors.Is(err, ErrLimitExceeded) {
+				t.Fatalf("Publish() work limit error = %v", err)
+			}
+		})
 	}
 }
 
@@ -465,7 +632,7 @@ func TestObjectIDValidation(t *testing.T) {
 	}
 }
 
-func TestPublishCompactedCheckpointRemovesStaleRows(t *testing.T) {
+func TestSnapshotPublicationContainsOnlyLiveRows(t *testing.T) {
 	service, err := semantic.New(semantic.Config{
 		Space:    semantic.SpaceDescriptor{ID: "compact-space-v1", Dimensions: 2, Metric: vector.MetricL2Squared, Normalization: vector.NormalizationNone, VectorFormatVersion: 1},
 		Chunking: semantic.ChunkingDescriptor{ID: "compact-chunks-v1"}, MaxVectors: 10,
@@ -481,35 +648,27 @@ func TestPublishCompactedCheckpointRemovesStaleRows(t *testing.T) {
 	if err := service.ReplaceDocument(ctx, []semantic.ChunkVector{{Ref: chunk.Ref{ID: "new", DocID: "doc", Field: fts.DefaultField, EndByte: 3}, Vector: []float32{1, 0}}}); err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err := service.Checkpoint()
+	checkpoint, err := service.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if checkpoint.Segment.Len() != 1 || len(checkpoint.Rows) != 1 || checkpoint.Rows[0].Chunk.ID != "new" {
+		t.Fatalf("checkpoint retained stale rows: %+v", checkpoint)
 	}
 	root := t.TempDir()
-	first, err := Publish(ctx, root, 1, checkpoint, Options{})
+	_, err = Publish(ctx, root, 1, checkpoint, Options{})
 	if err != nil {
 		t.Fatal(err)
-	}
-	compacted, err := checkpoint.BuildLiveOnly(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := Publish(ctx, root, 2, compacted, Options{ExpectedGeneration: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.ObjectID == second.ObjectID {
-		t.Fatal("compacted generation reused the stale segment object")
 	}
 	loaded, err := Open(root, Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer loaded.Close()
-	if loaded.Generation.ID != 2 || loaded.Checkpoint.Segment.Len() != 1 || loaded.Checkpoint.Live.AllowedOrdinalCount() != 1 || len(loaded.Checkpoint.Refs) != 1 {
-		t.Fatalf("opened compacted generation = %+v", loaded.Checkpoint)
+	if loaded.Generation.ID != 1 || loaded.Snapshot.Segment.Len() != 1 || len(loaded.Snapshot.Rows) != 1 {
+		t.Fatalf("opened dense generation = %+v", loaded.Snapshot)
 	}
-	result, err := loaded.Reader.SearchChunks(ctx, []float32{0, 0}, 1)
+	result, err := loaded.Snapshot.SearchChunks(ctx, []float32{0, 0}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +677,7 @@ func TestPublishCompactedCheckpointRemovesStaleRows(t *testing.T) {
 	}
 }
 
-func persistenceFixture(t testing.TB, extra bool) (semantic.Checkpoint, semantic.ChunkSearchResult, semantic.DocumentSearchResult) {
+func persistenceFixture(t testing.TB, extra bool) (semantic.Snapshot, semantic.ChunkSearchResult, semantic.DocumentSearchResult) {
 	t.Helper()
 	service, err := semantic.New(semantic.Config{
 		Space:    semantic.SpaceDescriptor{ID: "persist-space-v1", Dimensions: 2, Metric: vector.MetricL2Squared, Normalization: vector.NormalizationNone, VectorFormatVersion: 1},
@@ -543,38 +702,88 @@ func persistenceFixture(t testing.TB, extra bool) (semantic.Checkpoint, semantic
 	if extra {
 		add("doc-c", "c", []float32{2, 0})
 	}
-	checkpoint, err := service.Checkpoint()
+	checkpoint, err := service.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunks, err := service.SearchChunks(ctx, []float32{0, 0}, min(3, checkpoint.Live.AllowedOrdinalCount()))
+	chunks, err := service.SearchChunks(ctx, []float32{0, 0}, min(3, len(checkpoint.Rows)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	documents, err := service.SearchDocuments(ctx, []float32{0, 0}, min(2, len(checkpoint.Documents)))
+	documents, err := service.SearchDocuments(ctx, []float32{0, 0}, min(2, len(checkpoint.Rows)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return checkpoint, chunks, documents
 }
 
+func withHNSW(t testing.TB, checkpoint semantic.Snapshot, seed uint64) semantic.Snapshot {
+	t.Helper()
+	maxK := max(checkpoint.MaxK, checkpoint.MaxChunkCandidates)
+	graph, err := hnsw.Build(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
+		BuildConfig: hnsw.BuildConfig{
+			Dimensions: checkpoint.Space.Dimensions, Metric: checkpoint.Space.Metric,
+			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Space.Dimensions * 4),
+			MaxNeighbors: 2, EfConstruction: 8, Seed: seed,
+		},
+		SearchConfig: hnsw.SearchConfig{
+			DefaultEfSearch: maxK, MaxEfSearch: maxK, DefaultVisitLimit: checkpoint.Segment.Len(),
+			MaxVisitLimit: checkpoint.Segment.Len(), MaxK: maxK,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment, err := semantic.NewHNSWSegment(semantic.MutableHeadID, checkpoint.Segment.Vectors(), graph, checkpoint.Rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint.Segment = segment
+	return checkpoint
+}
+
+func substituteGraphAndReferences(t *testing.T, root string, generation Generation, checkpoint semantic.Snapshot) {
+	t.Helper()
+	generationPath := filepath.Join(root, generationsDirectory, generationName(generation.ID))
+	manifestPath := filepath.Join(generationPath, manifestFileName)
+	manifestData, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := decodeManifest(manifestData, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := withHNSW(t, checkpoint, 99)
+	graphData, _, err := hnsw.MarshalGraph(replacement.Segment.HNSW(), hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	graphPath := filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, graphFileName)
+	if err := os.WriteFile(graphPath, graphData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value.Graph = fileRef(graphData)
+	updatedManifest, updatedRef, err := encodeManifest(value, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, updatedManifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := encodeCurrent(currentRecord{GenerationID: generation.ID, ManifestHash: updatedRef.SHA256}, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, currentFileName), current, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func equalDocumentHits(a, b []semantic.DocumentHit) bool {
 	return slices.EqualFunc(a, b, func(a, b semantic.DocumentHit) bool {
 		return a.DocID == b.DocID && a.Distance == b.Distance && slices.Equal(a.Chunks, b.Chunks)
 	})
-}
-
-func equalDocumentRecords(a, b []semantic.DocumentRecord) bool {
-	return slices.EqualFunc(a, b, func(a, b semantic.DocumentRecord) bool {
-		return a.DocID == b.DocID && slices.Equal(a.VectorIDs, b.VectorIDs)
-	})
-}
-
-func equalDuplicateStatistics(a, b *semantic.DuplicateStatistics) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
 }
 
 func durabilityName(mode DurabilityMode) string {

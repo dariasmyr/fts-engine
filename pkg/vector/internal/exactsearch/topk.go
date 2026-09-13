@@ -1,4 +1,4 @@
-package flat
+package exactsearch
 
 import (
 	"math"
@@ -7,19 +7,18 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-// exactTopK omits duplicate tracking because a flat scan offers every ordinal
-// exactly once.
-type exactTopK struct {
+// TopK retains the best unique-row hits from an exact matrix scan.
+type TopK struct {
 	limit int
-	hits  exactHitHeap
+	hits  hitHeap
 }
 
-func newExactTopK(limit int) *exactTopK {
+func NewTopK(limit int) *TopK {
 	limit = max(0, limit)
-	return &exactTopK{limit: limit, hits: make(exactHitHeap, 0, limit)}
+	return &TopK{limit: limit, hits: make(hitHeap, 0, limit)}
 }
 
-func (t *exactTopK) Add(hit vector.Hit) {
+func (t *TopK) Add(hit vector.Hit) {
 	if t.limit == 0 || math.IsNaN(hit.Distance) || math.IsInf(hit.Distance, 0) {
 		return
 	}
@@ -28,17 +27,17 @@ func (t *exactTopK) Add(hit vector.Hit) {
 		t.siftUp(len(t.hits) - 1)
 		return
 	}
-	if compareExactHits(hit, t.hits[0]) >= 0 {
+	if compareHits(hit, t.hits[0]) >= 0 {
 		return
 	}
 	t.hits[0] = hit
 	t.siftDown(0)
 }
 
-func (t *exactTopK) siftUp(index int) {
+func (t *TopK) siftUp(index int) {
 	for index > 0 {
 		parent := (index - 1) / 2
-		if compareExactHits(t.hits[parent], t.hits[index]) >= 0 {
+		if compareHits(t.hits[parent], t.hits[index]) >= 0 {
 			return
 		}
 		t.hits[parent], t.hits[index] = t.hits[index], t.hits[parent]
@@ -46,7 +45,7 @@ func (t *exactTopK) siftUp(index int) {
 	}
 }
 
-func (t *exactTopK) siftDown(index int) {
+func (t *TopK) siftDown(index int) {
 	for {
 		left := index*2 + 1
 		if left >= len(t.hits) {
@@ -54,10 +53,10 @@ func (t *exactTopK) siftDown(index int) {
 		}
 		worseChild := left
 		right := left + 1
-		if right < len(t.hits) && compareExactHits(t.hits[right], t.hits[left]) > 0 {
+		if right < len(t.hits) && compareHits(t.hits[right], t.hits[left]) > 0 {
 			worseChild = right
 		}
-		if compareExactHits(t.hits[index], t.hits[worseChild]) >= 0 {
+		if compareHits(t.hits[index], t.hits[worseChild]) >= 0 {
 			return
 		}
 		t.hits[index], t.hits[worseChild] = t.hits[worseChild], t.hits[index]
@@ -65,13 +64,13 @@ func (t *exactTopK) siftDown(index int) {
 	}
 }
 
-func (t *exactTopK) Results() []vector.Hit {
+func (t *TopK) Results() []vector.Hit {
 	results := append([]vector.Hit(nil), t.hits...)
-	slices.SortFunc(results, compareExactHits)
+	slices.SortFunc(results, compareHits)
 	return results
 }
 
-func compareExactHits(a, b vector.Hit) int {
+func compareHits(a, b vector.Hit) int {
 	if a.Distance < b.Distance {
 		return -1
 	}
@@ -87,4 +86,4 @@ func compareExactHits(a, b vector.Hit) int {
 	return 0
 }
 
-type exactHitHeap []vector.Hit
+type hitHeap []vector.Hit

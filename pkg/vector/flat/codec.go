@@ -2,6 +2,7 @@ package flat
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -49,30 +50,63 @@ func Marshal(reader *Reader) ([]byte, FileMetadata, error) {
 	return buffer.Bytes(), metadata, err
 }
 
+// MarshalSource encodes any immutable prepared vector source as VFLT data.
+func MarshalSource(source vector.PreparedVectorSource, maxK int) ([]byte, FileMetadata, error) {
+	var buffer bytes.Buffer
+	metadata, err := WriteSource(&buffer, source, maxK)
+	return buffer.Bytes(), metadata, err
+}
+
 // Write streams one immutable fixed-width matrix and its checksum.
 func Write(writer io.Writer, reader *Reader) (FileMetadata, error) {
-	if writer == nil || reader == nil || reader.Dimensions() <= 0 || reader.maxK <= 0 {
+	if reader == nil {
 		return FileMetadata{}, ErrCorruptSegment
 	}
-	if uint64(reader.maxK) > math.MaxUint32 || uint64(reader.Len()) >= math.MaxUint32 || uint64(reader.Dimensions()) > math.MaxUint32 {
+	return WriteSource(writer, reader, reader.maxK)
+}
+
+// WriteSource streams an immutable prepared vector source as fixed-width VFLT
+// data. The source remains the caller's responsibility and is not retained.
+func WriteSource(writer io.Writer, source vector.PreparedVectorSource, maxK int) (FileMetadata, error) {
+	if writer == nil || source == nil || source.Dimensions() <= 0 || maxK <= 0 || source.Len() < 0 {
+		return FileMetadata{}, ErrCorruptSegment
+	}
+	space, err := vector.NewSpace(source.Dimensions(), source.Metric())
+	if err != nil || space.Normalization() != source.Normalization() {
+		return FileMetadata{}, ErrCorruptSegment
+	}
+	if uint64(maxK) > math.MaxUint32 || uint64(source.Len()) >= math.MaxUint32 || uint64(source.Dimensions()) > math.MaxUint32 {
 		return FileMetadata{}, ErrSegmentLimit
 	}
-	for row := range reader.Len() {
-		value, _ := reader.vectorView(vector.Ordinal(row))
-		if err := validatePreparedRow(reader.space, value); err != nil {
+	components, ok := checkedMultiply(uint64(source.Len()), uint64(source.Dimensions()))
+	if !ok || components > uint64(math.MaxInt) {
+		return FileMetadata{}, ErrSegmentLimit
+	}
+	vectorBytes := components * 4
+	if vectorBytes > math.MaxUint64-uint64(codecHeaderSize+codecFooterSize) {
+		return FileMetadata{}, ErrSegmentLimit
+	}
+	scratch := make([]float32, source.Dimensions())
+	for row := range source.Len() {
+		for i := range scratch {
+			scratch[i] = float32(math.NaN())
+		}
+		if err := source.ReadVectorInto(context.Background(), vector.Ordinal(row), scratch); err != nil {
+			return FileMetadata{}, fmt.Errorf("%w: row %d: %v", ErrCorruptSegment, row, err)
+		}
+		if err := validatePreparedRow(space, scratch); err != nil {
 			return FileMetadata{}, fmt.Errorf("%w: row %d: %v", ErrCorruptSegment, row, err)
 		}
 	}
-	vectorBytes := uint64(len(reader.values)) * 4
 	header := make([]byte, codecHeaderSize)
 	copy(header[:4], codecMagic)
 	binary.LittleEndian.PutUint16(header[4:6], codecVersion)
 	binary.LittleEndian.PutUint16(header[6:8], codecHeaderSize)
-	binary.LittleEndian.PutUint32(header[8:12], uint32(reader.Dimensions()))
-	header[12] = byte(reader.Metric())
-	header[13] = byte(reader.Normalization())
-	binary.LittleEndian.PutUint32(header[16:20], uint32(reader.Len()))
-	binary.LittleEndian.PutUint32(header[20:24], uint32(reader.maxK))
+	binary.LittleEndian.PutUint32(header[8:12], uint32(source.Dimensions()))
+	header[12] = byte(source.Metric())
+	header[13] = byte(source.Normalization())
+	binary.LittleEndian.PutUint32(header[16:20], uint32(source.Len()))
+	binary.LittleEndian.PutUint32(header[20:24], uint32(maxK))
 	binary.LittleEndian.PutUint64(header[24:32], vectorBytes)
 
 	crc := crc32.NewIEEE()
@@ -81,17 +115,19 @@ func Write(writer io.Writer, reader *Reader) (FileMetadata, error) {
 	if err := writeAll(body, header); err != nil {
 		return FileMetadata{}, fmt.Errorf("vector/flat: write header: %w", err)
 	}
-	buffer := make([]byte, 64<<10)
-	for offset := 0; offset < len(reader.values); {
-		components := min(len(buffer)/4, len(reader.values)-offset)
-		encoded := buffer[:components*4]
-		for i := range components {
-			binary.LittleEndian.PutUint32(encoded[i*4:(i+1)*4], math.Float32bits(reader.values[offset+i]))
+	rowBytes := source.Dimensions() * 4
+	buffer := make([]byte, rowBytes)
+	for row := range source.Len() {
+		if err := source.ReadVectorInto(context.Background(), vector.Ordinal(row), scratch); err != nil {
+			return FileMetadata{}, fmt.Errorf("%w: row %d: %v", ErrCorruptSegment, row, err)
+		}
+		encoded := buffer[:rowBytes]
+		for i, value := range scratch {
+			binary.LittleEndian.PutUint32(encoded[i*4:(i+1)*4], math.Float32bits(value))
 		}
 		if err := writeAll(body, encoded); err != nil {
 			return FileMetadata{}, fmt.Errorf("vector/flat: write vectors: %w", err)
 		}
-		offset += components
 	}
 	checksum := crc.Sum32()
 	var footer [codecFooterSize]byte

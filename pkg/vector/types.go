@@ -109,3 +109,13 @@ type Searcher interface {
 	Dimensions() int
 	Metric() Metric
 }
+
+// PreparedVectorSource provides immutable prepared vector rows by ordinal.
+// Implementations must fill the destination completely and must not retain it.
+type PreparedVectorSource interface {
+	Len() int
+	Dimensions() int
+	Metric() Metric
+	Normalization() Normalization
+	ReadVectorInto(context.Context, Ordinal, []float32) error
+}

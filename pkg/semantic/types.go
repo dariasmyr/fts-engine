@@ -1,4 +1,4 @@
-// Package semantic provides chunk-aware in-memory dense-vector search.
+// Package semantic provides chunk-aware dense-vector search.
 package semantic
 
 import (
@@ -7,6 +7,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 var (
@@ -16,8 +17,9 @@ var (
 	ErrDocumentNotFound  = errors.New("semantic: document not found")
 	ErrDuplicateChunkID  = errors.New("semantic: duplicate chunk ID")
 	ErrVectorIDExhausted = errors.New("semantic: vector ID exhausted")
+	ErrCapacityExceeded  = errors.New("semantic: vector capacity exceeded")
 	ErrInternalState     = errors.New("semantic: inconsistent internal state")
-	ErrInvalidCheckpoint = errors.New("semantic: invalid checkpoint")
+	ErrInvalidSnapshot   = errors.New("semantic: invalid snapshot")
 )
 
 type VectorID uint64
@@ -26,13 +28,10 @@ type ComponentID uint64
 
 const MutableHeadID ComponentID = 1
 
-type Location struct {
-	Component ComponentID
-	Ordinal   vector.Ordinal
-}
-
 type SpaceDescriptor struct {
 	ID                  string
+	ModelVersion        string
+	Fingerprint         string
 	Dimensions          int
 	Metric              vector.Metric
 	Normalization       vector.Normalization
@@ -40,21 +39,22 @@ type SpaceDescriptor struct {
 }
 
 type ChunkingDescriptor struct {
-	ID string
+	ID          string
+	Version     uint32
+	Fingerprint string
 }
 
 type Config struct {
-	Space    SpaceDescriptor
-	Chunking ChunkingDescriptor
-	// CollectDuplicateStatistics enables an O(rows * dimensions) exact-vector
-	// scan during checkpoint creation and validation. It is disabled by default.
-	CollectDuplicateStatistics bool
-	MaxVectors                 int
-	MaxChunksPerDocument       int
-	MaxK                       int
-	MaxChunkCandidates         int
-	MaxChunksPerDocumentHit    int
-	InitialVectorCapacity      int
+	Space                   SpaceDescriptor
+	Chunking                ChunkingDescriptor
+	MaxVectors              int
+	MaxChunksPerDocument    int
+	MaxK                    int
+	MaxChunkCandidates      int
+	MaxChunksPerDocumentHit int
+	InitialVectorCapacity   int
+	HNSWBuild               hnsw.BuildConfig
+	HNSWSearch              hnsw.SearchConfig
 	// InitialMaxAllocatedVectorID seeds the allocator; the first new vector gets
 	// the following ID. Use it when continuing an existing ID namespace.
 	InitialMaxAllocatedVectorID VectorID
@@ -74,6 +74,13 @@ type ChunkSearchResult struct {
 	Hits       []ChunkHit
 	Stats      vector.SearchStats
 	Incomplete bool
+}
+
+// SearchOptions controls request-local ANN work. Zero values use the HNSW
+// defaults configured for the service or segment.
+type SearchOptions struct {
+	EfSearch   int
+	VisitLimit int
 }
 
 type DocumentHit struct {
@@ -99,20 +106,10 @@ type Statistics struct {
 	MaxAllocatedVectorID VectorID
 }
 
-type DocumentRecord struct {
-	DocID     fts.DocID
-	VectorIDs []VectorID
-}
-
-type RefRecord struct {
+// VectorRow describes the semantic identity of one segment row. Its index in
+// Snapshot.Rows is the row's local ordinal for that snapshot generation.
+// Rows retain monotonically allocated VectorID order across compaction.
+type VectorRow struct {
 	VectorID VectorID
-	Ref      chunk.Ref
-}
-
-type DuplicateStatistics struct {
-	VectorRows      int
-	UniqueVectors   int
-	DuplicateRows   int
-	DuplicateGroups int
-	MaxFanOut       int
+	Chunk    chunk.Ref
 }

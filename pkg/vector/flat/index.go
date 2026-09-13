@@ -9,6 +9,8 @@ import (
 	"sync"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vector/internal/contextcheck"
+	"github.com/dariasmyr/fts-engine/pkg/vector/internal/exactsearch"
 )
 
 var (
@@ -125,7 +127,7 @@ func (idx *Index) AppendBatch(vectors [][]float32) (OrdinalRange, error) {
 func (idx *Index) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	return searchExact(ctx, idx.space, idx.values, idx.maxK, query, k, options)
+	return exactsearch.Search(ctx, idx.space, idx.values, idx.maxK, query, k, options)
 }
 
 // Compact returns a new mutable index containing only rows allowed by filter.
@@ -159,4 +161,55 @@ func (idx *Index) Freeze() *Reader {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	return newReader(idx.space, idx.maxK, append([]float32(nil), idx.values...))
+}
+
+// FreezeCompact returns an immutable reader containing only rows allowed by
+// filter. Prepared components are copied once and are not normalized again.
+func (idx *Index) FreezeCompact(ctx context.Context, filter vector.ResultFilter) (*Reader, error) {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	values, err := compactPrepared(ctx, idx.space.Dimensions(), idx.values, filter)
+	if err != nil {
+		return nil, err
+	}
+	return newReader(idx.space, idx.maxK, values), nil
+}
+
+func compactPrepared(ctx context.Context, dimensions int, matrix []float32, filter vector.ResultFilter) ([]float32, error) {
+	if ctx == nil {
+		return nil, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rowCount := len(matrix) / dimensions
+	allowedCount := rowCount
+	if filter != nil {
+		if filter.TotalOrdinalCount() != uint32(rowCount) {
+			return nil, fmt.Errorf("%w: got %d, want %d", vector.ErrResultFilterSizeMismatch, filter.TotalOrdinalCount(), rowCount)
+		}
+		allowedCount = filter.AllowedOrdinalCount()
+		if allowedCount < 0 || allowedCount > rowCount {
+			return nil, vector.ErrInvalidSearchOptions
+		}
+	}
+
+	compacted := make([]float32, 0, allowedCount*dimensions)
+	for row := range rowCount {
+		if err := contextcheck.PeriodicError(ctx, row); err != nil {
+			return nil, err
+		}
+		if filter != nil && !filter.Allows(vector.Ordinal(row)) {
+			continue
+		}
+		start := row * dimensions
+		compacted = append(compacted, matrix[start:start+dimensions]...)
+	}
+	if len(compacted)/dimensions != allowedCount {
+		return nil, vector.ErrInvalidSearchOptions
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return compacted, nil
 }

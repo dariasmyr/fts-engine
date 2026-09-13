@@ -30,6 +30,7 @@ For external integrations, prefer these public packages:
 - `pkg/ftsstats` - aggregated search observability
 - `pkg/vector` - dense-vector metrics, search contracts, and immutable result filters
 - `pkg/vector/flat` - mutable and immutable exact vector indexes
+- `pkg/vector/hnsw` - deterministic HNSW construction and immutable approximate search
 - `pkg/semantic` - chunk-aware semantic document search with caller-provided vectors
 - `pkg/semanticpersist` - generation-based persistence for semantic checkpoints
 
@@ -288,6 +289,55 @@ engine := fts.NewMultiField(
 )
 ```
 
+## HNSW Vector Index
+
+`pkg/vector/hnsw` provides observable deterministic construction, an immutable
+packed reader, and a binary graph format bound to a separate authoritative vector
+file. The low-level package still contains an explicit exact-fallback primitive
+for compatibility and benchmarking, but semantic search must not use it as a
+runtime strategy.
+
+The current `pkg/semantic` snapshot and flat-segment APIs are transitional. New
+semantic work targets immutable HNSW segments and an explicit flush lifecycle;
+ordinary semantic search should not require a snapshot or disk persistence.
+
+```go
+build := hnsw.BuildConfig{
+	Dimensions:     3,
+	Metric:         vector.MetricCosine,
+	MaxVectors:     len(values),
+	MaxVectorBytes: uint64(len(values) * 3 * 4),
+	MaxNeighbors:   8,
+	EfConstruction: 64,
+	Seed:           1,
+}
+search := hnsw.SearchConfig{
+	DefaultEfSearch:   32,
+	MaxEfSearch:       256,
+	DefaultVisitLimit: 10_000,
+	MaxVisitLimit:     100_000,
+	MaxK:              100,
+}
+
+reader, err := hnsw.Build(ctx, flatReader, hnsw.BuildOptions{
+	BuildConfig:  build,
+	SearchConfig: search,
+	Progress: func(progress hnsw.BuildProgress) {
+		fmt.Printf("phase=%s vectors=%d/%d\n", progress.Phase, progress.Completed, progress.Total)
+	},
+})
+if err != nil {
+	return err
+}
+result, err := reader.Search(ctx, query, 10, vector.SearchOptions{EfSearch: 64})
+```
+
+`hnsw.Build` reads prepared rows in stable dense ordinal order and hides manual
+`Add`/`Freeze`. `NewBuilder` remains available for low-level construction. Use
+`Reader.GraphStats`, `StorageStats`, `BuildInfo`, `NodeLevel`, and `Neighbors` to
+inspect the result. See the runnable [`hnsw-build`](examples/client-library/hnsw-build/main.go)
+example and run parameter sweeps with `go run ./cmd/vector-ann` from `benchmarks/`.
+
 ## Score Explanation
 
 Use `Explain(...)` to inspect why a specific document received its score for a
@@ -381,17 +431,18 @@ See `examples/client-library/README.md` for the exact run order. The load exampl
 ### Semantic Persistence
 
 `pkg/semantic` accepts embeddings produced by your application or an external
-model; it does not call an embedding model itself. Create a coherent checkpoint
-from the mutable service, publish it, then open the generation selected by
-`CURRENT` as an immutable reader:
+model; it does not call an embedding model itself. The snapshot-driven flow below
+is retained as a transitional compatibility path. The target design uses an
+explicit flush to immutable HNSW segments; flat exact search and exact fallback
+are not semantic runtime strategies.
 
 ```go
-checkpoint, err := service.Checkpoint()
+snapshot, err := service.Snapshot(ctx)
 if err != nil {
 	return err
 }
 
-_, err = semanticpersist.Publish(ctx, "./data/semantic", 1, checkpoint, semanticpersist.Options{
+_, err = semanticpersist.Publish(ctx, "./data/semantic", 1, snapshot, semanticpersist.Options{
 	ExpectedGeneration: 0,
 	Durability:         semanticpersist.DurabilitySynchronous,
 })
@@ -405,17 +456,16 @@ if err != nil {
 }
 defer loaded.Close()
 
-result, err := loaded.Reader.SearchDocuments(ctx, queryEmbedding, 10)
+result, err := loaded.Snapshot.SearchDocuments(ctx, queryEmbedding, 10)
 ```
 
-Replacement and deletion leave stale vectors in the append-only physical
-matrix. Call `service.Compact(ctx)` to synchronously rebuild the mutable flat
-head from live vectors before creating a checkpoint. If maintenance starts from
-an immutable checkpoint, use `checkpoint.BuildLiveOnly(ctx)` and publish the
-returned live-only copy. Both operations preserve stable `VectorID` values and the
-maximum allocated `VectorID` while assigning new dense local ordinals. Compaction does not
-delete old on-disk generations or objects; retention and garbage collection are
-separate operations.
+Replacement and deletion leave stale vectors only inside the mutable append-only
+service head. `service.Snapshot(ctx)` copies current rows directly into a dense
+immutable segment; `snapshot.Rows[ordinal]` contains the stable `VectorID` and
+`Chunk` reference for that vector row. Call `service.Compact(ctx)` only to reclaim
+mutable-head capacity before the next snapshot. Both operations preserve stable
+`VectorID` values and the maximum allocated `VectorID`. Neither operation deletes
+old on-disk generations or objects; retention and garbage collection are separate.
 
 `Publish` writes a complete immutable generation and atomically replaces
 `CURRENT`, which is the commit point. `ExpectedGeneration` rejects stale
@@ -423,6 +473,16 @@ writers. `Open` holds a shared OS file lock until `Loaded.Close`; publication
 requires the exclusive lock. Synchronous durability uses file and directory
 `fsync`, while asynchronous durability guarantees atomic process-visible
 publication but not survival of sudden power loss.
+
+Current contract: old flat generations are never interpreted automatically as
+ANN generations. Migration requires an explicit HNSW graph rebuild. Semantic
+runtime uses HNSW-only immutable segments; exact fallback remains available only
+in the low-level vector package for benchmarks/reference comparisons.
+
+Standalone sealed artifacts can be exported and opened without a mutable service
+or `CURRENT` generation pointer through `semanticpersist.SaveSegment` and
+`semanticpersist.OpenSegment`. `Publish`/`Open` remain the optional generation
+publication layer for atomic multi-file durability and recovery.
 
 See the runnable
 [`semantic-persistence` example](examples/client-library/semantic-persistence/main.go)
@@ -466,7 +526,8 @@ Runtime diagnostics are separate from `textproc.ObservabilityPipeline()`.
 - `segment-analyzer-compatibility` - analyzer-compatible sealed segment restore
 - `rank-profile` - multi-field ranking with weighted field scoring
 - `semantic-flat` - chunk-aware in-memory semantic search with caller-provided vectors
-- `semantic-persistence` - compact, publish, and open an immutable semantic generation
+- `hnsw-build` - observable HNSW build, graph inspection, persistence, and reopen
+- `semantic-persistence` - checkpoint, publish, and open an immutable semantic generation
 - `snapshot-*` - mutable snapshot save and restore
 - `segment-*` - sealed segment save and restore, including `mmap`
 
