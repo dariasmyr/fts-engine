@@ -183,13 +183,13 @@ func OpenSegment(paths SegmentPaths, limits Limits) (*LoadedSegment, error) {
 	if graphMetadata.Size != value.Graph.Size || graphMetadata.SHA256 != value.Graph.SHA256 {
 		return nil, ErrCorrupt
 	}
-	segment, err := semantic.NewHNSWSegment(semantic.MutableHeadID, vectorReader, graphReader, state.Rows)
+	segment, err := semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, vectorReader, graphReader, state.Rows)
 	if err != nil {
 		return nil, err
 	}
 	snapshot := semantic.Snapshot{
 		Space: state.Space, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
-		Segment: segment, Rows: state.Rows, MaxK: state.MaxK,
+		Segment: segment, MaxK: state.MaxK,
 		MaxChunkCandidates: state.MaxChunkCandidates, MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
 	}
 	if err := snapshot.Validate(); err != nil {

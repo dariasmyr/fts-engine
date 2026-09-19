@@ -76,7 +76,7 @@ func TestStateRoundTripRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(decoded.Rows, checkpoint.Rows) {
+	if !slices.Equal(decoded.Rows, checkpoint.Segment.Rows()) {
 		t.Fatalf("decoded v2 state = %+v", decoded)
 	}
 }

@@ -37,7 +37,7 @@ func TestSnapshotRoundTripPreservesSearchAndMappings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(checkpoint.Rows) != 3 || checkpoint.Segment.Len() != 3 {
+	if len(checkpoint.Segment.Rows()) != 3 || checkpoint.Segment.Len() != 3 {
 		t.Fatalf("checkpoint statistics/state = %+v", checkpoint)
 	}
 	gotChunks, err := checkpoint.SearchChunks(ctx, []float32{0, 0}, 3)
@@ -66,8 +66,9 @@ func TestSnapshotRejectsDanglingAndDuplicateState(t *testing.T) {
 	}
 
 	bad := checkpoint
-	bad.Rows = append([]VectorRow(nil), checkpoint.Rows...)
-	bad.Rows[0].VectorID = 0
+	rows := checkpoint.Segment.Rows()
+	rows[0].VectorID = 0
+	bad.Segment = testSegmentWithRows(checkpoint, rows)
 	if err := bad.Validate(); !errors.Is(err, ErrInvalidSnapshot) {
 		t.Fatalf("zero VectorID error = %v", err)
 	}
@@ -79,20 +80,22 @@ func TestSnapshotRejectsDanglingAndDuplicateState(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad = checkpoint
-	bad.Rows = append([]VectorRow(nil), checkpoint.Rows...)
-	bad.Rows[0], bad.Rows[1] = bad.Rows[1], bad.Rows[0]
+	rows = checkpoint.Segment.Rows()
+	rows[0], rows[1] = rows[1], rows[0]
+	bad.Segment = testSegmentWithRows(checkpoint, rows)
 	if err := bad.Validate(); !errors.Is(err, ErrInvalidSnapshot) {
 		t.Fatalf("non-monotonic row IDs error = %v", err)
 	}
 	bad = checkpoint
-	bad.Rows = append([]VectorRow(nil), checkpoint.Rows...)
-	bad.Rows[1].Chunk.DocID = bad.Rows[0].Chunk.DocID
-	bad.Rows[1].Chunk.ID = bad.Rows[0].Chunk.ID
+	rows = checkpoint.Segment.Rows()
+	rows[1].Chunk.DocID = rows[0].Chunk.DocID
+	rows[1].Chunk.ID = rows[0].Chunk.ID
+	bad.Segment = testSegmentWithRows(checkpoint, rows)
 	if err := bad.Validate(); !errors.Is(err, ErrInvalidSnapshot) {
 		t.Fatalf("duplicate document chunk error = %v", err)
 	}
 	bad = checkpoint
-	bad.Rows = nil
+	bad.Segment = testSegmentWithRows(checkpoint, nil)
 	if err := bad.Validate(); !errors.Is(err, ErrInvalidSnapshot) {
 		t.Fatalf("row-size error = %v", err)
 	}
@@ -138,10 +141,11 @@ func TestSnapshotContainsOnlyLiveRowsAndPreservesSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checkpoint.Segment.Len() != 1 || len(checkpoint.Rows) != 1 {
-		t.Fatalf("dense checkpoint rows = %d/%d", checkpoint.Segment.Len(), len(checkpoint.Rows))
+	if checkpoint.Segment.Len() != 1 || len(checkpoint.Segment.Rows()) != 1 {
+		t.Fatalf("dense checkpoint rows = %d/%d", checkpoint.Segment.Len(), len(checkpoint.Segment.Rows()))
 	}
-	if checkpoint.MaxAllocatedVectorID != 3 || checkpoint.Rows[0].VectorID != 3 || checkpoint.Rows[0].Chunk.ID != "new" {
+	rows := checkpoint.Segment.Rows()
+	if checkpoint.MaxAllocatedVectorID != 3 || rows[0].VectorID != 3 || rows[0].Chunk.ID != "new" {
 		t.Fatalf("dense mappings = %+v", checkpoint)
 	}
 	got, err := checkpoint.SearchChunks(ctx, []float32{0, 0}, 1)
@@ -166,7 +170,7 @@ func TestSnapshotSupportsNoLiveVectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checkpoint.Segment.Len() != 0 || len(checkpoint.Rows) != 0 || checkpoint.MaxAllocatedVectorID != 1 {
+	if checkpoint.Segment.Len() != 0 || len(checkpoint.Segment.Rows()) != 0 || checkpoint.MaxAllocatedVectorID != 1 {
 		t.Fatalf("empty checkpoint = %+v", checkpoint)
 	}
 	if err := checkpoint.Validate(); err != nil {
@@ -175,11 +179,22 @@ func TestSnapshotSupportsNoLiveVectors(t *testing.T) {
 }
 
 func snapshotRowIDs(checkpoint Snapshot) []VectorID {
-	ids := make([]VectorID, len(checkpoint.Rows))
-	for i, row := range checkpoint.Rows {
+	rows := checkpoint.Segment.Rows()
+	ids := make([]VectorID, len(rows))
+	for i, row := range rows {
 		ids[i] = row.VectorID
 	}
 	return ids
+}
+
+func testSegmentWithRows(snapshot Snapshot, rows []VectorRow) *Segment {
+	return &Segment{
+		component: snapshot.Segment.component,
+		metadata:  snapshot.Segment.metadata,
+		rows:      rows,
+		vectors:   snapshot.Segment.vectors,
+		graph:     snapshot.Segment.graph,
+	}
 }
 
 func newSnapshotTestService(t *testing.T) *Service {

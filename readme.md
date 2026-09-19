@@ -461,7 +461,7 @@ result, err := loaded.Snapshot.SearchDocuments(ctx, queryEmbedding, 10)
 
 Replacement and deletion leave stale vectors only inside the mutable append-only
 service head. `service.Snapshot(ctx)` copies current rows directly into a dense
-immutable segment; `snapshot.Rows[ordinal]` contains the stable `VectorID` and
+immutable segment; `snapshot.Segment.Rows()[ordinal]` contains the stable `VectorID` and
 `Chunk` reference for that vector row. Call `service.Compact(ctx)` only to reclaim
 mutable-head capacity before the next snapshot. Both operations preserve stable
 `VectorID` values and the maximum allocated `VectorID`. Neither operation deletes

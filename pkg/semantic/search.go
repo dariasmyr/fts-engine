@@ -10,19 +10,8 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-type searchView struct {
-	space                   vector.Space
-	searcher                vector.Searcher
-	filter                  vector.ResultFilter
-	rows                    []VectorRow
-	maxK                    int
-	maxChunkCandidates      int
-	maxChunksPerDocumentHit int
-}
-
-type segmentSearchView struct {
-	segment *SealedSegment
-	rows    []VectorRow
+type segmentView struct {
+	segment *Segment
 	filter  vector.ResultFilter
 }
 
@@ -51,25 +40,26 @@ func (s *Service) SearchChunksWithOptions(ctx context.Context, query []float32, 
 	return searchSegmentsChunks(ctx, s.space, views, query, k, maxK, vector.SearchOptions{EfSearch: options.EfSearch, VisitLimit: options.VisitLimit})
 }
 
-func searchChunks(ctx context.Context, view searchView, query []float32, k int) (ChunkSearchResult, error) {
-	return searchChunksUpTo(ctx, view, query, k, view.maxK)
+func searchChunks(ctx context.Context, view segmentView, query []float32, k, maxK int) (ChunkSearchResult, error) {
+	return searchChunksUpTo(ctx, view, query, k, maxK)
 }
 
-func searchChunksUpTo(ctx context.Context, view searchView, query []float32, k, maxK int) (ChunkSearchResult, error) {
+func searchChunksUpTo(ctx context.Context, view segmentView, query []float32, k, maxK int) (ChunkSearchResult, error) {
 	if k <= 0 || k > maxK {
 		return ChunkSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxK)
 	}
-	result, err := view.searcher.Search(ctx, query, k, vector.SearchOptions{ResultFilter: view.filter})
+	result, err := view.segment.Search(ctx, query, k, vector.SearchOptions{ResultFilter: view.filter})
 	if err != nil {
 		return ChunkSearchResult{}, err
 	}
 	hits := make([]ChunkHit, 0, len(result.Hits))
 	for _, hit := range result.Hits {
 		index := int(hit.Ordinal)
-		if index >= len(view.rows) {
+		row, ok := view.segment.rowAt(index)
+		if !ok {
 			return ChunkSearchResult{}, ErrInternalState
 		}
-		hits = append(hits, ChunkHit{Ref: view.rows[index].Chunk, Distance: hit.Distance})
+		hits = append(hits, ChunkHit{Ref: row.Chunk, Distance: hit.Distance})
 	}
 	return ChunkSearchResult{Hits: hits, Stats: result.Stats, Incomplete: result.Incomplete}, nil
 }
@@ -122,7 +112,7 @@ func (s *Service) SearchDocumentsWithOptions(ctx context.Context, query []float3
 	}, nil
 }
 
-func (s *Service) segmentViewsLocked() []segmentSearchView {
+func (s *Service) segmentViewsLocked() []segmentView {
 	if len(s.segments) == 0 {
 		return nil
 	}
@@ -132,23 +122,26 @@ func (s *Service) segmentViewsLocked() []segmentSearchView {
 			liveIDs[id] = struct{}{}
 		}
 	}
-	views := make([]segmentSearchView, 0, len(s.segments))
+	views := make([]segmentView, 0, len(s.segments))
 	for _, segment := range s.segments {
-		rows := segment.Rows()
-		allowed := make([]bool, len(rows))
+		allowed := make([]bool, segment.rowCount())
 		count := 0
-		for ordinal, row := range rows {
+		for ordinal := 0; ordinal < segment.rowCount(); ordinal++ {
+			row, ok := segment.rowAt(ordinal)
+			if !ok {
+				continue
+			}
 			if _, ok := liveIDs[row.VectorID]; ok {
 				allowed[ordinal] = true
 				count++
 			}
 		}
-		views = append(views, segmentSearchView{segment: segment, rows: rows, filter: rowFilter{allowed: allowed, count: count}})
+		views = append(views, segmentView{segment: segment, filter: rowFilter{allowed: allowed, count: count}})
 	}
 	return views
 }
 
-func searchSegmentsChunks(ctx context.Context, space vector.Space, views []segmentSearchView, query []float32, k, maxK int, searchOptions vector.SearchOptions) (ChunkSearchResult, error) {
+func searchSegmentsChunks(ctx context.Context, space vector.Space, views []segmentView, query []float32, k, maxK int, searchOptions vector.SearchOptions) (ChunkSearchResult, error) {
 	if k <= 0 || k > maxK {
 		return ChunkSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxK)
 	}
@@ -190,11 +183,12 @@ func searchSegmentsChunks(ctx context.Context, space vector.Space, views []segme
 			incomplete = true
 		}
 		for _, hit := range result.Hits {
-			if int(hit.Ordinal) >= len(view.rows) {
+			row, ok := view.segment.rowAt(int(hit.Ordinal))
+			if !ok {
 				return ChunkSearchResult{}, ErrInternalState
 			}
 			all = append(all, rankedHit{
-				hit:       ChunkHit{Ref: view.rows[hit.Ordinal].Chunk, Distance: hit.Distance},
+				hit:       ChunkHit{Ref: row.Chunk, Distance: hit.Distance},
 				component: view.segment.ComponentID(), ordinal: hit.Ordinal,
 			})
 		}
@@ -234,11 +228,11 @@ func searchSegmentsChunks(ctx context.Context, space vector.Space, views []segme
 	return ChunkSearchResult{Hits: hits, Stats: stats, Incomplete: incomplete}, nil
 }
 
-func searchDocuments(ctx context.Context, view searchView, query []float32, k int) (DocumentSearchResult, error) {
-	if k <= 0 || k > view.maxK {
-		return DocumentSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, view.maxK)
+func searchDocuments(ctx context.Context, view segmentView, space vector.Space, query []float32, k, maxK, maxChunkCandidates, maxChunksPerDocumentHit int) (DocumentSearchResult, error) {
+	if k <= 0 || k > maxK {
+		return DocumentSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxK)
 	}
-	liveCount := len(view.rows)
+	liveCount := view.segment.rowCount()
 	if view.filter != nil {
 		liveCount = view.filter.AllowedOrdinalCount()
 	}
@@ -249,17 +243,17 @@ func searchDocuments(ctx context.Context, view searchView, query []float32, k in
 		if err := ctx.Err(); err != nil {
 			return DocumentSearchResult{}, err
 		}
-		if _, err := view.space.Prepare(query); err != nil {
+		if _, err := space.Prepare(query); err != nil {
 			return DocumentSearchResult{}, err
 		}
 		return DocumentSearchResult{Hits: []DocumentHit{}}, nil
 	}
-	budget := min(liveCount, view.maxChunkCandidates)
-	chunks, err := searchChunksUpTo(ctx, view, query, budget, view.maxChunkCandidates)
+	budget := min(liveCount, maxChunkCandidates)
+	chunks, err := searchChunksUpTo(ctx, view, query, budget, maxChunkCandidates)
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
-	documents := groupDocuments(chunks.Hits, view.maxChunksPerDocumentHit)
+	documents := groupDocuments(chunks.Hits, maxChunksPerDocumentHit)
 	distinctDocuments := len(documents)
 	if len(documents) > k {
 		documents = documents[:k]

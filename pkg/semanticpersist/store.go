@@ -548,7 +548,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 	if vectorMetadata.Size != manifestValue.Vectors.Size || vectorMetadata.SHA256 != manifestValue.Vectors.SHA256 {
 		return nil, ErrCorrupt
 	}
-	var segment *semantic.SealedSegment
+	var segment *semantic.Segment
 	switch manifestValue.SegmentKind {
 	case semantic.SegmentKindChunkHNSW:
 		graphLimit := min(limits.MaxFileBytes, limits.MaxGraphBytes)
@@ -569,7 +569,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		if graphMetadata.Size != manifestValue.Graph.Size || graphMetadata.SHA256 != manifestValue.Graph.SHA256 {
 			return nil, ErrCorrupt
 		}
-		segment, err = semantic.NewHNSWSegment(semantic.MutableHeadID, vectorReader, graphReader, state.Rows)
+		segment, err = semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, vectorReader, graphReader, state.Rows)
 	default:
 		return nil, ErrCorrupt
 	}
@@ -581,7 +581,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 	}
 	snapshot := semantic.Snapshot{
 		Space: state.Space, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID, Segment: segment,
-		Rows: state.Rows, MaxK: state.MaxK,
+		MaxK:               state.MaxK,
 		MaxChunkCandidates: state.MaxChunkCandidates, MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
 	}
 	// Snapshot validation performs cross-file validation: vector rows, row metadata,
@@ -647,7 +647,7 @@ func writeGraphFile(path string, reader *hnsw.Reader, vectors fileReference, dur
 func validateSnapshotLimits(snapshot semantic.Snapshot, limits Limits) error {
 	if snapshot.Segment == nil || snapshot.Segment.Vectors() == nil ||
 		snapshot.Segment.Dimensions() > limits.MaxDimensions || snapshot.Segment.Len() > limits.MaxVectors ||
-		snapshot.Segment.MaxK() > limits.MaxK || len(snapshot.Rows) > limits.MaxVectors ||
+		snapshot.Segment.MaxK() > limits.MaxK || snapshot.Segment.Len() > limits.MaxVectors ||
 		snapshot.MaxK > limits.MaxK || snapshot.MaxChunkCandidates > limits.MaxK {
 		return ErrLimitExceeded
 	}
@@ -677,7 +677,7 @@ func validateSnapshotLimits(snapshot semantic.Snapshot, limits Limits) error {
 		return ErrLimitExceeded
 	}
 	documentChunks := make(map[string]int)
-	for _, record := range snapshot.Rows {
+	for _, record := range snapshot.Segment.Rows() {
 		if !validString(string(record.Chunk.ID)) || !validString(string(record.Chunk.DocID)) || !validString(record.Chunk.Field) {
 			return ErrLimitExceeded
 		}

@@ -18,7 +18,8 @@ func encodeState(snapshot semantic.Snapshot, limits Limits) ([]byte, fileReferen
 	if err := snapshot.Validate(); err != nil {
 		return nil, fileReference{}, err
 	}
-	if len(snapshot.Rows) > limits.MaxVectors {
+	rows := snapshot.Segment.Rows()
+	if len(rows) > limits.MaxVectors {
 		return nil, fileReference{}, ErrLimitExceeded
 	}
 	if snapshot.MaxK > limits.MaxK || snapshot.MaxChunkCandidates > limits.MaxVectors ||
@@ -42,8 +43,8 @@ func encodeState(snapshot semantic.Snapshot, limits Limits) ([]byte, fileReferen
 	e.u32(uint32(snapshot.MaxK))
 	e.u32(uint32(snapshot.MaxChunkCandidates))
 	e.u32(uint32(snapshot.MaxChunksPerDocumentHit))
-	e.u32(uint32(len(snapshot.Rows)))
-	for _, record := range snapshot.Rows {
+	e.u32(uint32(len(rows)))
+	for _, record := range rows {
 		e.u64(uint64(record.VectorID))
 		encodeRef(e, record.Chunk, limits)
 	}

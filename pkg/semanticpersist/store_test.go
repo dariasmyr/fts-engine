@@ -58,7 +58,7 @@ func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
 			if loaded.Snapshot.Space != checkpoint.Space || loaded.Snapshot.Chunking != checkpoint.Chunking || loaded.Snapshot.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID {
 				t.Fatal("checkpoint metadata changed during round trip")
 			}
-			if !slices.Equal(loaded.Snapshot.Rows, checkpoint.Rows) {
+			if !slices.Equal(loaded.Snapshot.Segment.Rows(), checkpoint.Segment.Rows()) {
 				t.Fatal("checkpoint mappings changed during round trip")
 			}
 		})
@@ -115,7 +115,7 @@ func TestPublishOpenChunkHNSWRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Stats.UsedExactFallback || len(result.Hits) != 2 || result.Hits[0].Ref.DocID != "doc-a" {
+	if len(result.Hits) != 2 || result.Hits[0].Ref.DocID != "doc-a" {
 		t.Fatalf("round-trip HNSW result = %+v", result)
 	}
 }
@@ -652,7 +652,7 @@ func TestSnapshotPublicationContainsOnlyLiveRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checkpoint.Segment.Len() != 1 || len(checkpoint.Rows) != 1 || checkpoint.Rows[0].Chunk.ID != "new" {
+	if checkpoint.Segment.Len() != 1 || len(checkpoint.Segment.Rows()) != 1 || checkpoint.Segment.Rows()[0].Chunk.ID != "new" {
 		t.Fatalf("checkpoint retained stale rows: %+v", checkpoint)
 	}
 	root := t.TempDir()
@@ -665,7 +665,7 @@ func TestSnapshotPublicationContainsOnlyLiveRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer loaded.Close()
-	if loaded.Generation.ID != 1 || loaded.Snapshot.Segment.Len() != 1 || len(loaded.Snapshot.Rows) != 1 {
+	if loaded.Generation.ID != 1 || loaded.Snapshot.Segment.Len() != 1 || len(loaded.Snapshot.Segment.Rows()) != 1 {
 		t.Fatalf("opened dense generation = %+v", loaded.Snapshot)
 	}
 	result, err := loaded.Snapshot.SearchChunks(ctx, []float32{0, 0}, 1)
@@ -706,11 +706,11 @@ func persistenceFixture(t testing.TB, extra bool) (semantic.Snapshot, semantic.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunks, err := service.SearchChunks(ctx, []float32{0, 0}, min(3, len(checkpoint.Rows)))
+	chunks, err := service.SearchChunks(ctx, []float32{0, 0}, min(3, len(checkpoint.Segment.Rows())))
 	if err != nil {
 		t.Fatal(err)
 	}
-	documents, err := service.SearchDocuments(ctx, []float32{0, 0}, min(2, len(checkpoint.Rows)))
+	documents, err := service.SearchDocuments(ctx, []float32{0, 0}, min(2, len(checkpoint.Segment.Rows())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -734,7 +734,7 @@ func withHNSW(t testing.TB, checkpoint semantic.Snapshot, seed uint64) semantic.
 	if err != nil {
 		t.Fatal(err)
 	}
-	segment, err := semantic.NewHNSWSegment(semantic.MutableHeadID, checkpoint.Segment.Vectors(), graph, checkpoint.Rows)
+	segment, err := semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: checkpoint.Space, Chunking: checkpoint.Chunking}, checkpoint.Segment.Vectors(), graph, checkpoint.Segment.Rows())
 	if err != nil {
 		t.Fatal(err)
 	}

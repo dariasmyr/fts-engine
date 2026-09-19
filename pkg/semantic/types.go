@@ -107,7 +107,7 @@ type Statistics struct {
 }
 
 // VectorRow describes the semantic identity of one segment row. Its index in
-// Snapshot.Rows is the row's local ordinal for that snapshot generation.
+// Segment.Rows is the row's local ordinal for that segment.
 // Rows retain monotonically allocated VectorID order across compaction.
 type VectorRow struct {
 	VectorID VectorID

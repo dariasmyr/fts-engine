@@ -23,9 +23,6 @@ func TestStandaloneSegmentRoundTrip(t *testing.T) {
 	if len(got.Hits) != len(wantChunks.Hits) || got.Hits[0] != wantChunks.Hits[0] {
 		t.Fatalf("standalone result = %+v, want %+v", got.Hits, wantChunks.Hits)
 	}
-	if got.Stats.UsedExactFallback {
-		t.Fatal("standalone segment used exact fallback")
-	}
 	if _, err := OpenSegment(SegmentPaths{Dir: path.Dir + "/missing"}, Limits{}); err == nil {
 		t.Fatal("missing standalone segment accepted")
 	}

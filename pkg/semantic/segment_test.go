@@ -20,8 +20,35 @@ func TestChunkHNSWSegmentAccessors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Stats.UsedExactFallback || len(result.Hits) != 2 || result.Hits[0].Ref.DocID != "doc-00" {
+	if len(result.Hits) != 2 || result.Hits[0].Ref.DocID != "doc-00" {
 		t.Fatalf("HNSW result = %+v", result)
+	}
+}
+
+func TestBuildSegmentSearchesWithoutSnapshotOrFallback(t *testing.T) {
+	checkpoint := hnswSnapshotFixture(t)
+	segment, err := BuildSegment(context.Background(), MutableHeadID, SegmentMetadata{
+		Space: checkpoint.Space, Chunking: checkpoint.Chunking,
+	}, checkpoint.Segment.Vectors(), checkpoint.Segment.Rows(), hnsw.BuildOptions{
+		BuildConfig: hnsw.BuildConfig{
+			Dimensions: checkpoint.Space.Dimensions, Metric: checkpoint.Space.Metric,
+			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Space.Dimensions * 4),
+			MaxNeighbors: 4, EfConstruction: 16, Seed: 23,
+		},
+		SearchConfig: hnsw.SearchConfig{
+			DefaultEfSearch: checkpoint.MaxK, MaxEfSearch: checkpoint.MaxK,
+			DefaultVisitLimit: checkpoint.Segment.Len(), MaxVisitLimit: checkpoint.Segment.Len(), MaxK: checkpoint.MaxK,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := segment.Search(context.Background(), []float32{0, 0}, 2, vector.SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stats.UsedExactFallback {
+		t.Fatal("segment search used exact fallback")
 	}
 }
 
@@ -43,10 +70,10 @@ func TestSnapshotRebuildsHNSWAfterRemovingStaleRows(t *testing.T) {
 		t.Fatal("graph has no entry point")
 	}
 	entryOrdinal := int(entry)
-	if entryOrdinal >= len(snapshot.Rows) {
+	if entryOrdinal >= len(snapshot.Segment.Rows()) {
 		t.Fatalf("entry ordinal %d out of range", entryOrdinal)
 	}
-	deletedDocID := snapshot.Rows[entryOrdinal].Chunk.DocID
+	deletedDocID := snapshot.Segment.Rows()[entryOrdinal].Chunk.DocID
 	if !service.DeleteDocument(deletedDocID) {
 		t.Fatal("failed to stale graph entry document")
 	}
@@ -54,18 +81,18 @@ func TestSnapshotRebuildsHNSWAfterRemovingStaleRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checkpoint.Segment.Len() != 19 || len(checkpoint.Rows) != 19 {
-		t.Fatalf("dense checkpoint rows = %d/%d", checkpoint.Segment.Len(), len(checkpoint.Rows))
+	if checkpoint.Segment.Len() != 19 || len(checkpoint.Segment.Rows()) != 19 {
+		t.Fatalf("dense checkpoint rows = %d/%d", checkpoint.Segment.Len(), len(checkpoint.Segment.Rows()))
 	}
 	liveSegment := checkpoint.Segment
-	staleSegment := &SealedSegment{kind: SegmentKindChunkHNSW, vectors: oldGraph, graph: oldGraph, rows: snapshot.Rows, component: MutableHeadID}
+	staleSegment := &Segment{metadata: SegmentMetadata{Space: checkpoint.Space, Chunking: checkpoint.Chunking}, vectors: oldGraph, graph: oldGraph, rows: checkpoint.Segment.Rows(), component: MutableHeadID}
 	checkpoint.Segment = staleSegment
 	if err := checkpoint.Validate(); !errors.Is(err, ErrInvalidSnapshot) {
 		t.Fatalf("stale topology error = %v", err)
 	}
 	checkpoint.Segment = liveSegment
 	graph := buildSnapshotGraph(t, checkpoint, 7)
-	checkpoint.Segment, err = NewHNSWSegment(MutableHeadID, graph, graph, checkpoint.Rows)
+	checkpoint.Segment, err = NewSegment(MutableHeadID, SegmentMetadata{Space: checkpoint.Space, Chunking: checkpoint.Chunking}, graph, graph, checkpoint.Segment.Rows())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +118,7 @@ func hnswSnapshotFixture(t *testing.T) Snapshot {
 		t.Fatal(err)
 	}
 	graph := buildSnapshotGraph(t, checkpoint, 11)
-	checkpoint.Segment, err = NewHNSWSegment(MutableHeadID, checkpoint.Segment.Vectors(), graph, checkpoint.Rows)
+	checkpoint.Segment, err = NewSegment(MutableHeadID, SegmentMetadata{Space: checkpoint.Space, Chunking: checkpoint.Chunking}, checkpoint.Segment.Vectors(), graph, checkpoint.Segment.Rows())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,4 +148,4 @@ func buildSnapshotGraph(t testing.TB, checkpoint Snapshot, seed uint64) *hnsw.Re
 	return graph
 }
 
-var _ vector.Searcher = (*SealedSegment)(nil)
+var _ vector.Searcher = (*Segment)(nil)

@@ -7,34 +7,54 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
-// SegmentKind identifies the physical search implementation of one sealed
-// semantic segment.
+// SegmentMetadata describes the embedding and chunking contracts of a segment.
+type SegmentMetadata struct {
+	Space    SpaceDescriptor
+	Chunking ChunkingDescriptor
+}
+
+// SegmentKind identifies the persisted semantic segment format.
 type SegmentKind uint8
 
-const (
-	SegmentKindChunkHNSW SegmentKind = iota + 1
-)
+const SegmentKindChunkHNSW SegmentKind = 1
 
-// SealedSegment searches one immutable HNSW component. The vector source is
+// Segment searches one immutable HNSW component. The vector source is
 // authoritative row storage and the graph contains only navigation topology.
-type SealedSegment struct {
+type Segment struct {
 	component ComponentID
-	kind      SegmentKind
+	metadata  SegmentMetadata
 	rows      []VectorRow
 	vectors   vector.PreparedVectorSource
 	graph     *hnsw.Reader
 }
 
-// NewHNSWSegment creates the target immutable semantic segment. The graph
+func (s *Segment) Kind() SegmentKind {
+	if s == nil {
+		return 0
+	}
+	return SegmentKindChunkHNSW
+}
+
+// BuildSegment builds the target immutable semantic segment. The graph
 // navigates source rows by local ordinal; rows resolve those ordinals to stable
 // semantic identities.
-func NewHNSWSegment(component ComponentID, source vector.PreparedVectorSource, graph *hnsw.Reader, rows []VectorRow) (*SealedSegment, error) {
+func BuildSegment(ctx context.Context, component ComponentID, metadata SegmentMetadata, source vector.PreparedVectorSource, rows []VectorRow, options hnsw.BuildOptions) (*Segment, error) {
+	graph, err := hnsw.BuildIndexReader(ctx, source, options)
+	if err != nil {
+		return nil, err
+	}
+	return NewSegment(component, metadata, source, graph, rows)
+}
+
+// NewSegment creates an immutable semantic segment from a prepared source
+// and its HNSW reader.
+func NewSegment(component ComponentID, metadata SegmentMetadata, source vector.PreparedVectorSource, graph *hnsw.Reader, rows []VectorRow) (*Segment, error) {
 	if component == 0 || source == nil || graph == nil || len(rows) != source.Len() || graph.Len() != source.Len() {
 		return nil, ErrInvalidSnapshot
 	}
-	segment := &SealedSegment{
+	segment := &Segment{
 		component: component,
-		kind:      SegmentKindChunkHNSW,
+		metadata:  metadata,
 		rows:      append([]VectorRow(nil), rows...),
 		vectors:   source,
 		graph:     graph,
@@ -45,79 +65,86 @@ func NewHNSWSegment(component ComponentID, source vector.PreparedVectorSource, g
 	return segment, nil
 }
 
-func (s *SealedSegment) Kind() SegmentKind {
-	if s == nil {
-		return 0
-	}
-	return s.kind
-}
-
-func (s *SealedSegment) ComponentID() ComponentID {
+func (s *Segment) ComponentID() ComponentID {
 	if s == nil {
 		return 0
 	}
 	return s.component
 }
 
-func (s *SealedSegment) Rows() []VectorRow {
+func (s *Segment) Rows() []VectorRow {
 	if s == nil {
 		return nil
 	}
 	return append([]VectorRow(nil), s.rows...)
 }
 
+func (s *Segment) rowCount() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.rows)
+}
+
+func (s *Segment) rowAt(index int) (VectorRow, bool) {
+	if s == nil || index < 0 || index >= len(s.rows) {
+		return VectorRow{}, false
+	}
+	return s.rows[index], true
+}
+
 // Vectors returns the immutable authoritative source rows.
-func (s *SealedSegment) Vectors() vector.PreparedVectorSource {
+func (s *Segment) Vectors() vector.PreparedVectorSource {
 	if s == nil {
 		return nil
 	}
 	return s.vectors
 }
 
-// HNSW returns the optional immutable graph reader.
-func (s *SealedSegment) HNSW() *hnsw.Reader {
+// HNSW returns the immutable graph reader used by this ANN segment.
+func (s *Segment) HNSW() *hnsw.Reader {
 	if s == nil {
 		return nil
 	}
 	return s.graph
 }
 
-func (s *SealedSegment) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func (s *Segment) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	if s == nil || s.graph == nil {
 		return vector.SearchResult{}, ErrInvalidSnapshot
 	}
 	return s.graph.Search(ctx, query, k, options)
 }
 
-func (s *SealedSegment) Len() int {
+func (s *Segment) Len() int {
 	if s == nil || s.vectors == nil {
 		return 0
 	}
 	return s.vectors.Len()
 }
 
-func (s *SealedSegment) Dimensions() int {
+func (s *Segment) Dimensions() int {
 	if s == nil || s.vectors == nil {
 		return 0
 	}
 	return s.vectors.Dimensions()
 }
 
-func (s *SealedSegment) Metric() vector.Metric {
+func (s *Segment) Metric() vector.Metric {
 	if s == nil || s.vectors == nil {
 		return 0
 	}
 	return s.vectors.Metric()
 }
 
-func (s *SealedSegment) Normalization() vector.Normalization {
+func (s *Segment) Normalization() vector.Normalization {
 	if s == nil || s.vectors == nil {
 		return 0
 	}
 	return s.vectors.Normalization()
 }
 
-func (s *SealedSegment) MaxK() int {
+func (s *Segment) MaxK() int {
 	if s == nil || s.vectors == nil {
 		return 0
 	}
@@ -127,21 +154,34 @@ func (s *SealedSegment) MaxK() int {
 	return 0
 }
 
-func (s *SealedSegment) Close() error {
+func (s *Segment) Close() error {
 	// Current sealed readers are fully loaded and Close is a no-op. Keeping the
 	// segment non-owning makes shallow immutable snapshots safe.
 	return nil
 }
 
-func (s *SealedSegment) validate() error {
+func (s *Segment) Metadata() SegmentMetadata {
+	if s == nil {
+		return SegmentMetadata{}
+	}
+	return s.metadata
+}
+
+func (s *Segment) validate() error {
 	return s.validateContents()
 }
 
-func (s *SealedSegment) validateContents() error {
+func (s *Segment) validateContents() error {
 	if s == nil || s.vectors == nil || s.graph == nil {
 		return ErrInvalidSnapshot
 	}
-	if s.kind != SegmentKindChunkHNSW || s.component == 0 || len(s.rows) != s.vectors.Len() || s.graph.Len() != s.vectors.Len() {
+	space, err := vector.NewSpace(s.metadata.Space.Dimensions, s.metadata.Space.Metric)
+	if err != nil || space.Normalization() != s.metadata.Space.Normalization || s.metadata.Space.ID == "" || s.metadata.Chunking.ID == "" {
+		return ErrInvalidSnapshot
+	}
+	if s.component == 0 || len(s.rows) != s.vectors.Len() || s.graph.Len() != s.vectors.Len() ||
+		s.vectors.Dimensions() != s.metadata.Space.Dimensions || s.vectors.Metric() != s.metadata.Space.Metric ||
+		s.vectors.Normalization() != s.metadata.Space.Normalization {
 		return ErrInvalidSnapshot
 	}
 	return nil

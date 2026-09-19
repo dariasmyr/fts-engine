@@ -18,7 +18,7 @@ type Service struct {
 	config          Config
 	space           vector.Space
 	head            *mutableSource
-	segments        []*SealedSegment
+	segments        []*Segment
 	nextComponentID ComponentID
 
 	maxAllocatedVectorID VectorID
@@ -196,14 +196,10 @@ func (s *Service) Compact(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	graph, err := hnsw.BuildIndexReader(ctx, nextSource, hnsw.BuildOptions{
+	merged, err := BuildSegment(ctx, componentID, SegmentMetadata{Space: s.config.Space, Chunking: s.config.Chunking}, nextSource, nextRows, hnsw.BuildOptions{
 		BuildConfig:  withBuildCapacity(s.config.HNSWBuild, nextHead.Len()),
 		SearchConfig: s.config.HNSWSearch,
 	})
-	if err != nil {
-		return err
-	}
-	merged, err := NewHNSWSegment(componentID, nextSource, graph, nextRows)
 	if err != nil {
 		return err
 	}
@@ -224,7 +220,7 @@ func (s *Service) Compact(ctx context.Context) error {
 	s.head = nextHead
 	s.vectorRows = nextRows
 	s.headOrdinalByVector = nextHeadOrdinals
-	s.segments = []*SealedSegment{merged}
+	s.segments = []*Segment{merged}
 	s.nextComponentID++
 	s.live = vector.NewFullBitSet(uint32(len(nextRows)))
 	return nil
@@ -251,14 +247,10 @@ func (s *Service) appendVersionLocked(ctx context.Context, docID fts.DocID, batc
 	if err != nil {
 		return err
 	}
-	graph, err := hnsw.BuildIndexReader(ctx, source, hnsw.BuildOptions{
+	segment, err := BuildSegment(ctx, componentID, SegmentMetadata{Space: s.config.Space, Chunking: s.config.Chunking}, source, rows, hnsw.BuildOptions{
 		BuildConfig:  withBuildCapacity(s.config.HNSWBuild, len(batch)),
 		SearchConfig: s.config.HNSWSearch,
 	})
-	if err != nil {
-		return err
-	}
-	segment, err := NewHNSWSegment(componentID, source, graph, rows)
 	if err != nil {
 		return err
 	}

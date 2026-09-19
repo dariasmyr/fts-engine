@@ -16,8 +16,7 @@ type Snapshot struct {
 	Chunking ChunkingDescriptor
 	// MaxAllocatedVectorID preserves the monotonic allocator across generations.
 	MaxAllocatedVectorID    VectorID
-	Segment                 *SealedSegment
-	Rows                    []VectorRow
+	Segment                 *Segment
 	MaxK                    int
 	MaxChunkCandidates      int
 	MaxChunksPerDocumentHit int
@@ -61,7 +60,7 @@ func (s *Service) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
-	graph, err := hnsw.BuildIndexReader(ctx, source, hnsw.BuildOptions{
+	segment, err := BuildSegment(ctx, MutableHeadID, SegmentMetadata{Space: config.Space, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
 			Dimensions: config.Space.Dimensions, Metric: config.Space.Metric,
 			MaxVectors:     max(config.MaxVectors, source.Len()),
@@ -74,16 +73,11 @@ func (s *Service) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	segment, err := NewHNSWSegment(MutableHeadID, source, graph, rows)
-	if err != nil {
-		return Snapshot{}, err
-	}
 	snapshot := Snapshot{
 		Space:                   config.Space,
 		Chunking:                config.Chunking,
 		MaxAllocatedVectorID:    maxAllocatedVectorID,
 		Segment:                 segment,
-		Rows:                    rows,
 		MaxK:                    config.MaxK,
 		MaxChunkCandidates:      config.MaxChunkCandidates,
 		MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit,
@@ -113,20 +107,29 @@ func (c Snapshot) validate(ctx context.Context) error {
 	if err := c.Segment.validate(); err != nil {
 		return err
 	}
+	rowCount := c.Segment.rowCount()
+	metadata := c.Segment.Metadata()
+	if metadata.Space != c.Space || metadata.Chunking != c.Chunking {
+		return ErrInvalidSnapshot
+	}
 	space, err := vector.NewSpace(c.Space.Dimensions, c.Space.Metric)
 	if err != nil || space.Normalization() != c.Space.Normalization || c.Segment.Dimensions() != c.Space.Dimensions ||
 		c.Segment.Metric() != c.Space.Metric || c.Segment.Normalization() != c.Space.Normalization ||
-		c.Segment.Len() != len(c.Rows) {
+		c.Segment.Len() != rowCount {
 		return ErrInvalidSnapshot
 	}
 	type chunkKey struct {
 		documentID fts.DocID
 		chunkID    chunk.ID
 	}
-	seenIDs := make(map[VectorID]struct{}, len(c.Rows))
-	seenChunks := make(map[chunkKey]struct{}, len(c.Rows))
+	seenIDs := make(map[VectorID]struct{}, rowCount)
+	seenChunks := make(map[chunkKey]struct{}, rowCount)
 	var maxID VectorID
-	for ordinal, row := range c.Rows {
+	for ordinal := 0; ordinal < rowCount; ordinal++ {
+		row, ok := c.Segment.rowAt(ordinal)
+		if !ok {
+			return ErrInvalidSnapshot
+		}
 		if ordinal%64 == 0 {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -135,7 +138,8 @@ func (c Snapshot) validate(ctx context.Context) error {
 		if row.VectorID == 0 || row.Chunk.ID == "" || row.Chunk.DocID == "" || row.Chunk.Field == "" || row.Chunk.StartByte > row.Chunk.EndByte {
 			return ErrInvalidSnapshot
 		}
-		if ordinal > 0 && c.Rows[ordinal-1].VectorID >= row.VectorID {
+		previous, ok := c.Segment.rowAt(ordinal - 1)
+		if ordinal > 0 && (!ok || previous.VectorID >= row.VectorID) {
 			return ErrInvalidSnapshot
 		}
 		if _, duplicate := seenIDs[row.VectorID]; duplicate {
@@ -158,13 +162,14 @@ func (c Snapshot) validate(ctx context.Context) error {
 // SearchChunks searches this immutable semantic snapshot and resolves vector
 // ordinals to their chunk references.
 func (s Snapshot) SearchChunks(ctx context.Context, query []float32, k int) (ChunkSearchResult, error) {
-	return searchChunks(ctx, s.searchView(), query, k)
+	return searchChunks(ctx, segmentView{segment: s.Segment}, query, k, s.MaxK)
 }
 
 // SearchDocuments searches this immutable semantic snapshot and groups chunk
 // hits by document.
 func (s Snapshot) SearchDocuments(ctx context.Context, query []float32, k int) (DocumentSearchResult, error) {
-	return searchDocuments(ctx, s.searchView(), query, k)
+	space, _ := vector.NewSpace(s.Space.Dimensions, s.Space.Metric)
+	return searchDocuments(ctx, segmentView{segment: s.Segment}, space, query, k, s.MaxK, s.MaxChunkCandidates, s.MaxChunksPerDocumentHit)
 }
 
 // Close releases resources owned by the snapshot's immutable segment.
@@ -173,12 +178,4 @@ func (s Snapshot) Close() error {
 		return nil
 	}
 	return s.Segment.Close()
-}
-
-func (s Snapshot) searchView() searchView {
-	space, _ := vector.NewSpace(s.Space.Dimensions, s.Space.Metric)
-	return searchView{
-		space: space, searcher: s.Segment, rows: s.Rows, maxK: s.MaxK,
-		maxChunkCandidates: s.MaxChunkCandidates, maxChunksPerDocumentHit: s.MaxChunksPerDocumentHit,
-	}
 }

@@ -59,7 +59,7 @@ func main() {
 	result, err := loaded.Snapshot.SearchDocuments(ctx, []float32{0, 0}, 2)
 	must(err)
 
-	fmt.Printf("generation=%d kind=%d rows=%d\n", generation.ID, loaded.Snapshot.Segment.Kind(), len(loaded.Snapshot.Rows))
+	fmt.Printf("generation=%d kind=%d rows=%d\n", generation.ID, loaded.Snapshot.Segment.Kind(), len(loaded.Snapshot.Segment.Rows()))
 	for _, hit := range result.Hits {
 		fmt.Printf("doc=%s distance=%.0f\n", hit.DocID, hit.Distance)
 	}

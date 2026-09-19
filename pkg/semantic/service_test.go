@@ -119,7 +119,7 @@ func TestServiceSearchUsesImmutableHNSWSegmentSet(t *testing.T) {
 		}
 	}
 	service.mu.RLock()
-	segments := append([]*SealedSegment(nil), service.segments...)
+	segments := append([]*Segment(nil), service.segments...)
 	service.mu.RUnlock()
 	if len(segments) != 3 {
 		t.Fatalf("segments = %d, want 3", len(segments))
@@ -132,9 +132,6 @@ func TestServiceSearchUsesImmutableHNSWSegmentSet(t *testing.T) {
 	result, err := service.SearchChunks(ctx, []float32{0, 0}, 3)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if result.Stats.UsedExactFallback {
-		t.Fatal("semantic service used exact fallback")
 	}
 	if len(result.Hits) != 3 {
 		t.Fatalf("hits = %d, want 3", len(result.Hits))
@@ -507,18 +504,18 @@ func TestConcurrentSnapshotAndReplacementRemainCoherent(t *testing.T) {
 					errCh <- err
 					return
 				}
-				if len(checkpoint.Rows) != 1 || checkpoint.Segment.Len() != 1 || checkpoint.Rows[0].Chunk.DocID != "doc" {
+				if len(checkpoint.Segment.Rows()) != 1 || checkpoint.Segment.Len() != 1 || checkpoint.Segment.Rows()[0].Chunk.DocID != "doc" {
 					errCh <- fmt.Errorf("worker %d: incoherent checkpoint: %+v", worker, checkpoint)
 					return
 				}
 				var version int
-				if _, err := fmt.Sscanf(string(checkpoint.Rows[0].Chunk.ID), "chunk-%d", &version); err != nil {
+				if _, err := fmt.Sscanf(string(checkpoint.Segment.Rows()[0].Chunk.ID), "chunk-%d", &version); err != nil {
 					errCh <- fmt.Errorf("worker %d: parse checkpoint row: %w", worker, err)
 					return
 				}
 				value := make([]float32, 2)
 				if err := checkpoint.Segment.Vectors().ReadVectorInto(ctx, 0, value); err != nil || value[0] != float32(version) {
-					errCh <- fmt.Errorf("worker %d: row/vector mismatch: %+v/%v/%v", worker, checkpoint.Rows[0], value, err)
+					errCh <- fmt.Errorf("worker %d: row/vector mismatch: %+v/%v/%v", worker, checkpoint.Segment.Rows()[0], value, err)
 					return
 				}
 			}
