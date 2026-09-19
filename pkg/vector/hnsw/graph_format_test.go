@@ -454,7 +454,7 @@ func FuzzOpenIndexReader(f *testing.F) {
 			MaxLinks: 256, MaxLevel: MaxLevel, MaxEfSearch: 64, MaxVisitLimit: 256,
 			MaxK: 32, MaxNeighbors: 8, MaxEfConstruction: 64,
 		}
-		source := PreparedVectorSource(empty)
+		source := vector.PreparedVectorSource(empty)
 		if sourceKind&1 != 0 {
 			source = singleton
 		}

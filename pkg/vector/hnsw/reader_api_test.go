@@ -7,13 +7,12 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 func TestPreparedReadersReadVectorInto(t *testing.T) {
 	flatReader := testFlatReader(t, [][]float32{{1, 2}, {3, 4}}, vector.MetricL2Squared)
 	hnswReader := testBuild(t, flatReader, 2, 2, vector.MetricL2Squared)
-	for name, source := range map[string]hnsw.PreparedVectorSource{"flat": flatReader, "hnsw": hnswReader} {
+	for name, source := range map[string]vector.PreparedVectorSource{"flat": flatReader, "hnsw": hnswReader} {
 		t.Run(name, func(t *testing.T) {
 			dst := []float32{9, 9}
 			if err := source.ReadVectorInto(context.Background(), 1, dst); err != nil || !slices.Equal(dst, []float32{3, 4}) {

@@ -187,13 +187,13 @@ func WriteGraph(writer io.Writer, reader *Reader, vectors VectorFileReference) (
 
 // OpenIndexReader validates a graph file and its vector-file binding, then
 // returns an immutable index reader over decoded graph sections backed by vectors.
-func OpenIndexReader(source io.Reader, vectors PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
+func OpenIndexReader(source io.Reader, vectors vector.PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
 	return OpenIndexReaderContext(context.Background(), source, vectors, vectorFile, limits)
 }
 
 // OpenIndexReaderContext is OpenIndexReader with cancellation for reads,
 // decoding, validation, and vector access.
-func OpenIndexReaderContext(ctx context.Context, source io.Reader, vectors PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
+func OpenIndexReaderContext(ctx context.Context, source io.Reader, vectors vector.PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
 	if ctx == nil {
 		return nil, FileMetadata{}, vector.ErrNilContext
 	}
@@ -223,7 +223,7 @@ func OpenIndexReaderContext(ctx context.Context, source io.Reader, vectors Prepa
 	return openGraphBytes(ctx, data, vectors, vectorFile, limits)
 }
 
-func openGraphBytes(ctx context.Context, data []byte, vectors PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
+func openGraphBytes(ctx context.Context, data []byte, vectors vector.PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, FileMetadata{}, err
 	}

@@ -17,7 +17,7 @@ type Builder struct {
 	present      []bool
 	graph        graphData
 	rng          levelRNG
-	source       PreparedVectorSource
+	source       vector.PreparedVectorSource
 }
 
 func NewBuilder(buildConfig BuildConfig, searchConfig SearchConfig, vectorCount int) (*Builder, error) {

@@ -49,7 +49,7 @@ func newReader(source vector.PreparedVectorSource, topology *topology) (*Reader,
 	return &Reader{topology: *topology, source: source}, nil
 }
 
-func newReaderFromGraph(space vector.Space, searchConfig SearchConfig, buildInfo BuildInfo, graph graphData, sourceOverride ...PreparedVectorSource) (*Reader, error) {
+func newReaderFromGraph(space vector.Space, searchConfig SearchConfig, buildInfo BuildInfo, graph graphData, sourceOverride ...vector.PreparedVectorSource) (*Reader, error) {
 	if err := searchConfig.validate(); err != nil {
 		return nil, err
 	}
@@ -247,8 +247,6 @@ func (r *Reader) ReadVectorInto(ctx context.Context, ordinal vector.Ordinal, dst
 	}
 	return r.source.ReadVectorInto(ctx, ordinal, dst)
 }
-
-func (r *Reader) Close() error { return nil }
 
 func (r *Reader) vectorByNode(node NodeOrdinal) ([]float32, vector.Ordinal, bool) {
 	if r == nil || uint64(node) >= uint64(len(r.nodeToVector)) {

@@ -106,8 +106,6 @@ func parseFlags(args []string, stderr io.Writer) (vectorann.Config, string, stri
 	filterSelectivities := flags.String("filter-selectivities", joinFloat64s(defaults.FilterSelectivities), "comma-separated result-filter selectivities")
 	filterSeed := flags.Uint64("filter-seed", defaults.FilterSeed, "deterministic result-filter seed")
 	visitLimit := flags.Int("visit-limit", 0, "request visit limit (0 = vector count)")
-	fallbackRows := flags.Int("fallback-max-rows", 0, "explicit exact fallback row threshold (0 = not set)")
-	fallbackDistances := flags.Int("fallback-max-distances", 0, "explicit exact fallback distance threshold (0 = not set)")
 	format := flags.String("format", "table", "stdout format: table or json")
 	output := flags.String("out", "", "optional JSON output file")
 	if err := flags.Parse(args); err != nil {
@@ -162,14 +160,6 @@ func parseFlags(args []string, stderr io.Writer) (vectorann.Config, string, stri
 	config.VisitLimit = *visitLimit
 	if config.VisitLimit == 0 {
 		config.VisitLimit = config.VectorCount
-	}
-	if *fallbackRows < 0 || *fallbackDistances < 0 {
-		return vectorann.Config{}, "", "", errors.New("vector-ann: fallback thresholds must not be negative")
-	}
-	if *fallbackRows > 0 || *fallbackDistances > 0 {
-		config.FallbackPolicy = &hnsw.ExactFallbackPolicy{
-			MaxPhysicalRows: *fallbackRows, MaxDistanceComputations: *fallbackDistances,
-		}
 	}
 	if *format != "table" && *format != "json" {
 		return vectorann.Config{}, "", "", fmt.Errorf("vector-ann: unknown format %q", *format)

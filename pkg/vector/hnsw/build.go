@@ -11,7 +11,7 @@ import (
 
 // BuildIndexReader constructs and freezes one HNSW reader from prepared source rows in
 // stable ordinal order 0..source.Len()-1.
-func BuildIndexReader(ctx context.Context, source PreparedVectorSource, options BuildOptions) (*Reader, error) {
+func BuildIndexReader(ctx context.Context, source vector.PreparedVectorSource, options BuildOptions) (*Reader, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -83,7 +83,7 @@ func BuildIndexReader(ctx context.Context, source PreparedVectorSource, options 
 	return reader, nil
 }
 
-func isNilPreparedVectorSource(source PreparedVectorSource) bool {
+func isNilPreparedVectorSource(source vector.PreparedVectorSource) bool {
 	value := reflect.ValueOf(source)
 	switch value.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:

@@ -41,7 +41,6 @@ type RunReport struct {
 	SearchWork                 SearchWorkReport    `json:"search_work"`
 	SearchOutcome              SearchOutcomeReport `json:"search_outcome"`
 	Mode                       string              `json:"mode"`
-	Fallback                   *FallbackReport     `json:"fallback,omitempty"`
 }
 
 type DatasetReport struct {
@@ -156,16 +155,6 @@ type SearchOutcomeReport struct {
 	VisitLimitTerminationRate float64 `json:"visit_limit_termination_rate"`
 }
 
-type FallbackPolicyReport struct {
-	MaxPhysicalRows         int `json:"max_physical_rows"`
-	MaxDistanceComputations int `json:"max_distance_computations"`
-}
-
-type FallbackReport struct {
-	Policy FallbackPolicyReport `json:"policy"`
-	Rate   float64              `json:"rate"`
-}
-
 func StrictRecallAtK(got, want []vector.Hit, k int) float64 {
 	if k <= 0 {
 		return 0
@@ -211,21 +200,17 @@ func WriteJSON(writer io.Writer, report Report) error {
 
 func WriteTable(writer io.Writer, report Report) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(table, "DATASET\tMETRIC\tORDER/PATH\tFILTER\tM\tEFC\tEFS(req/eff)\tSEED\tRECALL@K\tDOC-RECALL\tP50(us)\tP95(us)\tP99(us)\tINCOMPLETE\tFALLBACK"); err != nil {
+	if _, err := fmt.Fprintln(table, "DATASET\tMETRIC\tORDER/PATH\tFILTER\tM\tEFC\tEFS(req/eff)\tSEED\tRECALL@K\tDOC-RECALL\tP50(us)\tP95(us)\tP99(us)\tINCOMPLETE"); err != nil {
 		return err
 	}
 	for _, run := range report.Runs {
-		fallback := "-"
-		if run.Fallback != nil {
-			fallback = fmt.Sprintf("%.1f%%", run.Fallback.Rate*100)
-		}
-		if _, err := fmt.Fprintf(table, "%s\t%s\t%s/%s\t%.1f%%\t%d\t%d\t%d/%d\t%d\t%.4f\t%.4f\t%.1f\t%.1f\t%.1f\t%.1f%%\t%s\n",
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s/%s\t%.1f%%\t%d\t%d\t%d/%d\t%d\t%.4f\t%.4f\t%.1f\t%.1f\t%.1f\t%.1f%%\n",
 			run.Dataset.Kind, run.Dataset.Metric, run.BuildOrder.Name, run.BuildPath,
 			run.Request.ResultFilter.EffectiveSelectivity*100, run.BuildParameters.MaxNeighbors,
 			run.BuildParameters.EfConstruction, run.Request.RequestedEfSearch, run.Request.EffectiveEfSearch, run.BuildParameters.Seed,
 			run.Quality.MeanRecallAtK, run.Quality.MeanDocumentRecallAtK,
 			float64(run.Latency.P50NS)/1e3, float64(run.Latency.P95NS)/1e3,
-			float64(run.Latency.P99NS)/1e3, run.SearchOutcome.IncompleteRate*100, fallback); err != nil {
+			float64(run.Latency.P99NS)/1e3, run.SearchOutcome.IncompleteRate*100); err != nil {
 			return err
 		}
 	}

@@ -67,7 +67,7 @@ func BenchmarkOpenIndexReader(b *testing.B) {
 	}
 }
 
-func BenchmarkANNAndExactFallback(b *testing.B) {
+func BenchmarkANNAndExactReference(b *testing.B) {
 	const rows, dimensions = 10_000, 32
 	values := make([][]float32, rows)
 	for row := range values {
@@ -78,12 +78,8 @@ func BenchmarkANNAndExactFallback(b *testing.B) {
 	}
 	source := benchmarkFlatReader(b, values, vector.MetricL2Squared)
 	reader := benchmarkBuild(b, source, dimensions, rows, vector.MetricL2Squared)
-	exact, err := reader.WithExactFallback(hnsw.ExactFallbackPolicy{MaxPhysicalRows: rows})
-	if err != nil {
-		b.Fatal(err)
-	}
 	query := make([]float32, dimensions)
-	for name, searcher := range map[string]vector.Searcher{"ann": reader, "exact": exact} {
+	for name, searcher := range map[string]vector.Searcher{"ann": reader, "exact_reference": source} {
 		b.Run(name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
@@ -122,7 +118,7 @@ func benchmarkFlatReader(t testing.TB, values [][]float32, metric vector.Metric)
 	return index.Freeze()
 }
 
-func benchmarkBuild(t testing.TB, source hnsw.PreparedVectorSource, dimensions, count int, metric vector.Metric) *hnsw.Reader {
+func benchmarkBuild(t testing.TB, source vector.PreparedVectorSource, dimensions, count int, metric vector.Metric) *hnsw.Reader {
 	t.Helper()
 	reader, err := hnsw.BuildIndexReader(context.Background(), source, hnsw.BuildOptions{
 		BuildConfig: benchmarkBuildConfig(dimensions, count, metric), SearchConfig: benchmarkSearchConfig(count),

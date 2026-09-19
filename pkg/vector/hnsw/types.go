@@ -70,10 +70,6 @@ type BuildConfig struct {
 	Seed uint64
 }
 
-// PreparedVectorSource is kept as a package-local spelling for the shared
-// vector contract used by HNSW build and graph persistence.
-type PreparedVectorSource = vector.PreparedVectorSource
-
 type BuildPhase string
 
 const (

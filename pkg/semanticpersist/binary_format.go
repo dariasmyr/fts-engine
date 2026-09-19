@@ -184,15 +184,6 @@ func (d *decoder) remaining() int {
 	return len(d.data) - d.offset
 }
 
-func decodeBoundedInt(d *decoder) int {
-	value := d.u64()
-	if value > uint64(math.MaxInt) {
-		d.err = ErrLimitExceeded
-		return 0
-	}
-	return int(value)
-}
-
 func readBounded(reader io.Reader, limit uint64) ([]byte, error) {
 	if reader == nil || limit == 0 || limit >= math.MaxInt64 {
 		return nil, ErrLimitExceeded

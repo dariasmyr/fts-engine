@@ -92,7 +92,6 @@ type SearchStats struct {
 	ExpandedNodes        int
 	DistanceComputations int
 	RejectedNodes        int
-	UsedExactFallback    bool
 	Termination          string
 }
 

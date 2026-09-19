@@ -166,7 +166,7 @@ func TestReportJSON(t *testing.T) {
 		Dataset: DatasetReport{Kind: DatasetUniform, Hash: "abc", Metric: "l2_squared", Dimensions: 4, VectorCount: 8, QueryCount: 2},
 		Request: RequestParameters{K: 2, RequestedEfSearch: 1, EffectiveEfSearch: 2, VisitLimit: 8,
 			ResultFilter: FilterParametersReport{RequestedSelectivity: 1, EffectiveSelectivity: 1, EligibleOrdinals: 8, Method: "all_ordinals"}},
-		Mode: "forced_hnsw",
+		Mode: "hnsw_ann",
 	}}}
 	var output bytes.Buffer
 	if err := WriteJSON(&output, report); err != nil {
@@ -176,7 +176,7 @@ func TestReportJSON(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
 		t.Fatalf("invalid report JSON: %v\n%s", err, output.String())
 	}
-	if decoded.SchemaVersion != SchemaVersion || decoded.Benchmark != BenchmarkName || len(decoded.Runs) != 1 || decoded.Runs[0].Dataset.Hash != "abc" || decoded.Runs[0].Fallback != nil {
+	if decoded.SchemaVersion != SchemaVersion || decoded.Benchmark != BenchmarkName || len(decoded.Runs) != 1 || decoded.Runs[0].Dataset.Hash != "abc" {
 		t.Fatalf("decoded report = %+v", decoded)
 	}
 }
@@ -224,7 +224,7 @@ func TestSmokeRunner(t *testing.T) {
 		t.Fatalf("runs = %d, want %d", len(report.Runs), wantRuns)
 	}
 	for i, run := range report.Runs {
-		if run.Mode != "forced_hnsw" || run.Fallback != nil {
+		if run.Mode != "hnsw_ann" {
 			t.Fatalf("run %d did not force HNSW: %+v", i, run)
 		}
 		if run.BuildPath != BuildPathProduction || run.Dataset.GeneratorVersion != SyntheticGeneratorVersion {
@@ -244,16 +244,6 @@ func TestSmokeRunner(t *testing.T) {
 	config.DatasetKinds = config.DatasetKinds[:1]
 	config.EfSearch = config.EfSearch[:1]
 	config.BuildSeeds = config.BuildSeeds[:1]
-	config.FallbackPolicy = &hnsw.ExactFallbackPolicy{MaxPhysicalRows: config.VectorCount}
-	fallbackReport, err := Run(context.Background(), config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(fallbackReport.Runs) != len(config.FilterSelectivities) || fallbackReport.Runs[0].Fallback == nil || fallbackReport.Runs[0].Fallback.Rate != 1 || fallbackReport.Runs[0].Mode != "explicit_fallback_policy" {
-		t.Fatalf("explicit fallback was not reported: %+v", fallbackReport.Runs)
-	}
-
-	config.FallbackPolicy = nil
 	config.FilterSelectivities = []float64{1}
 	config.VisitLimit = 1
 	limitedReport, err := Run(context.Background(), config)

@@ -39,7 +39,7 @@ func testFlatReader(t testing.TB, values [][]float32, metric vector.Metric) *fla
 	return idx.Freeze()
 }
 
-func testBuild(t testing.TB, source hnsw.PreparedVectorSource, dimensions, count int, metric vector.Metric) *hnsw.Reader {
+func testBuild(t testing.TB, source vector.PreparedVectorSource, dimensions, count int, metric vector.Metric) *hnsw.Reader {
 	t.Helper()
 	reader, err := hnsw.BuildIndexReader(context.Background(), source, hnsw.BuildOptions{
 		BuildConfig: testBuildConfig(dimensions, count, metric), SearchConfig: testSearchConfig(count),

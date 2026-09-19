@@ -34,7 +34,6 @@ type Config struct {
 	FilterSelectivities []float64
 	FilterSeed          uint64
 	VisitLimit          int
-	FallbackPolicy      *hnsw.ExactFallbackPolicy
 	Progress            func(Progress)
 }
 
@@ -152,17 +151,10 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 		return nil, err
 	}
 
-	searcher := vector.Searcher(reader)
-	if config.FallbackPolicy != nil {
-		searcher, err = reader.WithExactFallback(*config.FallbackPolicy)
-		if err != nil {
-			return nil, fmt.Errorf("vectorann: fallback policy: %w", err)
-		}
-	}
 	runs := make([]RunReport, 0, len(config.EfSearch)*len(truth))
 	for _, requestedEfSearch := range config.EfSearch {
 		for _, filteredTruth := range truth {
-			run, err := runQueries(ctx, config, dataset, metric, order, buildPath, reader, searcher, filteredTruth, buildConfig, searchConfig, timing, requestedEfSearch)
+			run, err := runQueries(ctx, config, dataset, metric, order, buildPath, reader, filteredTruth, buildConfig, searchConfig, timing, requestedEfSearch)
 			if err != nil {
 				return nil, err
 			}
@@ -249,15 +241,15 @@ func ordinalOrder(count int, seed uint64) []int {
 	return order
 }
 
-func runQueries(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, buildPath string, reader *hnsw.Reader, searcher vector.Searcher, truth truthSweep, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, timing buildTiming, requestedEfSearch int) (RunReport, error) {
+func runQueries(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, buildPath string, reader *hnsw.Reader, truth truthSweep, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, timing buildTiming, requestedEfSearch int) (RunReport, error) {
 	effectiveEfSearch := max(config.K, requestedEfSearch)
 	latencies := make([]time.Duration, len(dataset.Queries))
 	var recall, documentRecall, exactDocuments, annDocuments float64
-	var visited, expanded, distances, rejected, fallback, incomplete, visitLimit int
+	var visited, expanded, distances, rejected, incomplete, visitLimit int
 	request := vector.SearchOptions{EfSearch: effectiveEfSearch, VisitLimit: config.VisitLimit, ResultFilter: truth.filter}
 	for i, query := range dataset.Queries {
 		started := time.Now()
-		result, err := searcher.Search(ctx, query, config.K, request)
+		result, err := reader.Search(ctx, query, config.K, request)
 		latencies[i] = time.Since(started)
 		if err != nil {
 			return RunReport{}, fmt.Errorf("vectorann: search query %d: %w", i, err)
@@ -270,9 +262,6 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 		expanded += result.Stats.ExpandedNodes
 		distances += result.Stats.DistanceComputations
 		rejected += result.Stats.RejectedNodes
-		if result.Stats.UsedExactFallback {
-			fallback++
-		}
 		if result.Incomplete {
 			incomplete++
 		}
@@ -339,17 +328,7 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 		SearchOutcome: SearchOutcomeReport{
 			IncompleteRate: float64(incomplete) / count, VisitLimitTerminationRate: float64(visitLimit) / count,
 		},
-		Mode: "forced_hnsw",
-	}
-	if config.FallbackPolicy != nil {
-		run.Mode = "explicit_fallback_policy"
-		run.Fallback = &FallbackReport{
-			Policy: FallbackPolicyReport{
-				MaxPhysicalRows:         config.FallbackPolicy.MaxPhysicalRows,
-				MaxDistanceComputations: config.FallbackPolicy.MaxDistanceComputations,
-			},
-			Rate: float64(fallback) / count,
-		}
+		Mode: "hnsw_ann",
 	}
 	return run, nil
 }

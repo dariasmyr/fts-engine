@@ -25,7 +25,7 @@ func TestChunkHNSWSegmentAccessors(t *testing.T) {
 	}
 }
 
-func TestBuildSegmentSearchesWithoutSnapshotOrFallback(t *testing.T) {
+func TestBuildSegmentSearchesWithoutSnapshot(t *testing.T) {
 	checkpoint := hnswSnapshotFixture(t)
 	segment, err := BuildSegment(context.Background(), MutableHeadID, SegmentMetadata{
 		Space: checkpoint.Space, Chunking: checkpoint.Chunking,
@@ -43,12 +43,9 @@ func TestBuildSegmentSearchesWithoutSnapshotOrFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := segment.Search(context.Background(), []float32{0, 0}, 2, vector.SearchOptions{})
+	_, err = segment.Search(context.Background(), []float32{0, 0}, 2, vector.SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if result.Stats.UsedExactFallback {
-		t.Fatal("segment search used exact fallback")
 	}
 }
 
