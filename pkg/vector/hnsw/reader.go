@@ -8,15 +8,13 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-// Reader is an immutable packed HNSW graph safe for concurrent searches.
-type Reader struct {
+type topology struct {
 	space        vector.Space
 	searchConfig SearchConfig
 	buildInfo    BuildInfo
 	stats        GraphStats
 	validated    bool
 
-	source       vector.PreparedVectorSource
 	nodeToVector []vector.Ordinal
 	levels       []uint8
 	entry        NodeOrdinal
@@ -30,6 +28,27 @@ type Reader struct {
 	upperNeighbors   []NodeOrdinal
 }
 
+// Reader is an immutable HNSW topology paired with an authoritative vector
+// source. The source is never mutated by Reader.
+type Reader struct {
+	topology
+	source vector.PreparedVectorSource
+}
+
+// newReader binds an immutable topology to an authoritative prepared vector
+// source. The source must have the same ordinal layout and vector metadata as
+// the topology.
+func newReader(source vector.PreparedVectorSource, topology *topology) (*Reader, error) {
+	if source == nil || isNilPreparedVectorSource(source) || topology == nil || !topology.validated {
+		return nil, ErrBuildSourceMismatch
+	}
+	if source.Len() != len(topology.nodeToVector) || source.Dimensions() != topology.space.Dimensions() ||
+		source.Metric() != topology.space.Metric() || source.Normalization() != topology.space.Normalization() {
+		return nil, ErrBuildSourceMismatch
+	}
+	return &Reader{topology: *topology, source: source}, nil
+}
+
 func newReaderFromGraph(space vector.Space, searchConfig SearchConfig, buildInfo BuildInfo, graph graphData, sourceOverride ...PreparedVectorSource) (*Reader, error) {
 	if err := searchConfig.validate(); err != nil {
 		return nil, err
@@ -38,15 +57,9 @@ func newReaderFromGraph(space vector.Space, searchConfig SearchConfig, buildInfo
 	if err != nil {
 		return nil, err
 	}
-	var source PreparedVectorSource
-	if len(sourceOverride) > 0 && sourceOverride[0] != nil && !isNilPreparedVectorSource(sourceOverride[0]) {
-		source = sourceOverride[0]
-	} else {
-		source = &matrixSource{space: space, values: append([]float32(nil), graph.values...)}
-	}
-	reader := &Reader{
+	topology := &topology{
 		space: space, searchConfig: searchConfig, buildInfo: buildInfo, stats: cloneGraphStats(stats),
-		source: source, levels: make([]uint8, len(graph.nodes)),
+		levels:       make([]uint8, len(graph.nodes)),
 		nodeToVector: make([]vector.Ordinal, len(graph.nodes)), entry: graph.entry, hasEntry: graph.hasEntry,
 		level0Offsets: make([]uint32, len(graph.nodes)+1), upperNodeOffsets: make([]uint32, len(graph.nodes)+1),
 	}
@@ -57,11 +70,11 @@ func newReaderFromGraph(space vector.Space, searchConfig SearchConfig, buildInfo
 	var upperPlacementCount uint64
 	var upperNeighborCount uint64
 	for nodeOrdinal, node := range graph.nodes {
-		reader.levels[nodeOrdinal] = node.level
-		reader.nodeToVector[nodeOrdinal] = node.vectorOrdinal
-		reader.level0Offsets[nodeOrdinal] = uint32(level0Count)
+		topology.levels[nodeOrdinal] = node.level
+		topology.nodeToVector[nodeOrdinal] = node.vectorOrdinal
+		topology.level0Offsets[nodeOrdinal] = uint32(level0Count)
 		level0Count += uint64(len(node.links[0]))
-		reader.upperNodeOffsets[nodeOrdinal] = uint32(upperPlacementCount)
+		topology.upperNodeOffsets[nodeOrdinal] = uint32(upperPlacementCount)
 		upperPlacementCount += uint64(node.level)
 		for level := 1; level <= int(node.level); level++ {
 			upperNeighborCount += uint64(len(node.links[level]))
@@ -70,26 +83,29 @@ func newReaderFromGraph(space vector.Space, searchConfig SearchConfig, buildInfo
 			return nil, ErrInvalidGraph
 		}
 	}
-	reader.level0Offsets[len(graph.nodes)] = uint32(level0Count)
-	reader.upperNodeOffsets[len(graph.nodes)] = uint32(upperPlacementCount)
-	reader.level0Neighbors = make([]NodeOrdinal, 0, int(level0Count))
-	reader.upperLinkOffsets = make([]uint32, int(upperPlacementCount)+1)
-	reader.upperNeighbors = make([]NodeOrdinal, 0, int(upperNeighborCount))
+	topology.level0Offsets[len(graph.nodes)] = uint32(level0Count)
+	topology.upperNodeOffsets[len(graph.nodes)] = uint32(upperPlacementCount)
+	topology.level0Neighbors = make([]NodeOrdinal, 0, int(level0Count))
+	topology.upperLinkOffsets = make([]uint32, int(upperPlacementCount)+1)
+	topology.upperNeighbors = make([]NodeOrdinal, 0, int(upperNeighborCount))
 
 	// Level 0 has one adjacency placement per node. Upper levels are sparse, so
 	// upperNodeOffsets maps a node to its consecutive levels 1..NodeLevel(node).
 	placement := 0
 	for _, node := range graph.nodes {
-		reader.level0Neighbors = append(reader.level0Neighbors, node.links[0]...)
+		topology.level0Neighbors = append(topology.level0Neighbors, node.links[0]...)
 		for level := 1; level <= int(node.level); level++ {
-			reader.upperLinkOffsets[placement] = uint32(len(reader.upperNeighbors))
-			reader.upperNeighbors = append(reader.upperNeighbors, node.links[level]...)
+			topology.upperLinkOffsets[placement] = uint32(len(topology.upperNeighbors))
+			topology.upperNeighbors = append(topology.upperNeighbors, node.links[level]...)
 			placement++
 		}
 	}
-	reader.upperLinkOffsets[placement] = uint32(len(reader.upperNeighbors))
-	reader.validated = true
-	return reader, nil
+	topology.upperLinkOffsets[placement] = uint32(len(topology.upperNeighbors))
+	topology.validated = true
+	if len(sourceOverride) > 0 && sourceOverride[0] != nil && !isNilPreparedVectorSource(sourceOverride[0]) {
+		return newReader(sourceOverride[0], topology)
+	}
+	return &Reader{topology: *topology, source: &matrixSource{space: space, values: append([]float32(nil), graph.values...)}}, nil
 }
 
 func (r *Reader) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {

@@ -61,7 +61,7 @@ func (s *Service) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
-	graph, err := hnsw.Build(ctx, source, hnsw.BuildOptions{
+	graph, err := hnsw.BuildIndexReader(ctx, source, hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
 			Dimensions: config.Space.Dimensions, Metric: config.Space.Metric,
 			MaxVectors:     max(config.MaxVectors, source.Len()),

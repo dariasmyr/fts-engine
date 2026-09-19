@@ -41,7 +41,7 @@ func testFlatReader(t testing.TB, values [][]float32, metric vector.Metric) *fla
 
 func testBuild(t testing.TB, source hnsw.PreparedVectorSource, dimensions, count int, metric vector.Metric) *hnsw.Reader {
 	t.Helper()
-	reader, err := hnsw.Build(context.Background(), source, hnsw.BuildOptions{
+	reader, err := hnsw.BuildIndexReader(context.Background(), source, hnsw.BuildOptions{
 		BuildConfig: testBuildConfig(dimensions, count, metric), SearchConfig: testSearchConfig(count),
 	})
 	if err != nil {
@@ -53,7 +53,7 @@ func testBuild(t testing.TB, source hnsw.PreparedVectorSource, dimensions, count
 func TestBuildProgressStableOrderAndPreparedCosineBits(t *testing.T) {
 	source := testFlatReader(t, [][]float32{{3, 4}, {-5, 12}, {8, 15}}, vector.MetricCosine)
 	var progress []hnsw.BuildProgress
-	reader, err := hnsw.Build(context.Background(), source, hnsw.BuildOptions{
+	reader, err := hnsw.BuildIndexReader(context.Background(), source, hnsw.BuildOptions{
 		BuildConfig:  testBuildConfig(2, source.Len(), vector.MetricCosine),
 		SearchConfig: testSearchConfig(source.Len()),
 		Progress: func(value hnsw.BuildProgress) {
@@ -141,11 +141,11 @@ func (s *testSource) ReadVectorInto(ctx context.Context, ordinal vector.Ordinal,
 func TestBuildPreflightReadErrorsAndContext(t *testing.T) {
 	options := hnsw.BuildOptions{BuildConfig: testBuildConfig(2, 2, vector.MetricL2Squared), SearchConfig: testSearchConfig(2)}
 	var nilFlat *flat.Reader
-	if _, err := hnsw.Build(context.Background(), nilFlat, options); !errors.Is(err, hnsw.ErrBuildSourceMismatch) {
+	if _, err := hnsw.BuildIndexReader(context.Background(), nilFlat, options); !errors.Is(err, hnsw.ErrBuildSourceMismatch) {
 		t.Fatalf("typed nil source error = %v", err)
 	}
 	mismatch := &testSource{values: [][]float32{{1}, {2}}, dimensions: 1, metric: vector.MetricL2Squared}
-	if _, err := hnsw.Build(context.Background(), mismatch, options); !errors.Is(err, hnsw.ErrBuildSourceMismatch) {
+	if _, err := hnsw.BuildIndexReader(context.Background(), mismatch, options); !errors.Is(err, hnsw.ErrBuildSourceMismatch) {
 		t.Fatalf("metadata error = %v", err)
 	}
 	if len(mismatch.reads) != 0 {
@@ -154,23 +154,23 @@ func TestBuildPreflightReadErrorsAndContext(t *testing.T) {
 
 	sentinel := errors.New("source read failed")
 	failing := &testSource{values: [][]float32{{1, 2}, {3, 4}}, dimensions: 2, metric: vector.MetricL2Squared, readErrAt: 1, readErr: sentinel}
-	if _, err := hnsw.Build(context.Background(), failing, options); !errors.Is(err, sentinel) {
+	if _, err := hnsw.BuildIndexReader(context.Background(), failing, options); !errors.Is(err, sentinel) {
 		t.Fatalf("read error = %v", err)
 	}
 	if !slices.Equal(failing.reads, []vector.Ordinal{0, 1}) {
 		t.Fatalf("read order = %v", failing.reads)
 	}
 	partial := &testSource{values: [][]float32{{1, 2}, {3, 4}}, dimensions: 2, metric: vector.MetricL2Squared, partial: true}
-	if _, err := hnsw.Build(context.Background(), partial, options); !errors.Is(err, vector.ErrNonFiniteVector) {
+	if _, err := hnsw.BuildIndexReader(context.Background(), partial, options); !errors.Is(err, vector.ErrNonFiniteVector) {
 		t.Fatalf("partial source row error = %v", err)
 	}
 
-	if _, err := hnsw.Build(nil, failing, options); !errors.Is(err, vector.ErrNilContext) {
+	if _, err := hnsw.BuildIndexReader(nil, failing, options); !errors.Is(err, vector.ErrNilContext) {
 		t.Fatalf("nil context error = %v", err)
 	}
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := hnsw.Build(canceled, failing, options); !errors.Is(err, context.Canceled) {
+	if _, err := hnsw.BuildIndexReader(canceled, failing, options); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled context error = %v", err)
 	}
 
@@ -181,7 +181,7 @@ func TestBuildPreflightReadErrorsAndContext(t *testing.T) {
 			progressCancel()
 		}
 	}
-	if _, err := hnsw.Build(progressCtx, progressSource, options); !errors.Is(err, context.Canceled) {
+	if _, err := hnsw.BuildIndexReader(progressCtx, progressSource, options); !errors.Is(err, context.Canceled) {
 		t.Fatalf("progress cancellation error = %v", err)
 	}
 	if !slices.Equal(progressSource.reads, []vector.Ordinal{0}) {

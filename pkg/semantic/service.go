@@ -104,16 +104,6 @@ func (s *Service) Space() SpaceDescriptor { return s.config.Space }
 
 func (s *Service) Chunking() ChunkingDescriptor { return s.config.Chunking }
 
-// Flush is a visibility barrier for the HNSW segment set. Mutations currently
-// seal a small immutable HNSW segment synchronously, so Flush only observes
-// cancellation and provides an explicit lifecycle hook for future batching.
-func (s *Service) Flush(ctx context.Context) error {
-	if ctx == nil {
-		return vector.ErrNilContext
-	}
-	return ctx.Err()
-}
-
 func (s *Service) AddDocument(ctx context.Context, batch []ChunkVector) error {
 	docID, prepared, err := s.validateBatch(ctx, batch)
 	if err != nil {
@@ -206,7 +196,7 @@ func (s *Service) Compact(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	graph, err := hnsw.Build(ctx, nextSource, hnsw.BuildOptions{
+	graph, err := hnsw.BuildIndexReader(ctx, nextSource, hnsw.BuildOptions{
 		BuildConfig:  withBuildCapacity(s.config.HNSWBuild, nextHead.Len()),
 		SearchConfig: s.config.HNSWSearch,
 	})
@@ -261,7 +251,7 @@ func (s *Service) appendVersionLocked(ctx context.Context, docID fts.DocID, batc
 	if err != nil {
 		return err
 	}
-	graph, err := hnsw.Build(ctx, source, hnsw.BuildOptions{
+	graph, err := hnsw.BuildIndexReader(ctx, source, hnsw.BuildOptions{
 		BuildConfig:  withBuildCapacity(s.config.HNSWBuild, len(batch)),
 		SearchConfig: s.config.HNSWSearch,
 	})

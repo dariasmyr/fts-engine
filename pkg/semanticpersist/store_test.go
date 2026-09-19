@@ -720,7 +720,7 @@ func persistenceFixture(t testing.TB, extra bool) (semantic.Snapshot, semantic.C
 func withHNSW(t testing.TB, checkpoint semantic.Snapshot, seed uint64) semantic.Snapshot {
 	t.Helper()
 	maxK := max(checkpoint.MaxK, checkpoint.MaxChunkCandidates)
-	graph, err := hnsw.Build(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
+	graph, err := hnsw.BuildIndexReader(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
 			Dimensions: checkpoint.Space.Dimensions, Metric: checkpoint.Space.Metric,
 			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Space.Dimensions * 4),

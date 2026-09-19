@@ -185,15 +185,15 @@ func WriteGraph(writer io.Writer, reader *Reader, vectors VectorFileReference) (
 	return metadata, nil
 }
 
-// OpenGraph validates a graph file and its vector-file binding, then returns an
-// immutable reader over decoded packed sections backed by vectors.
-func OpenGraph(source io.Reader, vectors PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
-	return OpenGraphContext(context.Background(), source, vectors, vectorFile, limits)
+// OpenIndexReader validates a graph file and its vector-file binding, then
+// returns an immutable index reader over decoded graph sections backed by vectors.
+func OpenIndexReader(source io.Reader, vectors PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
+	return OpenIndexReaderContext(context.Background(), source, vectors, vectorFile, limits)
 }
 
-// OpenGraphContext is OpenGraph with cancellation for reads, decoding, validation,
-// and vector access.
-func OpenGraphContext(ctx context.Context, source io.Reader, vectors PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
+// OpenIndexReaderContext is OpenIndexReader with cancellation for reads,
+// decoding, validation, and vector access.
+func OpenIndexReaderContext(ctx context.Context, source io.Reader, vectors PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
 	if ctx == nil {
 		return nil, FileMetadata{}, vector.ErrNilContext
 	}
@@ -309,11 +309,14 @@ func openGraphBytes(ctx context.Context, data []byte, vectors PreparedVectorSour
 	}
 
 	reader := &Reader{
-		space: space, searchConfig: searchConfig, buildInfo: buildInfo, source: vectors,
-		nodeToVector: make([]vector.Ordinal, int(nodes)), levels: make([]uint8, int(nodes)),
-		level0Offsets: make([]uint32, int(nodes)+1), level0Neighbors: make([]NodeOrdinal, int(level0Links)),
-		upperNodeOffsets: make([]uint32, int(nodes)+1), upperLinkOffsets: make([]uint32, int(upperPlacements)+1),
-		upperNeighbors: make([]NodeOrdinal, int(upperLinks)),
+		topology: topology{
+			space: space, searchConfig: searchConfig, buildInfo: buildInfo,
+			nodeToVector: make([]vector.Ordinal, int(nodes)), levels: make([]uint8, int(nodes)),
+			level0Offsets: make([]uint32, int(nodes)+1), level0Neighbors: make([]NodeOrdinal, int(level0Links)),
+			upperNodeOffsets: make([]uint32, int(nodes)+1), upperLinkOffsets: make([]uint32, int(upperPlacements)+1),
+			upperNeighbors: make([]NodeOrdinal, int(upperLinks)),
+		},
+		source: vectors,
 	}
 	offset := graphFormatHeaderSize
 	offset, err = readGraphUint32sContext(ctx, data, offset, reader.nodeToVector)

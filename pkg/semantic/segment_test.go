@@ -104,7 +104,7 @@ func hnswSnapshotFixture(t *testing.T) Snapshot {
 func buildSnapshotGraph(t testing.TB, checkpoint Snapshot, seed uint64) *hnsw.Reader {
 	t.Helper()
 	maxK := max(checkpoint.MaxK, checkpoint.MaxChunkCandidates)
-	graph, err := hnsw.Build(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
+	graph, err := hnsw.BuildIndexReader(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
 			Dimensions: checkpoint.Space.Dimensions, Metric: checkpoint.Space.Metric,
 			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Space.Dimensions * 4),

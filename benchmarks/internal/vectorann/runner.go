@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	BuildPathProduction = "hnsw.Build"
+	BuildPathProduction = "hnsw.BuildIndexReader"
 	BuildPathBuilder    = "hnsw.Builder"
 )
 
@@ -194,7 +194,7 @@ func buildReader(ctx context.Context, source *flat.Reader, rawVectors [][]float3
 	var err error
 	switch order.Name {
 	case "ascending":
-		reader, err = hnsw.Build(ctx, source, hnsw.BuildOptions{
+		reader, err = hnsw.BuildIndexReader(ctx, source, hnsw.BuildOptions{
 			BuildConfig: buildConfig, SearchConfig: searchConfig, Progress: reportProgress,
 		})
 	case "shuffled":

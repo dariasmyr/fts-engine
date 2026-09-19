@@ -556,7 +556,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		if readErr != nil {
 			return nil, readErr
 		}
-		graphReader, graphMetadata, openErr := hnsw.OpenGraph(bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{
+		graphReader, graphMetadata, openErr := hnsw.OpenIndexReader(bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{
 			Size: manifestValue.Vectors.Size, SHA256: manifestValue.Vectors.SHA256,
 		}, hnsw.GraphLimits{
 			MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes,

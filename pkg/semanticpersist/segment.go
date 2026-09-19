@@ -172,7 +172,7 @@ func OpenSegment(paths SegmentPaths, limits Limits) (*LoadedSegment, error) {
 	if err != nil {
 		return nil, err
 	}
-	graphReader, graphMetadata, err := hnsw.OpenGraph(bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256}, hnsw.GraphLimits{
+	graphReader, graphMetadata, err := hnsw.OpenIndexReader(bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256}, hnsw.GraphLimits{
 		MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes,
 		MaxGraphBytes: min(limits.MaxFileBytes, limits.MaxGraphBytes), MaxLinks: limits.MaxGraphLinks,
 		MaxK: limits.MaxK, MaxEfSearch: limits.MaxEfSearch, MaxVisitLimit: limits.MaxVisitLimit,

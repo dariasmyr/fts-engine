@@ -28,7 +28,7 @@ func BenchmarkBuildPreparedSource(b *testing.B) {
 			b.SetBytes(int64(rows * dimensions * 4))
 			b.ResetTimer()
 			for b.Loop() {
-				if _, err := hnsw.Build(context.Background(), source, options); err != nil {
+				if _, err := hnsw.BuildIndexReader(context.Background(), source, options); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -36,7 +36,7 @@ func BenchmarkBuildPreparedSource(b *testing.B) {
 	}
 }
 
-func BenchmarkOpenGraph(b *testing.B) {
+func BenchmarkOpenIndexReader(b *testing.B) {
 	const rows, dimensions = 10_000, 32
 	values := make([][]float32, rows)
 	for row := range values {
@@ -61,7 +61,7 @@ func BenchmarkOpenGraph(b *testing.B) {
 	b.SetBytes(int64(len(graphData)))
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, err := hnsw.OpenGraphContext(context.Background(), bytes.NewReader(graphData), source, reference, hnsw.DefaultGraphLimits()); err != nil {
+		if _, _, err := hnsw.OpenIndexReaderContext(context.Background(), bytes.NewReader(graphData), source, reference, hnsw.DefaultGraphLimits()); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -124,7 +124,7 @@ func benchmarkFlatReader(t testing.TB, values [][]float32, metric vector.Metric)
 
 func benchmarkBuild(t testing.TB, source hnsw.PreparedVectorSource, dimensions, count int, metric vector.Metric) *hnsw.Reader {
 	t.Helper()
-	reader, err := hnsw.Build(context.Background(), source, hnsw.BuildOptions{
+	reader, err := hnsw.BuildIndexReader(context.Background(), source, hnsw.BuildOptions{
 		BuildConfig: benchmarkBuildConfig(dimensions, count, metric), SearchConfig: benchmarkSearchConfig(count),
 	})
 	if err != nil {

@@ -27,7 +27,7 @@ func main() {
 	must(err)
 	source := mutable.Freeze()
 
-	reader, err := hnsw.Build(ctx, source, hnsw.BuildOptions{
+	reader, err := hnsw.BuildIndexReader(ctx, source, hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
 			Dimensions: 2, Metric: vector.MetricL2Squared,
 			MaxVectors: len(values), MaxVectorBytes: uint64(len(values) * 2 * 4),
@@ -75,7 +75,7 @@ func main() {
 	openedVectors, openedVectorMetadata, err := flat.Open(bytes.NewReader(vectorData), flat.DefaultCodecLimits())
 	must(err)
 	openedReference := hnsw.VectorFileReference{Size: openedVectorMetadata.Size, SHA256: openedVectorMetadata.SHA256}
-	openedGraph, _, err := hnsw.OpenGraphContext(ctx, bytes.NewReader(graphData), openedVectors, openedReference, hnsw.DefaultGraphLimits())
+	openedGraph, _, err := hnsw.OpenIndexReaderContext(ctx, bytes.NewReader(graphData), openedVectors, openedReference, hnsw.DefaultGraphLimits())
 	must(err)
 
 	reopened, err := openedGraph.Search(ctx, query, 3, vector.SearchOptions{EfSearch: 8})
