@@ -155,8 +155,9 @@ func TestCompactRebuildsDenseMutableAndImmutableIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, firstOK := reader.Vector(0)
-	second, secondOK := reader.Vector(1)
+	source := reader.VectorSource()
+	first, firstOK := source.Vector(0)
+	second, secondOK := source.Vector(1)
 	if !firstOK || !secondOK || !slices.Equal(first, []float32{2, 3}) || !slices.Equal(second, []float32{6, 7}) {
 		t.Fatalf("compacted reader vectors = %v/%v", first, second)
 	}

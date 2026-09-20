@@ -13,30 +13,30 @@ import (
 var errVisitLimit = errors.New("vector/hnsw: visit limit reached")
 
 type searchState struct {
-	ctx         context.Context
-	reader      *Reader
-	space       vector.Space
-	query       []float32
-	filter      vector.ResultFilter
-	visitLimit  int
-	vectorCount int
-	scores      map[NodeOrdinal]searchCandidate
-	workItems   int
-	stats       vector.SearchStats
+	ctx           context.Context
+	index         *Searcher
+	space         vector.Space
+	preparedQuery []float32
+	filter        vector.ResultFilter
+	visitLimit    int
+	vectorCount   int
+	candidates    map[NodeOrdinal]searchCandidate
+	workItems     int
+	stats         vector.SearchStats
 }
 
-func search(ctx context.Context, reader *Reader, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func search(ctx context.Context, reader *Searcher, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	if ctx == nil {
 		return vector.SearchResult{}, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return vector.SearchResult{}, err
 	}
-	if reader == nil || !reader.validated {
+	if reader == nil || !reader.topology.validated {
 		return vector.SearchResult{}, ErrInvalidGraph
 	}
-	config := reader.searchConfig
-	space := reader.space
+	config := reader.topology.searchConfig
+	space := reader.topology.space
 	if err := config.validate(); err != nil {
 		return vector.SearchResult{}, err
 	}
@@ -99,10 +99,10 @@ func search(ctx context.Context, reader *Reader, query []float32, k int, options
 		return vector.SearchResult{}, ErrInvalidGraph
 	}
 	state := searchState{
-		ctx: ctx, reader: reader, space: space, query: preparedQuery, filter: filter,
+		ctx: ctx, index: reader, space: space, preparedQuery: preparedQuery, filter: filter,
 		visitLimit: visitLimit, vectorCount: vectorCount,
-		scores: make(map[NodeOrdinal]searchCandidate, min(visitLimit, nodeCount)),
-		stats:  vector.SearchStats{Termination: vector.TerminationComplete},
+		candidates: make(map[NodeOrdinal]searchCandidate, min(visitLimit, nodeCount)),
+		stats:      vector.SearchStats{Termination: vector.TerminationComplete},
 	}
 	entryCandidate, err := state.score(entry)
 	if err != nil {
@@ -125,7 +125,7 @@ func greedySearch(state *searchState, current searchCandidate, maxLevel int) (se
 			}
 			state.stats.ExpandedNodes++
 			best := current
-			neighbors, ok := state.reader.neighborView(current.node, level)
+			neighbors, ok := state.index.neighborView(current.node, level)
 			if !ok {
 				return searchCandidate{}, ErrInvalidGraph
 			}
@@ -153,8 +153,8 @@ func greedySearch(state *searchState, current searchCandidate, maxLevel int) (se
 func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCount int) (resultHeap, error) {
 	resultCapacity := min(efSearch, allowedCount)
 	results := newResultHeap(resultCapacity)
-	frontier := candidateHeap{items: make([]searchCandidate, 0, min(efSearch, state.reader.NodeCount()))}
-	seen := make(map[NodeOrdinal]struct{}, min(state.visitLimit, state.reader.NodeCount()))
+	frontier := candidateHeap{items: make([]searchCandidate, 0, min(efSearch, state.index.NodeCount()))}
+	seen := make(map[NodeOrdinal]struct{}, min(state.visitLimit, state.index.NodeCount()))
 	seen[entry.node] = struct{}{}
 	frontier.Push(entry)
 	if entry.accepted {
@@ -173,7 +173,7 @@ func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCou
 			break
 		}
 		state.stats.ExpandedNodes++
-		neighbors, ok := state.reader.neighborView(candidate.node, 0)
+		neighbors, ok := state.index.neighborView(candidate.node, 0)
 		if !ok {
 			return results, ErrInvalidGraph
 		}
@@ -181,7 +181,7 @@ func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCou
 			if err := state.periodicContextError(); err != nil {
 				return results, err
 			}
-			if uint64(neighbor) >= uint64(state.reader.NodeCount()) {
+			if uint64(neighbor) >= uint64(state.index.NodeCount()) {
 				return results, ErrInvalidGraph
 			}
 			if _, exists := seen[neighbor]; exists {
@@ -202,10 +202,10 @@ func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCou
 }
 
 func (state *searchState) score(node NodeOrdinal) (searchCandidate, error) {
-	if uint64(node) >= uint64(state.reader.NodeCount()) {
+	if uint64(node) >= uint64(state.index.NodeCount()) {
 		return searchCandidate{}, ErrInvalidGraph
 	}
-	if candidate, exists := state.scores[node]; exists {
+	if candidate, exists := state.candidates[node]; exists {
 		return candidate, nil
 	}
 	// VisitedNodes and the visit budget count unique query-to-node scores across
@@ -213,27 +213,27 @@ func (state *searchState) score(node NodeOrdinal) (searchCandidate, error) {
 	if state.stats.VisitedNodes >= state.visitLimit {
 		return searchCandidate{}, errVisitLimit
 	}
-	if uint64(node) >= uint64(len(state.reader.nodeToVector)) {
+	if uint64(node) >= uint64(len(state.index.topology.nodeToVector)) {
 		return searchCandidate{}, ErrInvalidGraph
 	}
-	ordinal := state.reader.nodeToVector[node]
+	ordinal := state.index.topology.nodeToVector[node]
 	if uint64(ordinal) >= uint64(state.vectorCount) {
 		return searchCandidate{}, ErrInvalidGraph
 	}
 	value := make([]float32, state.space.Dimensions())
-	if err := state.reader.ReadVectorInto(state.ctx, ordinal, value); err != nil {
+	if err := state.index.VectorSource().ReadVectorInto(state.ctx, ordinal, value); err != nil {
 		if state.ctx.Err() != nil {
 			return searchCandidate{}, state.ctx.Err()
 		}
 		return searchCandidate{}, fmt.Errorf("%w: read vector row %d: %v", ErrInvalidGraph, ordinal, err)
 	}
-	distance := state.space.DistancePrepared(state.query, value)
+	distance := state.space.DistancePrepared(state.preparedQuery, value)
 	if math.IsNaN(distance) || math.IsInf(distance, 0) {
 		return searchCandidate{}, ErrInvalidGraph
 	}
 	accepted := state.filter == nil || state.filter.Allows(ordinal)
 	candidate := searchCandidate{node: node, vectorOrdinal: ordinal, distance: distance, accepted: accepted}
-	state.scores[node] = candidate
+	state.candidates[node] = candidate
 	state.stats.VisitedNodes++
 	state.stats.DistanceComputations++
 	if !accepted {
@@ -250,7 +250,7 @@ func (state *searchState) periodicContextError() error {
 
 func (state *searchState) acceptedResults(capacity int) resultHeap {
 	results := newResultHeap(capacity)
-	for _, candidate := range state.scores {
+	for _, candidate := range state.candidates {
 		if candidate.accepted {
 			results.Add(candidate)
 		}

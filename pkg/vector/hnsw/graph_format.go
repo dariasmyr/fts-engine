@@ -72,7 +72,7 @@ type FileMetadata struct {
 	SHA256 [sha256.Size]byte
 }
 
-func MarshalGraph(reader *Reader, vectors VectorFileReference) ([]byte, FileMetadata, error) {
+func MarshalGraph(reader *Searcher, vectors VectorFileReference) ([]byte, FileMetadata, error) {
 	var buffer bytes.Buffer
 	metadata, err := WriteGraph(&buffer, reader, vectors)
 	return buffer.Bytes(), metadata, err
@@ -80,7 +80,7 @@ func MarshalGraph(reader *Reader, vectors VectorFileReference) ([]byte, FileMeta
 
 // WriteGraph writes exact packed topology and configuration. Vector values are
 // not included; vectors identifies their authoritative separate file.
-func WriteGraph(writer io.Writer, reader *Reader, vectors VectorFileReference) (FileMetadata, error) {
+func WriteGraph(writer io.Writer, reader *Searcher, vectors VectorFileReference) (FileMetadata, error) {
 	if writer == nil || reader == nil || !validVectorFileReference(vectors) {
 		return FileMetadata{}, ErrCorruptGraphData
 	}
@@ -88,23 +88,23 @@ func WriteGraph(writer io.Writer, reader *Reader, vectors VectorFileReference) (
 	if err != nil {
 		return FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptGraphData, err)
 	}
-	if err := reader.searchConfig.validate(); err != nil {
+	if err := reader.topology.searchConfig.validate(); err != nil {
 		return FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptGraphData, err)
 	}
-	if err := validatePersistedBuildInfo(reader.buildInfo); err != nil {
+	if err := validatePersistedBuildInfo(reader.topology.buildInfo); err != nil {
 		return FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptGraphData, err)
 	}
 	if !readerConfigEncodable(reader) {
 		return FileMetadata{}, ErrGraphLimitExceeded
 	}
-	if err := validateReaderVectors(reader); err != nil {
+	if err := validateSearcherVectors(reader); err != nil {
 		return FileMetadata{}, err
 	}
 
 	nodes := uint64(reader.Len())
-	level0Links := uint64(len(reader.level0Neighbors))
-	upperPlacements := uint64(len(reader.upperLinkOffsets) - 1)
-	upperLinks := uint64(len(reader.upperNeighbors))
+	level0Links := uint64(len(reader.topology.level0Neighbors))
+	upperPlacements := uint64(len(reader.topology.upperLinkOffsets) - 1)
+	upperLinks := uint64(len(reader.topology.upperNeighbors))
 	topologyBytes, ok := graphTopologyBytes(nodes, level0Links, upperPlacements, upperLinks)
 	if !ok || nodes >= math.MaxUint32 || level0Links >= math.MaxUint32 || upperPlacements >= math.MaxUint32 || upperLinks >= math.MaxUint32 {
 		return FileMetadata{}, ErrGraphLimitExceeded
@@ -121,13 +121,13 @@ func WriteGraph(writer io.Writer, reader *Reader, vectors VectorFileReference) (
 	binary.LittleEndian.PutUint32(header[8:12], uint32(reader.Dimensions()))
 	header[12] = byte(reader.Metric())
 	header[13] = byte(reader.Normalization())
-	if reader.hasEntry {
+	if reader.topology.hasEntry {
 		header[14] = 1
 	}
 	binary.LittleEndian.PutUint32(header[16:20], uint32(nodes))
-	binary.LittleEndian.PutUint32(header[20:24], uint32(reader.entry))
-	putSearchConfig(header[24:44], reader.searchConfig)
-	putBuildInfo(header[44:72], reader.buildInfo)
+	binary.LittleEndian.PutUint32(header[20:24], uint32(reader.topology.entry))
+	putSearchConfig(header[24:44], reader.topology.searchConfig)
+	putBuildInfo(header[44:72], reader.topology.buildInfo)
 	binary.LittleEndian.PutUint64(header[72:80], vectors.Size)
 	copy(header[80:112], vectors.SHA256[:])
 	binary.LittleEndian.PutUint32(header[112:116], uint32(level0Links))
@@ -147,10 +147,10 @@ func WriteGraph(writer io.Writer, reader *Reader, vectors VectorFileReference) (
 	if err := writeGraphBytes(body, header); err != nil {
 		return FileMetadata{}, fmt.Errorf("vector/hnsw: write graph header: %w", err)
 	}
-	if err := writeGraphUint32s(body, reader.nodeToVector); err != nil {
+	if err := writeGraphUint32s(body, reader.topology.nodeToVector); err != nil {
 		return FileMetadata{}, fmt.Errorf("vector/hnsw: write node mapping: %w", err)
 	}
-	if err := writeGraphBytes(body, reader.levels); err != nil {
+	if err := writeGraphBytes(body, reader.topology.levels); err != nil {
 		return FileMetadata{}, fmt.Errorf("vector/hnsw: write node levels: %w", err)
 	}
 	if padding := aligned4(nodes) - nodes; padding != 0 {
@@ -158,19 +158,19 @@ func WriteGraph(writer io.Writer, reader *Reader, vectors VectorFileReference) (
 			return FileMetadata{}, fmt.Errorf("vector/hnsw: write level padding: %w", err)
 		}
 	}
-	if err := writeGraphUint32s(body, reader.level0Offsets); err != nil {
+	if err := writeGraphUint32s(body, reader.topology.level0Offsets); err != nil {
 		return FileMetadata{}, fmt.Errorf("vector/hnsw: write level-0 offsets: %w", err)
 	}
-	if err := writeGraphUint32s(body, reader.level0Neighbors); err != nil {
+	if err := writeGraphUint32s(body, reader.topology.level0Neighbors); err != nil {
 		return FileMetadata{}, fmt.Errorf("vector/hnsw: write level-0 links: %w", err)
 	}
-	if err := writeGraphUint32s(body, reader.upperNodeOffsets); err != nil {
+	if err := writeGraphUint32s(body, reader.topology.upperNodeOffsets); err != nil {
 		return FileMetadata{}, fmt.Errorf("vector/hnsw: write upper-node offsets: %w", err)
 	}
-	if err := writeGraphUint32s(body, reader.upperLinkOffsets); err != nil {
+	if err := writeGraphUint32s(body, reader.topology.upperLinkOffsets); err != nil {
 		return FileMetadata{}, fmt.Errorf("vector/hnsw: write upper-link offsets: %w", err)
 	}
-	if err := writeGraphUint32s(body, reader.upperNeighbors); err != nil {
+	if err := writeGraphUint32s(body, reader.topology.upperNeighbors); err != nil {
 		return FileMetadata{}, fmt.Errorf("vector/hnsw: write upper links: %w", err)
 	}
 
@@ -185,15 +185,15 @@ func WriteGraph(writer io.Writer, reader *Reader, vectors VectorFileReference) (
 	return metadata, nil
 }
 
-// OpenIndexReader validates a graph file and its vector-file binding, then
-// returns an immutable index reader over decoded graph sections backed by vectors.
-func OpenIndexReader(source io.Reader, vectors vector.PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
-	return OpenIndexReaderContext(context.Background(), source, vectors, vectorFile, limits)
+// OpenSearcher validates a graph file and its vector-file binding, then opens
+// an immutable HNSW searcher.
+func OpenSearcher(source io.Reader, vectors vector.PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Searcher, FileMetadata, error) {
+	return OpenSearcherContext(context.Background(), source, vectors, vectorFile, limits)
 }
 
-// OpenIndexReaderContext is OpenIndexReader with cancellation for reads,
+// OpenSearcherContext is OpenSearcher with cancellation for reads,
 // decoding, validation, and vector access.
-func OpenIndexReaderContext(ctx context.Context, source io.Reader, vectors vector.PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
+func OpenSearcherContext(ctx context.Context, source io.Reader, vectors vector.PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Searcher, FileMetadata, error) {
 	if ctx == nil {
 		return nil, FileMetadata{}, vector.ErrNilContext
 	}
@@ -223,7 +223,7 @@ func OpenIndexReaderContext(ctx context.Context, source io.Reader, vectors vecto
 	return openGraphBytes(ctx, data, vectors, vectorFile, limits)
 }
 
-func openGraphBytes(ctx context.Context, data []byte, vectors vector.PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Reader, FileMetadata, error) {
+func openGraphBytes(ctx context.Context, data []byte, vectors vector.PreparedVectorSource, vectorFile VectorFileReference, limits GraphLimits) (*Searcher, FileMetadata, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, FileMetadata{}, err
 	}
@@ -308,7 +308,7 @@ func openGraphBytes(ctx context.Context, data []byte, vectors vector.PreparedVec
 		return nil, FileMetadata{}, ErrGraphLimitExceeded
 	}
 
-	reader := &Reader{
+	reader := &Searcher{
 		topology: topology{
 			space: space, searchConfig: searchConfig, buildInfo: buildInfo,
 			nodeToVector: make([]vector.Ordinal, int(nodes)), levels: make([]uint8, int(nodes)),
@@ -316,46 +316,46 @@ func openGraphBytes(ctx context.Context, data []byte, vectors vector.PreparedVec
 			upperNodeOffsets: make([]uint32, int(nodes)+1), upperLinkOffsets: make([]uint32, int(upperPlacements)+1),
 			upperNeighbors: make([]NodeOrdinal, int(upperLinks)),
 		},
-		source: vectors,
+		vectors: vectors,
 	}
 	offset := graphFormatHeaderSize
-	offset, err = readGraphUint32sContext(ctx, data, offset, reader.nodeToVector)
+	offset, err = readGraphUint32sContext(ctx, data, offset, reader.topology.nodeToVector)
 	if err != nil {
 		return nil, FileMetadata{}, err
 	}
-	copy(reader.levels, data[offset:offset+int(nodes)])
+	copy(reader.topology.levels, data[offset:offset+int(nodes)])
 	offset += int(aligned4(nodes))
 	if !allZero(data[offset-int(aligned4(nodes)-nodes) : offset]) {
 		return nil, FileMetadata{}, ErrCorruptGraphData
 	}
-	offset, err = readGraphUint32sContext(ctx, data, offset, reader.level0Offsets)
+	offset, err = readGraphUint32sContext(ctx, data, offset, reader.topology.level0Offsets)
 	if err != nil {
 		return nil, FileMetadata{}, err
 	}
-	offset, err = readGraphUint32sContext(ctx, data, offset, reader.level0Neighbors)
+	offset, err = readGraphUint32sContext(ctx, data, offset, reader.topology.level0Neighbors)
 	if err != nil {
 		return nil, FileMetadata{}, err
 	}
-	offset, err = readGraphUint32sContext(ctx, data, offset, reader.upperNodeOffsets)
+	offset, err = readGraphUint32sContext(ctx, data, offset, reader.topology.upperNodeOffsets)
 	if err != nil {
 		return nil, FileMetadata{}, err
 	}
-	offset, err = readGraphUint32sContext(ctx, data, offset, reader.upperLinkOffsets)
+	offset, err = readGraphUint32sContext(ctx, data, offset, reader.topology.upperLinkOffsets)
 	if err != nil {
 		return nil, FileMetadata{}, err
 	}
-	offset, err = readGraphUint32sContext(ctx, data, offset, reader.upperNeighbors)
+	offset, err = readGraphUint32sContext(ctx, data, offset, reader.topology.upperNeighbors)
 	if err != nil {
 		return nil, FileMetadata{}, err
 	}
 	if offset != len(data)-graphFormatFooterSize {
 		return nil, FileMetadata{}, ErrCorruptGraphData
 	}
-	reader.hasEntry = data[14] == 1
+	reader.topology.hasEntry = data[14] == 1
 	if data[14] > 1 {
 		return nil, FileMetadata{}, ErrCorruptGraphData
 	}
-	reader.entry = NodeOrdinal(binary.LittleEndian.Uint32(data[20:24]))
+	reader.topology.entry = NodeOrdinal(binary.LittleEndian.Uint32(data[20:24]))
 	stats, err := validatePackedTopologyContext(ctx, reader)
 	if err != nil && ctx.Err() != nil {
 		return nil, FileMetadata{}, ctx.Err()
@@ -370,11 +370,11 @@ func openGraphBytes(ctx context.Context, data []byte, vectors vector.PreparedVec
 	if vectors.Len() != int(nodes) || vectors.Dimensions() != dimensions || vectors.Metric() != metric || vectors.Normalization() != normalization {
 		return nil, FileMetadata{}, ErrGraphVectorSource
 	}
-	if err := validateReaderVectorsContext(ctx, reader); err != nil {
+	if err := validateSearcherVectorsContext(ctx, reader); err != nil {
 		return nil, FileMetadata{}, err
 	}
-	reader.stats = cloneGraphStats(stats)
-	reader.validated = true
+	reader.topology.stats = cloneGraphStats(stats)
+	reader.topology.validated = true
 	if err := ctx.Err(); err != nil {
 		return nil, FileMetadata{}, err
 	}
@@ -420,13 +420,13 @@ func (r contextGraphReader) Read(dst []byte) (int, error) {
 	return n, err
 }
 
-func validateReaderVectors(reader *Reader) error {
-	return validateReaderVectorsContext(context.Background(), reader)
+func validateSearcherVectors(reader *Searcher) error {
+	return validateSearcherVectorsContext(context.Background(), reader)
 }
 
-func validateReaderVectorsContext(ctx context.Context, reader *Reader) error {
-	if reader == nil || reader.source == nil || reader.source.Len() != reader.Len() ||
-		reader.source.Dimensions() != reader.Dimensions() || reader.source.Metric() != reader.Metric() || reader.source.Normalization() != reader.Normalization() {
+func validateSearcherVectorsContext(ctx context.Context, reader *Searcher) error {
+	if reader == nil || reader.vectors == nil || reader.vectors.Len() != reader.Len() ||
+		reader.vectors.Dimensions() != reader.Dimensions() || reader.vectors.Metric() != reader.Metric() || reader.vectors.Normalization() != reader.Normalization() {
 		return ErrCorruptGraphData
 	}
 	components, ok := checkedMultiply(uint64(reader.Len()), uint64(reader.Dimensions()))
@@ -441,44 +441,44 @@ func validateReaderVectorsContext(ctx context.Context, reader *Reader) error {
 		for i := range scratch {
 			scratch[i] = float32(math.NaN())
 		}
-		if err := reader.source.ReadVectorInto(ctx, vector.Ordinal(row), scratch); err != nil {
+		if err := reader.vectors.ReadVectorInto(ctx, vector.Ordinal(row), scratch); err != nil {
 			return fmt.Errorf("%w: read vector row %d: %v", ErrGraphVectorSource, row, err)
 		}
-		if err := validatePreparedVector(reader.space, scratch); err != nil {
+		if err := validatePreparedVector(reader.topology.space, scratch); err != nil {
 			return fmt.Errorf("%w: vector row %d: %v", ErrGraphVectorSource, row, err)
 		}
 	}
 	return nil
 }
 
-func validatePackedTopology(reader *Reader) (GraphStats, error) {
+func validatePackedTopology(reader *Searcher) (GraphStats, error) {
 	return validatePackedTopologyContext(context.Background(), reader)
 }
 
-func validatePackedTopologyContext(ctx context.Context, reader *Reader) (GraphStats, error) {
+func validatePackedTopologyContext(ctx context.Context, reader *Searcher) (GraphStats, error) {
 	if err := ctx.Err(); err != nil {
 		return GraphStats{}, err
 	}
 	if reader == nil || reader.Dimensions() <= 0 || !reader.Metric().Valid() {
 		return GraphStats{}, ErrInvalidGraph
 	}
-	nodes := len(reader.nodeToVector)
-	if uint64(nodes) >= math.MaxUint32 || len(reader.levels) != nodes || len(reader.level0Offsets) != nodes+1 ||
-		len(reader.upperNodeOffsets) != nodes+1 || len(reader.upperLinkOffsets) == 0 ||
-		uint64(len(reader.level0Neighbors)) >= math.MaxUint32 || uint64(len(reader.upperLinkOffsets)-1) >= math.MaxUint32 || uint64(len(reader.upperNeighbors)) >= math.MaxUint32 {
+	nodes := len(reader.topology.nodeToVector)
+	if uint64(nodes) >= math.MaxUint32 || len(reader.topology.levels) != nodes || len(reader.topology.level0Offsets) != nodes+1 ||
+		len(reader.topology.upperNodeOffsets) != nodes+1 || len(reader.topology.upperLinkOffsets) == 0 ||
+		uint64(len(reader.topology.level0Neighbors)) >= math.MaxUint32 || uint64(len(reader.topology.upperLinkOffsets)-1) >= math.MaxUint32 || uint64(len(reader.topology.upperNeighbors)) >= math.MaxUint32 {
 		return GraphStats{}, ErrInvalidGraph
 	}
-	if links, ok := checkedAdd(uint64(len(reader.level0Neighbors)), uint64(len(reader.upperNeighbors))); !ok || links > uint64(math.MaxInt) {
+	if links, ok := checkedAdd(uint64(len(reader.topology.level0Neighbors)), uint64(len(reader.topology.upperNeighbors))); !ok || links > uint64(math.MaxInt) {
 		return GraphStats{}, ErrInvalidGraph
 	}
 	if nodes == 0 {
-		if reader.hasEntry || reader.entry != 0 || len(reader.level0Neighbors) != 0 || len(reader.upperLinkOffsets) != 1 || len(reader.upperNeighbors) != 0 ||
-			reader.level0Offsets[0] != 0 || reader.upperNodeOffsets[0] != 0 || reader.upperLinkOffsets[0] != 0 {
+		if reader.topology.hasEntry || reader.topology.entry != 0 || len(reader.topology.level0Neighbors) != 0 || len(reader.topology.upperLinkOffsets) != 1 || len(reader.topology.upperNeighbors) != 0 ||
+			reader.topology.level0Offsets[0] != 0 || reader.topology.upperNodeOffsets[0] != 0 || reader.topology.upperLinkOffsets[0] != 0 {
 			return GraphStats{}, ErrInvalidGraph
 		}
 		return GraphStats{MaxLevel: -1}, nil
 	}
-	if !reader.hasEntry || uint64(reader.entry) >= uint64(nodes) {
+	if !reader.topology.hasEntry || uint64(reader.topology.entry) >= uint64(nodes) {
 		return GraphStats{}, ErrInvalidGraph
 	}
 	seenVectors := make([]bool, nodes)
@@ -488,9 +488,9 @@ func validatePackedTopologyContext(ctx context.Context, reader *Reader) (GraphSt
 		if err := contextProgressCheck(ctx, node); err != nil {
 			return GraphStats{}, err
 		}
-		ordinal := reader.nodeToVector[node]
-		level := int(reader.levels[node])
-		if uint64(ordinal) >= uint64(nodes) || seenVectors[ordinal] || level > MaxLevel || uint64(reader.upperNodeOffsets[node]) != placements {
+		ordinal := reader.topology.nodeToVector[node]
+		level := int(reader.topology.levels[node])
+		if uint64(ordinal) >= uint64(nodes) || seenVectors[ordinal] || level > MaxLevel || uint64(reader.topology.upperNodeOffsets[node]) != placements {
 			return GraphStats{}, ErrInvalidGraph
 		}
 		seenVectors[ordinal] = true
@@ -500,10 +500,10 @@ func validatePackedTopologyContext(ctx context.Context, reader *Reader) (GraphSt
 		}
 		maxLevel = max(maxLevel, level)
 	}
-	if uint64(reader.upperNodeOffsets[nodes]) != placements || placements != uint64(len(reader.upperLinkOffsets)-1) || int(reader.levels[reader.entry]) != maxLevel {
+	if uint64(reader.topology.upperNodeOffsets[nodes]) != placements || placements != uint64(len(reader.topology.upperLinkOffsets)-1) || int(reader.topology.levels[reader.topology.entry]) != maxLevel {
 		return GraphStats{}, ErrInvalidGraph
 	}
-	if !validOffsetsContext(ctx, reader.level0Offsets, len(reader.level0Neighbors)) || !validOffsetsContext(ctx, reader.upperLinkOffsets, len(reader.upperNeighbors)) {
+	if !validOffsetsContext(ctx, reader.topology.level0Offsets, len(reader.topology.level0Neighbors)) || !validOffsetsContext(ctx, reader.topology.upperLinkOffsets, len(reader.topology.upperNeighbors)) {
 		if err := ctx.Err(); err != nil {
 			return GraphStats{}, err
 		}
@@ -520,29 +520,29 @@ func validatePackedTopologyContext(ctx context.Context, reader *Reader) (GraphSt
 		if err := contextProgressCheck(ctx, node); err != nil {
 			return GraphStats{}, err
 		}
-		for level := 0; level <= int(reader.levels[node]); level++ {
+		for level := 0; level <= int(reader.topology.levels[node]); level++ {
 			neighbors, ok := reader.neighborView(NodeOrdinal(node), level)
-			if !ok || len(neighbors) > reader.buildInfo.neighborLimit(level) {
+			if !ok || len(neighbors) > reader.topology.buildInfo.neighborLimit(level) {
 				return GraphStats{}, ErrInvalidGraph
 			}
 			stats.LevelNodeCounts[level]++
 			stats.LevelLinkCounts[level] += len(neighbors)
 			epoch++
 			for _, neighbor := range neighbors {
-				if uint64(neighbor) >= uint64(nodes) || int(neighbor) == node || int(reader.levels[neighbor]) < level || marks[neighbor] == epoch {
+				if uint64(neighbor) >= uint64(nodes) || int(neighbor) == node || int(reader.topology.levels[neighbor]) < level || marks[neighbor] == epoch {
 					return GraphStats{}, ErrInvalidGraph
 				}
 				marks[neighbor] = epoch
 			}
 		}
-		if reader.level0Offsets[node] == reader.level0Offsets[node+1] {
+		if reader.topology.level0Offsets[node] == reader.topology.level0Offsets[node+1] {
 			stats.ZeroDegreeNodes++
 		}
 	}
 	visited := make([]bool, nodes)
 	queue := make([]NodeOrdinal, 1, nodes)
-	queue[0] = reader.entry
-	visited[reader.entry] = true
+	queue[0] = reader.topology.entry
+	visited[reader.topology.entry] = true
 	processed := 0
 	for len(queue) > 0 {
 		if err := contextProgressCheck(ctx, processed); err != nil {
@@ -589,11 +589,11 @@ func contextProgressCheck(ctx context.Context, index int) error {
 	return ctx.Err()
 }
 
-func readerConfigEncodable(reader *Reader) bool {
+func readerConfigEncodable(reader *Searcher) bool {
 	values := [...]int{
-		reader.Dimensions(), reader.searchConfig.DefaultEfSearch, reader.searchConfig.MaxEfSearch,
-		reader.searchConfig.DefaultVisitLimit, reader.searchConfig.MaxVisitLimit, reader.searchConfig.MaxK,
-		reader.buildInfo.MaxNeighbors, reader.buildInfo.LevelZeroMaxNeighbors, reader.buildInfo.EfConstruction,
+		reader.Dimensions(), reader.topology.searchConfig.DefaultEfSearch, reader.topology.searchConfig.MaxEfSearch,
+		reader.topology.searchConfig.DefaultVisitLimit, reader.topology.searchConfig.MaxVisitLimit, reader.topology.searchConfig.MaxK,
+		reader.topology.buildInfo.MaxNeighbors, reader.topology.buildInfo.LevelZeroMaxNeighbors, reader.topology.buildInfo.EfConstruction,
 	}
 	for _, value := range values {
 		if value < 0 || uint64(value) > math.MaxUint32 {

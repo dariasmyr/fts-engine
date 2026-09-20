@@ -54,7 +54,7 @@ func SaveSegment(ctx context.Context, paths SegmentPaths, snapshot semantic.Snap
 	if err := snapshot.Validate(); err != nil {
 		return err
 	}
-	if snapshot.Segment.Kind() != semantic.SegmentKindChunkHNSW || snapshot.Segment.HNSW() == nil {
+	if snapshot.Segment.Kind() != semantic.SegmentKindChunkHNSW || snapshot.Segment.Searcher() == nil {
 		return ErrCorrupt
 	}
 	if err := validateSnapshotLimits(snapshot, options.Limits); err != nil {
@@ -80,7 +80,7 @@ func SaveSegment(ctx context.Context, paths SegmentPaths, snapshot semantic.Snap
 	if err != nil {
 		return err
 	}
-	graphRef, err := writeGraphFile(filepath.Join(temp, segmentGraphFile), snapshot.Segment.HNSW(), vectorsRef, options.Durability)
+	graphRef, err := writeGraphFile(filepath.Join(temp, segmentGraphFile), snapshot.Segment.Searcher(), vectorsRef, options.Durability)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func OpenSegment(paths SegmentPaths, limits Limits) (*LoadedSegment, error) {
 	if err != nil {
 		return nil, err
 	}
-	graphReader, graphMetadata, err := hnsw.OpenIndexReader(bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256}, hnsw.GraphLimits{
+	searcher, graphMetadata, err := hnsw.OpenSearcher(bytes.NewReader(graphData), vectorReader.VectorSource(), hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256}, hnsw.GraphLimits{
 		MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes,
 		MaxGraphBytes: min(limits.MaxFileBytes, limits.MaxGraphBytes), MaxLinks: limits.MaxGraphLinks,
 		MaxK: limits.MaxK, MaxEfSearch: limits.MaxEfSearch, MaxVisitLimit: limits.MaxVisitLimit,
@@ -183,7 +183,7 @@ func OpenSegment(paths SegmentPaths, limits Limits) (*LoadedSegment, error) {
 	if graphMetadata.Size != value.Graph.Size || graphMetadata.SHA256 != value.Graph.SHA256 {
 		return nil, ErrCorrupt
 	}
-	segment, err := semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, vectorReader, graphReader, state.Rows)
+	segment, err := semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, searcher, state.Rows)
 	if err != nil {
 		return nil, err
 	}

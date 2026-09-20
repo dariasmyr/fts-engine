@@ -39,17 +39,17 @@ func TestGraphFormatRoundTripExactTopologyAndSearch(t *testing.T) {
 		t.Fatalf("metadata = %+v", firstMetadata)
 	}
 
-	opened, openedMetadata, err := OpenIndexReader(bytes.NewReader(first), original, reference, DefaultGraphLimits())
+	opened, openedMetadata, err := OpenSearcher(bytes.NewReader(first), original.VectorSource(), reference, DefaultGraphLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if openedMetadata != firstMetadata || opened.SearchConfig() != original.SearchConfig() || opened.BuildInfo() != original.BuildInfo() || !reflect.DeepEqual(opened.GraphStats(), original.GraphStats()) {
 		t.Fatalf("opened metadata/configuration differ: metadata=%+v search=%+v build=%+v stats=%+v", openedMetadata, opened.SearchConfig(), opened.BuildInfo(), opened.GraphStats())
 	}
-	if !slices.Equal(opened.nodeToVector, original.nodeToVector) || !slices.Equal(opened.levels, original.levels) ||
-		!slices.Equal(opened.level0Offsets, original.level0Offsets) || !slices.Equal(opened.level0Neighbors, original.level0Neighbors) ||
-		!slices.Equal(opened.upperNodeOffsets, original.upperNodeOffsets) || !slices.Equal(opened.upperLinkOffsets, original.upperLinkOffsets) ||
-		!slices.Equal(opened.upperNeighbors, original.upperNeighbors) {
+	if !slices.Equal(opened.topology.nodeToVector, original.topology.nodeToVector) || !slices.Equal(opened.topology.levels, original.topology.levels) ||
+		!slices.Equal(opened.topology.level0Offsets, original.topology.level0Offsets) || !slices.Equal(opened.topology.level0Neighbors, original.topology.level0Neighbors) ||
+		!slices.Equal(opened.topology.upperNodeOffsets, original.topology.upperNodeOffsets) || !slices.Equal(opened.topology.upperLinkOffsets, original.topology.upperLinkOffsets) ||
+		!slices.Equal(opened.topology.upperNeighbors, original.topology.upperNeighbors) {
 		t.Fatal("packed topology changed across graph format round trip")
 	}
 	for _, query := range [][]float32{{0, 0}, {1.5, 0}, {4, 0}} {
@@ -86,7 +86,7 @@ func TestGraphFormatEmptySingletonAndCosine(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			opened, gotMetadata, err := OpenIndexReader(bytes.NewReader(data), original, reference, DefaultGraphLimits())
+			opened, gotMetadata, err := OpenSearcher(bytes.NewReader(data), original.VectorSource(), reference, DefaultGraphLimits())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +131,7 @@ func (s *graphPreparedSource) ReadVectorInto(_ context.Context, ordinal vector.O
 	return nil
 }
 
-func TestOpenIndexReaderValidatesPreparedVectorSource(t *testing.T) {
+func TestOpenSearcherValidatesPreparedVectorSource(t *testing.T) {
 	original := newReaderForTest(t, readerTestSpace(t, 2, vector.MetricL2Squared), readerTestGraph())
 	reference := testVectorFileReference()
 	data, _, err := MarshalGraph(original, reference)
@@ -140,11 +140,11 @@ func TestOpenIndexReaderValidatesPreparedVectorSource(t *testing.T) {
 	}
 	values := [][]float32{{0, 0}, {1, 0}, {2, 0}, {3, 0}}
 	source := &graphPreparedSource{values: values, dimensions: 2, metric: vector.MetricL2Squared, normalization: vector.NormalizationNone}
-	opened, _, err := OpenIndexReader(bytes.NewReader(data), source, reference, DefaultGraphLimits())
+	opened, _, err := OpenSearcher(bytes.NewReader(data), source, reference, DefaultGraphLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _ := opened.Vector(0)
+	got, _ := readPreparedVector(opened.VectorSource(), 0)
 	if !slices.Equal(got, []float32{0, 0}) || source.reads < len(values) {
 		t.Fatalf("opened vectors/source validation = value:%v reads:%d", got, source.reads)
 	}
@@ -154,12 +154,12 @@ func TestOpenIndexReaderValidatesPreparedVectorSource(t *testing.T) {
 		{values: values, dimensions: 1, metric: vector.MetricL2Squared, normalization: vector.NormalizationNone},
 		{values: values, dimensions: 2, metric: vector.MetricCosine, normalization: vector.NormalizationUnitLength},
 	} {
-		if _, _, err := OpenIndexReader(bytes.NewReader(data), mismatch, reference, DefaultGraphLimits()); !errors.Is(err, ErrGraphVectorSource) || mismatch.reads != 0 {
+		if _, _, err := OpenSearcher(bytes.NewReader(data), mismatch, reference, DefaultGraphLimits()); !errors.Is(err, ErrGraphVectorSource) || mismatch.reads != 0 {
 			t.Fatalf("source mismatch error/reads = %v/%d", err, mismatch.reads)
 		}
 	}
 	partial := &graphPreparedSource{values: values, dimensions: 2, metric: vector.MetricL2Squared, partial: true}
-	if _, _, err := OpenIndexReader(bytes.NewReader(data), partial, reference, DefaultGraphLimits()); !errors.Is(err, ErrGraphVectorSource) {
+	if _, _, err := OpenSearcher(bytes.NewReader(data), partial, reference, DefaultGraphLimits()); !errors.Is(err, ErrGraphVectorSource) {
 		t.Fatalf("partial source row error = %v", err)
 	}
 }
@@ -173,29 +173,29 @@ func TestGraphFormatRejectsReferenceSizeAndIntegrityFailures(t *testing.T) {
 	}
 	wrong := reference
 	wrong.Size++
-	if _, _, err := OpenIndexReader(bytes.NewReader(data), original, wrong, DefaultGraphLimits()); !errors.Is(err, ErrVectorFileRefMismatch) {
+	if _, _, err := OpenSearcher(bytes.NewReader(data), original.VectorSource(), wrong, DefaultGraphLimits()); !errors.Is(err, ErrVectorFileRefMismatch) {
 		t.Fatalf("reference mismatch error = %v", err)
 	}
 	if _, _, err := MarshalGraph(original, VectorFileReference{}); !errors.Is(err, ErrCorruptGraphData) {
 		t.Fatalf("empty reference marshal error = %v", err)
 	}
 	for _, size := range []int{0, 3, graphFormatHeaderSize - 1, len(data) - 1} {
-		if _, _, err := OpenIndexReader(bytes.NewReader(data[:size]), original, reference, DefaultGraphLimits()); err == nil {
+		if _, _, err := OpenSearcher(bytes.NewReader(data[:size]), original.VectorSource(), reference, DefaultGraphLimits()); err == nil {
 			t.Fatalf("truncated graph size %d was accepted", size)
 		}
 	}
 	trailing := append(append([]byte(nil), data...), 0)
-	if _, _, err := OpenIndexReader(bytes.NewReader(trailing), original, reference, DefaultGraphLimits()); !errors.Is(err, ErrCorruptGraphData) {
+	if _, _, err := OpenSearcher(bytes.NewReader(trailing), original.VectorSource(), reference, DefaultGraphLimits()); !errors.Is(err, ErrCorruptGraphData) {
 		t.Fatalf("trailing graph error = %v", err)
 	}
 	corrupt := append([]byte(nil), data...)
 	corrupt[graphFormatHeaderSize] ^= 1
-	if _, _, err := OpenIndexReader(bytes.NewReader(corrupt), original, reference, DefaultGraphLimits()); !errors.Is(err, ErrCorruptGraphData) {
+	if _, _, err := OpenSearcher(bytes.NewReader(corrupt), original.VectorSource(), reference, DefaultGraphLimits()); !errors.Is(err, ErrCorruptGraphData) {
 		t.Fatalf("CRC corruption error = %v", err)
 	}
 	unsupported := append([]byte(nil), data...)
 	binary.LittleEndian.PutUint16(unsupported[4:6], GraphFormatVersion+1)
-	if _, _, err := OpenIndexReader(bytes.NewReader(unsupported), original, reference, DefaultGraphLimits()); !errors.Is(err, ErrUnsupportedGraphVersion) {
+	if _, _, err := OpenSearcher(bytes.NewReader(unsupported), original.VectorSource(), reference, DefaultGraphLimits()); !errors.Is(err, ErrUnsupportedGraphVersion) {
 		t.Fatalf("graph format version error = %v", err)
 	}
 }
@@ -250,7 +250,7 @@ func TestGraphFormatRejectsMalformedPackedTopologyAndCanonicalBytes(t *testing.T
 			data := append([]byte(nil), valid...)
 			test.mutate(data)
 			rewriteGraphChecksum(data)
-			if _, _, err := OpenIndexReader(bytes.NewReader(data), original, reference, DefaultGraphLimits()); !errors.Is(err, ErrCorruptGraphData) {
+			if _, _, err := OpenSearcher(bytes.NewReader(data), original.VectorSource(), reference, DefaultGraphLimits()); !errors.Is(err, ErrCorruptGraphData) {
 				t.Fatalf("error = %v", err)
 			}
 		})
@@ -258,7 +258,7 @@ func TestGraphFormatRejectsMalformedPackedTopologyAndCanonicalBytes(t *testing.T
 	futureBuild := append([]byte(nil), valid...)
 	binary.LittleEndian.PutUint32(futureBuild[44:48], BuildVersion+1)
 	rewriteGraphChecksum(futureBuild)
-	opened, _, err := OpenIndexReader(bytes.NewReader(futureBuild), original, reference, DefaultGraphLimits())
+	opened, _, err := OpenSearcher(bytes.NewReader(futureBuild), original.VectorSource(), reference, DefaultGraphLimits())
 	if err != nil || opened.BuildInfo().BuildVersion != BuildVersion+1 {
 		t.Fatalf("future build provenance = (%+v, %v)", opened, err)
 	}
@@ -270,12 +270,12 @@ func TestGraphFormatRejectsMalformedPackedTopologyAndCanonicalBytes(t *testing.T
 	}
 	padded[graphFormatHeaderSize+4+1] = 1
 	rewriteGraphChecksum(padded)
-	if _, _, err := OpenIndexReader(bytes.NewReader(padded), singleton, reference, DefaultGraphLimits()); !errors.Is(err, ErrCorruptGraphData) {
+	if _, _, err := OpenSearcher(bytes.NewReader(padded), singleton.VectorSource(), reference, DefaultGraphLimits()); !errors.Is(err, ErrCorruptGraphData) {
 		t.Fatalf("non-canonical level padding error = %v", err)
 	}
 }
 
-func TestOpenIndexReaderContextCancellation(t *testing.T) {
+func TestOpenSearcherContextCancellation(t *testing.T) {
 	original := newReaderForTest(t, readerTestSpace(t, 2, vector.MetricL2Squared), readerTestGraph())
 	reference := testVectorFileReference()
 	data, _, err := MarshalGraph(original, reference)
@@ -284,7 +284,7 @@ func TestOpenIndexReaderContextCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := OpenIndexReaderContext(ctx, bytes.NewReader(data), original, reference, DefaultGraphLimits()); !errors.Is(err, context.Canceled) {
+	if _, _, err := OpenSearcherContext(ctx, bytes.NewReader(data), original.VectorSource(), reference, DefaultGraphLimits()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled open error = %v", err)
 	}
 
@@ -293,7 +293,7 @@ func TestOpenIndexReaderContextCancellation(t *testing.T) {
 		values: [][]float32{{0, 0}, {1, 0}, {2, 0}, {3, 0}}, dimensions: 2,
 		metric: vector.MetricL2Squared, cancel: cancel,
 	}
-	if _, _, err := OpenIndexReaderContext(ctx, bytes.NewReader(data), source, reference, DefaultGraphLimits()); !errors.Is(err, context.Canceled) {
+	if _, _, err := OpenSearcherContext(ctx, bytes.NewReader(data), source, reference, DefaultGraphLimits()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("source-cancelled open error = %v", err)
 	}
 }
@@ -309,12 +309,12 @@ func TestMalformedTopologyIsRejectedBeforeSourceRowsAreRead(t *testing.T) {
 	binary.LittleEndian.PutUint32(data[sections.level0Offsets:sections.level0Offsets+4], 1)
 	rewriteGraphChecksum(data)
 	source := &graphPreparedSource{values: [][]float32{{0, 0}, {1, 0}, {2, 0}, {3, 0}}, dimensions: 2, metric: vector.MetricL2Squared}
-	if _, _, err := OpenIndexReader(bytes.NewReader(data), source, reference, DefaultGraphLimits()); !errors.Is(err, ErrCorruptGraphData) || source.reads != 0 {
+	if _, _, err := OpenSearcher(bytes.NewReader(data), source, reference, DefaultGraphLimits()); !errors.Is(err, ErrCorruptGraphData) || source.reads != 0 {
 		t.Fatalf("malformed topology error/reads = %v/%d", err, source.reads)
 	}
 }
 
-func TestOpenIndexReaderEnforcesConfiguredLimits(t *testing.T) {
+func TestOpenSearcherEnforcesConfiguredLimits(t *testing.T) {
 	original := newReaderForTest(t, readerTestSpace(t, 2, vector.MetricL2Squared), readerTestGraph())
 	reference := testVectorFileReference()
 	data, _, err := MarshalGraph(original, reference)
@@ -340,7 +340,7 @@ func TestOpenIndexReaderEnforcesConfiguredLimits(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			limits := DefaultGraphLimits()
 			test.change(&limits)
-			if _, _, err := OpenIndexReader(bytes.NewReader(data), original, reference, limits); !errors.Is(err, ErrGraphLimitExceeded) {
+			if _, _, err := OpenSearcher(bytes.NewReader(data), original.VectorSource(), reference, limits); !errors.Is(err, ErrGraphLimitExceeded) {
 				t.Fatalf("error = %v", err)
 			}
 		})
@@ -354,7 +354,7 @@ func TestOpenedReaderConcurrentSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opened, _, err := OpenIndexReader(bytes.NewReader(data), original, reference, DefaultGraphLimits())
+	opened, _, err := OpenSearcher(bytes.NewReader(data), original.VectorSource(), reference, DefaultGraphLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,17 +423,17 @@ func rewriteGraphChecksum(data []byte) {
 	binary.LittleEndian.PutUint32(data[len(data)-graphFormatFooterSize:], crc32.ChecksumIEEE(body))
 }
 
-func FuzzOpenIndexReader(f *testing.F) {
+func FuzzOpenSearcher(f *testing.F) {
 	reference := testVectorFileReference()
 	space, err := vector.NewSpace(2, vector.MetricL2Squared)
 	if err != nil {
 		f.Fatal(err)
 	}
-	empty, err := newReaderFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), graphData{})
+	empty, err := newSearcherFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), graphData{})
 	if err != nil {
 		f.Fatal(err)
 	}
-	singleton, err := newReaderFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}, hasEntry: true})
+	singleton, err := newSearcherFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}, hasEntry: true})
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -454,11 +454,11 @@ func FuzzOpenIndexReader(f *testing.F) {
 			MaxLinks: 256, MaxLevel: MaxLevel, MaxEfSearch: 64, MaxVisitLimit: 256,
 			MaxK: 32, MaxNeighbors: 8, MaxEfConstruction: 64,
 		}
-		source := vector.PreparedVectorSource(empty)
+		source := vector.PreparedVectorSource(empty.VectorSource())
 		if sourceKind&1 != 0 {
-			source = singleton
+			source = singleton.VectorSource()
 		}
-		_, _, _ = OpenIndexReader(bytes.NewReader(data), source, reference, limits)
+		_, _, _ = OpenSearcher(bytes.NewReader(data), source, reference, limits)
 	})
 }
 
@@ -469,7 +469,7 @@ func TestGraphFormatSourceRejectsNonCanonicalNegativeZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := &graphPreparedSource{values: [][]float32{{math.Float32frombits(1 << 31)}}, dimensions: 1, metric: vector.MetricL2Squared}
-	if _, _, err := OpenIndexReader(bytes.NewReader(data), source, testVectorFileReference(), DefaultGraphLimits()); !errors.Is(err, ErrGraphVectorSource) {
+	if _, _, err := OpenSearcher(bytes.NewReader(data), source, testVectorFileReference(), DefaultGraphLimits()); !errors.Is(err, ErrGraphVectorSource) {
 		t.Fatalf("negative-zero source error = %v", err)
 	}
 }

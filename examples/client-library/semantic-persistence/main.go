@@ -6,14 +6,16 @@ import (
 	"os"
 
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/pkg/semanticencode"
 	"github.com/dariasmyr/fts-engine/pkg/semanticpersist"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
 func main() {
 	ctx := context.Background()
+	encoder, err := semanticencode.New(nil, persistenceEmbedder{})
+	must(err)
 	root, err := os.MkdirTemp("", "fts-semantic-")
 	if err != nil {
 		panic(err)
@@ -40,9 +42,9 @@ func main() {
 	}
 
 	// Embeddings are produced by the caller or an external model.
-	must(service.AddDocument(ctx, []semantic.ChunkVector{chunkVector("doc-a", "a-v1", []float32{0, 0})}))
-	must(service.AddDocument(ctx, []semantic.ChunkVector{chunkVector("doc-b", "b-v1", []float32{5, 0})}))
-	must(service.ReplaceDocument(ctx, []semantic.ChunkVector{chunkVector("doc-a", "a-v2", []float32{10, 0})}))
+	must(service.AddDocument(ctx, encoder, semantic.Document{ID: "doc-a", Fields: map[string]string{"body": "a-v1"}}))
+	must(service.AddDocument(ctx, encoder, semantic.Document{ID: "doc-b", Fields: map[string]string{"body": "b-v1"}}))
+	must(service.ReplaceDocument(ctx, encoder, semantic.Document{ID: "doc-a", Fields: map[string]string{"body": "a-v2"}}))
 
 	// Create an immutable HNSW snapshot containing only active vectors.
 	snapshot, err := service.Snapshot(ctx)
@@ -56,7 +58,7 @@ func main() {
 	loaded, err := semanticpersist.Open(root, semanticpersist.DefaultLimits())
 	must(err)
 	defer loaded.Close()
-	result, err := loaded.Snapshot.SearchDocuments(ctx, []float32{0, 0}, 2)
+	result, err := loaded.Snapshot.SearchDocuments(ctx, encoder, semantic.Document{ID: "query", Fields: map[string]string{"body": "query"}}, 2)
 	must(err)
 
 	fmt.Printf("generation=%d kind=%d rows=%d\n", generation.ID, loaded.Snapshot.Segment.Kind(), len(loaded.Snapshot.Segment.Rows()))
@@ -71,9 +73,19 @@ func must(err error) {
 	}
 }
 
-func chunkVector(docID fts.DocID, chunkID chunk.ID, embedding []float32) semantic.ChunkVector {
-	return semantic.ChunkVector{
-		Ref:    chunk.Ref{ID: chunkID, DocID: docID, Field: fts.DefaultField, EndByte: 10},
-		Vector: embedding,
+type persistenceEmbedder struct{}
+
+func (persistenceEmbedder) Embed(_ context.Context, chunks []chunk.Chunk) ([][]float32, error) {
+	result := make([][]float32, len(chunks))
+	for i, item := range chunks {
+		switch item.Text {
+		case "a-v2":
+			result[i] = []float32{10, 0}
+		case "b-v1":
+			result[i] = []float32{5, 0}
+		default:
+			result[i] = []float32{0, 0}
+		}
 	}
+	return result, nil
 }

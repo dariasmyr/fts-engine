@@ -112,7 +112,7 @@ func Publish(ctx context.Context, root string, generationID uint64, snapshot sem
 		if err := beforeStep(ctx, options, StepWriteGraph); err != nil {
 			return Generation{}, err
 		}
-		graphRef, err = writeGraphFile(filepath.Join(segmentTemp, graphFileName), snapshot.Segment.HNSW(), vectorsRef, options.Durability)
+		graphRef, err = writeGraphFile(filepath.Join(segmentTemp, graphFileName), snapshot.Segment.Searcher(), vectorsRef, options.Durability)
 		if err != nil {
 			return Generation{}, err
 		}
@@ -556,7 +556,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		if readErr != nil {
 			return nil, readErr
 		}
-		graphReader, graphMetadata, openErr := hnsw.OpenIndexReader(bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{
+		searcher, graphMetadata, openErr := hnsw.OpenSearcher(bytes.NewReader(graphData), vectorReader.VectorSource(), hnsw.VectorFileReference{
 			Size: manifestValue.Vectors.Size, SHA256: manifestValue.Vectors.SHA256,
 		}, hnsw.GraphLimits{
 			MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes,
@@ -569,7 +569,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		if graphMetadata.Size != manifestValue.Graph.Size || graphMetadata.SHA256 != manifestValue.Graph.SHA256 {
 			return nil, ErrCorrupt
 		}
-		segment, err = semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, vectorReader, graphReader, state.Rows)
+		segment, err = semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, searcher, state.Rows)
 	default:
 		return nil, ErrCorrupt
 	}
@@ -625,7 +625,7 @@ func writeVectorsFile(path string, source vector.PreparedVectorSource, maxK int,
 	return fileReference{Size: metadata.Size, SHA256: metadata.SHA256}, nil
 }
 
-func writeGraphFile(path string, reader *hnsw.Reader, vectors fileReference, durability DurabilityMode) (fileReference, error) {
+func writeGraphFile(path string, reader *hnsw.Searcher, vectors fileReference, durability DurabilityMode) (fileReference, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fileReference{}, err
@@ -660,14 +660,14 @@ func validateSnapshotLimits(snapshot semantic.Snapshot, limits Limits) error {
 		return ErrLimitExceeded
 	}
 	if snapshot.Segment.Kind() == semantic.SegmentKindChunkHNSW {
-		graph := snapshot.Segment.HNSW()
-		if graph == nil {
+		searcher := snapshot.Segment.Searcher()
+		if searcher == nil {
 			return ErrLimitExceeded
 		}
-		search := graph.SearchConfig()
+		search := searcher.SearchConfig()
 		if search.MaxK > limits.MaxK || search.MaxEfSearch > limits.MaxEfSearch || search.MaxVisitLimit > limits.MaxVisitLimit ||
-			uint64(graph.StorageStats().DirectedLinks) > limits.MaxGraphLinks ||
-			graphFileSize(graph) > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
+			uint64(searcher.StorageStats().DirectedLinks) > limits.MaxGraphLinks ||
+			graphFileSize(searcher) > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
 			return ErrLimitExceeded
 		}
 	}
@@ -853,11 +853,11 @@ func syncPublishedGeneration(paths storePaths, generationID uint64, objectID str
 	return nil
 }
 
-func graphFileSize(reader *hnsw.Reader) uint64 {
-	if reader == nil {
+func graphFileSize(searcher *hnsw.Searcher) uint64 {
+	if searcher == nil {
 		return 0
 	}
-	stats := reader.StorageStats()
+	stats := searcher.StorageStats()
 	padding := uint64((4 - stats.VectorRows%4) % 4)
 	size, ok := checkedAdd64(164, stats.NodeMetadataBytes)
 	if !ok {

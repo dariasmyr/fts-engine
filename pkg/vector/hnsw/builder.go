@@ -121,8 +121,8 @@ func (b *Builder) Check() (GraphStats, error) {
 	return validateGraphData(b.space, b.buildInfo, compact)
 }
 
-// Freeze validates and copies a complete graph into an immutable packed Reader.
-func (b *Builder) Freeze() (*Reader, error) {
+// Freeze validates and copies a complete graph into an immutable packed Searcher.
+func (b *Builder) Freeze() (*Searcher, error) {
 	if len(b.graph.nodes) != b.expected {
 		return nil, ErrBuilderIncomplete
 	}
@@ -131,9 +131,9 @@ func (b *Builder) Freeze() (*Reader, error) {
 			return nil, ErrBuilderIncomplete
 		}
 	}
-	// newReaderFromGraph validates and copies every retained section, so passing
+	// newSearcherFromGraph validates and copies every retained section, so passing
 	// the mutable graph directly avoids a redundant full graph clone.
-	return newReaderFromGraph(b.space, b.searchConfig, b.buildInfo, b.graph, b.source)
+	return newSearcherFromGraph(b.space, b.searchConfig, b.buildInfo, b.graph, b.source)
 }
 
 func (b *Builder) insert(node NodeOrdinal) {

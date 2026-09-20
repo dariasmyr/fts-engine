@@ -28,7 +28,7 @@ func BenchmarkBuildPreparedSource(b *testing.B) {
 			b.SetBytes(int64(rows * dimensions * 4))
 			b.ResetTimer()
 			for b.Loop() {
-				if _, err := hnsw.BuildIndexReader(context.Background(), source, options); err != nil {
+				if _, err := hnsw.BuildSearcher(context.Background(), source.VectorSource(), options); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -36,7 +36,7 @@ func BenchmarkBuildPreparedSource(b *testing.B) {
 	}
 }
 
-func BenchmarkOpenIndexReader(b *testing.B) {
+func BenchmarkOpenSearcher(b *testing.B) {
 	const rows, dimensions = 10_000, 32
 	values := make([][]float32, rows)
 	for row := range values {
@@ -46,7 +46,7 @@ func BenchmarkOpenIndexReader(b *testing.B) {
 		}
 	}
 	source := benchmarkFlatReader(b, values, vector.MetricL2Squared)
-	reader := benchmarkBuild(b, source, dimensions, rows, vector.MetricL2Squared)
+	reader := benchmarkBuild(b, source.VectorSource(), dimensions, rows, vector.MetricL2Squared)
 	_, vectorMetadata, err := flat.Marshal(source)
 	if err != nil {
 		b.Fatal(err)
@@ -61,7 +61,7 @@ func BenchmarkOpenIndexReader(b *testing.B) {
 	b.SetBytes(int64(len(graphData)))
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, err := hnsw.OpenIndexReaderContext(context.Background(), bytes.NewReader(graphData), source, reference, hnsw.DefaultGraphLimits()); err != nil {
+		if _, _, err := hnsw.OpenSearcherContext(context.Background(), bytes.NewReader(graphData), source.VectorSource(), reference, hnsw.DefaultGraphLimits()); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -77,7 +77,7 @@ func BenchmarkANNAndExactReference(b *testing.B) {
 		}
 	}
 	source := benchmarkFlatReader(b, values, vector.MetricL2Squared)
-	reader := benchmarkBuild(b, source, dimensions, rows, vector.MetricL2Squared)
+	reader := benchmarkBuild(b, source.VectorSource(), dimensions, rows, vector.MetricL2Squared)
 	query := make([]float32, dimensions)
 	for name, searcher := range map[string]vector.Searcher{"ann": reader, "exact_reference": source} {
 		b.Run(name, func(b *testing.B) {
@@ -106,7 +106,7 @@ func benchmarkSearchConfig(count int) hnsw.SearchConfig {
 	}
 }
 
-func benchmarkFlatReader(t testing.TB, values [][]float32, metric vector.Metric) *flat.Reader {
+func benchmarkFlatReader(t testing.TB, values [][]float32, metric vector.Metric) *flat.Searcher {
 	t.Helper()
 	index, err := flat.New(flat.Config{Dimensions: len(values[0]), Metric: metric, MaxVectors: len(values), MaxK: len(values)})
 	if err != nil {
@@ -118,13 +118,24 @@ func benchmarkFlatReader(t testing.TB, values [][]float32, metric vector.Metric)
 	return index.Freeze()
 }
 
-func benchmarkBuild(t testing.TB, source vector.PreparedVectorSource, dimensions, count int, metric vector.Metric) *hnsw.Reader {
+func benchmarkBuild(t testing.TB, source vector.PreparedVectorSource, dimensions, count int, metric vector.Metric) *hnsw.Searcher {
 	t.Helper()
-	reader, err := hnsw.BuildIndexReader(context.Background(), source, hnsw.BuildOptions{
+	reader, err := hnsw.BuildSearcher(context.Background(), source, hnsw.BuildOptions{
 		BuildConfig: benchmarkBuildConfig(dimensions, count, metric), SearchConfig: benchmarkSearchConfig(count),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return reader
+}
+
+func readPreparedVector(source vector.PreparedVectorSource, ordinal vector.Ordinal) ([]float32, bool) {
+	if source == nil || uint64(ordinal) >= uint64(source.Len()) {
+		return nil, false
+	}
+	value := make([]float32, source.Dimensions())
+	if err := source.ReadVectorInto(context.Background(), ordinal, value); err != nil {
+		return nil, false
+	}
+	return value, true
 }

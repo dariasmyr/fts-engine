@@ -44,7 +44,7 @@ type FileMetadata struct {
 	SHA256 [sha256.Size]byte
 }
 
-func Marshal(reader *Reader) ([]byte, FileMetadata, error) {
+func Marshal(reader *Searcher) ([]byte, FileMetadata, error) {
 	var buffer bytes.Buffer
 	metadata, err := Write(&buffer, reader)
 	return buffer.Bytes(), metadata, err
@@ -58,11 +58,11 @@ func MarshalSource(source vector.PreparedVectorSource, maxK int) ([]byte, FileMe
 }
 
 // Write streams one immutable fixed-width matrix and its checksum.
-func Write(writer io.Writer, reader *Reader) (FileMetadata, error) {
+func Write(writer io.Writer, reader *Searcher) (FileMetadata, error) {
 	if reader == nil {
 		return FileMetadata{}, ErrCorruptSegment
 	}
-	return WriteSource(writer, reader, reader.maxK)
+	return WriteSource(writer, reader.VectorSource(), reader.maxK)
 }
 
 // WriteSource streams an immutable prepared vector source as fixed-width VFLT
@@ -140,7 +140,7 @@ func WriteSource(writer io.Writer, source vector.PreparedVectorSource, maxK int)
 	return metadata, nil
 }
 
-func Open(source io.Reader, limits CodecLimits) (*Reader, FileMetadata, error) {
+func Open(source io.Reader, limits CodecLimits) (*Searcher, FileMetadata, error) {
 	if source == nil {
 		return nil, FileMetadata{}, ErrCorruptSegment
 	}
@@ -163,7 +163,7 @@ func Open(source io.Reader, limits CodecLimits) (*Reader, FileMetadata, error) {
 	return reader, metadata, err
 }
 
-func openBytes(data []byte, limits CodecLimits) (*Reader, FileMetadata, error) {
+func openBytes(data []byte, limits CodecLimits) (*Searcher, FileMetadata, error) {
 	if len(data) < codecHeaderSize+codecFooterSize || string(data[:4]) != codecMagic {
 		return nil, FileMetadata{}, ErrCorruptSegment
 	}

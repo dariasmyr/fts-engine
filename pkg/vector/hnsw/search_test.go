@@ -38,9 +38,9 @@ func testBuildInfo() BuildInfo {
 	}
 }
 
-func newTestReader(t *testing.T, space vector.Space, config SearchConfig, graph graphData) *Reader {
+func newTestReader(t *testing.T, space vector.Space, config SearchConfig, graph graphData) *Searcher {
 	t.Helper()
-	reader, err := newReaderFromGraph(space, config, testBuildInfo(), graph)
+	reader, err := newSearcherFromGraph(space, config, testBuildInfo(), graph)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +472,7 @@ func TestSearchNilPreCancelledAndMidSearchCancellation(t *testing.T) {
 	config := testSearchConfig()
 	config.DefaultVisitLimit = neighborCount + 1
 	config.MaxVisitLimit = neighborCount + 1
-	largeReader, err := newReaderFromGraph(space, config, BuildInfo{
+	largeReader, err := newSearcherFromGraph(space, config, BuildInfo{
 		BuildVersion:          BuildVersion,
 		LevelGeneratorVersion: LevelGeneratorVersion,
 		MaxNeighbors:          128,
@@ -534,7 +534,7 @@ func TestSearchRejectsInvalidKOptionsConfigFilterAndReader(t *testing.T) {
 	}
 	for i, invalid := range invalidConfigs {
 		invalidReader := *reader
-		invalidReader.searchConfig = invalid
+		invalidReader.topology.searchConfig = invalid
 		if _, err := invalidReader.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, ErrInvalidSearchConfig) {
 			t.Errorf("invalid config %d error = %v", i, err)
 		}
@@ -552,13 +552,13 @@ func TestSearchRejectsInvalidKOptionsConfigFilterAndReader(t *testing.T) {
 	}
 
 	unvalidated := *reader
-	unvalidated.validated = false
+	unvalidated.topology.validated = false
 	if _, err := unvalidated.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, ErrInvalidGraph) {
 		t.Fatalf("unvalidated reader error = %v", err)
 	}
 	badLevel := *reader
-	badLevel.levels = append([]uint8(nil), reader.levels...)
-	badLevel.levels[0] = MaxLevel + 1
+	badLevel.topology.levels = append([]uint8(nil), reader.topology.levels...)
+	badLevel.topology.levels[0] = MaxLevel + 1
 	if _, err := badLevel.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, ErrInvalidGraph) {
 		t.Fatalf("excessive graph level error = %v", err)
 	}
@@ -571,8 +571,8 @@ func TestSearchRejectsInvalidKOptionsConfigFilterAndReader(t *testing.T) {
 		entry: 0, hasEntry: true,
 	})
 	badNeighbor := *defensiveReader
-	badNeighbor.level0Neighbors = append([]NodeOrdinal(nil), defensiveReader.level0Neighbors...)
-	badNeighbor.level0Neighbors[0] = 2
+	badNeighbor.topology.level0Neighbors = append([]NodeOrdinal(nil), defensiveReader.topology.level0Neighbors...)
+	badNeighbor.topology.level0Neighbors[0] = 2
 	if _, err := badNeighbor.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, ErrInvalidGraph) {
 		t.Fatalf("out-of-range neighbor error = %v", err)
 	}

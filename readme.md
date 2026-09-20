@@ -525,7 +525,7 @@ Runtime diagnostics are separate from `textproc.ObservabilityPipeline()`.
 - `flat-observability` - flat index with technical-token analysis
 - `segment-analyzer-compatibility` - analyzer-compatible sealed segment restore
 - `rank-profile` - multi-field ranking with weighted field scoring
-- `semantic-flat` - chunk-aware in-memory semantic search with caller-provided vectors
+- `semantic-hnsw` - document-level semantic search through `semanticencode`
 - `hnsw-build` - observable HNSW build, graph inspection, persistence, and reopen
 - `semantic-persistence` - checkpoint, publish, and open an immutable semantic generation
 - `snapshot-*` - mutable snapshot save and restore

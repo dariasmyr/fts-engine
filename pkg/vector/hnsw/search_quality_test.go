@@ -36,7 +36,7 @@ func TestDifferentialRecallAgainstFlatUsingPublicAPIs(t *testing.T) {
 		}
 	}
 	flatReader := testFlatReader(t, values, vector.MetricL2Squared)
-	reader := testBuild(t, flatReader, dimensions, rows, vector.MetricL2Squared)
+	reader := testBuild(t, flatReader.VectorSource(), dimensions, rows, vector.MetricL2Squared)
 	var totalRecall float64
 	for range 20 {
 		query := make([]float32, dimensions)

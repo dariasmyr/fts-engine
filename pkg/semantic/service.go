@@ -12,20 +12,45 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
+type pendingVector struct {
+	row    VectorRow
+	vector []float32
+}
+
+type vectorLocation struct {
+	component ComponentID
+	ordinal   vector.Ordinal
+}
+
+type livenessChange struct {
+	ids     []VectorID
+	allowed bool
+}
+
+// publishedIndex is the immutable published state searched by the service. A
+// new index is built on mutation commit and swapped under Service.mu; readers
+// can keep the older index while a newer one is being published.
+type publishedIndex struct {
+	segments   []segmentView
+	generation uint64
+	liveCount  int
+}
+
 type Service struct {
-	mu sync.RWMutex
+	mu      sync.RWMutex
+	flushMu sync.Mutex
 
-	config          Config
-	space           vector.Space
-	head            *mutableSource
-	segments        []*Segment
-	nextComponentID ComponentID
+	config    Config
+	space     vector.Space
+	published *publishedIndex
 
-	maxAllocatedVectorID VectorID
-	currentByDoc         map[fts.DocID][]VectorID
-	headOrdinalByVector  map[VectorID]vector.Ordinal
-	vectorRows           []VectorRow
-	live                 vector.BitSet
+	pendingVectors           []pendingVector
+	pendingVisibilityChanges []livenessChange
+	currentByDoc             map[fts.DocID][]VectorID
+	locations                map[VectorID]vectorLocation
+	maxAllocatedID           VectorID
+	nextComponentID          ComponentID
+	mutationVersion          uint64
 }
 
 func New(config Config) (*Service, error) {
@@ -47,15 +72,15 @@ func New(config Config) (*Service, error) {
 	if _, err := hnsw.NewBuilder(config.HNSWBuild, config.HNSWSearch, 0); err != nil {
 		return nil, ErrInvalidConfig
 	}
-	head := newMutableSource(space, config.MaxVectors, config.InitialVectorCapacity)
 	return &Service{
-		config:               config,
-		space:                space,
-		head:                 head,
-		maxAllocatedVectorID: config.InitialMaxAllocatedVectorID,
-		nextComponentID:      MutableHeadID + 1,
-		currentByDoc:         make(map[fts.DocID][]VectorID),
-		headOrdinalByVector:  make(map[VectorID]vector.Ordinal),
+		config:          config,
+		space:           space,
+		published:       &publishedIndex{},
+		maxAllocatedID:  config.InitialMaxAllocatedVectorID,
+		nextComponentID: MutableHeadID + 1,
+		currentByDoc:    make(map[fts.DocID][]VectorID),
+		locations:       make(map[VectorID]vectorLocation),
+		pendingVectors:  make([]pendingVector, 0, config.InitialVectorCapacity),
 	}, nil
 }
 
@@ -104,12 +129,22 @@ func (s *Service) Space() SpaceDescriptor { return s.config.Space }
 
 func (s *Service) Chunking() ChunkingDescriptor { return s.config.Chunking }
 
-func (s *Service) AddDocument(ctx context.Context, batch []ChunkVector) error {
-	docID, prepared, err := s.validateBatch(ctx, batch)
+// AddDocument encodes a document through encoder and queues its vectors.
+func (s *Service) AddDocument(ctx context.Context, encoder Encoder, document Document) error {
+	if encoder == nil {
+		return ErrInvalidConfig
+	}
+	batch, err := encoder.Encode(ctx, document)
 	if err != nil {
 		return err
 	}
+	return s.addEncodedDocument(ctx, document.ID, batch)
+}
 
+func (s *Service) addEncodedDocument(ctx context.Context, docID fts.DocID, batch []ChunkVector) error {
+	if err := s.validateBatch(ctx, docID, batch); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -118,15 +153,25 @@ func (s *Service) AddDocument(ctx context.Context, batch []ChunkVector) error {
 	if _, exists := s.currentByDoc[docID]; exists {
 		return fmt.Errorf("%w: %s", ErrDocumentExists, docID)
 	}
-	return s.appendVersionLocked(ctx, docID, prepared, nil)
+	return s.queueVersionLocked(docID, batch, nil)
 }
 
-func (s *Service) ReplaceDocument(ctx context.Context, batch []ChunkVector) error {
-	docID, prepared, err := s.validateBatch(ctx, batch)
+// ReplaceDocument encodes a document version through encoder and queues it.
+func (s *Service) ReplaceDocument(ctx context.Context, encoder Encoder, document Document) error {
+	if encoder == nil {
+		return ErrInvalidConfig
+	}
+	batch, err := encoder.Encode(ctx, document)
 	if err != nil {
 		return err
 	}
+	return s.replaceEncodedDocument(ctx, document.ID, batch)
+}
 
+func (s *Service) replaceEncodedDocument(ctx context.Context, docID fts.DocID, batch []ChunkVector) error {
+	if err := s.validateBatch(ctx, docID, batch); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -136,182 +181,350 @@ func (s *Service) ReplaceDocument(ctx context.Context, batch []ChunkVector) erro
 	if !exists {
 		return fmt.Errorf("%w: %s", ErrDocumentNotFound, docID)
 	}
-	return s.appendVersionLocked(ctx, docID, prepared, old)
+	return s.queueVersionLocked(docID, batch, old)
 }
 
+// DeleteDocument queues a deletion. The document remains searchable until
+// Flush publishes the updated component-local liveness filters.
 func (s *Service) DeleteDocument(docID fts.DocID) bool {
 	if docID == "" {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ids, exists := s.currentByDoc[docID]
-	if !exists {
+	if _, exists := s.currentByDoc[docID]; !exists {
 		return false
 	}
-	staleOrdinals := make([]vector.Ordinal, 0, len(ids))
-	for _, id := range ids {
-		if ordinal, ok := s.headOrdinalByVector[id]; ok {
-			staleOrdinals = append(staleOrdinals, ordinal)
-		}
-	}
-	next, err := s.live.WithChanges(s.live.TotalOrdinalCount(), nil, staleOrdinals)
-	if err != nil {
-		panic(fmt.Errorf("%w: %v", ErrInternalState, err))
-	}
-	s.live = next
+	ids := s.currentByDoc[docID]
 	delete(s.currentByDoc, docID)
+	s.pendingVisibilityChanges = append(s.pendingVisibilityChanges, livenessChange{ids: append([]VectorID(nil), ids...), allowed: false})
+	s.mutationVersion++
 	return true
 }
 
-// Compact rebuilds the mutable source and one merged HNSW segment from live vectors.
-// Stable VectorIDs and MaxAllocatedVectorID are preserved while local ordinals
-// are reassigned.
-func (s *Service) Compact(ctx context.Context) error {
+// Flush builds one HNSW segment for the pending batch outside Service.mu and
+// atomically publishes a new immutable read view. If mutations race with the
+// build, the stale build is discarded and retried from the newer state.
+func (s *Service) Flush(ctx context.Context) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.live.AllowedOrdinalCount() == s.head.Len() {
-		return ctx.Err()
-	}
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+	return s.flushPending(ctx)
+}
 
-	nextHead, err := s.head.Compact(ctx, s.live)
-	if err != nil {
-		return err
-	}
-	nextRows := make([]VectorRow, 0, s.live.AllowedOrdinalCount())
-	for ordinal, row := range s.vectorRows {
-		if !s.live.Allows(vector.Ordinal(ordinal)) {
+// flushPending publishes the current pending state. The caller must hold
+// flushMu so that flush and compact cannot build competing publications.
+func (s *Service) flushPending(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		version, componentID, pendingVectors, visibilityChanges, documents, base, config := s.captureFlushState()
+		if version == base.generation {
+			return nil
+		}
+		segment, err := buildPendingSegment(ctx, componentID, pendingVectors, config)
+		if err != nil {
+			return err
+		}
+
+		s.mu.Lock()
+		if version != s.mutationVersion {
+			s.mu.Unlock()
 			continue
 		}
-		nextRows = append(nextRows, row)
+		published, locations, err := publishIndex(base, s.locations, visibilityChanges, segment, componentID, documents, version)
+		if err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		s.published = published
+		s.locations = locations
+		s.pendingVectors = nil
+		s.pendingVisibilityChanges = nil
+		if segment != nil {
+			s.nextComponentID++
+		}
+		s.mu.Unlock()
+		return nil
 	}
-	if len(nextRows) != nextHead.Len() {
-		return ErrInternalState
+}
+
+func (s *Service) captureFlushState() (uint64, ComponentID, []pendingVector, []livenessChange, map[fts.DocID][]VectorID, *publishedIndex, Config) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	pendingVectors := make([]pendingVector, len(s.pendingVectors))
+	for i, item := range s.pendingVectors {
+		pendingVectors[i] = pendingVector{row: item.row, vector: append([]float32(nil), item.vector...)}
 	}
-	componentID := s.nextComponentID
-	nextSource, err := nextHead.FreezeCompact(ctx, nil)
+	documents := cloneDocumentMapping(s.currentByDoc)
+	pendingVisibilityChanges := make([]livenessChange, len(s.pendingVisibilityChanges))
+	for i, change := range s.pendingVisibilityChanges {
+		pendingVisibilityChanges[i] = livenessChange{ids: append([]VectorID(nil), change.ids...), allowed: change.allowed}
+	}
+	return s.mutationVersion, s.nextComponentID, pendingVectors, pendingVisibilityChanges, documents, s.published, s.config
+}
+
+func buildPendingSegment(ctx context.Context, componentID ComponentID, pending []pendingVector, config Config) (*Segment, error) {
+	if len(pending) == 0 {
+		return nil, nil
+	}
+	values := make([][]float32, len(pending))
+	rows := make([]VectorRow, len(pending))
+	for i, item := range pending {
+		values[i] = item.vector
+		rows[i] = item.row
+	}
+	source, err := newInMemoryVectorSourceFromConfig(config, values)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	merged, err := BuildSegment(ctx, componentID, SegmentMetadata{Space: s.config.Space, Chunking: s.config.Chunking}, nextSource, nextRows, hnsw.BuildOptions{
-		BuildConfig:  withBuildCapacity(s.config.HNSWBuild, nextHead.Len()),
-		SearchConfig: s.config.HNSWSearch,
+	return BuildSegment(ctx, componentID, SegmentMetadata{Space: config.Space, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
+		BuildConfig:  withBuildCapacity(config.HNSWBuild, len(rows)),
+		SearchConfig: config.HNSWSearch,
 	})
+}
+
+func newInMemoryVectorSourceFromConfig(config Config, values [][]float32) (*vector.MemorySource, error) {
+	space, err := vector.NewSpace(config.Space.Dimensions, config.Space.Metric)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	rowsByID := make(map[VectorID]VectorRow, len(nextRows))
-	nextHeadOrdinals := make(map[VectorID]vector.Ordinal, len(nextRows))
-	for ordinal, row := range nextRows {
-		rowsByID[row.VectorID] = row
-		nextHeadOrdinals[row.VectorID] = vector.Ordinal(ordinal)
+	return vector.NewMemorySource(space, values)
+}
+
+func publishIndex(base *publishedIndex, locations map[VectorID]vectorLocation, changes []livenessChange, pending *Segment, pendingComponent ComponentID, documents map[fts.DocID][]VectorID, generation uint64) (*publishedIndex, map[VectorID]vectorLocation, error) {
+	segments := append([]segmentView(nil), base.segments...)
+	componentIndexes := make(map[ComponentID]int, len(segments))
+	for i, view := range segments {
+		if view.segment == nil {
+			return nil, nil, ErrInternalState
+		}
+		componentIndexes[view.segment.ComponentID()] = i
 	}
-	for docID, ids := range s.currentByDoc {
-		for _, id := range ids {
-			row, ok := rowsByID[id]
-			if !ok || row.Chunk.DocID != docID {
-				return ErrInternalState
+	type componentChanges struct {
+		allowed    []vector.Ordinal
+		disallowed []vector.Ordinal
+	}
+	changesByComponent := make(map[ComponentID]*componentChanges)
+	for _, change := range changes {
+		for _, id := range change.ids {
+			location, ok := locations[id]
+			if !ok {
+				continue
+			}
+			if _, ok := componentIndexes[location.component]; !ok {
+				return nil, nil, ErrInternalState
+			}
+			componentChange := changesByComponent[location.component]
+			if componentChange == nil {
+				componentChange = &componentChanges{}
+				changesByComponent[location.component] = componentChange
+			}
+			if change.allowed {
+				componentChange.allowed = append(componentChange.allowed, location.ordinal)
+			} else {
+				componentChange.disallowed = append(componentChange.disallowed, location.ordinal)
 			}
 		}
 	}
-	s.head = nextHead
-	s.vectorRows = nextRows
-	s.headOrdinalByVector = nextHeadOrdinals
-	s.segments = []*Segment{merged}
-	s.nextComponentID++
-	s.live = vector.NewFullBitSet(uint32(len(nextRows)))
-	return nil
+	for componentID, change := range changesByComponent {
+		index := componentIndexes[componentID]
+		filter, err := segments[index].filter.WithChanges(segments[index].filter.TotalOrdinalCount(), change.allowed, change.disallowed)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: update segment filter: %v", ErrInternalState, err)
+		}
+		segments[index].filter = filter
+	}
+	resultLocations := cloneLocations(locations)
+	if pending != nil {
+		filter, err := filterForDocumentMapping(pending, documents)
+		if err != nil {
+			return nil, nil, err
+		}
+		segments = append(segments, segmentView{segment: pending, filter: filter})
+		for ordinal, row := range pending.Rows() {
+			resultLocations[row.VectorID] = vectorLocation{component: pendingComponent, ordinal: vector.Ordinal(ordinal)}
+		}
+	}
+	liveCount := 0
+	for _, view := range segments {
+		liveCount += view.filter.AllowedOrdinalCount()
+	}
+	return &publishedIndex{segments: segments, generation: generation, liveCount: liveCount}, resultLocations, nil
 }
 
-func (s *Service) appendVersionLocked(ctx context.Context, docID fts.DocID, batch []ChunkVector, old []VectorID) error {
-	// Check capacity and derive new stable IDs without changing service state.
-	// Example: watermark 10 and two new chunks produce IDs 11 and 12.
-	if len(batch) > s.config.MaxVectors-s.head.Len() {
+func filterForDocumentMapping(segment *Segment, documents map[fts.DocID][]VectorID) (vector.BitSet, error) {
+	liveIDs := make(map[VectorID]struct{})
+	for _, ids := range documents {
+		for _, id := range ids {
+			liveIDs[id] = struct{}{}
+		}
+	}
+	allowed := make([]vector.Ordinal, 0, segment.Len())
+	for ordinal, row := range segment.Rows() {
+		if _, ok := liveIDs[row.VectorID]; ok {
+			allowed = append(allowed, vector.Ordinal(ordinal))
+		}
+	}
+	filter, err := vector.NewBitSet(uint32(segment.Len()), allowed...)
+	if err != nil {
+		return vector.BitSet{}, fmt.Errorf("%w: build pending segment filter: %v", ErrInternalState, err)
+	}
+	return filter, nil
+}
+
+func cloneDocumentMapping(source map[fts.DocID][]VectorID) map[fts.DocID][]VectorID {
+	result := make(map[fts.DocID][]VectorID, len(source))
+	for docID, ids := range source {
+		result[docID] = append([]VectorID(nil), ids...)
+	}
+	return result
+}
+
+func cloneLocations(source map[VectorID]vectorLocation) map[VectorID]vectorLocation {
+	result := make(map[VectorID]vectorLocation, len(source))
+	for id, location := range source {
+		result[id] = location
+	}
+	return result
+}
+
+func (s *Service) queueVersionLocked(docID fts.DocID, batch []ChunkVector, old []VectorID) error {
+	liveCount := 0
+	for _, ids := range s.currentByDoc {
+		liveCount += len(ids)
+	}
+	if liveCount-len(old)+len(batch) > s.config.MaxVectors {
 		return ErrCapacityExceeded
 	}
 	ids, err := s.allocateIDsLocked(len(batch))
 	if err != nil {
 		return err
 	}
-	componentID := s.nextComponentID
-	rows := make([]VectorRow, len(batch))
-	values := make([][]float32, len(batch))
 	for i, item := range batch {
-		rows[i] = VectorRow{VectorID: ids[i], Chunk: item.Ref}
-		values[i] = item.Vector
+		id := ids[i]
+		s.pendingVectors = append(s.pendingVectors, pendingVector{
+			row:    VectorRow{VectorID: id, Chunk: item.Ref},
+			vector: append([]float32(nil), item.Vector...),
+		})
 	}
-	source, err := newMemorySource(s.space, values)
-	if err != nil {
+	s.currentByDoc[docID] = append([]VectorID(nil), ids...)
+	if len(old) > 0 {
+		s.pendingVisibilityChanges = append(s.pendingVisibilityChanges, livenessChange{ids: append([]VectorID(nil), old...), allowed: false})
+	}
+	s.pendingVisibilityChanges = append(s.pendingVisibilityChanges, livenessChange{ids: append([]VectorID(nil), ids...), allowed: true})
+	s.maxAllocatedID = ids[len(ids)-1]
+	s.mutationVersion++
+	return nil
+}
+
+func (s *Service) viewSegmentsPhysical() []segmentView {
+	if s.published == nil {
+		return nil
+	}
+	return s.published.segments
+}
+
+func (s *Service) physicalVectorCountLocked() int {
+	count := len(s.pendingVectors)
+	for _, view := range s.viewSegmentsPhysical() {
+		count += view.segment.Len()
+	}
+	return count
+}
+
+// Compact merges all visible live rows into one immutable HNSW segment.
+func (s *Service) Compact(ctx context.Context) error {
+	if ctx == nil {
+		return vector.ErrNilContext
+	}
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+	if err := s.flushPending(ctx); err != nil {
 		return err
 	}
-	segment, err := BuildSegment(ctx, componentID, SegmentMetadata{Space: s.config.Space, Chunking: s.config.Chunking}, source, rows, hnsw.BuildOptions{
-		BuildConfig:  withBuildCapacity(s.config.HNSWBuild, len(batch)),
-		SearchConfig: s.config.HNSWSearch,
-	})
-	if err != nil {
-		return err
-	}
-	// The append-only ingest source assigns the next contiguous ordinal range.
-	// Prepare the corresponding liveness snapshot before mutating the index.
-	// Example replace: with head length 5, two new chunks use ordinals 5 and 6;
-	// old ordinals 2 and 3 become stale but remain in the physical matrix.
-	start := s.head.Len()
-	newLiveOrdinals := make([]vector.Ordinal, len(batch))
-	for i := range newLiveOrdinals {
-		newLiveOrdinals[i] = vector.Ordinal(start + i)
-	}
-	staleOrdinals := make([]vector.Ordinal, 0, len(old))
-	for _, id := range old {
-		ordinal, ok := s.headOrdinalByVector[id]
-		if !ok {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		s.mu.RLock()
+		version := s.mutationVersion
+		published := s.published
+		config := s.config
+		componentID := s.nextComponentID
+		hasPending := len(s.pendingVectors) != 0 || len(s.pendingVisibilityChanges) != 0
+		s.mu.RUnlock()
+		if hasPending {
+			if err := s.flushPending(ctx); err != nil {
+				return err
+			}
 			continue
 		}
-		staleOrdinals = append(staleOrdinals, ordinal)
-	}
-	nextLive, err := s.live.WithChanges(uint32(start+len(batch)), newLiveOrdinals, staleOrdinals)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInternalState, err)
-	}
-
-	// AppendBatch prepares and copies every vector, or leaves the index unchanged.
-	vectors := make([][]float32, len(batch))
-	for i := range batch {
-		vectors[i] = batch[i].Vector
-	}
-	ordinals, err := s.head.AppendBatch(vectors)
-	if err != nil {
-		return err
-	}
-
-	// The assigned range must match the ordinals used to build nextLive.
-	if ordinals.Count != len(batch) {
-		return ErrInternalState
-	}
-	for i := range batch {
-		ord := ordinals.Start + vector.Ordinal(i)
-		if ord != newLiveOrdinals[i] {
-			return ErrInternalState
+		if len(published.segments) <= 1 {
+			stale := false
+			for _, item := range published.segments {
+				stale = stale || item.filter.AllowedOrdinalCount() != item.segment.Len()
+			}
+			if !stale {
+				return nil
+			}
 		}
-
-		// Install the mappings while the service lock prevents readers from
-		// observing a partially published document version.
-		id := ids[i]
-		s.vectorRows = append(s.vectorRows, VectorRow{VectorID: id, Chunk: batch[i].Ref})
-		s.headOrdinalByVector[id] = ord
+		values, rows, err := materializeLiveRows(ctx, published)
+		if err != nil {
+			return err
+		}
+		source, err := newInMemoryVectorSourceFromConfig(config, values)
+		if err != nil {
+			return err
+		}
+		merged, err := BuildSegment(ctx, componentID, SegmentMetadata{Space: config.Space, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
+			BuildConfig:  withBuildCapacity(config.HNSWBuild, len(rows)),
+			SearchConfig: config.HNSWSearch,
+		})
+		if err != nil {
+			return err
+		}
+		filter := vector.NewFullBitSet(uint32(len(rows)))
+		s.mu.Lock()
+		if version != s.mutationVersion {
+			s.mu.Unlock()
+			if err := s.flushPending(ctx); err != nil {
+				return err
+			}
+			continue
+		}
+		locations := make(map[VectorID]vectorLocation, len(rows))
+		for ordinal, row := range rows {
+			locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
+		}
+		s.published = &publishedIndex{segments: []segmentView{{segment: merged, filter: filter}}, generation: version, liveCount: len(rows)}
+		s.locations = locations
+		s.nextComponentID++
+		s.mu.Unlock()
+		return nil
 	}
-	// Switch the document mapping and liveness snapshot to the new version.
-	// Example: doc-A -> [9, 10] becomes doc-A -> [11, 12], while vectors 9
-	// and 10 remain stored but are no longer allowed in search results.
-	s.currentByDoc[docID] = append([]VectorID(nil), ids...)
-	s.live = nextLive
-	s.segments = append(s.segments, segment)
-	s.nextComponentID++
-	// Advance the watermark only after the new version is fully installed.
-	s.maxAllocatedVectorID = ids[len(ids)-1]
-	return nil
+}
+
+func materializeLiveRows(ctx context.Context, published *publishedIndex) ([][]float32, []VectorRow, error) {
+	var values [][]float32
+	var rows []VectorRow
+	for _, item := range published.segments {
+		for ordinal, row := range item.segment.Rows() {
+			if !item.filter.Allows(vector.Ordinal(ordinal)) {
+				continue
+			}
+			value := make([]float32, item.segment.Dimensions())
+			if err := item.segment.Vectors().ReadVectorInto(ctx, vector.Ordinal(ordinal), value); err != nil {
+				return nil, nil, err
+			}
+			values = append(values, value)
+			rows = append(rows, row)
+		}
+	}
+	return values, rows, nil
 }
 
 func withBuildCapacity(config hnsw.BuildConfig, count int) hnsw.BuildConfig {
@@ -324,52 +537,42 @@ func withBuildCapacity(config hnsw.BuildConfig, count int) hnsw.BuildConfig {
 	return config
 }
 
-func (s *Service) validateBatch(ctx context.Context, batch []ChunkVector) (fts.DocID, []ChunkVector, error) {
+func (s *Service) validateBatch(ctx context.Context, docID fts.DocID, batch []ChunkVector) error {
 	if ctx == nil {
-		return "", nil, vector.ErrNilContext
+		return vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
-		return "", nil, err
+		return err
 	}
 	if len(batch) == 0 || len(batch) > s.config.MaxChunksPerDocument {
-		return "", nil, ErrInvalidBatch
+		return ErrInvalidBatch
 	}
-	docID := batch[0].Ref.DocID
 	if docID == "" {
-		return "", nil, chunk.ErrInvalidDocID
+		return chunk.ErrInvalidDocID
 	}
-	seen := make(map[chunk.ID]struct{}, len(batch))
-	validated := make([]ChunkVector, len(batch))
 	for i, item := range batch {
 		if i%64 == 0 {
 			if err := ctx.Err(); err != nil {
-				return "", nil, err
+				return err
 			}
 		}
 		if item.Ref.DocID != docID || item.Ref.ID == "" || item.Ref.Field == "" || item.Ref.StartByte > item.Ref.EndByte {
-			return "", nil, ErrInvalidBatch
+			return ErrInvalidBatch
 		}
-		if _, exists := seen[item.Ref.ID]; exists {
-			return "", nil, fmt.Errorf("%w: %s", ErrDuplicateChunkID, item.Ref.ID)
-		}
-		seen[item.Ref.ID] = struct{}{}
-		// Validate the complete document batch without copying vector data. The
-		// The ingest source copies and prepares every vector before publishing the batch.
 		if err := s.space.Validate(item.Vector); err != nil {
-			return "", nil, err
+			return err
 		}
-		validated[i] = ChunkVector{Ref: item.Ref, Vector: item.Vector}
 	}
-	return docID, validated, nil
+	return nil
 }
 
 func (s *Service) allocateIDsLocked(count int) ([]VectorID, error) {
-	if count <= 0 || uint64(count) > math.MaxUint64-uint64(s.maxAllocatedVectorID) {
+	if count <= 0 || uint64(count) > math.MaxUint64-uint64(s.maxAllocatedID) {
 		return nil, ErrVectorIDExhausted
 	}
 	ids := make([]VectorID, count)
 	for i := range ids {
-		ids[i] = s.maxAllocatedVectorID + VectorID(i) + 1
+		ids[i] = s.maxAllocatedID + VectorID(i) + 1
 		if ids[i] == 0 {
 			return nil, ErrVectorIDExhausted
 		}
@@ -380,13 +583,16 @@ func (s *Service) allocateIDsLocked(count int) ([]VectorID, error) {
 func (s *Service) Statistics() Statistics {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	physical := s.head.Len()
-	liveCount := s.live.AllowedOrdinalCount()
+	physical := s.physicalVectorCountLocked()
+	live := 0
+	for _, ids := range s.currentByDoc {
+		live += len(ids)
+	}
 	return Statistics{
 		Documents:            len(s.currentByDoc),
 		PhysicalVectors:      physical,
-		LiveVectors:          liveCount,
-		StaleVectors:         physical - liveCount,
-		MaxAllocatedVectorID: s.maxAllocatedVectorID,
+		LiveVectors:          live,
+		StaleVectors:         physical - live,
+		MaxAllocatedVectorID: s.maxAllocatedID,
 	}
 }

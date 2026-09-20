@@ -12,24 +12,24 @@ import (
 func TestSnapshotRoundTripPreservesSearchAndMappings(t *testing.T) {
 	service := newSnapshotTestService(t)
 	ctx := context.Background()
-	if err := service.AddDocument(ctx, []ChunkVector{
+	if err := addDocument(t, service, ctx, []ChunkVector{
 		testChunk("doc-b", "b-1", 0, []float32{1, 0}),
 		testChunk("doc-b", "b-2", 1, []float32{1, 0}),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc-a", "a-1", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a-1", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.ReplaceDocument(ctx, []ChunkVector{testChunk("doc-a", "a-new", 0, []float32{2, 0})}); err != nil {
+	if err := replaceDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a-new", 0, []float32{2, 0})}); err != nil {
 		t.Fatal(err)
 	}
 
-	wantChunks, err := service.SearchChunks(ctx, []float32{0, 0}, 3)
+	wantChunks, err := service.searchChunks(ctx, []float32{0, 0}, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDocuments, err := service.SearchDocuments(ctx, []float32{0, 0}, 2)
+	wantDocuments, err := service.searchEncodedDocuments(ctx, []float32{0, 0}, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +40,11 @@ func TestSnapshotRoundTripPreservesSearchAndMappings(t *testing.T) {
 	if len(checkpoint.Segment.Rows()) != 3 || checkpoint.Segment.Len() != 3 {
 		t.Fatalf("checkpoint statistics/state = %+v", checkpoint)
 	}
-	gotChunks, err := checkpoint.SearchChunks(ctx, []float32{0, 0}, 3)
+	gotChunks, err := checkpoint.searchChunks(ctx, []float32{0, 0}, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotDocuments, err := checkpoint.SearchDocuments(ctx, []float32{0, 0}, 2)
+	gotDocuments, err := checkpoint.searchEncodedDocuments(ctx, []float32{0, 0}, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestSnapshotRoundTripPreservesSearchAndMappings(t *testing.T) {
 
 func TestSnapshotRejectsDanglingAndDuplicateState(t *testing.T) {
 	service := newSnapshotTestService(t)
-	if err := service.AddDocument(context.Background(), []ChunkVector{testChunk("doc", "chunk", 0, []float32{1, 0})}); err != nil {
+	if err := addDocument(t, service, context.Background(), []ChunkVector{testChunk("doc", "chunk", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	checkpoint, err := service.Snapshot(context.Background())
@@ -72,7 +72,7 @@ func TestSnapshotRejectsDanglingAndDuplicateState(t *testing.T) {
 	if err := bad.Validate(); !errors.Is(err, ErrInvalidSnapshot) {
 		t.Fatalf("zero VectorID error = %v", err)
 	}
-	if err := service.AddDocument(context.Background(), []ChunkVector{testChunk("doc-2", "chunk-2", 0, []float32{2, 0})}); err != nil {
+	if err := addDocument(t, service, context.Background(), []ChunkVector{testChunk("doc-2", "chunk-2", 0, []float32{2, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	checkpoint, err = service.Snapshot(context.Background())
@@ -121,23 +121,23 @@ func TestSnapshotHonorsContext(t *testing.T) {
 func TestSnapshotContainsOnlyLiveRowsAndPreservesSearch(t *testing.T) {
 	service := newSnapshotTestService(t)
 	ctx := context.Background()
-	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc-a", "old", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "old", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.ReplaceDocument(ctx, []ChunkVector{testChunk("doc-a", "new", 0, []float32{2, 0})}); err != nil {
+	if err := replaceDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "new", 0, []float32{2, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if !service.DeleteDocument("doc-b") {
+	if !deleteDocument(t, service, "doc-b") {
 		t.Fatal("DeleteDocument returned false")
 	}
 	checkpoint, err := service.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := service.SearchChunks(ctx, []float32{0, 0}, 1)
+	want, err := service.searchChunks(ctx, []float32{0, 0}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestSnapshotContainsOnlyLiveRowsAndPreservesSearch(t *testing.T) {
 	if checkpoint.MaxAllocatedVectorID != 3 || rows[0].VectorID != 3 || rows[0].Chunk.ID != "new" {
 		t.Fatalf("dense mappings = %+v", checkpoint)
 	}
-	got, err := checkpoint.SearchChunks(ctx, []float32{0, 0}, 1)
+	got, err := checkpoint.searchChunks(ctx, []float32{0, 0}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,10 +160,10 @@ func TestSnapshotContainsOnlyLiveRowsAndPreservesSearch(t *testing.T) {
 func TestSnapshotSupportsNoLiveVectors(t *testing.T) {
 	service := newSnapshotTestService(t)
 	ctx := context.Background()
-	if err := service.AddDocument(ctx, []ChunkVector{testChunk("doc", "chunk", 0, []float32{1, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc", "chunk", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if !service.DeleteDocument("doc") {
+	if !deleteDocument(t, service, "doc") {
 		t.Fatal("DeleteDocument returned false")
 	}
 	checkpoint, err := service.Snapshot(ctx)
@@ -192,8 +192,7 @@ func testSegmentWithRows(snapshot Snapshot, rows []VectorRow) *Segment {
 		component: snapshot.Segment.component,
 		metadata:  snapshot.Segment.metadata,
 		rows:      rows,
-		vectors:   snapshot.Segment.vectors,
-		graph:     snapshot.Segment.graph,
+		searcher:  snapshot.Segment.searcher,
 	}
 }
 

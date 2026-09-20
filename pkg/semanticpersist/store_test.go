@@ -17,10 +17,24 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
+type staticEncoder struct {
+	vectors map[fts.DocID][]semantic.ChunkVector
+}
+
+func (e staticEncoder) Encode(_ context.Context, document semantic.Document) ([]semantic.ChunkVector, error) {
+	return e.vectors[document.ID], nil
+}
+
+func zeroQueryEncoder() staticEncoder {
+	return staticEncoder{vectors: map[fts.DocID][]semantic.ChunkVector{
+		"query": {{Ref: chunk.Ref{ID: "query", DocID: "query", Field: fts.DefaultField, EndByte: 5}, Vector: []float32{0, 0}}},
+	}}
+}
+
 func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
 	for _, durability := range []DurabilityMode{DurabilitySynchronous, DurabilityAsynchronous} {
 		t.Run(durabilityName(durability), func(t *testing.T) {
-			checkpoint, wantChunks, wantDocuments := persistenceFixture(t, false)
+			checkpoint, _, wantDocuments := persistenceFixture(t, false)
 			root := t.TempDir()
 			generation, err := Publish(context.Background(), root, 42, checkpoint, Options{Durability: durability})
 			if err != nil {
@@ -44,16 +58,12 @@ func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer loaded.Close()
-			gotChunks, err := loaded.Snapshot.SearchChunks(context.Background(), []float32{0, 0}, 3)
+			gotDocuments, err := loaded.Snapshot.SearchDocuments(context.Background(), zeroQueryEncoder(), semantic.Document{ID: "query"}, 2)
 			if err != nil {
 				t.Fatal(err)
 			}
-			gotDocuments, err := loaded.Snapshot.SearchDocuments(context.Background(), []float32{0, 0}, 2)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(gotChunks.Hits, wantChunks.Hits) || !equalDocumentHits(gotDocuments.Hits, wantDocuments.Hits) {
-				t.Fatalf("round-trip search mismatch\nchunks=%+v\ndocuments=%+v", gotChunks, gotDocuments)
+			if !equalDocumentHits(gotDocuments.Hits, wantDocuments.Hits) {
+				t.Fatalf("round-trip document search mismatch\ndocuments=%+v", gotDocuments)
 			}
 			if loaded.Snapshot.Space != checkpoint.Space || loaded.Snapshot.Chunking != checkpoint.Chunking || loaded.Snapshot.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID {
 				t.Fatal("checkpoint metadata changed during round trip")
@@ -108,14 +118,14 @@ func TestPublishOpenChunkHNSWRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer loaded.Close()
-	if loaded.Snapshot.Segment.Kind() != semantic.SegmentKindChunkHNSW || loaded.Snapshot.Segment.HNSW() == nil {
-		t.Fatalf("opened segment = kind %d, graph %p", loaded.Snapshot.Segment.Kind(), loaded.Snapshot.Segment.HNSW())
+	if loaded.Snapshot.Segment.Kind() != semantic.SegmentKindChunkHNSW || loaded.Snapshot.Segment.Searcher() == nil {
+		t.Fatalf("opened segment = kind %d, searcher %p", loaded.Snapshot.Segment.Kind(), loaded.Snapshot.Segment.Searcher())
 	}
-	result, err := loaded.Snapshot.SearchChunks(context.Background(), []float32{0, 0}, 2)
+	result, err := loaded.Snapshot.SearchDocuments(context.Background(), zeroQueryEncoder(), semantic.Document{ID: "query"}, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Hits) != 2 || result.Hits[0].Ref.DocID != "doc-a" {
+	if len(result.Hits) != 2 || result.Hits[0].DocID != "doc-a" {
 		t.Fatalf("round-trip HNSW result = %+v", result)
 	}
 }
@@ -528,9 +538,11 @@ func TestHNSWSearchWorkLimits(t *testing.T) {
 	checkpoint = withHNSW(t, checkpoint, 7)
 
 	for name, limit := range map[string]func(*Limits){
-		"ef search": func(limits *Limits) { limits.MaxEfSearch = checkpoint.Segment.HNSW().SearchConfig().MaxEfSearch - 1 },
+		"ef search": func(limits *Limits) {
+			limits.MaxEfSearch = checkpoint.Segment.Searcher().SearchConfig().MaxEfSearch - 1
+		},
 		"visit limit": func(limits *Limits) {
-			limits.MaxVisitLimit = checkpoint.Segment.HNSW().SearchConfig().MaxVisitLimit - 1
+			limits.MaxVisitLimit = checkpoint.Segment.Searcher().SearchConfig().MaxVisitLimit - 1
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -642,10 +654,14 @@ func TestSnapshotPublicationContainsOnlyLiveRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := service.AddDocument(ctx, []semantic.ChunkVector{{Ref: chunk.Ref{ID: "old", DocID: "doc", Field: fts.DefaultField, EndByte: 3}, Vector: []float32{0, 0}}}); err != nil {
+	encoder := staticEncoder{vectors: map[fts.DocID][]semantic.ChunkVector{
+		"doc": {{Ref: chunk.Ref{ID: "old", DocID: "doc", Field: fts.DefaultField, EndByte: 3}, Vector: []float32{0, 0}}},
+	}}
+	if err := service.AddDocument(ctx, encoder, semantic.Document{ID: "doc"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.ReplaceDocument(ctx, []semantic.ChunkVector{{Ref: chunk.Ref{ID: "new", DocID: "doc", Field: fts.DefaultField, EndByte: 3}, Vector: []float32{1, 0}}}); err != nil {
+	encoder.vectors["doc"] = []semantic.ChunkVector{{Ref: chunk.Ref{ID: "new", DocID: "doc", Field: fts.DefaultField, EndByte: 3}, Vector: []float32{1, 0}}}
+	if err := service.ReplaceDocument(ctx, encoder, semantic.Document{ID: "doc"}); err != nil {
 		t.Fatal(err)
 	}
 	checkpoint, err := service.Snapshot(ctx)
@@ -668,16 +684,20 @@ func TestSnapshotPublicationContainsOnlyLiveRows(t *testing.T) {
 	if loaded.Generation.ID != 1 || loaded.Snapshot.Segment.Len() != 1 || len(loaded.Snapshot.Segment.Rows()) != 1 {
 		t.Fatalf("opened dense generation = %+v", loaded.Snapshot)
 	}
-	result, err := loaded.Snapshot.SearchChunks(ctx, []float32{0, 0}, 1)
+	result, err := loaded.Snapshot.SearchDocuments(ctx, zeroQueryEncoder(), semantic.Document{ID: "query"}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Hits) != 1 || result.Hits[0].Ref.ID != "new" || result.Stats.RejectedNodes != 0 {
+	if len(result.Hits) != 1 || result.Hits[0].Chunks[0].Ref.ID != "new" || result.Stats.RejectedNodes != 0 {
 		t.Fatalf("compacted result = %+v", result)
 	}
 }
 
-func persistenceFixture(t testing.TB, extra bool) (semantic.Snapshot, semantic.ChunkSearchResult, semantic.DocumentSearchResult) {
+type chunkExpectation struct {
+	Hits []semantic.ChunkHit
+}
+
+func persistenceFixture(t testing.TB, extra bool) (semantic.Snapshot, chunkExpectation, semantic.DocumentSearchResult) {
 	t.Helper()
 	service, err := semantic.New(semantic.Config{
 		Space:    semantic.SpaceDescriptor{ID: "persist-space-v1", Dimensions: 2, Metric: vector.MetricL2Squared, Normalization: vector.NormalizationNone, VectorFormatVersion: 1},
@@ -688,11 +708,13 @@ func persistenceFixture(t testing.TB, extra bool) (semantic.Snapshot, semantic.C
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	encoder := staticEncoder{vectors: make(map[fts.DocID][]semantic.ChunkVector)}
 	add := func(docID fts.DocID, id chunk.ID, value []float32) {
 		t.Helper()
-		err := service.AddDocument(ctx, []semantic.ChunkVector{{
+		encoder.vectors[docID] = []semantic.ChunkVector{{
 			Ref: chunk.Ref{ID: id, DocID: docID, Field: fts.DefaultField, EndByte: 10}, Vector: value,
-		}})
+		}}
+		err := service.AddDocument(ctx, encoder, semantic.Document{ID: docID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -706,11 +728,16 @@ func persistenceFixture(t testing.TB, extra bool) (semantic.Snapshot, semantic.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunks, err := service.SearchChunks(ctx, []float32{0, 0}, min(3, len(checkpoint.Segment.Rows())))
+	encoder.vectors["query"] = []semantic.ChunkVector{{Ref: chunk.Ref{ID: "query", DocID: "query", Field: fts.DefaultField, EndByte: 5}, Vector: []float32{0, 0}}}
+	allDocuments, err := service.SearchDocuments(ctx, encoder, semantic.Document{ID: "query"}, min(3, len(checkpoint.Segment.Rows())))
 	if err != nil {
 		t.Fatal(err)
 	}
-	documents, err := service.SearchDocuments(ctx, []float32{0, 0}, min(2, len(checkpoint.Segment.Rows())))
+	chunks := chunkExpectation{}
+	for _, document := range allDocuments.Hits {
+		chunks.Hits = append(chunks.Hits, document.Chunks...)
+	}
+	documents, err := service.SearchDocuments(ctx, encoder, semantic.Document{ID: "query"}, min(2, len(checkpoint.Segment.Rows())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,7 +747,7 @@ func persistenceFixture(t testing.TB, extra bool) (semantic.Snapshot, semantic.C
 func withHNSW(t testing.TB, checkpoint semantic.Snapshot, seed uint64) semantic.Snapshot {
 	t.Helper()
 	maxK := max(checkpoint.MaxK, checkpoint.MaxChunkCandidates)
-	graph, err := hnsw.BuildIndexReader(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
+	graph, err := hnsw.BuildSearcher(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
 			Dimensions: checkpoint.Space.Dimensions, Metric: checkpoint.Space.Metric,
 			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Space.Dimensions * 4),
@@ -734,7 +761,7 @@ func withHNSW(t testing.TB, checkpoint semantic.Snapshot, seed uint64) semantic.
 	if err != nil {
 		t.Fatal(err)
 	}
-	segment, err := semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: checkpoint.Space, Chunking: checkpoint.Chunking}, checkpoint.Segment.Vectors(), graph, checkpoint.Segment.Rows())
+	segment, err := semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: checkpoint.Space, Chunking: checkpoint.Chunking}, graph, checkpoint.Segment.Rows())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -755,7 +782,7 @@ func substituteGraphAndReferences(t *testing.T, root string, generation Generati
 		t.Fatal(err)
 	}
 	replacement := withHNSW(t, checkpoint, 99)
-	graphData, _, err := hnsw.MarshalGraph(replacement.Segment.HNSW(), hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256})
+	graphData, _, err := hnsw.MarshalGraph(replacement.Segment.Searcher(), hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256})
 	if err != nil {
 		t.Fatal(err)
 	}

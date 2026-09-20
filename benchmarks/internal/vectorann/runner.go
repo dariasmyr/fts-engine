@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	BuildPathProduction = "hnsw.BuildIndexReader"
+	BuildPathProduction = "hnsw.BuildSearcher"
 	BuildPathBuilder    = "hnsw.Builder"
 )
 
@@ -131,7 +131,7 @@ func Run(ctx context.Context, config Config) (Report, error) {
 	return report, nil
 }
 
-func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, source *flat.Reader, truth []truthSweep, maxNeighbors, efConstruction int, seed uint64, buildNumber, builds int) ([]RunReport, error) {
+func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, source *flat.Searcher, truth []truthSweep, maxNeighbors, efConstruction int, seed uint64, buildNumber, builds int) ([]RunReport, error) {
 	maxEfSearch := max(config.K, maxSlice(config.EfSearch))
 	searchConfig := hnsw.SearchConfig{
 		DefaultEfSearch: max(config.K, config.EfSearch[0]), MaxEfSearch: maxEfSearch,
@@ -164,7 +164,7 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 	return runs, nil
 }
 
-func buildReader(ctx context.Context, source *flat.Reader, rawVectors [][]float32, order BuildOrder, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress Progress, callback func(Progress)) (*hnsw.Reader, string, buildTiming, error) {
+func buildReader(ctx context.Context, source *flat.Searcher, rawVectors [][]float32, order BuildOrder, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress Progress, callback func(Progress)) (*hnsw.Searcher, string, buildTiming, error) {
 	buildPath := BuildPathProduction
 	if order.Name == "shuffled" {
 		buildPath = BuildPathBuilder
@@ -182,11 +182,11 @@ func buildReader(ctx context.Context, source *flat.Reader, rawVectors [][]float3
 	}
 
 	started := time.Now()
-	var reader *hnsw.Reader
+	var reader *hnsw.Searcher
 	var err error
 	switch order.Name {
 	case "ascending":
-		reader, err = hnsw.BuildIndexReader(ctx, source, hnsw.BuildOptions{
+		reader, err = hnsw.BuildSearcher(ctx, source.VectorSource(), hnsw.BuildOptions{
 			BuildConfig: buildConfig, SearchConfig: searchConfig, Progress: reportProgress,
 		})
 	case "shuffled":
@@ -207,7 +207,7 @@ func buildReader(ctx context.Context, source *flat.Reader, rawVectors [][]float3
 	return reader, buildPath, timing, nil
 }
 
-func buildShuffled(ctx context.Context, vectors [][]float32, seed uint64, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress func(hnsw.BuildProgress)) (*hnsw.Reader, error) {
+func buildShuffled(ctx context.Context, vectors [][]float32, seed uint64, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress func(hnsw.BuildProgress)) (*hnsw.Searcher, error) {
 	total := len(vectors)
 	progress(hnsw.BuildProgress{Phase: hnsw.BuildPhasePreflight, Total: total})
 	builder, err := hnsw.NewBuilder(buildConfig, searchConfig, total)
@@ -241,7 +241,7 @@ func ordinalOrder(count int, seed uint64) []int {
 	return order
 }
 
-func runQueries(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, buildPath string, reader *hnsw.Reader, truth truthSweep, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, timing buildTiming, requestedEfSearch int) (RunReport, error) {
+func runQueries(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, buildPath string, reader *hnsw.Searcher, truth truthSweep, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, timing buildTiming, requestedEfSearch int) (RunReport, error) {
 	effectiveEfSearch := max(config.K, requestedEfSearch)
 	latencies := make([]time.Duration, len(dataset.Queries))
 	var recall, documentRecall, exactDocuments, annDocuments float64
@@ -333,7 +333,7 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 	return run, nil
 }
 
-func newFlatReader(values [][]float32, dimensions int, metric vector.Metric, k int) (*flat.Reader, error) {
+func newFlatReader(values [][]float32, dimensions int, metric vector.Metric, k int) (*flat.Searcher, error) {
 	index, err := flat.New(flat.Config{Dimensions: dimensions, Metric: metric, MaxVectors: len(values), MaxK: k})
 	if err != nil {
 		return nil, err
@@ -344,7 +344,7 @@ func newFlatReader(values [][]float32, dimensions int, metric vector.Metric, k i
 	return index.Freeze(), nil
 }
 
-func exactTruthSweeps(ctx context.Context, reader *flat.Reader, queries [][]float32, config Config) ([]truthSweep, error) {
+func exactTruthSweeps(ctx context.Context, reader *flat.Searcher, queries [][]float32, config Config) ([]truthSweep, error) {
 	truth := make([]truthSweep, 0, len(config.FilterSelectivities))
 	for _, selectivity := range config.FilterSelectivities {
 		filter, report, err := deterministicFilter(reader.Len(), selectivity, config.FilterSeed)

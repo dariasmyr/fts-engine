@@ -53,13 +53,13 @@ func TestCodecRoundTripAndDeterministicBytes(t *testing.T) {
 			if !slices.Equal(got.Hits, want.Hits) {
 				t.Fatalf("round-trip hits = %+v, want %+v", got.Hits, want.Hits)
 			}
-			stats := opened.ExactDuplicateStats("space/test/v1")
+			stats := opened.VectorSource().ExactDuplicateStats("space/test/v1")
 			if stats.VectorRows != 3 || stats.UniqueVectors != 2 || stats.DuplicateRows != 1 || stats.DuplicateGroups != 1 || stats.MaxFanOut != 2 {
 				t.Fatalf("duplicate stats = %+v", stats)
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			if _, err := opened.ExactDuplicateStatsContext(ctx, "space/test/v1"); !errors.Is(err, context.Canceled) {
+			if _, err := opened.VectorSource().ExactDuplicateStatsContext(ctx, "space/test/v1"); !errors.Is(err, context.Canceled) {
 				t.Fatalf("canceled duplicate scan error = %v", err)
 			}
 		})
@@ -86,12 +86,12 @@ func TestReaderVectorReturnsIndependentCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader := idx.Freeze()
-	value, ok := reader.Vector(0)
+	value, ok := reader.VectorSource().Vector(0)
 	if !ok {
 		t.Fatal("Vector(0) not found")
 	}
 	value[0] = 99
-	again, _ := reader.Vector(0)
+	again, _ := reader.VectorSource().Vector(0)
 	if again[0] != 1 {
 		t.Fatalf("reader backing storage was mutated: %v", again)
 	}

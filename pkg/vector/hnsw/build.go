@@ -9,9 +9,9 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-// BuildIndexReader constructs and freezes one HNSW reader from prepared source rows in
+// BuildSearcher constructs and freezes one HNSW searcher from prepared source rows in
 // stable ordinal order 0..source.Len()-1.
-func BuildIndexReader(ctx context.Context, source vector.PreparedVectorSource, options BuildOptions) (*Reader, error) {
+func BuildSearcher(ctx context.Context, source vector.PreparedVectorSource, options BuildOptions) (*Searcher, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}

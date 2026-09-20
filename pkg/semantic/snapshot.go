@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"context"
+	"slices"
 
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
@@ -31,32 +32,23 @@ func (s *Service) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
-	s.mu.RLock()
-	source, err := s.head.FreezeCompact(ctx, s.live)
-	if err != nil {
-		s.mu.RUnlock()
+	if err := s.Flush(ctx); err != nil {
 		return Snapshot{}, err
 	}
-	rows := make([]VectorRow, 0, s.live.AllowedOrdinalCount())
-	for ordinal, row := range s.vectorRows {
-		if ordinal%64 == 0 {
-			if err := ctx.Err(); err != nil {
-				s.mu.RUnlock()
-				return Snapshot{}, err
-			}
-		}
-		if s.live.Allows(vector.Ordinal(ordinal)) {
-			rows = append(rows, row)
-		}
-	}
-	if len(rows) != source.Len() {
-		s.mu.RUnlock()
-		return Snapshot{}, ErrInternalState
-	}
-	maxAllocatedVectorID := s.maxAllocatedVectorID
+	s.mu.RLock()
+	published := s.published
+	maxAllocatedVectorID := s.maxAllocatedID
 	config := s.config
 	s.mu.RUnlock()
 
+	values, rows, err := materializeLiveRows(ctx, published)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	source, err := newInMemoryVectorSourceFromConfig(config, values)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
@@ -159,17 +151,68 @@ func (c Snapshot) validate(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// SearchChunks searches this immutable semantic snapshot and resolves vector
-// ordinals to their chunk references.
-func (s Snapshot) SearchChunks(ctx context.Context, query []float32, k int) (ChunkSearchResult, error) {
-	return searchChunks(ctx, segmentView{segment: s.Segment}, query, k, s.MaxK)
+// SearchDocuments encodes a query document and groups matches by document.
+func (s Snapshot) SearchDocuments(ctx context.Context, encoder Encoder, query Document, k int) (DocumentSearchResult, error) {
+	if encoder == nil {
+		return DocumentSearchResult{}, ErrInvalidSnapshot
+	}
+	queries, err := encoder.Encode(ctx, query)
+	if err != nil {
+		return DocumentSearchResult{}, err
+	}
+	merged := make(map[fts.DocID]DocumentHit)
+	var result DocumentSearchResult
+	for _, item := range queries {
+		partial, err := s.searchEncodedDocuments(ctx, item.Vector, k)
+		if err != nil {
+			return DocumentSearchResult{}, err
+		}
+		result.CandidateChunks += partial.CandidateChunks
+		mergeSearchStats(&result.Stats, partial.Stats)
+		result.GroupingIncomplete = result.GroupingIncomplete || partial.GroupingIncomplete
+		for _, hit := range partial.Hits {
+			current, exists := merged[hit.DocID]
+			if !exists || hit.Distance < current.Distance {
+				merged[hit.DocID] = hit
+			}
+		}
+	}
+	result.Hits = make([]DocumentHit, 0, len(merged))
+	for _, hit := range merged {
+		result.Hits = append(result.Hits, hit)
+	}
+	slices.SortFunc(result.Hits, func(a, b DocumentHit) int {
+		if a.Distance < b.Distance {
+			return -1
+		}
+		if a.Distance > b.Distance {
+			return 1
+		}
+		if a.DocID < b.DocID {
+			return -1
+		}
+		if a.DocID > b.DocID {
+			return 1
+		}
+		return 0
+	})
+	result.DistinctDocuments = len(result.Hits)
+	if len(result.Hits) > k {
+		result.Hits = result.Hits[:k]
+	}
+	return result, nil
 }
 
-// SearchDocuments searches this immutable semantic snapshot and groups chunk
-// hits by document.
-func (s Snapshot) SearchDocuments(ctx context.Context, query []float32, k int) (DocumentSearchResult, error) {
+func (s Snapshot) searchEncodedDocuments(ctx context.Context, query []float32, k int) (DocumentSearchResult, error) {
 	space, _ := vector.NewSpace(s.Space.Dimensions, s.Space.Metric)
-	return searchDocuments(ctx, segmentView{segment: s.Segment}, space, query, k, s.MaxK, s.MaxChunkCandidates, s.MaxChunksPerDocumentHit)
+	return searchDocuments(ctx, fullSegmentView(s.Segment), space, query, k, s.MaxK, s.MaxChunkCandidates, s.MaxChunksPerDocumentHit)
+}
+
+func fullSegmentView(segment *Segment) segmentView {
+	if segment == nil {
+		return segmentView{segment: segment}
+	}
+	return segmentView{segment: segment, filter: vector.NewFullBitSet(uint32(segment.Len()))}
 }
 
 // Close releases resources owned by the snapshot's immutable segment.

@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/pkg/semanticencode"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
@@ -32,32 +32,39 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := search.AddDocument(ctx, []semantic.ChunkVector{
-		{
-			Ref:    chunk.Ref{ID: "intro", DocID: "doc-hotel", Field: fts.DefaultField, Ordinal: 0, StartByte: 0, EndByte: 18},
-			Vector: []float32{1, 0, 0},
-		},
-		{
-			Ref:    chunk.Ref{ID: "location", DocID: "doc-hotel", Field: fts.DefaultField, Ordinal: 1, StartByte: 19, EndByte: 36},
-			Vector: []float32{0.8, 0.2, 0},
-		},
-	}); err != nil {
-		panic(err)
-	}
-
-	whole, err := chunk.Whole("doc-boat", fts.DefaultField, "A cargo boat on the river")
+	encoder, err := semanticencode.New(nil, exampleEmbedder{})
 	if err != nil {
 		panic(err)
 	}
-	if err := search.AddDocument(ctx, []semantic.ChunkVector{{Ref: whole.Ref, Vector: []float32{0, 1, 0}}}); err != nil {
+	if err := search.AddDocument(ctx, encoder, semantic.Document{ID: "doc-hotel", Fields: map[string]string{"body": "hotel"}}); err != nil {
+		panic(err)
+	}
+	if err := search.AddDocument(ctx, encoder, semantic.Document{ID: "doc-boat", Fields: map[string]string{"body": "boat"}}); err != nil {
+		panic(err)
+	}
+	if err := search.Flush(ctx); err != nil {
 		panic(err)
 	}
 
-	result, err := search.SearchDocuments(ctx, []float32{1, 0.1, 0}, 2)
+	result, err := search.SearchDocuments(ctx, encoder, semantic.Document{ID: "query", Fields: map[string]string{"body": "hotel"}}, 2)
 	if err != nil {
 		panic(err)
 	}
 	for _, hit := range result.Hits {
 		fmt.Printf("doc=%s distance=%.4f best_chunk=%s\n", hit.DocID, hit.Distance, hit.Chunks[0].Ref.ID)
 	}
+}
+
+type exampleEmbedder struct{}
+
+func (exampleEmbedder) Embed(_ context.Context, chunks []chunk.Chunk) ([][]float32, error) {
+	result := make([][]float32, len(chunks))
+	for i, item := range chunks {
+		if item.Text == "boat" {
+			result[i] = []float32{0, 1, 0}
+		} else {
+			result[i] = []float32{1, 0, 0}
+		}
+	}
+	return result, nil
 }

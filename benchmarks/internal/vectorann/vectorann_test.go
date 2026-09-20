@@ -277,7 +277,7 @@ func TestShuffledBuildPreservesOriginalOrdinals(t *testing.T) {
 		t.Fatalf("build path = %q, want %q", path, BuildPathBuilder)
 	}
 	for ordinal, want := range dataset.Vectors {
-		got, ok := reader.Vector(vector.Ordinal(ordinal))
+		got, ok := readPreparedVector(reader.VectorSource(), vector.Ordinal(ordinal))
 		if !ok || !slices.Equal(got, want) {
 			t.Fatalf("ordinal %d changed identity: got %v want %v", ordinal, got, want)
 		}

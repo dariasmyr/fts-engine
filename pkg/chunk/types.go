@@ -20,8 +20,12 @@ var (
 	ErrInvalidUTF8    = errors.New("chunk: field value must be valid UTF-8")
 )
 
+// ID identifies a chunk within its source document.
 type ID string
 
+// Ref identifies the source location and document ownership of a chunk. It is
+// metadata associated with an embedding, not the identity of the vector index
+// row itself.
 type Ref struct {
 	ID        ID
 	DocID     fts.DocID

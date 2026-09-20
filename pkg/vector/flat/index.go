@@ -157,7 +157,7 @@ func (idx *Index) Metric() vector.Metric { return idx.space.Metric() }
 func (idx *Index) lenLocked() int { return len(idx.values) / idx.space.Dimensions() }
 
 // Freeze copies the current matrix into an immutable concurrent reader.
-func (idx *Index) Freeze() *Reader {
+func (idx *Index) Freeze() *Searcher {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	return newReader(idx.space, idx.maxK, append([]float32(nil), idx.values...))
@@ -165,7 +165,7 @@ func (idx *Index) Freeze() *Reader {
 
 // FreezeCompact returns an immutable reader containing only rows allowed by
 // filter. Prepared components are copied once and are not normalized again.
-func (idx *Index) FreezeCompact(ctx context.Context, filter vector.ResultFilter) (*Reader, error) {
+func (idx *Index) FreezeCompact(ctx context.Context, filter vector.ResultFilter) (*Searcher, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	values, err := compactPrepared(ctx, idx.space.Dimensions(), idx.values, filter)

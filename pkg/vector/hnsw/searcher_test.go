@@ -22,6 +22,17 @@ func readerTestSearchConfig() SearchConfig {
 	}
 }
 
+func readPreparedVector(source vector.PreparedVectorSource, ordinal vector.Ordinal) ([]float32, bool) {
+	if source == nil || uint64(ordinal) >= uint64(source.Len()) {
+		return nil, false
+	}
+	value := make([]float32, source.Dimensions())
+	if err := source.ReadVectorInto(context.Background(), ordinal, value); err != nil {
+		return nil, false
+	}
+	return value, true
+}
+
 func readerTestBuildInfo() BuildInfo {
 	return BuildInfo{
 		BuildVersion:          BuildVersion,
@@ -61,9 +72,9 @@ func readerTestGraph() graphData {
 	}
 }
 
-func newReaderForTest(t *testing.T, space vector.Space, graph graphData) *Reader {
+func newReaderForTest(t *testing.T, space vector.Space, graph graphData) *Searcher {
 	t.Helper()
-	reader, err := newReaderFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), graph)
+	reader, err := newSearcherFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), graph)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,9 +108,9 @@ func TestSearchConfigValidation(t *testing.T) {
 	}
 
 	space := readerTestSpace(t, 1, vector.MetricL2Squared)
-	_, err := newReaderFromGraph(space, SearchConfig{}, readerTestBuildInfo(), graphData{})
+	_, err := newSearcherFromGraph(space, SearchConfig{}, readerTestBuildInfo(), graphData{})
 	if !errors.Is(err, ErrInvalidSearchConfig) {
-		t.Fatalf("newReaderFromGraph invalid search config error = %v", err)
+		t.Fatalf("newSearcherFromGraph invalid search config error = %v", err)
 	}
 }
 
@@ -118,7 +129,7 @@ func TestReaderEmptyAndSingleton(t *testing.T) {
 	if _, ok := empty.Neighbors(0, 0); ok {
 		t.Fatal("empty reader has adjacency for node 0")
 	}
-	if _, ok := empty.Vector(0); ok {
+	if _, ok := readPreparedVector(empty.VectorSource(), 0); ok {
 		t.Fatal("empty reader has vector 0")
 	}
 	if got := empty.GraphStats(); !reflect.DeepEqual(got, GraphStats{MaxLevel: -1}) {
@@ -160,19 +171,19 @@ func TestReaderEmptyAndSingleton(t *testing.T) {
 func TestReaderExplicitLevelsMembershipPackingAndMapping(t *testing.T) {
 	reader := newReaderForTest(t, readerTestSpace(t, 2, vector.MetricL2Squared), readerTestGraph())
 
-	if got, want := reader.level0Offsets, []uint32{0, 2, 3, 5, 5}; !slices.Equal(got, want) {
+	if got, want := reader.topology.level0Offsets, []uint32{0, 2, 3, 5, 5}; !slices.Equal(got, want) {
 		t.Fatalf("level0 offsets = %v, want %v", got, want)
 	}
-	if got, want := reader.level0Neighbors, []NodeOrdinal{1, 2, 0, 0, 3}; !slices.Equal(got, want) {
+	if got, want := reader.topology.level0Neighbors, []NodeOrdinal{1, 2, 0, 0, 3}; !slices.Equal(got, want) {
 		t.Fatalf("level0 neighbors = %v, want %v", got, want)
 	}
-	if got, want := reader.upperNodeOffsets, []uint32{0, 2, 2, 3, 3}; !slices.Equal(got, want) {
+	if got, want := reader.topology.upperNodeOffsets, []uint32{0, 2, 2, 3, 3}; !slices.Equal(got, want) {
 		t.Fatalf("upper node offsets = %v, want %v", got, want)
 	}
-	if got, want := reader.upperLinkOffsets, []uint32{0, 1, 1, 2}; !slices.Equal(got, want) {
+	if got, want := reader.topology.upperLinkOffsets, []uint32{0, 1, 1, 2}; !slices.Equal(got, want) {
 		t.Fatalf("upper link offsets = %v, want %v", got, want)
 	}
-	if got, want := reader.upperNeighbors, []NodeOrdinal{2, 0}; !slices.Equal(got, want) {
+	if got, want := reader.topology.upperNeighbors, []NodeOrdinal{2, 0}; !slices.Equal(got, want) {
 		t.Fatalf("upper neighbors = %v, want %v", got, want)
 	}
 
@@ -209,11 +220,11 @@ func TestReaderExplicitLevelsMembershipPackingAndMapping(t *testing.T) {
 		}
 	}
 
-	if got, want := reader.nodeToVector, []vector.Ordinal{2, 0, 3, 1}; !slices.Equal(got, want) {
+	if got, want := reader.topology.nodeToVector, []vector.Ordinal{2, 0, 3, 1}; !slices.Equal(got, want) {
 		t.Fatalf("node mapping = %v, want %v", got, want)
 	}
 	for ordinal, want := range [][]float32{{0, 0}, {1, 0}, {2, 0}, {3, 0}} {
-		got, ok := reader.Vector(vector.Ordinal(ordinal))
+		got, ok := readPreparedVector(reader.VectorSource(), vector.Ordinal(ordinal))
 		if !ok || !slices.Equal(got, want) {
 			t.Errorf("Vector(%d) = (%v, %v), want (%v, true)", ordinal, got, ok, want)
 		}
@@ -286,7 +297,7 @@ func TestReaderRejectsInvalidGraphData(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := newReaderFromGraph(test.space, validSearch, test.info, test.graph)
+			_, err := newSearcherFromGraph(test.space, validSearch, test.info, test.graph)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("error = %v, want %v", err, test.want)
 			}
@@ -300,16 +311,16 @@ func TestReaderReturnsImmutableCopies(t *testing.T) {
 
 	graph.values[0] = 99
 	graph.nodes[0].links[0][0] = 3
-	if got, _ := reader.Vector(0); !slices.Equal(got, []float32{0, 0}) {
+	if got, _ := readPreparedVector(reader.VectorSource(), 0); !slices.Equal(got, []float32{0, 0}) {
 		t.Fatalf("reader retained input values: %v", got)
 	}
 	if got, _ := reader.Neighbors(0, 0); !slices.Equal(got, []NodeOrdinal{1, 2}) {
 		t.Fatalf("reader retained input links: %v", got)
 	}
 
-	value, _ := reader.Vector(0)
+	value, _ := readPreparedVector(reader.VectorSource(), 0)
 	value[0] = 77
-	valueAgain, _ := reader.Vector(0)
+	valueAgain, _ := readPreparedVector(reader.VectorSource(), 0)
 	if !slices.Equal(valueAgain, []float32{0, 0}) {
 		t.Fatalf("Vector returned mutable storage: %v", valueAgain)
 	}
@@ -335,14 +346,14 @@ func TestNewReaderFromGraphRetainsPreparedSource(t *testing.T) {
 		metric:        vector.MetricL2Squared,
 		normalization: vector.NormalizationNone,
 	}
-	reader, err := newReaderFromGraph(readerTestSpace(t, 2, vector.MetricL2Squared), readerTestSearchConfig(), readerTestBuildInfo(), readerTestGraph(), source)
+	reader, err := newSearcherFromGraph(readerTestSpace(t, 2, vector.MetricL2Squared), readerTestSearchConfig(), readerTestBuildInfo(), readerTestGraph(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	source.reads = 0
 
-	if _, ok := reader.Vector(1); !ok {
-		t.Fatal("reader.Vector(1) failed")
+	if _, ok := readPreparedVector(reader.VectorSource(), 1); !ok {
+		t.Fatal("reader.VectorSource row 1 failed")
 	}
 	if source.reads != 1 {
 		t.Fatalf("reader did not retain prepared source, reads = %d", source.reads)
