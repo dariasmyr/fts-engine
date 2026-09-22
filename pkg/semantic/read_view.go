@@ -21,7 +21,7 @@ type ReadView struct {
 	maxK                    int
 	maxCandidates           int
 	maxChunksPerDocumentHit int
-	space                   vector.Space
+	vectorSpace             vector.Space
 }
 
 // Generation returns the publication version represented by the view.
@@ -92,7 +92,7 @@ func (v *ReadView) SearchDocumentsWithOptions(ctx context.Context, encoder Encod
 	merged := make(map[fts.DocID]DocumentHit)
 	var result DocumentSearchResult
 	for _, item := range queries {
-		partial, err := searchReadViewDocuments(ctx, v, v.space, maxResults, maxCandidates, maxChunks, item.Vector, k, options)
+		partial, err := searchReadViewDocuments(ctx, v, v.vectorSpace, maxResults, maxCandidates, maxChunks, item.Vector, k, options)
 		if err != nil {
 			return DocumentSearchResult{}, err
 		}
@@ -161,8 +161,8 @@ func newReadView(generation uint64, segments []segmentView) *ReadView {
 	for _, segment := range view.segments {
 		if segment.segment != nil {
 			view.maxK = max(view.maxK, segment.segment.MaxK())
-			if view.space.Dimensions() == 0 {
-				view.space, _ = vector.NewSpace(segment.segment.Dimensions(), segment.segment.Metric())
+			if view.vectorSpace.Dimensions() == 0 {
+				view.vectorSpace, _ = vector.NewSpace(segment.segment.Dimensions(), segment.segment.Metric())
 			}
 		}
 	}

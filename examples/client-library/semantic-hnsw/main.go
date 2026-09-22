@@ -11,15 +11,13 @@ import (
 )
 
 func main() {
+	embedding, err := semantic.NewEmbeddingDescriptor("example-provider", "example-embedding", "v1", "example-embedding-v1", semantic.VectorSpec{Dimensions: 3, Metric: vector.MetricCosine, VectorFormatVersion: 1})
+	if err != nil {
+		panic(err)
+	}
 	search, err := semantic.New(semantic.Config{
-		Space: semantic.SpaceDescriptor{
-			ID:                  "example-embedding-v1",
-			Dimensions:          3,
-			Metric:              vector.MetricCosine,
-			Normalization:       vector.NormalizationUnitLength,
-			VectorFormatVersion: 1,
-		},
-		Chunking:                semantic.ChunkingDescriptor{ID: "caller-chunks-v1"},
+		Embedding:               embedding,
+		Chunking:                semantic.ChunkingDescriptor{ID: "caller-chunks-v1", Version: 1, Fingerprint: "caller-chunks-fp-v1"},
 		MaxVectors:              1_000,
 		MaxChunksPerDocument:    32,
 		MaxK:                    10,
@@ -32,7 +30,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	encoder, err := semanticencode.New(nil, exampleEmbedder{})
+	encoder, err := semanticencode.New(nil, exampleEmbedder{}, search.Embedding(), search.Chunking())
 	if err != nil {
 		panic(err)
 	}

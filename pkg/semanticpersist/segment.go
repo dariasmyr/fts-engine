@@ -119,11 +119,11 @@ func SaveSegment(ctx context.Context, paths SegmentPaths, sealed SealedSegment, 
 // OpenSealedSegment opens one immutable ANN component without creating a
 // mutable service or acquiring a generation lock. The returned payload is
 // independent of a mutable service or generation publication.
-func OpenSealedSegment(paths SegmentPaths, limits Limits) (*LoadedSealedSegment, error) {
+func OpenSealedSegment(paths SegmentPaths, options OpenOptions) (*LoadedSealedSegment, error) {
 	if paths.Dir == "" {
 		return nil, ErrCorrupt
 	}
-	limits = normalizeLimits(limits)
+	limits := normalizeLimits(options.Limits)
 	if err := validateLimits(limits); err != nil {
 		return nil, err
 	}
@@ -177,22 +177,38 @@ func OpenSealedSegment(paths SegmentPaths, limits Limits) (*LoadedSealedSegment,
 	if graphMetadata.Size != value.Graph.Size || graphMetadata.SHA256 != value.Graph.SHA256 {
 		return nil, ErrCorrupt
 	}
-	segment, err := semantic.NewSegment(state.ComponentID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, searcher, state.Rows)
+	segment, err := semantic.NewSegment(state.ComponentID, semantic.SegmentMetadata{Embedding: state.Embedding, Chunking: state.Chunking}, searcher, state.Rows)
 	if err != nil {
 		return nil, err
 	}
 	sealed := SealedSegment{
-		Segment: segment, Space: state.Space, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
+		Segment: segment, Embedding: state.Embedding, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
 		MaxK: state.MaxK, MaxChunkCandidates: state.MaxChunkCandidates,
 		MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
 	}
 	if err := validateSealedSegment(sealed, limits); err != nil {
 		return nil, err
 	}
+	if err := validateExpectedDescriptors(sealed, options.ExpectedDescriptors); err != nil {
+		return nil, err
+	}
 	return &LoadedSealedSegment{Sealed: sealed}, nil
 }
 
 // OpenSegment is the name-level alias for OpenSealedSegment.
-func OpenSegment(paths SegmentPaths, limits Limits) (*LoadedSealedSegment, error) {
-	return OpenSealedSegment(paths, limits)
+func OpenSegment(paths SegmentPaths, options OpenOptions) (*LoadedSealedSegment, error) {
+	return OpenSealedSegment(paths, options)
+}
+
+func validateExpectedDescriptors(sealed SealedSegment, expected semantic.PipelineDescriptor) error {
+	if expected == (semantic.PipelineDescriptor{}) {
+		return nil
+	}
+	if sealed.Embedding != expected.Embedding {
+		return ErrEmbeddingMismatch
+	}
+	if sealed.Chunking != expected.Chunking {
+		return ErrChunkingMismatch
+	}
+	return nil
 }

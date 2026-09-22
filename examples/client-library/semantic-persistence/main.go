@@ -14,23 +14,18 @@ import (
 
 func main() {
 	ctx := context.Background()
-	encoder, err := semanticencode.New(nil, persistenceEmbedder{})
-	must(err)
 	root, err := os.MkdirTemp("", "fts-semantic-")
 	if err != nil {
 		panic(err)
 	}
 	defer os.RemoveAll(root)
 
+	embedding, err := semantic.NewEmbeddingDescriptor("example-provider", "example-embedding", "v1", "example-embedding-v1", semantic.VectorSpec{Dimensions: 2, Metric: vector.MetricL2Squared, VectorFormatVersion: 1})
+	must(err)
+	chunking := semantic.ChunkingDescriptor{ID: "example-chunks-v1", Version: 1, Fingerprint: "example-chunks-fp-v1"}
 	service, err := semantic.New(semantic.Config{
-		Space: semantic.SpaceDescriptor{
-			ID:                  "example-embedding-v1",
-			Dimensions:          2,
-			Metric:              vector.MetricL2Squared,
-			Normalization:       vector.NormalizationNone,
-			VectorFormatVersion: 1,
-		},
-		Chunking:                semantic.ChunkingDescriptor{ID: "example-chunks-v1"},
+		Embedding:               embedding,
+		Chunking:                chunking,
 		MaxVectors:              100,
 		MaxChunksPerDocument:    10,
 		MaxK:                    10,
@@ -40,6 +35,8 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	encoder, err := semanticencode.New(nil, persistenceEmbedder{}, embedding, chunking)
+	must(err)
 
 	// Embeddings are produced by the caller or an external model.
 	must(service.AddDocument(ctx, encoder, semantic.Document{ID: "doc-a", Fields: map[string]string{"body": "a-v1"}}))
@@ -53,7 +50,7 @@ func main() {
 	segment := view.Segments()[0]
 	stats := service.Statistics()
 	sealed := semanticpersist.SealedSegment{
-		Segment: segment, Space: service.Space(), Chunking: service.Chunking(),
+		Segment: segment, Embedding: service.Embedding(), Chunking: service.Chunking(),
 		MaxAllocatedVectorID: stats.MaxAllocatedVectorID, MaxK: 10,
 		MaxChunkCandidates: 100, MaxChunksPerDocumentHit: 3,
 	}
@@ -63,7 +60,7 @@ func main() {
 	})
 	must(err)
 
-	loaded, err := semanticpersist.Open(root, semanticpersist.DefaultLimits())
+	loaded, err := semanticpersist.Open(root, semanticpersist.OpenOptions{Limits: semanticpersist.DefaultLimits(), ExpectedDescriptors: semantic.PipelineDescriptor{Embedding: embedding, Chunking: chunking}})
 	must(err)
 	defer loaded.Close()
 	loadedView, err := semantic.NewReadView(generation.ID, []*semantic.Segment{loaded.Sealed.Segment})

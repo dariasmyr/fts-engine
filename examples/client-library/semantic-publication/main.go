@@ -13,23 +13,22 @@ import (
 // This example shows that mutations become searchable only after Flush.
 func main() {
 	ctx := context.Background()
-	encoder, err := semanticencode.New(nil, publicationEmbedder{})
-	must(err)
+	embedding, err := semantic.NewEmbeddingDescriptor("example-provider", "publication-example", "v1", "publication-embedding-v1", semantic.VectorSpec{Dimensions: 2, Metric: vector.MetricL2Squared, VectorFormatVersion: 1})
+	if err != nil {
+		panic(err)
+	}
 	service, err := semantic.New(semantic.Config{
-		Space: semantic.SpaceDescriptor{
-			ID:                  "publication-example-v1",
-			Dimensions:          2,
-			Metric:              vector.MetricL2Squared,
-			Normalization:       vector.NormalizationNone,
-			VectorFormatVersion: 1,
-		},
-		Chunking:                semantic.ChunkingDescriptor{ID: "publication-example-v1"},
+		Embedding:               embedding,
+		Chunking:                semantic.ChunkingDescriptor{ID: "publication-example-v1", Version: 1, Fingerprint: "publication-chunks-fp-v1"},
 		MaxVectors:              100,
 		MaxChunksPerDocument:    10,
 		MaxK:                    10,
 		MaxChunkCandidates:      100,
 		MaxChunksPerDocumentHit: 3,
 	})
+	must(err)
+	embedding, chunking := service.Embedding(), service.Chunking()
+	encoder, err := semanticencode.New(nil, publicationEmbedder{}, embedding, chunking)
 	must(err)
 
 	// Expected: no hits. The initial published index is empty.

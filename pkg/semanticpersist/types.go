@@ -21,6 +21,8 @@ var (
 	ErrIndeterminate      = errors.New("semanticpersist: publication outcome is indeterminate")
 	ErrStoreLocked        = errors.New("semanticpersist: store is locked by another writer")
 	ErrStaleGeneration    = errors.New("semanticpersist: expected generation does not match CURRENT")
+	ErrEmbeddingMismatch  = errors.New("semanticpersist: embedding descriptor mismatch")
+	ErrChunkingMismatch   = errors.New("semanticpersist: chunking descriptor mismatch")
 )
 
 type DurabilityMode uint8
@@ -84,6 +86,11 @@ type Options struct {
 	ExpectedGeneration uint64
 }
 
+type OpenOptions struct {
+	Limits              Limits
+	ExpectedDescriptors semantic.PipelineDescriptor
+}
+
 type Generation struct {
 	ID       uint64
 	ObjectID string
@@ -94,7 +101,7 @@ type Generation struct {
 // publication metadata.
 type SealedSegment struct {
 	Segment                 *semantic.Segment
-	Space                   semantic.SpaceDescriptor
+	Embedding               semantic.EmbeddingDescriptor
 	Chunking                semantic.ChunkingDescriptor
 	MaxAllocatedVectorID    semantic.VectorID
 	MaxK                    int
@@ -155,7 +162,7 @@ type currentRecord struct {
 }
 
 type decodedState struct {
-	Space                   semantic.SpaceDescriptor
+	Embedding               semantic.EmbeddingDescriptor
 	Chunking                semantic.ChunkingDescriptor
 	MaxAllocatedVectorID    semantic.VectorID
 	ComponentID             semantic.ComponentID

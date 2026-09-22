@@ -127,8 +127,8 @@ func TestSemanticFormatGoldenHashes(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateHash := sha256.Sum256(state)
-	if got, want := hex.EncodeToString(stateHash[:]), "f1f8fc25578d98fb0d13dab30f5d9a32d1d6a65ba41db0faf820b024f1cb782f"; got != want {
-		t.Fatalf("SSTA v4 SHA-256 = %s, want %s", got, want)
+	if got, want := hex.EncodeToString(stateHash[:]), "42377836ba923462ecefa3852677882b4ce956fadbb32f49a95270d9bf07f2b1"; got != want {
+		t.Fatalf("SSTA v6 SHA-256 = %s, want %s", got, want)
 	}
 }
 

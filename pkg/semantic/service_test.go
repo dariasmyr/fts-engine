@@ -15,15 +15,13 @@ import (
 )
 
 func testConfig(maxK, maxCandidates int) Config {
+	embedding, err := NewEmbeddingDescriptor("test-provider", "test-model", "v1", "test-embedding-v1", VectorSpec{Dimensions: 2, Metric: vector.MetricL2Squared, VectorFormatVersion: 1})
+	if err != nil {
+		panic(err)
+	}
 	return Config{
-		Space: SpaceDescriptor{
-			ID:                  "test-space-v1",
-			Dimensions:          2,
-			Metric:              vector.MetricL2Squared,
-			Normalization:       vector.NormalizationNone,
-			VectorFormatVersion: 1,
-		},
-		Chunking:                ChunkingDescriptor{ID: "test-chunks-v1"},
+		Embedding:               embedding,
+		Chunking:                ChunkingDescriptor{ID: "test-chunks-v1", Version: 1, Fingerprint: "test-chunks-fp-v1"},
 		MaxVectors:              200,
 		MaxChunksPerDocument:    20,
 		MaxK:                    maxK,

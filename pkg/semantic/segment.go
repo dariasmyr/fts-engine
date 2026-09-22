@@ -11,8 +11,8 @@ import (
 
 // SegmentMetadata describes the embedding and chunking contracts of a segment.
 type SegmentMetadata struct {
-	Space    SpaceDescriptor
-	Chunking ChunkingDescriptor
+	Embedding EmbeddingDescriptor
+	Chunking  ChunkingDescriptor
 }
 
 // SegmentKind identifies the persisted semantic segment format.
@@ -208,13 +208,13 @@ func (s *Segment) validateContents() error {
 		return ErrInvalidSegment
 	}
 	vectors := s.searcher.VectorSource()
-	space, err := vector.NewSpace(s.metadata.Space.Dimensions, s.metadata.Space.Metric)
-	if err != nil || space.Normalization() != s.metadata.Space.Normalization || s.metadata.Space.ID == "" || s.metadata.Chunking.ID == "" {
+	if !s.metadata.Embedding.IsValid() || !s.metadata.Chunking.IsValid() {
 		return ErrInvalidSegment
 	}
-	if s.component == 0 || len(s.rows) != vectors.Len() || s.searcher.Len() != vectors.Len() ||
-		vectors.Dimensions() != s.metadata.Space.Dimensions || vectors.Metric() != s.metadata.Space.Metric ||
-		vectors.Normalization() != s.metadata.Space.Normalization {
+	vectorSpace, err := s.metadata.Embedding.VectorSpace()
+	if err != nil || s.component == 0 || len(s.rows) != vectors.Len() || s.searcher.Len() != vectors.Len() ||
+		vectors.Dimensions() != vectorSpace.Dimensions() || vectors.Metric() != vectorSpace.Metric() ||
+		vectors.Normalization() != vectorSpace.Normalization() {
 		return ErrInvalidSegment
 	}
 	return nil

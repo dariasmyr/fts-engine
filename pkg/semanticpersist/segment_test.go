@@ -14,7 +14,7 @@ func TestStandaloneSegmentRoundTrip(t *testing.T) {
 	if err := SaveSegment(context.Background(), path, sealed, Options{}); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := OpenSegment(path, Limits{})
+	loaded, err := OpenSegment(path, OpenOptions{Limits: Limits{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestStandaloneSegmentRoundTrip(t *testing.T) {
 	if !equalDocumentHits(got.Hits, wantDocuments.Hits) {
 		t.Fatalf("standalone result = %+v, want %+v", got.Hits, wantDocuments.Hits)
 	}
-	if _, err := OpenSegment(SegmentPaths{Dir: path.Dir + "/missing"}, Limits{}); err == nil {
+	if _, err := OpenSegment(SegmentPaths{Dir: path.Dir + "/missing"}, OpenOptions{Limits: Limits{}}); err == nil {
 		t.Fatal("missing standalone segment accepted")
 	}
 }
@@ -38,7 +38,7 @@ func TestSealedSegmentAPIIsIndependentFromLegacyCallerContract(t *testing.T) {
 	fixture, _, _ := persistenceFixture(t, true)
 	sealed := SealedSegment{
 		Segment:                 fixture.Segment,
-		Space:                   fixture.Space,
+		Embedding:               fixture.Embedding,
 		Chunking:                fixture.Chunking,
 		MaxAllocatedVectorID:    fixture.MaxAllocatedVectorID,
 		MaxK:                    fixture.MaxK,
@@ -49,7 +49,7 @@ func TestSealedSegmentAPIIsIndependentFromLegacyCallerContract(t *testing.T) {
 	if err := SaveSealedSegment(context.Background(), path, sealed, Options{}); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := OpenSealedSegment(path, Limits{})
+	loaded, err := OpenSealedSegment(path, OpenOptions{Limits: Limits{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestSealedSegmentAPIIsIndependentFromLegacyCallerContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opened, err := Open(root, Limits{})
+	opened, err := Open(root, OpenOptions{Limits: Limits{}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -311,8 +311,8 @@ func Publish(ctx context.Context, root string, generationID uint64, sealed Seale
 	return PublishSealedSegment(ctx, root, generationID, sealed, options)
 }
 
-func Open(root string, limits Limits) (*Loaded, error) {
-	limits = normalizeLimits(limits)
+func Open(root string, options OpenOptions) (*Loaded, error) {
+	limits := normalizeLimits(options.Limits)
 	if err := validateLimits(limits); err != nil {
 		return nil, err
 	}
@@ -326,7 +326,7 @@ func Open(root string, limits Limits) (*Loaded, error) {
 	if err != nil {
 		return nil, err
 	}
-	loaded, err := openCurrent(paths, limits)
+	loaded, err := openCurrent(paths, limits, options.ExpectedDescriptors)
 	if err != nil {
 		_ = storeLock.Close()
 		return nil, err
@@ -335,7 +335,7 @@ func Open(root string, limits Limits) (*Loaded, error) {
 	return loaded, nil
 }
 
-func openCurrent(paths storePaths, limits Limits) (*Loaded, error) {
+func openCurrent(paths storePaths, limits Limits, expected semantic.PipelineDescriptor) (*Loaded, error) {
 	// CURRENT is authoritative. Normal open never scans generation directories or
 	// promotes a newer orphan automatically.
 	currentData, err := readRegularFile(filepath.Join(paths.root, currentFileName), limits.MaxFileBytes)
@@ -349,7 +349,7 @@ func openCurrent(paths storePaths, limits Limits) (*Loaded, error) {
 	if err != nil {
 		return nil, err
 	}
-	return openGeneration(paths, current.GenerationID, current.ManifestHash, true, limits)
+	return openGeneration(paths, current.GenerationID, current.ManifestHash, true, limits, expected)
 }
 
 // RepairCurrent explicitly validates and selects generationID. Normal Open
@@ -484,7 +484,7 @@ func validateDirectory(path string) error {
 	return nil
 }
 
-func openGeneration(paths storePaths, generationID uint64, expectedManifestHash [sha256.Size]byte, checkHash bool, limits Limits) (*Loaded, error) {
+func openGeneration(paths storePaths, generationID uint64, expectedManifestHash [sha256.Size]byte, checkHash bool, limits Limits, expected semantic.PipelineDescriptor) (*Loaded, error) {
 	generationPath := filepath.Join(paths.generations, generationName(generationID))
 	if err := validateDirectory(generationPath); err != nil {
 		return nil, err
@@ -571,7 +571,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		if graphMetadata.Size != manifestValue.Graph.Size || graphMetadata.SHA256 != manifestValue.Graph.SHA256 {
 			return nil, ErrCorrupt
 		}
-		segment, err = semantic.NewSegment(state.ComponentID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, searcher, state.Rows)
+		segment, err = semantic.NewSegment(state.ComponentID, semantic.SegmentMetadata{Embedding: state.Embedding, Chunking: state.Chunking}, searcher, state.Rows)
 	default:
 		return nil, ErrCorrupt
 	}
@@ -582,11 +582,14 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		return nil, ErrCorrupt
 	}
 	sealed := SealedSegment{
-		Segment: segment, Space: state.Space, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
+		Segment: segment, Embedding: state.Embedding, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
 		MaxK: state.MaxK, MaxChunkCandidates: state.MaxChunkCandidates,
 		MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
 	}
 	if err := validateSealedSegment(sealed, limits); err != nil {
+		return nil, err
+	}
+	if err := validateExpectedDescriptors(sealed, expected); err != nil {
 		return nil, err
 	}
 	return &Loaded{
@@ -605,7 +608,7 @@ func openGenerationForRepair(paths storePaths, generationID uint64, limits Limit
 		return nil, [sha256.Size]byte{}, err
 	}
 	hash := sha256.Sum256(manifestData)
-	loaded, err := openGeneration(paths, generationID, hash, true, limits)
+	loaded, err := openGeneration(paths, generationID, hash, true, limits, semantic.PipelineDescriptor{})
 	return loaded, hash, err
 }
 
@@ -679,7 +682,7 @@ func validateSealedSegment(sealed SealedSegment, limits Limits) error {
 	}
 	validString := func(value string) bool { return len(value) <= limits.MaxStringBytes }
 	metadata := sealed.Segment.Metadata()
-	if !validString(metadata.Space.ID) || !validString(metadata.Space.ModelVersion) || !validString(metadata.Space.Fingerprint) ||
+	if !validString(metadata.Embedding.ProviderID) || !validString(metadata.Embedding.ModelID) || !validString(metadata.Embedding.ModelVersion) || !validString(metadata.Embedding.PipelineFingerprint) ||
 		!validString(metadata.Chunking.ID) || !validString(metadata.Chunking.Fingerprint) {
 		return ErrLimitExceeded
 	}
@@ -961,7 +964,7 @@ func ensureContained(root, path string) error {
 func generationName(id uint64) string { return fmt.Sprintf("%020d", id) }
 
 func validatedCurrentGeneration(paths storePaths, limits Limits) (uint64, error) {
-	loaded, err := openCurrent(paths, limits)
+	loaded, err := openCurrent(paths, limits, semantic.PipelineDescriptor{})
 	if errors.Is(err, ErrCurrentMissing) {
 		return 0, nil
 	}

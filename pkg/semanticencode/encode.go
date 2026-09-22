@@ -40,16 +40,20 @@ type EmbeddingProvider interface {
 // DocumentEncoder owns document-level chunking and embedding orchestration.
 // The resulting vectors can be passed to semantic.Service or another sink.
 type DocumentEncoder struct {
-	chunker  Chunker
-	embedder EmbeddingProvider
+	chunker     Chunker
+	embedder    EmbeddingProvider
+	descriptors semantic.PipelineDescriptor
 }
 
-func New(chunker Chunker, embedder EmbeddingProvider) (*DocumentEncoder, error) {
+func New(chunker Chunker, embedder EmbeddingProvider, embedding semantic.EmbeddingDescriptor, chunking semantic.ChunkingDescriptor) (*DocumentEncoder, error) {
 	if embedder == nil {
 		return nil, ErrInvalidConfig
 	}
-	return &DocumentEncoder{chunker: chunker, embedder: embedder}, nil
+	return &DocumentEncoder{chunker: chunker, embedder: embedder, descriptors: semantic.PipelineDescriptor{Embedding: embedding, Chunking: chunking}}, nil
 }
+
+// Descriptor returns the immutable model and chunking identity used by Encode.
+func (e *DocumentEncoder) Descriptor() semantic.PipelineDescriptor { return e.descriptors }
 
 // Encode chunks and embeds a complete document and returns prepared vectors
 // for the semantic service's internal encoded stage.

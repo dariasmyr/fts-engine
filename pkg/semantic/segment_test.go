@@ -53,12 +53,12 @@ func TestSegmentValidationRejectsDuplicateRows(t *testing.T) {
 func testImmutableSegment(t *testing.T) *Segment {
 	t.Helper()
 	config := testConfig(10, 100)
-	space, err := vector.NewSpace(config.Space.Dimensions, config.Space.Metric)
+	vectorSpace, err := config.Embedding.VectorSpace()
 	if err != nil {
 		t.Fatal(err)
 	}
 	values := [][]float32{{0, 0}, {1, 0}, {2, 0}}
-	source, err := vector.NewMemorySource(space, values)
+	source, err := vector.NewMemorySource(vectorSpace, values)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func testImmutableSegment(t *testing.T) *Segment {
 		{VectorID: 2, Chunk: testChunk("doc-01", "chunk-01", 0, values[1]).Ref},
 		{VectorID: 3, Chunk: testChunk("doc-02", "chunk-02", 0, values[2]).Ref},
 	}
-	segment, err := BuildSegment(context.Background(), MutableHeadID, SegmentMetadata{Space: config.Space, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
+	segment, err := BuildSegment(context.Background(), MutableHeadID, SegmentMetadata{Embedding: config.Embedding, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
 			Dimensions: 2, Metric: vector.MetricL2Squared, MaxVectors: 3,
 			MaxVectorBytes: 3 * 2 * 4, MaxNeighbors: 4, EfConstruction: 16, Seed: 11,

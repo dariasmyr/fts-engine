@@ -20,6 +20,8 @@ var (
 	ErrCapacityExceeded     = errors.New("semantic: vector capacity exceeded")
 	ErrInternalState        = errors.New("semantic: inconsistent internal state")
 	ErrInvalidSegment       = errors.New("semantic: invalid segment")
+	ErrEmbeddingMismatch    = errors.New("semantic: embedding descriptor mismatch")
+	ErrChunkingMismatch     = errors.New("semantic: chunking descriptor mismatch")
 	ErrInvalidSearchOptions = errors.New("semantic: invalid search options")
 )
 
@@ -33,14 +35,43 @@ type ComponentID uint64
 
 const MutableHeadID ComponentID = 1
 
-type SpaceDescriptor struct {
-	ID                  string
-	ModelVersion        string
-	Fingerprint         string
+type VectorSpec struct {
 	Dimensions          int
 	Metric              vector.Metric
-	Normalization       vector.Normalization
 	VectorFormatVersion uint32
+}
+
+func (spec VectorSpec) VectorSpace() (vector.Space, error) {
+	return vector.NewSpace(spec.Dimensions, spec.Metric)
+}
+
+type EmbeddingDescriptor struct {
+	ProviderID          string
+	ModelID             string
+	ModelVersion        string
+	PipelineFingerprint string
+	Vector              VectorSpec
+}
+
+func NewEmbeddingDescriptor(providerID, modelID, modelVersion, pipelineFingerprint string, vectorSpec VectorSpec) (EmbeddingDescriptor, error) {
+	if _, err := vectorSpec.VectorSpace(); err != nil {
+		return EmbeddingDescriptor{}, err
+	}
+	if vectorSpec.VectorFormatVersion == 0 {
+		return EmbeddingDescriptor{}, ErrInvalidConfig
+	}
+	return EmbeddingDescriptor{
+		ProviderID: providerID, ModelID: modelID, ModelVersion: modelVersion,
+		PipelineFingerprint: pipelineFingerprint, Vector: vectorSpec,
+	}, nil
+}
+
+func (descriptor EmbeddingDescriptor) VectorSpace() (vector.Space, error) {
+	vectorSpace, err := descriptor.Vector.VectorSpace()
+	if err != nil {
+		return vector.Space{}, err
+	}
+	return vectorSpace, nil
 }
 
 type ChunkingDescriptor struct {
@@ -49,9 +80,33 @@ type ChunkingDescriptor struct {
 	Fingerprint string
 }
 
+type PipelineDescriptor struct {
+	Embedding EmbeddingDescriptor
+	Chunking  ChunkingDescriptor
+}
+
+func (descriptor EmbeddingDescriptor) IsValid() bool {
+	return descriptor.ProviderID != "" && descriptor.ModelID != "" && descriptor.ModelVersion != "" &&
+		descriptor.PipelineFingerprint != "" && descriptor.Vector.Dimensions > 0 && descriptor.Vector.VectorFormatVersion > 0 && descriptor.Vector.Metric.Valid()
+}
+
+func (descriptor ChunkingDescriptor) IsValid() bool {
+	return descriptor.ID != "" && descriptor.Version > 0 && descriptor.Fingerprint != ""
+}
+
+func descriptorsEqual(left, right PipelineDescriptor) (bool, error) {
+	if left.Embedding != right.Embedding {
+		return false, ErrEmbeddingMismatch
+	}
+	if left.Chunking != right.Chunking {
+		return false, ErrChunkingMismatch
+	}
+	return true, nil
+}
+
 type Config struct {
-	Space    SpaceDescriptor
-	Chunking ChunkingDescriptor
+	Embedding EmbeddingDescriptor
+	Chunking  ChunkingDescriptor
 	// MaxVectors limits the number of live vectors accepted by the service.
 	// Replaced and deleted physical rows remain until Compact.
 	MaxVectors              int
@@ -85,6 +140,7 @@ type Document struct {
 // concurrent use.
 type Encoder interface {
 	Encode(context.Context, Document) ([]ChunkVector, error)
+	Descriptor() PipelineDescriptor
 }
 
 type ChunkHit struct {

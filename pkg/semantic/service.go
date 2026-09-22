@@ -31,9 +31,9 @@ type Service struct {
 	mu      sync.RWMutex
 	flushMu sync.Mutex
 
-	config    Config
-	space     vector.Space
-	published *ReadView
+	config      Config
+	vectorSpace vector.Space
+	published   *ReadView
 
 	pendingVectors           []pendingVector
 	pendingVisibilityChanges []livenessChange
@@ -45,12 +45,11 @@ type Service struct {
 }
 
 func New(config Config) (*Service, error) {
-	space, err := vector.NewSpace(config.Space.Dimensions, config.Space.Metric)
+	vectorSpace, err := config.Embedding.VectorSpace()
 	if err != nil {
 		return nil, err
 	}
-	if config.Space.ID == "" || config.Space.VectorFormatVersion == 0 ||
-		config.Space.Normalization != space.Normalization() || config.Chunking.ID == "" ||
+	if !config.Embedding.IsValid() || !config.Chunking.IsValid() ||
 		config.MaxVectors <= 0 || config.MaxChunksPerDocument <= 0 || config.MaxK <= 0 ||
 		config.MaxChunkCandidates < config.MaxK || config.MaxChunkCandidates > config.MaxVectors ||
 		config.MaxChunksPerDocument > config.MaxVectors || config.MaxChunksPerDocumentHit <= 0 ||
@@ -58,14 +57,14 @@ func New(config Config) (*Service, error) {
 		config.InitialVectorCapacity > config.MaxVectors {
 		return nil, ErrInvalidConfig
 	}
-	config.HNSWBuild = normalizeBuildConfig(config.HNSWBuild, config.Space, config.MaxVectors)
+	config.HNSWBuild = normalizeBuildConfig(config.HNSWBuild, config.Embedding, config.MaxVectors)
 	config.HNSWSearch = normalizeSearchConfig(config.HNSWSearch, config.MaxK, config.MaxChunkCandidates, config.MaxVectors)
 	if _, err := hnsw.NewBuilder(config.HNSWBuild, config.HNSWSearch, 0); err != nil {
 		return nil, ErrInvalidConfig
 	}
 	return &Service{
 		config:          config,
-		space:           space,
+		vectorSpace:     vectorSpace,
 		published:       &ReadView{},
 		maxAllocatedID:  config.InitialMaxAllocatedVectorID,
 		nextComponentID: MutableHeadID + 1,
@@ -75,18 +74,18 @@ func New(config Config) (*Service, error) {
 	}, nil
 }
 
-func normalizeBuildConfig(config hnsw.BuildConfig, space SpaceDescriptor, maxVectors int) hnsw.BuildConfig {
+func normalizeBuildConfig(config hnsw.BuildConfig, embedding EmbeddingDescriptor, maxVectors int) hnsw.BuildConfig {
 	if config.Dimensions == 0 {
-		config.Dimensions = space.Dimensions
+		config.Dimensions = embedding.Vector.Dimensions
 	}
 	if config.Metric == 0 {
-		config.Metric = space.Metric
+		config.Metric = embedding.Vector.Metric
 	}
 	if config.MaxVectors == 0 {
 		config.MaxVectors = maxVectors
 	}
 	if config.MaxVectorBytes == 0 {
-		config.MaxVectorBytes = uint64(maxVectors) * uint64(space.Dimensions) * 4
+		config.MaxVectorBytes = uint64(maxVectors) * uint64(embedding.Vector.Dimensions) * 4
 	}
 	if config.MaxNeighbors == 0 {
 		config.MaxNeighbors = 16
@@ -116,14 +115,22 @@ func normalizeSearchConfig(config hnsw.SearchConfig, maxK, maxCandidates, maxVec
 	return config
 }
 
-func (s *Service) Space() SpaceDescriptor { return s.config.Space }
+func (s *Service) Embedding() EmbeddingDescriptor { return s.config.Embedding }
 
 func (s *Service) Chunking() ChunkingDescriptor { return s.config.Chunking }
 
-// AddDocument encodes a document through encoder and queues its vectors.
-func (s *Service) AddDocument(ctx context.Context, encoder Encoder, document Document) error {
+func (s *Service) validateEncoder(encoder Encoder) error {
 	if encoder == nil {
 		return ErrInvalidConfig
+	}
+	_, err := descriptorsEqual(encoder.Descriptor(), PipelineDescriptor{Embedding: s.config.Embedding, Chunking: s.config.Chunking})
+	return err
+}
+
+// AddDocument encodes a document through encoder and queues its vectors.
+func (s *Service) AddDocument(ctx context.Context, encoder Encoder, document Document) error {
+	if err := s.validateEncoder(encoder); err != nil {
+		return err
 	}
 	batch, err := encoder.Encode(ctx, document)
 	if err != nil {
@@ -149,8 +156,8 @@ func (s *Service) addEncodedDocument(ctx context.Context, docID fts.DocID, batch
 
 // ReplaceDocument encodes a document version through encoder and queues it.
 func (s *Service) ReplaceDocument(ctx context.Context, encoder Encoder, document Document) error {
-	if encoder == nil {
-		return ErrInvalidConfig
+	if err := s.validateEncoder(encoder); err != nil {
+		return err
 	}
 	batch, err := encoder.Encode(ctx, document)
 	if err != nil {
@@ -287,18 +294,18 @@ func buildPendingSegment(ctx context.Context, componentID ComponentID, pending [
 	if err != nil {
 		return nil, err
 	}
-	return BuildSegment(ctx, componentID, SegmentMetadata{Space: config.Space, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
+	return BuildSegment(ctx, componentID, SegmentMetadata{Embedding: config.Embedding, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
 		BuildConfig:  withBuildCapacity(config.HNSWBuild, len(rows)),
 		SearchConfig: config.HNSWSearch,
 	})
 }
 
 func newInMemoryVectorSourceFromConfig(config Config, values [][]float32) (*vector.MemorySource, error) {
-	space, err := vector.NewSpace(config.Space.Dimensions, config.Space.Metric)
+	vectorSpace, err := config.Embedding.VectorSpace()
 	if err != nil {
 		return nil, err
 	}
-	return vector.NewMemorySource(space, values)
+	return vector.NewMemorySource(vectorSpace, values)
 }
 
 func publishIndex(base *ReadView, locations map[VectorID]vectorLocation, changes []livenessChange, pending *Segment, pendingComponent ComponentID, documents map[fts.DocID][]VectorID, generation uint64) (*ReadView, map[VectorID]vectorLocation, error) {
@@ -531,7 +538,7 @@ func (s *Service) validateBatch(ctx context.Context, docID fts.DocID, batch []Ch
 		if item.Ref.DocID != docID || item.Ref.ID == "" || item.Ref.Field == "" || item.Ref.StartByte > item.Ref.EndByte {
 			return ErrInvalidBatch
 		}
-		if err := s.space.Validate(item.Vector); err != nil {
+		if err := s.vectorSpace.Validate(item.Vector); err != nil {
 			return err
 		}
 	}

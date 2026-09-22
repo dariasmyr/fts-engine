@@ -25,9 +25,10 @@ func (e *testEmbedder) Embed(_ context.Context, chunks []chunk.Chunk) ([][]float
 
 func testService(t *testing.T) *semantic.Service {
 	t.Helper()
+	embedding, chunking := testDescriptors()
 	service, err := semantic.New(semantic.Config{
-		Space:                   semantic.SpaceDescriptor{ID: "test-space", Dimensions: 2, Metric: vector.MetricL2Squared, VectorFormatVersion: 1},
-		Chunking:                semantic.ChunkingDescriptor{ID: "test-chunks"},
+		Embedding:               embedding,
+		Chunking:                chunking,
 		MaxVectors:              10,
 		MaxChunksPerDocument:    10,
 		MaxK:                    10,
@@ -40,9 +41,18 @@ func testService(t *testing.T) *semantic.Service {
 	return service
 }
 
+func testDescriptors() (semantic.EmbeddingDescriptor, semantic.ChunkingDescriptor) {
+	embedding, err := semantic.NewEmbeddingDescriptor("test-provider", "test-model", "v1", "test-embedding", semantic.VectorSpec{Dimensions: 2, Metric: vector.MetricL2Squared, VectorFormatVersion: 1})
+	if err != nil {
+		panic(err)
+	}
+	return embedding, semantic.ChunkingDescriptor{ID: "test-chunks", Version: 1, Fingerprint: "test-chunks-fp"}
+}
+
 func TestDocumentEncoderWithoutChunkerUsesWholeFields(t *testing.T) {
 	service := testService(t)
-	encoder, err := New(nil, &testEmbedder{})
+	embedding, chunking := testDescriptors()
+	encoder, err := New(nil, &testEmbedder{}, embedding, chunking)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +83,8 @@ func TestDocumentEncoderWithoutChunkerUsesWholeFields(t *testing.T) {
 }
 
 func TestDocumentEncoderRejectsEmbeddingCountMismatch(t *testing.T) {
-	encoder, err := New(nil, mismatchedEmbedder{})
+	embedding, chunking := testDescriptors()
+	encoder, err := New(nil, mismatchedEmbedder{}, embedding, chunking)
 	if err != nil {
 		t.Fatal(err)
 	}

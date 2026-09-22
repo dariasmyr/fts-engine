@@ -18,11 +18,30 @@ import (
 )
 
 type staticEncoder struct {
-	vectors map[fts.DocID][]semantic.ChunkVector
+	vectors    map[fts.DocID][]semantic.ChunkVector
+	descriptor semantic.PipelineDescriptor
+}
+
+func testEmbeddingDescriptor(model, fingerprint string) semantic.EmbeddingDescriptor {
+	descriptor, err := semantic.NewEmbeddingDescriptor("test-provider", model, "v1", fingerprint, semantic.VectorSpec{Dimensions: 2, Metric: vector.MetricL2Squared, VectorFormatVersion: 1})
+	if err != nil {
+		panic(err)
+	}
+	return descriptor
 }
 
 func (e staticEncoder) Encode(_ context.Context, document semantic.Document) ([]semantic.ChunkVector, error) {
 	return e.vectors[document.ID], nil
+}
+
+func (e staticEncoder) Descriptor() semantic.PipelineDescriptor {
+	if e.descriptor != (semantic.PipelineDescriptor{}) {
+		return e.descriptor
+	}
+	return semantic.PipelineDescriptor{
+		Embedding: testEmbeddingDescriptor("test-model", "test-embedding"),
+		Chunking:  semantic.ChunkingDescriptor{ID: "test-chunks", Version: 1, Fingerprint: "test-chunks-fp"},
+	}
 }
 
 func zeroQueryEncoder() staticEncoder {
@@ -53,7 +72,7 @@ func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
 					t.Fatalf("missing %s: %v", path, err)
 				}
 			}
-			loaded, err := Open(root, Limits{})
+			loaded, err := Open(root, OpenOptions{Limits: Limits{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,7 +88,7 @@ func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
 			if !equalDocumentHits(gotDocuments.Hits, wantDocuments.Hits) {
 				t.Fatalf("round-trip document search mismatch\ndocuments=%+v", gotDocuments)
 			}
-			if loaded.Sealed.Space != checkpoint.Space || loaded.Sealed.Chunking != checkpoint.Chunking || loaded.Sealed.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID {
+			if loaded.Sealed.Embedding != checkpoint.Embedding || loaded.Sealed.Chunking != checkpoint.Chunking || loaded.Sealed.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID {
 				t.Fatal("checkpoint metadata changed during round trip")
 			}
 			if !slices.Equal(loaded.Sealed.Segment.Rows(), checkpoint.Segment.Rows()) {
@@ -96,7 +115,7 @@ func TestPublishReusesSegmentObjectAndUpgradesDurability(t *testing.T) {
 	if second.ObjectID != first.ObjectID {
 		t.Fatalf("segment object was not reused: first %q, second %q", first.ObjectID, second.ObjectID)
 	}
-	loaded, err := Open(root, Limits{})
+	loaded, err := Open(root, OpenOptions{Limits: Limits{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +136,7 @@ func TestPublishOpenChunkHNSWRoundTrip(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, graphFileName)); err != nil {
 		t.Fatalf("graph was not published: %v", err)
 	}
-	loaded, err := Open(root, Limits{})
+	loaded, err := Open(root, OpenOptions{Limits: Limits{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +191,7 @@ func TestOpenRejectsMissingCorruptAndSubstitutedGraph(t *testing.T) {
 				t.Fatal(err)
 			}
 			test.mutate(t, root, generation, checkpoint)
-			if _, err := Open(root, Limits{}); err == nil {
+			if _, err := Open(root, OpenOptions{Limits: Limits{}}); err == nil {
 				t.Fatal("Open accepted invalid graph publication")
 			}
 		})
@@ -209,7 +228,7 @@ func TestGraphPublicationFailureKeepsPreviousGeneration(t *testing.T) {
 			if _, err := Publish(context.Background(), root, 2, second, options); !errors.Is(err, injected) {
 				t.Fatalf("Publish error = %v", err)
 			}
-			loaded, err := Open(root, Limits{})
+			loaded, err := Open(root, OpenOptions{Limits: Limits{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -263,7 +282,7 @@ func TestFailuresBeforeCurrentKeepPreviousGeneration(t *testing.T) {
 			if !errors.Is(err, injected) || errors.Is(err, ErrIndeterminate) {
 				t.Fatalf("Publish() error = %v", err)
 			}
-			loaded, err := Open(root, Limits{})
+			loaded, err := Open(root, OpenOptions{Limits: Limits{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -295,7 +314,7 @@ func TestFailureAfterCurrentIsIndeterminateAndPublished(t *testing.T) {
 	if !errors.Is(err, ErrIndeterminate) {
 		t.Fatalf("Publish() error = %v, want ErrIndeterminate", err)
 	}
-	loaded, err := Open(root, Limits{})
+	loaded, err := Open(root, OpenOptions{Limits: Limits{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +347,7 @@ func TestFailuresAfterPreCommitStepsKeepPreviousGeneration(t *testing.T) {
 			if !errors.Is(err, injected) || errors.Is(err, ErrIndeterminate) {
 				t.Fatalf("Publish() error = %v", err)
 			}
-			loaded, err := Open(root, Limits{})
+			loaded, err := Open(root, OpenOptions{Limits: Limits{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -359,7 +378,7 @@ func TestFailureAfterCommittedStepsIsIndeterminate(t *testing.T) {
 			if !errors.Is(err, ErrIndeterminate) {
 				t.Fatalf("Publish() error = %v", err)
 			}
-			loaded, err := Open(root, Limits{})
+			loaded, err := Open(root, OpenOptions{Limits: Limits{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -384,7 +403,7 @@ func TestCancellationAfterStepStopsBeforeNextPublicationStage(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Publish() error = %v, want context cancellation", err)
 	}
-	if _, err := Open(root, Limits{}); !errors.Is(err, ErrCurrentMissing) {
+	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrCurrentMissing) {
 		t.Fatalf("Open() error = %v, want missing CURRENT", err)
 	}
 }
@@ -405,7 +424,7 @@ func TestCurrentRecoveryOrphanAndExplicitRepair(t *testing.T) {
 	}}); !errors.Is(err, injected) {
 		t.Fatalf("orphan publication error = %v", err)
 	}
-	loaded, err := Open(root, Limits{})
+	loaded, err := Open(root, OpenOptions{Limits: Limits{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,13 +435,13 @@ func TestCurrentRecoveryOrphanAndExplicitRepair(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, currentFileName)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(root, Limits{}); !errors.Is(err, ErrCurrentMissing) {
+	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrCurrentMissing) {
 		t.Fatalf("missing CURRENT error = %v", err)
 	}
 	if err := RepairCurrent(root, 2, Options{}); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err = Open(root, Limits{})
+	loaded, err = Open(root, OpenOptions{Limits: Limits{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +467,7 @@ func TestOpenRejectsCorruptCurrentAndSymlinkedObject(t *testing.T) {
 	if err := os.WriteFile(currentPath, current, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(root, Limits{}); !errors.Is(err, ErrCorrupt) {
+	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("corrupt CURRENT error = %v", err)
 	}
 	if runtime.GOOS == "windows" {
@@ -465,7 +484,7 @@ func TestOpenRejectsCorruptCurrentAndSymlinkedObject(t *testing.T) {
 	if err := os.Symlink(realPath, objectPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(root, Limits{}); !errors.Is(err, ErrSymlink) {
+	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrSymlink) {
 		t.Fatalf("symlinked object error = %v", err)
 	}
 }
@@ -499,7 +518,7 @@ func TestOpenRejectsCorruptReferencedFiles(t *testing.T) {
 			if err := os.WriteFile(path, data, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Open(root, Limits{}); err == nil {
+			if _, err := Open(root, OpenOptions{Limits: Limits{}}); err == nil {
 				t.Fatalf("Open() accepted corruption in %s", path)
 			}
 		})
@@ -514,14 +533,14 @@ func TestOpenEnforcesAllocationLimits(t *testing.T) {
 	}
 	limits := DefaultLimits()
 	limits.MaxVectors = 1
-	if _, err := Open(root, limits); !errors.Is(err, ErrLimitExceeded) && !errors.Is(err, vectorflat.ErrSegmentLimit) {
+	if _, err := Open(root, OpenOptions{Limits: limits}); !errors.Is(err, ErrLimitExceeded) && !errors.Is(err, vectorflat.ErrSegmentLimit) {
 		t.Fatalf("Open() limit error = %v", err)
 	}
 	limits = DefaultLimits()
 	limits.MaxFileBytes = 512
 	limits.MaxVectorBytes = 512
 	limits.MaxOpenBytes = 512
-	if _, err := Open(root, limits); !errors.Is(err, ErrLimitExceeded) {
+	if _, err := Open(root, OpenOptions{Limits: limits}); !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("Open() aggregate allocation limit error = %v", err)
 	}
 }
@@ -573,7 +592,7 @@ func TestPublishDoesNotCommitGenerationThatExceedsOpenBudget(t *testing.T) {
 	if _, err := Publish(context.Background(), root, 1, checkpoint, Options{Limits: limits}); !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("Publish() aggregate allocation limit error = %v", err)
 	}
-	if _, err := Open(root, limits); !errors.Is(err, ErrCurrentMissing) {
+	if _, err := Open(root, OpenOptions{Limits: limits}); !errors.Is(err, ErrCurrentMissing) {
 		t.Fatalf("Open() after rejected publication error = %v", err)
 	}
 }
@@ -596,7 +615,7 @@ func TestOpenRejectsReferencedFileLargerThanDeclaredSize(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(root, Limits{}); !errors.Is(err, ErrCorrupt) {
+	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("Open() mismatched referenced size error = %v", err)
 	}
 }
@@ -613,11 +632,11 @@ func TestPublishRejectsLockedAndStaleWriters(t *testing.T) {
 	if _, err := Publish(context.Background(), root, 2, checkpoint, Options{}); !errors.Is(err, ErrStaleGeneration) {
 		t.Fatalf("stale publication error = %v", err)
 	}
-	firstReader, err := Open(root, Limits{})
+	firstReader, err := Open(root, OpenOptions{Limits: Limits{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondReader, err := Open(root, Limits{})
+	secondReader, err := Open(root, OpenOptions{Limits: Limits{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,7 +657,7 @@ func TestPublishRejectsLockedAndStaleWriters(t *testing.T) {
 	if _, err := Publish(context.Background(), root, 2, checkpoint, Options{ExpectedGeneration: 1}); !errors.Is(err, ErrStoreLocked) {
 		t.Fatalf("locked publication error = %v", err)
 	}
-	if _, err := Open(root, Limits{}); !errors.Is(err, ErrStoreLocked) {
+	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrStoreLocked) {
 		t.Fatalf("read during publication error = %v", err)
 	}
 }
@@ -654,8 +673,8 @@ func TestObjectIDValidation(t *testing.T) {
 
 func TestPublicationContainsOnlyLiveRows(t *testing.T) {
 	service, err := semantic.New(semantic.Config{
-		Space:    semantic.SpaceDescriptor{ID: "compact-space-v1", Dimensions: 2, Metric: vector.MetricL2Squared, Normalization: vector.NormalizationNone, VectorFormatVersion: 1},
-		Chunking: semantic.ChunkingDescriptor{ID: "compact-chunks-v1"}, MaxVectors: 10,
+		Embedding: testEmbeddingDescriptor("compact-model", "compact-embedding"),
+		Chunking:  semantic.ChunkingDescriptor{ID: "compact-chunks-v1", Version: 1, Fingerprint: "compact-chunks-fp"}, MaxVectors: 10,
 		MaxChunksPerDocument: 2, MaxK: 2, MaxChunkCandidates: 10, MaxChunksPerDocumentHit: 2,
 	})
 	if err != nil {
@@ -664,7 +683,7 @@ func TestPublicationContainsOnlyLiveRows(t *testing.T) {
 	ctx := context.Background()
 	encoder := staticEncoder{vectors: map[fts.DocID][]semantic.ChunkVector{
 		"doc": {{Ref: chunk.Ref{ID: "old", DocID: "doc", Field: fts.DefaultField, EndByte: 3}, Vector: []float32{0, 0}}},
-	}}
+	}, descriptor: semantic.PipelineDescriptor{Embedding: testEmbeddingDescriptor("compact-model", "compact-embedding"), Chunking: semantic.ChunkingDescriptor{ID: "compact-chunks-v1", Version: 1, Fingerprint: "compact-chunks-fp"}}}
 	if err := service.AddDocument(ctx, encoder, semantic.Document{ID: "doc"}); err != nil {
 		t.Fatal(err)
 	}
@@ -680,7 +699,7 @@ func TestPublicationContainsOnlyLiveRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	segment := view.Segments()[0]
-	sealed := SealedSegment{Segment: segment, Space: segment.Metadata().Space, Chunking: segment.Metadata().Chunking, MaxAllocatedVectorID: service.Statistics().MaxAllocatedVectorID, MaxK: 2, MaxChunkCandidates: 10, MaxChunksPerDocumentHit: 2}
+	sealed := SealedSegment{Segment: segment, Embedding: segment.Metadata().Embedding, Chunking: segment.Metadata().Chunking, MaxAllocatedVectorID: service.Statistics().MaxAllocatedVectorID, MaxK: 2, MaxChunkCandidates: 10, MaxChunksPerDocumentHit: 2}
 	if segment.Len() != 1 || len(segment.Rows()) != 1 || segment.Rows()[0].Chunk.ID != "new" {
 		t.Fatalf("sealed segment retained stale rows: %+v", sealed)
 	}
@@ -689,7 +708,7 @@ func TestPublicationContainsOnlyLiveRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := Open(root, Limits{})
+	loaded, err := Open(root, OpenOptions{Limits: Limits{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -717,8 +736,8 @@ type chunkExpectation struct {
 func persistenceFixture(t testing.TB, extra bool) (SealedSegment, chunkExpectation, semantic.DocumentSearchResult) {
 	t.Helper()
 	config := semantic.Config{
-		Space:    semantic.SpaceDescriptor{ID: "persist-space-v1", Dimensions: 2, Metric: vector.MetricL2Squared, Normalization: vector.NormalizationNone, VectorFormatVersion: 1},
-		Chunking: semantic.ChunkingDescriptor{ID: "persist-chunks-v1"}, MaxVectors: 100,
+		Embedding: testEmbeddingDescriptor("persist-model", "persist-embedding"),
+		Chunking:  semantic.ChunkingDescriptor{ID: "persist-chunks-v1", Version: 1, Fingerprint: "persist-chunks-fp"}, MaxVectors: 100,
 		MaxChunksPerDocument: 10, MaxK: 10, MaxChunkCandidates: 100, MaxChunksPerDocumentHit: 3,
 	}
 	service, err := semantic.New(config)
@@ -726,7 +745,7 @@ func persistenceFixture(t testing.TB, extra bool) (SealedSegment, chunkExpectati
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	encoder := staticEncoder{vectors: make(map[fts.DocID][]semantic.ChunkVector)}
+	encoder := staticEncoder{vectors: make(map[fts.DocID][]semantic.ChunkVector), descriptor: semantic.PipelineDescriptor{Embedding: testEmbeddingDescriptor("persist-model", "persist-embedding"), Chunking: semantic.ChunkingDescriptor{ID: "persist-chunks-v1", Version: 1, Fingerprint: "persist-chunks-fp"}}}
 	add := func(docID fts.DocID, id chunk.ID, value []float32) {
 		t.Helper()
 		encoder.vectors[docID] = []semantic.ChunkVector{{
@@ -751,7 +770,7 @@ func persistenceFixture(t testing.TB, extra bool) (SealedSegment, chunkExpectati
 	}
 	segment := view.Segments()[0]
 	stats := service.Statistics()
-	checkpoint := SealedSegment{Segment: segment, Space: config.Space, Chunking: config.Chunking, MaxAllocatedVectorID: stats.MaxAllocatedVectorID, MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}
+	checkpoint := SealedSegment{Segment: segment, Embedding: config.Embedding, Chunking: config.Chunking, MaxAllocatedVectorID: stats.MaxAllocatedVectorID, MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}
 	encoder.vectors["query"] = []semantic.ChunkVector{{Ref: chunk.Ref{ID: "query", DocID: "query", Field: fts.DefaultField, EndByte: 5}, Vector: []float32{0, 0}}}
 	allDocuments, err := service.SearchDocuments(ctx, encoder, semantic.Document{ID: "query"}, min(3, len(checkpoint.Segment.Rows())))
 	if err != nil {
@@ -773,8 +792,8 @@ func withHNSW(t testing.TB, checkpoint SealedSegment, seed uint64) SealedSegment
 	maxK := max(checkpoint.MaxK, checkpoint.MaxChunkCandidates)
 	graph, err := hnsw.BuildSearcher(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
-			Dimensions: checkpoint.Space.Dimensions, Metric: checkpoint.Space.Metric,
-			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Space.Dimensions * 4),
+			Dimensions: checkpoint.Embedding.Vector.Dimensions, Metric: checkpoint.Embedding.Vector.Metric,
+			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Embedding.Vector.Dimensions * 4),
 			MaxNeighbors: 2, EfConstruction: 8, Seed: seed,
 		},
 		SearchConfig: hnsw.SearchConfig{
@@ -785,7 +804,7 @@ func withHNSW(t testing.TB, checkpoint SealedSegment, seed uint64) SealedSegment
 	if err != nil {
 		t.Fatal(err)
 	}
-	segment, err := semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: checkpoint.Space, Chunking: checkpoint.Chunking}, graph, checkpoint.Segment.Rows())
+	segment, err := semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Embedding: checkpoint.Embedding, Chunking: checkpoint.Chunking}, graph, checkpoint.Segment.Rows())
 	if err != nil {
 		t.Fatal(err)
 	}

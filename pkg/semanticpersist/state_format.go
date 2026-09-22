@@ -11,7 +11,7 @@ import (
 
 const (
 	stateMagic   = "SSTA"
-	stateVersion = uint16(4)
+	stateVersion = uint16(6)
 )
 
 func encodeState(sealed SealedSegment, limits Limits) ([]byte, fileReference, error) {
@@ -29,14 +29,19 @@ func encodeState(sealed SealedSegment, limits Limits) ([]byte, fileReference, er
 		return nil, fileReference{}, ErrLimitExceeded
 	}
 	e := newEncoder(stateMagic, stateVersion, limits.MaxFileBytes)
-	e.u32(uint32(metadata.Space.Dimensions))
-	e.u8(uint8(metadata.Space.Metric))
-	e.u8(uint8(metadata.Space.Normalization))
+	space, err := vector.NewSpace(metadata.Embedding.Vector.Dimensions, metadata.Embedding.Vector.Metric)
+	if err != nil {
+		return nil, fileReference{}, err
+	}
+	e.u32(uint32(metadata.Embedding.Vector.Dimensions))
+	e.u8(uint8(metadata.Embedding.Vector.Metric))
+	e.u8(uint8(space.Normalization()))
 	e.u16(0)
-	e.u32(metadata.Space.VectorFormatVersion)
-	e.string(metadata.Space.ID, limits.MaxStringBytes)
-	e.string(metadata.Space.ModelVersion, limits.MaxStringBytes)
-	e.string(metadata.Space.Fingerprint, limits.MaxStringBytes)
+	e.u32(metadata.Embedding.Vector.VectorFormatVersion)
+	e.string(metadata.Embedding.ProviderID, limits.MaxStringBytes)
+	e.string(metadata.Embedding.ModelID, limits.MaxStringBytes)
+	e.string(metadata.Embedding.ModelVersion, limits.MaxStringBytes)
+	e.string(metadata.Embedding.PipelineFingerprint, limits.MaxStringBytes)
 	e.string(metadata.Chunking.ID, limits.MaxStringBytes)
 	e.u32(metadata.Chunking.Version)
 	e.string(metadata.Chunking.Fingerprint, limits.MaxStringBytes)
@@ -65,9 +70,10 @@ func decodeState(data []byte, limits Limits) (decodedState, error) {
 		return decodedState{}, ErrCorrupt
 	}
 	formatVersion := d.u32()
-	spaceID := d.string()
+	providerID := d.string()
+	modelID := d.string()
 	modelVersion := d.string()
-	spaceFingerprint := d.string()
+	pipelineFingerprint := d.string()
 	chunkingID := d.string()
 	chunkingVersion := d.u32()
 	chunkingFingerprint := d.string()
@@ -76,7 +82,7 @@ func decodeState(data []byte, limits Limits) (decodedState, error) {
 	maxCandidates := int(d.u32())
 	maxChunksHit := int(d.u32())
 	componentID := semantic.ComponentID(d.u64())
-	if dimensions <= 0 || dimensions > limits.MaxDimensions || maxK <= 0 || maxK > limits.MaxK || maxCandidates < maxK || maxChunksHit <= 0 || formatVersion == 0 || spaceID == "" || chunkingID == "" || componentID == 0 {
+	if dimensions <= 0 || dimensions > limits.MaxDimensions || maxK <= 0 || maxK > limits.MaxK || maxCandidates < maxK || maxChunksHit <= 0 || formatVersion == 0 || providerID == "" || modelID == "" || modelVersion == "" || pipelineFingerprint == "" || chunkingID == "" || componentID == 0 {
 		return decodedState{}, ErrCorrupt
 	}
 	space, err := vector.NewSpace(dimensions, metric)
@@ -110,8 +116,8 @@ func decodeState(data []byte, limits Limits) (decodedState, error) {
 		return decodedState{}, err
 	}
 	return decodedState{
-		Space:    semantic.SpaceDescriptor{ID: spaceID, ModelVersion: modelVersion, Fingerprint: spaceFingerprint, Dimensions: dimensions, Metric: metric, Normalization: normalization, VectorFormatVersion: formatVersion},
-		Chunking: semantic.ChunkingDescriptor{ID: chunkingID, Version: chunkingVersion, Fingerprint: chunkingFingerprint}, MaxAllocatedVectorID: maxAllocatedVectorID,
+		Embedding: semantic.EmbeddingDescriptor{ProviderID: providerID, ModelID: modelID, ModelVersion: modelVersion, PipelineFingerprint: pipelineFingerprint, Vector: semantic.VectorSpec{Dimensions: dimensions, Metric: metric, VectorFormatVersion: formatVersion}},
+		Chunking:  semantic.ChunkingDescriptor{ID: chunkingID, Version: chunkingVersion, Fingerprint: chunkingFingerprint}, MaxAllocatedVectorID: maxAllocatedVectorID,
 		Rows: rows, ComponentID: componentID, MaxK: maxK, MaxChunkCandidates: maxCandidates, MaxChunksPerDocumentHit: maxChunksHit,
 	}, nil
 }
