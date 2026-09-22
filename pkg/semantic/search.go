@@ -126,7 +126,11 @@ func (s *Service) searchEncodedDocumentsWithOptions(ctx context.Context, query [
 	return s.searchEncodedDocumentsInPublished(ctx, published, maxResults, maxCandidates, maxChunksPerDocumentHit, query, k, options)
 }
 
-func (s *Service) searchEncodedDocumentsInPublished(ctx context.Context, published *publishedIndex, maxResults, maxCandidates, maxChunksPerDocumentHit int, query []float32, k int, options SearchOptions) (DocumentSearchResult, error) {
+func (s *Service) searchEncodedDocumentsInPublished(ctx context.Context, published *ReadView, maxResults, maxCandidates, maxChunksPerDocumentHit int, query []float32, k int, options SearchOptions) (DocumentSearchResult, error) {
+	return searchReadViewDocuments(ctx, published, s.space, maxResults, maxCandidates, maxChunksPerDocumentHit, query, k, options)
+}
+
+func searchReadViewDocuments(ctx context.Context, published *ReadView, space vector.Space, maxResults, maxCandidates, maxChunksPerDocumentHit int, query []float32, k int, options SearchOptions) (DocumentSearchResult, error) {
 	candidateBudget, err := resolveCandidateBudget(options.CandidateChunks, maxCandidates)
 	if err != nil {
 		return DocumentSearchResult{}, err
@@ -142,13 +146,13 @@ func (s *Service) searchEncodedDocumentsInPublished(ctx context.Context, publish
 		if err := ctx.Err(); err != nil {
 			return DocumentSearchResult{}, err
 		}
-		if _, err := s.space.Prepare(query); err != nil {
+		if _, err := space.Prepare(query); err != nil {
 			return DocumentSearchResult{}, err
 		}
 		return DocumentSearchResult{Hits: []DocumentHit{}}, nil
 	}
 	budget := min(liveCount, candidateBudget)
-	chunks, err := searchSegmentsChunks(ctx, s.space, published.segments, query, budget, candidateBudget, vector.SearchOptions{EfSearch: options.EfSearch, VisitLimit: options.VisitLimit})
+	chunks, err := searchSegmentsChunks(ctx, space, published.segments, query, budget, candidateBudget, vector.SearchOptions{EfSearch: options.EfSearch, VisitLimit: options.VisitLimit})
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}

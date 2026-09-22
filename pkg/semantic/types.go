@@ -19,7 +19,7 @@ var (
 	ErrVectorIDExhausted    = errors.New("semantic: vector ID exhausted")
 	ErrCapacityExceeded     = errors.New("semantic: vector capacity exceeded")
 	ErrInternalState        = errors.New("semantic: inconsistent internal state")
-	ErrInvalidSnapshot      = errors.New("semantic: invalid snapshot")
+	ErrInvalidSegment       = errors.New("semantic: invalid segment")
 	ErrInvalidSearchOptions = errors.New("semantic: invalid search options")
 )
 

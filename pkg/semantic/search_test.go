@@ -15,7 +15,3 @@ func (s *Service) searchChunks(ctx context.Context, query []float32, k int) (chu
 	s.mu.RUnlock()
 	return searchSegmentsChunks(ctx, s.space, published.segments, query, k, maxK, vector.SearchOptions{})
 }
-
-func (s Snapshot) searchChunks(ctx context.Context, query []float32, k int) (chunkSearchResult, error) {
-	return searchSegmentChunks(ctx, fullSegmentView(s.Segment), query, k, s.MaxK)
-}

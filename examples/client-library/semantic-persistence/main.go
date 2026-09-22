@@ -46,10 +46,18 @@ func main() {
 	must(service.AddDocument(ctx, encoder, semantic.Document{ID: "doc-b", Fields: map[string]string{"body": "b-v1"}}))
 	must(service.ReplaceDocument(ctx, encoder, semantic.Document{ID: "doc-a", Fields: map[string]string{"body": "a-v2"}}))
 
-	// Create an immutable HNSW snapshot containing only active vectors.
-	snapshot, err := service.Snapshot(ctx)
+	// Compact and publish the active immutable HNSW segment.
+	must(service.Compact(ctx))
+	view, err := service.ReadView(ctx)
 	must(err)
-	generation, err := semanticpersist.Publish(ctx, root, 1, snapshot, semanticpersist.Options{
+	segment := view.Segments()[0]
+	stats := service.Statistics()
+	sealed := semanticpersist.SealedSegment{
+		Segment: segment, Space: service.Space(), Chunking: service.Chunking(),
+		MaxAllocatedVectorID: stats.MaxAllocatedVectorID, MaxK: 10,
+		MaxChunkCandidates: 100, MaxChunksPerDocumentHit: 3,
+	}
+	generation, err := semanticpersist.PublishSealedSegment(ctx, root, 1, sealed, semanticpersist.Options{
 		ExpectedGeneration: 0,
 		Durability:         semanticpersist.DurabilitySynchronous,
 	})
@@ -58,10 +66,12 @@ func main() {
 	loaded, err := semanticpersist.Open(root, semanticpersist.DefaultLimits())
 	must(err)
 	defer loaded.Close()
-	result, err := loaded.Snapshot.SearchDocuments(ctx, encoder, semantic.Document{ID: "query", Fields: map[string]string{"body": "query"}}, 2)
+	loadedView, err := semantic.NewReadView(generation.ID, []*semantic.Segment{loaded.Sealed.Segment})
+	must(err)
+	result, err := loadedView.SearchDocuments(ctx, encoder, semantic.Document{ID: "query", Fields: map[string]string{"body": "query"}}, 2)
 	must(err)
 
-	fmt.Printf("generation=%d kind=%d rows=%d\n", generation.ID, loaded.Snapshot.Segment.Kind(), len(loaded.Snapshot.Segment.Rows()))
+	fmt.Printf("generation=%d kind=%d rows=%d\n", generation.ID, loaded.Sealed.Segment.Kind(), len(loaded.Sealed.Segment.Rows()))
 	for _, hit := range result.Hits {
 		fmt.Printf("doc=%s distance=%.0f\n", hit.DocID, hit.Distance)
 	}

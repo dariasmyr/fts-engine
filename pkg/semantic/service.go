@@ -27,22 +27,13 @@ type livenessChange struct {
 	allowed bool
 }
 
-// publishedIndex is the immutable published state searched by the service. A
-// new index is built on mutation commit and swapped under Service.mu; readers
-// can keep the older index while a newer one is being published.
-type publishedIndex struct {
-	segments   []segmentView
-	generation uint64
-	liveCount  int
-}
-
 type Service struct {
 	mu      sync.RWMutex
 	flushMu sync.Mutex
 
 	config    Config
 	space     vector.Space
-	published *publishedIndex
+	published *ReadView
 
 	pendingVectors           []pendingVector
 	pendingVisibilityChanges []livenessChange
@@ -75,7 +66,7 @@ func New(config Config) (*Service, error) {
 	return &Service{
 		config:          config,
 		space:           space,
-		published:       &publishedIndex{},
+		published:       &ReadView{},
 		maxAllocatedID:  config.InitialMaxAllocatedVectorID,
 		nextComponentID: MutableHeadID + 1,
 		currentByDoc:    make(map[fts.DocID][]VectorID),
@@ -214,6 +205,21 @@ func (s *Service) Flush(ctx context.Context) error {
 	return s.flushPending(ctx)
 }
 
+// ReadView flushes pending mutations and returns the immutable published view.
+// The returned view is independent of subsequent service mutations.
+func (s *Service) ReadView(ctx context.Context) (*ReadView, error) {
+	if ctx == nil {
+		return nil, vector.ErrNilContext
+	}
+	if err := s.Flush(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	view := s.published
+	s.mu.RUnlock()
+	return view, nil
+}
+
 // flushPending publishes the current pending state. The caller must hold
 // flushMu so that flush and compact cannot build competing publications.
 func (s *Service) flushPending(ctx context.Context) error {
@@ -252,7 +258,7 @@ func (s *Service) flushPending(ctx context.Context) error {
 	}
 }
 
-func (s *Service) captureFlushState() (uint64, ComponentID, []pendingVector, []livenessChange, map[fts.DocID][]VectorID, *publishedIndex, Config) {
+func (s *Service) captureFlushState() (uint64, ComponentID, []pendingVector, []livenessChange, map[fts.DocID][]VectorID, *ReadView, Config) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	pendingVectors := make([]pendingVector, len(s.pendingVectors))
@@ -295,7 +301,7 @@ func newInMemoryVectorSourceFromConfig(config Config, values [][]float32) (*vect
 	return vector.NewMemorySource(space, values)
 }
 
-func publishIndex(base *publishedIndex, locations map[VectorID]vectorLocation, changes []livenessChange, pending *Segment, pendingComponent ComponentID, documents map[fts.DocID][]VectorID, generation uint64) (*publishedIndex, map[VectorID]vectorLocation, error) {
+func publishIndex(base *ReadView, locations map[VectorID]vectorLocation, changes []livenessChange, pending *Segment, pendingComponent ComponentID, documents map[fts.DocID][]VectorID, generation uint64) (*ReadView, map[VectorID]vectorLocation, error) {
 	segments := append([]segmentView(nil), base.segments...)
 	componentIndexes := make(map[ComponentID]int, len(segments))
 	for i, view := range segments {
@@ -349,11 +355,7 @@ func publishIndex(base *publishedIndex, locations map[VectorID]vectorLocation, c
 			resultLocations[row.VectorID] = vectorLocation{component: pendingComponent, ordinal: vector.Ordinal(ordinal)}
 		}
 	}
-	liveCount := 0
-	for _, view := range segments {
-		liveCount += view.filter.AllowedOrdinalCount()
-	}
-	return &publishedIndex{segments: segments, generation: generation, liveCount: liveCount}, resultLocations, nil
+	return newReadView(generation, segments), resultLocations, nil
 }
 
 func filterForDocumentMapping(segment *Segment, documents map[fts.DocID][]VectorID) (vector.BitSet, error) {
@@ -472,18 +474,7 @@ func (s *Service) Compact(ctx context.Context) error {
 				return nil
 			}
 		}
-		values, rows, err := materializeLiveRows(ctx, published)
-		if err != nil {
-			return err
-		}
-		source, err := newInMemoryVectorSourceFromConfig(config, values)
-		if err != nil {
-			return err
-		}
-		merged, err := BuildSegment(ctx, componentID, SegmentMetadata{Space: config.Space, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
-			BuildConfig:  withBuildCapacity(config.HNSWBuild, len(rows)),
-			SearchConfig: config.HNSWSearch,
-		})
+		merged, rows, err := buildCompactedSegment(ctx, published, componentID, config)
 		if err != nil {
 			return err
 		}
@@ -500,31 +491,12 @@ func (s *Service) Compact(ctx context.Context) error {
 		for ordinal, row := range rows {
 			locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
 		}
-		s.published = &publishedIndex{segments: []segmentView{{segment: merged, filter: filter}}, generation: version, liveCount: len(rows)}
+		s.published = newReadView(version, []segmentView{{segment: merged, filter: filter}})
 		s.locations = locations
 		s.nextComponentID++
 		s.mu.Unlock()
 		return nil
 	}
-}
-
-func materializeLiveRows(ctx context.Context, published *publishedIndex) ([][]float32, []VectorRow, error) {
-	var values [][]float32
-	var rows []VectorRow
-	for _, item := range published.segments {
-		for ordinal, row := range item.segment.Rows() {
-			if !item.filter.Allows(vector.Ordinal(ordinal)) {
-				continue
-			}
-			value := make([]float32, item.segment.Dimensions())
-			if err := item.segment.Vectors().ReadVectorInto(ctx, vector.Ordinal(ordinal), value); err != nil {
-				return nil, nil, err
-			}
-			values = append(values, value)
-			rows = append(rows, row)
-		}
-	}
-	return values, rows, nil
 }
 
 func withBuildCapacity(config hnsw.BuildConfig, count int) hnsw.BuildConfig {

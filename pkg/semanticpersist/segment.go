@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -26,22 +25,16 @@ type SegmentPaths struct {
 	Dir string
 }
 
-// LoadedSegment is a read-only segment opened without a mutable semantic
-// service or a generation CURRENT pointer.
-type LoadedSegment struct {
-	Snapshot semantic.Snapshot
-}
-
-// SaveSegment writes one immutable HNSW segment atomically. It does not create
-// a generation, acquire a store lock, or update CURRENT.
-func SaveSegment(ctx context.Context, paths SegmentPaths, snapshot semantic.Snapshot, options Options) error {
+// SaveSealedSegment writes one immutable ANN component without creating a
+// generation or changing CURRENT.
+func SaveSealedSegment(ctx context.Context, paths SegmentPaths, sealed SealedSegment, options Options) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if paths.Dir == "" {
+	if paths.Dir == "" || sealed.Segment == nil {
 		return ErrCorrupt
 	}
 	options.Limits = normalizeLimits(options.Limits)
@@ -51,13 +44,7 @@ func SaveSegment(ctx context.Context, paths SegmentPaths, snapshot semantic.Snap
 	if err := validateLimits(options.Limits); err != nil {
 		return err
 	}
-	if err := snapshot.Validate(); err != nil {
-		return err
-	}
-	if snapshot.Segment.Kind() != semantic.SegmentKindChunkHNSW || snapshot.Segment.Searcher() == nil {
-		return ErrCorrupt
-	}
-	if err := validateSnapshotLimits(snapshot, options.Limits); err != nil {
+	if err := validateSealedSegment(sealed, options.Limits); err != nil {
 		return err
 	}
 
@@ -76,15 +63,15 @@ func SaveSegment(ctx context.Context, paths SegmentPaths, snapshot semantic.Snap
 		}
 	}()
 
-	vectorsRef, err := writeVectorsFile(filepath.Join(temp, segmentVectorsFile), snapshot.Segment.Vectors(), snapshot.Segment.MaxK(), options.Durability)
+	vectorsRef, err := writeVectorsFile(filepath.Join(temp, segmentVectorsFile), sealed.Segment.Vectors(), sealed.Segment.MaxK(), options.Durability)
 	if err != nil {
 		return err
 	}
-	graphRef, err := writeGraphFile(filepath.Join(temp, segmentGraphFile), snapshot.Segment.Searcher(), vectorsRef, options.Durability)
+	graphRef, err := writeGraphFile(filepath.Join(temp, segmentGraphFile), sealed.Segment.Searcher(), vectorsRef, options.Durability)
 	if err != nil {
 		return err
 	}
-	stateData, stateRef, err := encodeState(snapshot, options.Limits)
+	stateData, stateRef, err := encodeState(sealed, options.Limits)
 	if err != nil {
 		return err
 	}
@@ -93,8 +80,8 @@ func SaveSegment(ctx context.Context, paths SegmentPaths, snapshot semantic.Snap
 	}
 	manifestValue := manifest{
 		Version: manifestVersion, GenerationID: 1,
-		ObjectID:    segmentObjectID(snapshot.Segment.Kind(), vectorsRef, graphRef),
-		SegmentKind: semantic.SegmentKindChunkHNSW, Vectors: vectorsRef, Graph: graphRef, State: stateRef,
+		ObjectID:    segmentObjectID(sealed.Segment.Kind(), vectorsRef, graphRef),
+		SegmentKind: sealed.Segment.Kind(), Vectors: vectorsRef, Graph: graphRef, State: stateRef,
 	}
 	manifestData, _, err := encodeManifest(manifestValue, options.Limits)
 	if err != nil {
@@ -123,9 +110,16 @@ func SaveSegment(ctx context.Context, paths SegmentPaths, snapshot semantic.Snap
 	return nil
 }
 
-// OpenSegment opens one standalone HNSW segment. The returned snapshot owns
-// fully loaded readers and does not hold a filesystem lock.
-func OpenSegment(paths SegmentPaths, limits Limits) (*LoadedSegment, error) {
+// SaveSegment is a short name alias for callers that already use the segment
+// persistence API. It accepts only a sealed segment.
+func SaveSegment(ctx context.Context, paths SegmentPaths, sealed SealedSegment, options Options) error {
+	return SaveSealedSegment(ctx, paths, sealed, options)
+}
+
+// OpenSealedSegment opens one immutable ANN component without creating a
+// mutable service or acquiring a generation lock. The returned payload is
+// independent of a mutable service or generation publication.
+func OpenSealedSegment(paths SegmentPaths, limits Limits) (*LoadedSealedSegment, error) {
 	if paths.Dir == "" {
 		return nil, ErrCorrupt
 	}
@@ -183,17 +177,22 @@ func OpenSegment(paths SegmentPaths, limits Limits) (*LoadedSegment, error) {
 	if graphMetadata.Size != value.Graph.Size || graphMetadata.SHA256 != value.Graph.SHA256 {
 		return nil, ErrCorrupt
 	}
-	segment, err := semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, searcher, state.Rows)
+	segment, err := semantic.NewSegment(state.ComponentID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, searcher, state.Rows)
 	if err != nil {
 		return nil, err
 	}
-	snapshot := semantic.Snapshot{
-		Space: state.Space, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
-		Segment: segment, MaxK: state.MaxK,
-		MaxChunkCandidates: state.MaxChunkCandidates, MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
+	sealed := SealedSegment{
+		Segment: segment, Space: state.Space, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
+		MaxK: state.MaxK, MaxChunkCandidates: state.MaxChunkCandidates,
+		MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
 	}
-	if err := snapshot.Validate(); err != nil {
-		return nil, fmt.Errorf("semanticpersist: validate standalone segment: %w", err)
+	if err := validateSealedSegment(sealed, limits); err != nil {
+		return nil, err
 	}
-	return &LoadedSegment{Snapshot: snapshot}, nil
+	return &LoadedSealedSegment{Sealed: sealed}, nil
+}
+
+// OpenSegment is the name-level alias for OpenSealedSegment.
+func OpenSegment(paths SegmentPaths, limits Limits) (*LoadedSealedSegment, error) {
+	return OpenSealedSegment(paths, limits)
 }

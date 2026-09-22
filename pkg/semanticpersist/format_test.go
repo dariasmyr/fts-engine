@@ -127,8 +127,8 @@ func TestSemanticFormatGoldenHashes(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateHash := sha256.Sum256(state)
-	if got, want := hex.EncodeToString(stateHash[:]), "75488c20ad39bd4eed1cc7bece00073fab81ec0f8a855946ed931543b37fa972"; got != want {
-		t.Fatalf("SSTA v3 SHA-256 = %s, want %s", got, want)
+	if got, want := hex.EncodeToString(stateHash[:]), "f1f8fc25578d98fb0d13dab30f5d9a32d1d6a65ba41db0faf820b024f1cb782f"; got != want {
+		t.Fatalf("SSTA v4 SHA-256 = %s, want %s", got, want)
 	}
 }
 
@@ -168,8 +168,8 @@ func FuzzDecodeManifestAndCurrent(f *testing.F) {
 	})
 }
 
-func vectorBytes(snapshot semantic.Snapshot) ([]byte, fileReference, error) {
-	data, metadata, err := vectorflat.MarshalSource(snapshot.Segment.Vectors(), snapshot.Segment.MaxK())
+func vectorBytes(sealed SealedSegment) ([]byte, fileReference, error) {
+	data, metadata, err := vectorflat.MarshalSource(sealed.Segment.Vectors(), sealed.Segment.MaxK())
 	return data, fileReference{Size: metadata.Size, SHA256: metadata.SHA256}, err
 }
 

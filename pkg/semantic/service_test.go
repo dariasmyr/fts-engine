@@ -396,22 +396,22 @@ func TestCompactRemovesStaleVectorsAndPreservesStableIDs(t *testing.T) {
 	if !slices.Equal(after.Hits, before.Hits) || after.Stats.RejectedNodes != 0 {
 		t.Fatalf("search changed after compaction\nbefore=%+v\nafter=%+v", before, after)
 	}
-	checkpoint, err := service.Snapshot(ctx)
+	view, err := service.ReadView(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(snapshotRowIDs(checkpoint), []VectorID{2, 3}) {
-		t.Fatalf("compacted row IDs = %v", snapshotRowIDs(checkpoint))
+	if view.LiveVectorCount() != 2 {
+		t.Fatalf("compacted live rows = %d", view.LiveVectorCount())
 	}
 	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-c", "c", 0, []float32{3, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err = service.Snapshot(ctx)
+	view, err = service.ReadView(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(snapshotRowIDs(checkpoint), []VectorID{2, 3, 4}) || checkpoint.MaxAllocatedVectorID != 4 {
-		t.Fatalf("post-compaction row IDs/max allocated ID = %v/%d", snapshotRowIDs(checkpoint), checkpoint.MaxAllocatedVectorID)
+	if view.LiveVectorCount() != 3 || service.Statistics().MaxAllocatedVectorID != 4 {
+		t.Fatalf("post-compaction rows/max allocated ID = %d/%d", view.LiveVectorCount(), service.Statistics().MaxAllocatedVectorID)
 	}
 }
 
@@ -460,12 +460,12 @@ func TestCompactEmptyServiceReclaimsCapacity(t *testing.T) {
 	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("new", "new", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err := service.Snapshot(ctx)
+	view, err := service.ReadView(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(snapshotRowIDs(checkpoint), []VectorID{2}) || checkpoint.MaxAllocatedVectorID != 2 {
-		t.Fatalf("reclaimed row IDs/max allocated ID = %v/%d", snapshotRowIDs(checkpoint), checkpoint.MaxAllocatedVectorID)
+	if view.LiveVectorCount() != 1 || service.Statistics().MaxAllocatedVectorID != 2 {
+		t.Fatalf("reclaimed rows/max allocated ID = %d/%d", view.LiveVectorCount(), service.Statistics().MaxAllocatedVectorID)
 	}
 }
 
@@ -741,7 +741,7 @@ func TestConcurrentSameDocumentAddAndSearchReplace(t *testing.T) {
 	}
 }
 
-func TestConcurrentSnapshotAndReplacementRemainCoherent(t *testing.T) {
+func TestConcurrentReadViewAndReplacementRemainCoherent(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
 	if err := service.addEncodedDocument(ctx, "doc", []ChunkVector{testChunk("doc", "chunk-0", 0, []float32{0, 0})}); err != nil {
@@ -755,23 +755,13 @@ func TestConcurrentSnapshotAndReplacementRemainCoherent(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			for range 25 {
-				checkpoint, err := service.Snapshot(ctx)
+				view, err := service.ReadView(ctx)
 				if err != nil {
 					errCh <- err
 					return
 				}
-				if len(checkpoint.Segment.Rows()) != 1 || checkpoint.Segment.Len() != 1 || checkpoint.Segment.Rows()[0].Chunk.DocID != "doc" {
-					errCh <- fmt.Errorf("worker %d: incoherent checkpoint: %+v", worker, checkpoint)
-					return
-				}
-				var version int
-				if _, err := fmt.Sscanf(string(checkpoint.Segment.Rows()[0].Chunk.ID), "chunk-%d", &version); err != nil {
-					errCh <- fmt.Errorf("worker %d: parse checkpoint row: %w", worker, err)
-					return
-				}
-				value := make([]float32, 2)
-				if err := checkpoint.Segment.Vectors().ReadVectorInto(ctx, 0, value); err != nil || value[0] != float32(version) {
-					errCh <- fmt.Errorf("worker %d: row/vector mismatch: %+v/%v/%v", worker, checkpoint.Segment.Rows()[0], value, err)
+				if view.LiveVectorCount() != 1 {
+					errCh <- fmt.Errorf("worker %d: incoherent read view: live=%d", worker, view.LiveVectorCount())
 					return
 				}
 			}

@@ -11,38 +11,40 @@ import (
 
 const (
 	stateMagic   = "SSTA"
-	stateVersion = uint16(3)
+	stateVersion = uint16(4)
 )
 
-func encodeState(snapshot semantic.Snapshot, limits Limits) ([]byte, fileReference, error) {
-	if err := snapshot.Validate(); err != nil {
+func encodeState(sealed SealedSegment, limits Limits) ([]byte, fileReference, error) {
+	if err := validateSealedSegment(sealed, limits); err != nil {
 		return nil, fileReference{}, err
 	}
-	rows := snapshot.Segment.Rows()
+	metadata := sealed.Segment.Metadata()
+	rows := sealed.Segment.Rows()
 	if len(rows) > limits.MaxVectors {
 		return nil, fileReference{}, ErrLimitExceeded
 	}
-	if snapshot.MaxK > limits.MaxK || snapshot.MaxChunkCandidates > limits.MaxVectors ||
-		uint64(snapshot.MaxK) > math.MaxUint32 || uint64(snapshot.MaxChunkCandidates) > math.MaxUint32 ||
-		uint64(snapshot.MaxChunksPerDocumentHit) > math.MaxUint32 {
+	if sealed.MaxK > limits.MaxK || sealed.MaxChunkCandidates > limits.MaxVectors ||
+		uint64(sealed.MaxK) > math.MaxUint32 || uint64(sealed.MaxChunkCandidates) > math.MaxUint32 ||
+		uint64(sealed.MaxChunksPerDocumentHit) > math.MaxUint32 {
 		return nil, fileReference{}, ErrLimitExceeded
 	}
 	e := newEncoder(stateMagic, stateVersion, limits.MaxFileBytes)
-	e.u32(uint32(snapshot.Space.Dimensions))
-	e.u8(uint8(snapshot.Space.Metric))
-	e.u8(uint8(snapshot.Space.Normalization))
+	e.u32(uint32(metadata.Space.Dimensions))
+	e.u8(uint8(metadata.Space.Metric))
+	e.u8(uint8(metadata.Space.Normalization))
 	e.u16(0)
-	e.u32(snapshot.Space.VectorFormatVersion)
-	e.string(snapshot.Space.ID, limits.MaxStringBytes)
-	e.string(snapshot.Space.ModelVersion, limits.MaxStringBytes)
-	e.string(snapshot.Space.Fingerprint, limits.MaxStringBytes)
-	e.string(snapshot.Chunking.ID, limits.MaxStringBytes)
-	e.u32(snapshot.Chunking.Version)
-	e.string(snapshot.Chunking.Fingerprint, limits.MaxStringBytes)
-	e.u64(uint64(snapshot.MaxAllocatedVectorID))
-	e.u32(uint32(snapshot.MaxK))
-	e.u32(uint32(snapshot.MaxChunkCandidates))
-	e.u32(uint32(snapshot.MaxChunksPerDocumentHit))
+	e.u32(metadata.Space.VectorFormatVersion)
+	e.string(metadata.Space.ID, limits.MaxStringBytes)
+	e.string(metadata.Space.ModelVersion, limits.MaxStringBytes)
+	e.string(metadata.Space.Fingerprint, limits.MaxStringBytes)
+	e.string(metadata.Chunking.ID, limits.MaxStringBytes)
+	e.u32(metadata.Chunking.Version)
+	e.string(metadata.Chunking.Fingerprint, limits.MaxStringBytes)
+	e.u64(uint64(sealed.MaxAllocatedVectorID))
+	e.u32(uint32(sealed.MaxK))
+	e.u32(uint32(sealed.MaxChunkCandidates))
+	e.u32(uint32(sealed.MaxChunksPerDocumentHit))
+	e.u64(uint64(sealed.Segment.ComponentID()))
 	e.u32(uint32(len(rows)))
 	for _, record := range rows {
 		e.u64(uint64(record.VectorID))
@@ -73,7 +75,8 @@ func decodeState(data []byte, limits Limits) (decodedState, error) {
 	maxK := int(d.u32())
 	maxCandidates := int(d.u32())
 	maxChunksHit := int(d.u32())
-	if dimensions <= 0 || dimensions > limits.MaxDimensions || maxK <= 0 || maxK > limits.MaxK || maxCandidates < maxK || maxChunksHit <= 0 || formatVersion == 0 || spaceID == "" || chunkingID == "" {
+	componentID := semantic.ComponentID(d.u64())
+	if dimensions <= 0 || dimensions > limits.MaxDimensions || maxK <= 0 || maxK > limits.MaxK || maxCandidates < maxK || maxChunksHit <= 0 || formatVersion == 0 || spaceID == "" || chunkingID == "" || componentID == 0 {
 		return decodedState{}, ErrCorrupt
 	}
 	space, err := vector.NewSpace(dimensions, metric)
@@ -109,7 +112,7 @@ func decodeState(data []byte, limits Limits) (decodedState, error) {
 	return decodedState{
 		Space:    semantic.SpaceDescriptor{ID: spaceID, ModelVersion: modelVersion, Fingerprint: spaceFingerprint, Dimensions: dimensions, Metric: metric, Normalization: normalization, VectorFormatVersion: formatVersion},
 		Chunking: semantic.ChunkingDescriptor{ID: chunkingID, Version: chunkingVersion, Fingerprint: chunkingFingerprint}, MaxAllocatedVectorID: maxAllocatedVectorID,
-		Rows: rows, MaxK: maxK, MaxChunkCandidates: maxCandidates, MaxChunksPerDocumentHit: maxChunksHit,
+		Rows: rows, ComponentID: componentID, MaxK: maxK, MaxChunkCandidates: maxCandidates, MaxChunksPerDocumentHit: maxChunksHit,
 	}, nil
 }
 

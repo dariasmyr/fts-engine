@@ -89,22 +89,42 @@ type Generation struct {
 	ObjectID string
 }
 
+// SealedSegment is the persistence payload for one immutable semantic ANN
+// component. It deliberately contains no mutable service state or generation
+// publication metadata.
+type SealedSegment struct {
+	Segment                 *semantic.Segment
+	Space                   semantic.SpaceDescriptor
+	Chunking                semantic.ChunkingDescriptor
+	MaxAllocatedVectorID    semantic.VectorID
+	MaxK                    int
+	MaxChunkCandidates      int
+	MaxChunksPerDocumentHit int
+}
+
+// LoadedSealedSegment is a standalone sealed segment opened without CURRENT.
+type LoadedSealedSegment struct {
+	Sealed SealedSegment
+}
+
 type Loaded struct {
 	Generation Generation
-	Snapshot   semantic.Snapshot
+	Sealed     SealedSegment
 	storeLock  *storeLock
 	closeOnce  sync.Once
 	closeErr   error
 }
 
-// Close closes the immutable snapshot segment and releases the shared store lock. It is
+// Close closes the immutable segment and releases the shared store lock. It is
 // safe to call more than once.
 func (l *Loaded) Close() error {
 	if l == nil {
 		return nil
 	}
 	l.closeOnce.Do(func() {
-		l.closeErr = l.Snapshot.Close()
+		if l.Sealed.Segment != nil {
+			l.closeErr = l.Sealed.Segment.Close()
+		}
 		if l.storeLock != nil {
 			if err := l.storeLock.Close(); l.closeErr == nil {
 				l.closeErr = err
@@ -138,6 +158,7 @@ type decodedState struct {
 	Space                   semantic.SpaceDescriptor
 	Chunking                semantic.ChunkingDescriptor
 	MaxAllocatedVectorID    semantic.VectorID
+	ComponentID             semantic.ComponentID
 	Rows                    []semantic.VectorRow
 	MaxK                    int
 	MaxChunkCandidates      int

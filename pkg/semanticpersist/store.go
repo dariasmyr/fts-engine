@@ -27,10 +27,10 @@ const (
 	stateFileName        = "semantic-state.bin"
 )
 
-// Publish writes one complete generation and atomically switches CURRENT.
+// PublishSealedSegment writes one complete generation and atomically switches CURRENT.
 // Synchronous mode fsyncs files and affected directories; asynchronous mode
 // only provides atomic process-visible publication, not power-loss durability.
-func Publish(ctx context.Context, root string, generationID uint64, snapshot semantic.Snapshot, options Options) (Generation, error) {
+func PublishSealedSegment(ctx context.Context, root string, generationID uint64, sealed SealedSegment, options Options) (Generation, error) {
 	if ctx == nil {
 		return Generation{}, vector.ErrNilContext
 	}
@@ -44,10 +44,7 @@ func Publish(ctx context.Context, root string, generationID uint64, snapshot sem
 	if err := validateLimits(options.Limits); err != nil {
 		return Generation{}, err
 	}
-	if err := validateSnapshotLimits(snapshot, options.Limits); err != nil {
-		return Generation{}, err
-	}
-	if err := snapshot.Validate(); err != nil {
+	if err := validateSealedSegment(sealed, options.Limits); err != nil {
 		return Generation{}, err
 	}
 	paths, rootCreated, err := prepareStoreDirectories(root)
@@ -97,7 +94,7 @@ func Publish(ctx context.Context, root string, generationID uint64, snapshot sem
 	if err := beforeStep(ctx, options, StepWriteVectors); err != nil {
 		return Generation{}, err
 	}
-	vectorsRef, err := writeVectorsFile(filepath.Join(segmentTemp, vectorsFileName), snapshot.Segment.Vectors(), snapshot.Segment.MaxK(), options.Durability)
+	vectorsRef, err := writeVectorsFile(filepath.Join(segmentTemp, vectorsFileName), sealed.Segment.Vectors(), sealed.Segment.MaxK(), options.Durability)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -108,11 +105,11 @@ func Publish(ctx context.Context, root string, generationID uint64, snapshot sem
 		return Generation{}, ErrLimitExceeded
 	}
 	var graphRef fileReference
-	if snapshot.Segment.Kind() == semantic.SegmentKindChunkHNSW {
+	if sealed.Segment.Kind() == semantic.SegmentKindChunkHNSW {
 		if err := beforeStep(ctx, options, StepWriteGraph); err != nil {
 			return Generation{}, err
 		}
-		graphRef, err = writeGraphFile(filepath.Join(segmentTemp, graphFileName), snapshot.Segment.Searcher(), vectorsRef, options.Durability)
+		graphRef, err = writeGraphFile(filepath.Join(segmentTemp, graphFileName), sealed.Segment.Searcher(), vectorsRef, options.Durability)
 		if err != nil {
 			return Generation{}, err
 		}
@@ -135,15 +132,15 @@ func Publish(ctx context.Context, root string, generationID uint64, snapshot sem
 		}
 	}
 
-	objectID := segmentObjectID(snapshot.Segment.Kind(), vectorsRef, graphRef)
+	objectID := segmentObjectID(sealed.Segment.Kind(), vectorsRef, graphRef)
 	objectPath := filepath.Join(paths.segments, objectID)
 	if err := beforeStep(ctx, options, StepRenameSegment); err != nil {
 		return Generation{}, err
 	}
 	if _, err := os.Lstat(objectPath); err == nil {
 		// Content-addressed reuse is allowed only after the existing files match
-		// the exact sizes and hashes produced by this snapshot.
-		if err := verifyExistingObject(objectPath, snapshot.Segment.Kind(), vectorsRef, graphRef, options.Limits, options.Durability); err != nil {
+		// the exact sizes and hashes produced by this sealed segment.
+		if err := verifyExistingObject(objectPath, sealed.Segment.Kind(), vectorsRef, graphRef, options.Limits, options.Durability); err != nil {
 			return Generation{}, err
 		}
 		if options.Durability == DurabilitySynchronous {
@@ -187,7 +184,7 @@ func Publish(ctx context.Context, root string, generationID uint64, snapshot sem
 	if err := beforeStep(ctx, options, StepWriteState); err != nil {
 		return Generation{}, err
 	}
-	stateData, stateRef, err := encodeState(snapshot, options.Limits)
+	stateData, stateRef, err := encodeState(sealed, options.Limits)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -198,7 +195,7 @@ func Publish(ctx context.Context, root string, generationID uint64, snapshot sem
 		return Generation{}, err
 	}
 	manifestValue := manifest{
-		Version: manifestVersion, GenerationID: generationID, ObjectID: objectID, SegmentKind: snapshot.Segment.Kind(),
+		Version: manifestVersion, GenerationID: generationID, ObjectID: objectID, SegmentKind: sealed.Segment.Kind(),
 		Vectors: vectorsRef, Graph: graphRef, State: stateRef,
 	}
 	if err := beforeStep(ctx, options, StepWriteManifest); err != nil {
@@ -309,6 +306,11 @@ func Publish(ctx context.Context, root string, generationID uint64, snapshot sem
 	return Generation{ID: generationID, ObjectID: objectID}, nil
 }
 
+// Publish is the short name for publishing one sealed segment generation.
+func Publish(ctx context.Context, root string, generationID uint64, sealed SealedSegment, options Options) (Generation, error) {
+	return PublishSealedSegment(ctx, root, generationID, sealed, options)
+}
+
 func Open(root string, limits Limits) (*Loaded, error) {
 	limits = normalizeLimits(limits)
 	if err := validateLimits(limits); err != nil {
@@ -381,7 +383,7 @@ func RepairCurrent(root string, generationID uint64, options Options) error {
 		return err
 	}
 	if options.Durability == DurabilitySynchronous {
-		if err := syncPublishedGeneration(paths, generationID, loaded.Generation.ObjectID, loaded.Snapshot.Segment.Kind() == semantic.SegmentKindChunkHNSW); err != nil {
+		if err := syncPublishedGeneration(paths, generationID, loaded.Generation.ObjectID, loaded.Sealed.Segment.Kind() == semantic.SegmentKindChunkHNSW); err != nil {
 			return err
 		}
 	}
@@ -569,7 +571,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		if graphMetadata.Size != manifestValue.Graph.Size || graphMetadata.SHA256 != manifestValue.Graph.SHA256 {
 			return nil, ErrCorrupt
 		}
-		segment, err = semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, searcher, state.Rows)
+		segment, err = semantic.NewSegment(state.ComponentID, semantic.SegmentMetadata{Space: state.Space, Chunking: state.Chunking}, searcher, state.Rows)
 	default:
 		return nil, ErrCorrupt
 	}
@@ -579,17 +581,18 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 	if segment.Len() != len(state.Rows) {
 		return nil, ErrCorrupt
 	}
-	snapshot := semantic.Snapshot{
-		Space: state.Space, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID, Segment: segment,
-		MaxK:               state.MaxK,
-		MaxChunkCandidates: state.MaxChunkCandidates, MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
+	sealed := SealedSegment{
+		Segment: segment, Space: state.Space, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
+		MaxK: state.MaxK, MaxChunkCandidates: state.MaxChunkCandidates,
+		MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
 	}
-	// Snapshot validation performs cross-file validation: vector rows, row metadata,
-	// descriptors, and limits must agree.
-	if err := snapshot.Validate(); err != nil {
+	if err := validateSealedSegment(sealed, limits); err != nil {
 		return nil, err
 	}
-	return &Loaded{Generation: Generation{ID: generationID, ObjectID: manifestValue.ObjectID}, Snapshot: snapshot}, nil
+	return &Loaded{
+		Generation: Generation{ID: generationID, ObjectID: manifestValue.ObjectID},
+		Sealed:     sealed,
+	}, nil
 }
 
 func openGenerationForRepair(paths storePaths, generationID uint64, limits Limits) (*Loaded, [sha256.Size]byte, error) {
@@ -644,14 +647,17 @@ func writeGraphFile(path string, reader *hnsw.Searcher, vectors fileReference, d
 	return fileReference{Size: metadata.Size, SHA256: metadata.SHA256}, nil
 }
 
-func validateSnapshotLimits(snapshot semantic.Snapshot, limits Limits) error {
-	if snapshot.Segment == nil || snapshot.Segment.Vectors() == nil ||
-		snapshot.Segment.Dimensions() > limits.MaxDimensions || snapshot.Segment.Len() > limits.MaxVectors ||
-		snapshot.Segment.MaxK() > limits.MaxK || snapshot.Segment.Len() > limits.MaxVectors ||
-		snapshot.MaxK > limits.MaxK || snapshot.MaxChunkCandidates > limits.MaxK {
+func validateSealedSegment(sealed SealedSegment, limits Limits) error {
+	if sealed.Segment == nil || sealed.Segment.Vectors() == nil ||
+		sealed.Segment.Dimensions() > limits.MaxDimensions || sealed.Segment.Len() > limits.MaxVectors ||
+		sealed.Segment.MaxK() > limits.MaxK || sealed.Segment.Len() > limits.MaxVectors ||
+		sealed.MaxK > limits.MaxK || sealed.MaxChunkCandidates > limits.MaxK {
 		return ErrLimitExceeded
 	}
-	components, ok := checkedMultiply64(uint64(snapshot.Segment.Len()), uint64(snapshot.Segment.Dimensions()))
+	if err := sealed.Segment.Validate(); err != nil {
+		return err
+	}
+	components, ok := checkedMultiply64(uint64(sealed.Segment.Len()), uint64(sealed.Segment.Dimensions()))
 	if !ok {
 		return ErrLimitExceeded
 	}
@@ -659,8 +665,8 @@ func validateSnapshotLimits(snapshot semantic.Snapshot, limits Limits) error {
 	if !ok || vectorBytes > limits.MaxVectorBytes || limits.MaxFileBytes < 44 || vectorBytes > limits.MaxFileBytes-44 {
 		return ErrLimitExceeded
 	}
-	if snapshot.Segment.Kind() == semantic.SegmentKindChunkHNSW {
-		searcher := snapshot.Segment.Searcher()
+	if sealed.Segment.Kind() == semantic.SegmentKindChunkHNSW {
+		searcher := sealed.Segment.Searcher()
 		if searcher == nil {
 			return ErrLimitExceeded
 		}
@@ -672,12 +678,13 @@ func validateSnapshotLimits(snapshot semantic.Snapshot, limits Limits) error {
 		}
 	}
 	validString := func(value string) bool { return len(value) <= limits.MaxStringBytes }
-	if !validString(snapshot.Space.ID) || !validString(snapshot.Space.ModelVersion) || !validString(snapshot.Space.Fingerprint) ||
-		!validString(snapshot.Chunking.ID) || !validString(snapshot.Chunking.Fingerprint) {
+	metadata := sealed.Segment.Metadata()
+	if !validString(metadata.Space.ID) || !validString(metadata.Space.ModelVersion) || !validString(metadata.Space.Fingerprint) ||
+		!validString(metadata.Chunking.ID) || !validString(metadata.Chunking.Fingerprint) {
 		return ErrLimitExceeded
 	}
 	documentChunks := make(map[string]int)
-	for _, record := range snapshot.Segment.Rows() {
+	for _, record := range sealed.Segment.Rows() {
 		if !validString(string(record.Chunk.ID)) || !validString(string(record.Chunk.DocID)) || !validString(record.Chunk.Field) {
 			return ErrLimitExceeded
 		}
