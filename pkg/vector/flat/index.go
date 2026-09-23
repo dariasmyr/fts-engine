@@ -44,14 +44,14 @@ func (r OrdinalRange) At(index int) (vector.Ordinal, bool) {
 // Index stores prepared vectors as one contiguous row-major matrix.
 type Index struct {
 	mu         sync.RWMutex
-	space      vector.Space
+	calculator vector.Calculator
 	maxVectors int
 	maxK       int
 	values     []float32
 }
 
 func New(config Config) (*Index, error) {
-	space, err := vector.NewSpace(config.Dimensions, config.Metric)
+	space, err := vector.NewCalculator(config.Dimensions, config.Metric)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func New(config Config) (*Index, error) {
 		return nil, ErrInvalidCapacity
 	}
 	return &Index{
-		space:      space,
+		calculator: space,
 		maxVectors: config.MaxVectors,
 		maxK:       config.MaxK,
 		values:     make([]float32, 0, config.InitialVectorCapacity*config.Dimensions),
@@ -91,11 +91,11 @@ func (idx *Index) AppendBatch(vectors [][]float32) (OrdinalRange, error) {
 	if len(vectors) > idx.maxVectors {
 		return OrdinalRange{}, fmt.Errorf("%w: batch=%d max=%d", ErrCapacityExceeded, len(vectors), idx.maxVectors)
 	}
-	if len(vectors) > int(^uint(0)>>1)/idx.space.Dimensions() {
+	if len(vectors) > int(^uint(0)>>1)/idx.calculator.Dimensions() {
 		return OrdinalRange{}, ErrCapacityExceeded
 	}
 
-	dimensions := idx.space.Dimensions()
+	dimensions := idx.calculator.Dimensions()
 	// Prepare the complete batch in one allocation. Besides avoiding one
 	// temporary allocation per vector, this keeps validation and normalization
 	// outside the write lock and preserves all-or-nothing append semantics.
@@ -105,7 +105,7 @@ func (idx *Index) AppendBatch(vectors [][]float32) (OrdinalRange, error) {
 		rowEnd := rowStart + dimensions
 		// row is a view into prepared; slicing does not copy vector components.
 		row := prepared[rowStart:rowEnd]
-		if err := idx.space.PrepareInto(row, vectorValue); err != nil {
+		if err := idx.calculator.PrepareInto(row, vectorValue); err != nil {
 			return OrdinalRange{}, err
 		}
 	}
@@ -127,7 +127,7 @@ func (idx *Index) AppendBatch(vectors [][]float32) (OrdinalRange, error) {
 func (idx *Index) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	return exactsearch.Search(ctx, idx.space, idx.values, idx.maxK, query, k, options)
+	return exactsearch.Search(ctx, idx.calculator, idx.values, idx.maxK, query, k, options)
 }
 
 // Compact returns a new mutable index containing only rows allowed by filter.
@@ -135,11 +135,11 @@ func (idx *Index) Search(ctx context.Context, query []float32, k int, options ve
 func (idx *Index) Compact(ctx context.Context, filter vector.ResultFilter) (*Index, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	values, err := compactPrepared(ctx, idx.space.Dimensions(), idx.values, filter)
+	values, err := compactPrepared(ctx, idx.calculator.Dimensions(), idx.values, filter)
 	if err != nil {
 		return nil, err
 	}
-	return &Index{space: idx.space, maxVectors: idx.maxVectors, maxK: idx.maxK, values: values}, nil
+	return &Index{calculator: idx.calculator, maxVectors: idx.maxVectors, maxK: idx.maxK, values: values}, nil
 }
 
 func (idx *Index) Len() int {
@@ -149,18 +149,18 @@ func (idx *Index) Len() int {
 }
 
 // Dimensions returns the number of dimensions in the index.
-func (idx *Index) Dimensions() int { return idx.space.Dimensions() }
+func (idx *Index) Dimensions() int { return idx.calculator.Dimensions() }
 
-func (idx *Index) Metric() vector.Metric { return idx.space.Metric() }
+func (idx *Index) Metric() vector.Metric { return idx.calculator.Metric() }
 
 // lenLocked returns the number of vectors in the index. The caller must hold a read or write lock.
-func (idx *Index) lenLocked() int { return len(idx.values) / idx.space.Dimensions() }
+func (idx *Index) lenLocked() int { return len(idx.values) / idx.calculator.Dimensions() }
 
 // Freeze copies the current matrix into an immutable concurrent reader.
 func (idx *Index) Freeze() *Searcher {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	return newReader(idx.space, idx.maxK, append([]float32(nil), idx.values...))
+	return newReader(idx.calculator, idx.maxK, append([]float32(nil), idx.values...))
 }
 
 // FreezeCompact returns an immutable reader containing only rows allowed by
@@ -168,11 +168,11 @@ func (idx *Index) Freeze() *Searcher {
 func (idx *Index) FreezeCompact(ctx context.Context, filter vector.ResultFilter) (*Searcher, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	values, err := compactPrepared(ctx, idx.space.Dimensions(), idx.values, filter)
+	values, err := compactPrepared(ctx, idx.calculator.Dimensions(), idx.values, filter)
 	if err != nil {
 		return nil, err
 	}
-	return newReader(idx.space, idx.maxK, values), nil
+	return newReader(idx.calculator, idx.maxK, values), nil
 }
 
 func compactPrepared(ctx context.Context, dimensions int, matrix []float32, filter vector.ResultFilter) ([]float32, error) {

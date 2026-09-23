@@ -8,7 +8,7 @@ import (
 )
 
 func TestMemorySourceStoresPreparedRowsWithoutAliasing(t *testing.T) {
-	space, err := NewSpace(2, MetricCosine)
+	space, err := NewCalculator(2, MetricCosine)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestMemorySourceStoresPreparedRowsWithoutAliasing(t *testing.T) {
 }
 
 func TestPreparedMemorySourceValidatesMatrixShape(t *testing.T) {
-	space, err := NewSpace(2, MetricL2Squared)
+	space, err := NewCalculator(2, MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}

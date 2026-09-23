@@ -14,21 +14,21 @@ import (
 
 // VectorSource is immutable prepared vector storage backed by a flat matrix.
 type VectorSource struct {
-	space  vector.Space
-	values []float32
+	calculator vector.Calculator
+	values     []float32
 }
 
-func newVectorSource(space vector.Space, values []float32) *VectorSource {
-	return &VectorSource{space: space, values: values}
+func newVectorSource(calculator vector.Calculator, values []float32) *VectorSource {
+	return &VectorSource{calculator: calculator, values: values}
 }
 
-func (s *VectorSource) Len() int { return len(s.values) / s.space.Dimensions() }
+func (s *VectorSource) Len() int { return len(s.values) / s.calculator.Dimensions() }
 
-func (s *VectorSource) Dimensions() int { return s.space.Dimensions() }
+func (s *VectorSource) Dimensions() int { return s.calculator.Dimensions() }
 
-func (s *VectorSource) Metric() vector.Metric { return s.space.Metric() }
+func (s *VectorSource) Metric() vector.Metric { return s.calculator.Metric() }
 
-func (s *VectorSource) Normalization() vector.Normalization { return s.space.Normalization() }
+func (s *VectorSource) Normalization() vector.Normalization { return s.calculator.Normalization() }
 
 // ReadVectorInto copies one prepared row into dst without exposing source storage.
 func (s *VectorSource) ReadVectorInto(ctx context.Context, ord vector.Ordinal, dst []float32) error {

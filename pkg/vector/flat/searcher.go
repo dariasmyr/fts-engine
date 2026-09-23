@@ -13,12 +13,12 @@ type Searcher struct {
 	maxK   int
 }
 
-func newReader(space vector.Space, maxK int, values []float32) *Searcher {
-	return &Searcher{source: newVectorSource(space, values), maxK: maxK}
+func newReader(calculator vector.Calculator, maxK int, values []float32) *Searcher {
+	return &Searcher{source: newVectorSource(calculator, values), maxK: maxK}
 }
 
 func (r *Searcher) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
-	return exactsearch.Search(ctx, r.source.space, r.source.values, r.maxK, query, k, options)
+	return exactsearch.Search(ctx, r.source.calculator, r.source.values, r.maxK, query, k, options)
 }
 
 // Compact returns an immutable reader containing only rows allowed by filter.
@@ -28,7 +28,7 @@ func (r *Searcher) Compact(ctx context.Context, filter vector.ResultFilter) (*Se
 	if err != nil {
 		return nil, err
 	}
-	return newReader(r.source.space, r.maxK, values), nil
+	return newReader(r.source.calculator, r.maxK, values), nil
 }
 
 func (r *Searcher) Len() int { return r.source.Len() }

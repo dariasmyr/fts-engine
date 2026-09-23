@@ -44,9 +44,9 @@ func readerTestBuildInfo() BuildInfo {
 	}
 }
 
-func readerTestSpace(t *testing.T, dimensions int, metric vector.Metric) vector.Space {
+func readerTestSpace(t *testing.T, dimensions int, metric vector.Metric) vector.Calculator {
 	t.Helper()
-	space, err := vector.NewSpace(dimensions, metric)
+	space, err := vector.NewCalculator(dimensions, metric)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,9 +72,9 @@ func readerTestGraph() graphData {
 	}
 }
 
-func newReaderForTest(t *testing.T, space vector.Space, graph graphData) *Searcher {
+func newReaderForTest(t *testing.T, calculator vector.Calculator, graph graphData) *Searcher {
 	t.Helper()
-	reader, err := newSearcherFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), graph)
+	reader, err := newSearcherFromGraph(calculator, readerTestSearchConfig(), readerTestBuildInfo(), graph)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,11 +261,11 @@ func TestReaderRejectsInvalidGraphData(t *testing.T) {
 	validSearch := readerTestSearchConfig()
 
 	tests := []struct {
-		name  string
-		space vector.Space
-		info  BuildInfo
-		graph graphData
-		want  error
+		name       string
+		calculator vector.Calculator
+		info       BuildInfo
+		graph      graphData
+		want       error
 	}{
 		{"invalid build version", l2, BuildInfo{BuildVersion: BuildVersion + 1, LevelGeneratorVersion: LevelGeneratorVersion, MaxNeighbors: 2, LevelZeroMaxNeighbors: 4, EfConstruction: 2}, graphData{}, ErrInvalidBuildConfig},
 		{"invalid generator version", l2, BuildInfo{BuildVersion: BuildVersion, LevelGeneratorVersion: LevelGeneratorVersion + 1, MaxNeighbors: 2, LevelZeroMaxNeighbors: 4, EfConstruction: 2}, graphData{}, ErrInvalidBuildConfig},
@@ -297,7 +297,7 @@ func TestReaderRejectsInvalidGraphData(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := newSearcherFromGraph(test.space, validSearch, test.info, test.graph)
+			_, err := newSearcherFromGraph(test.calculator, validSearch, test.info, test.graph)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("error = %v, want %v", err, test.want)
 			}

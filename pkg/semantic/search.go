@@ -10,14 +10,14 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-// segmentView binds an immutable physical segment to an immutable local
+// visibleSegment binds an immutable physical segment to an immutable local
 // liveness filter. The filter is view state, not mutable segment state.
-type segmentView struct {
+type visibleSegment struct {
 	segment *Segment
 	filter  vector.BitSet
 }
 
-func searchSegmentChunks(ctx context.Context, view segmentView, query []float32, k, maxResults int) (chunkSearchResult, error) {
+func searchSegmentChunks(ctx context.Context, view visibleSegment, query []float32, k, maxResults int) (chunkSearchResult, error) {
 	if k <= 0 || k > maxResults {
 		return chunkSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxResults)
 	}
@@ -127,10 +127,10 @@ func (s *Service) searchEncodedDocumentsWithOptions(ctx context.Context, query [
 }
 
 func (s *Service) searchEncodedDocumentsInPublished(ctx context.Context, published *ReadView, maxResults, maxCandidates, maxChunksPerDocumentHit int, query []float32, k int, options SearchOptions) (DocumentSearchResult, error) {
-	return searchReadViewDocuments(ctx, published, s.vectorSpace, maxResults, maxCandidates, maxChunksPerDocumentHit, query, k, options)
+	return searchReadViewDocuments(ctx, published, s.calculator, maxResults, maxCandidates, maxChunksPerDocumentHit, query, k, options)
 }
 
-func searchReadViewDocuments(ctx context.Context, published *ReadView, vectorSpace vector.Space, maxResults, maxCandidates, maxChunksPerDocumentHit int, query []float32, k int, options SearchOptions) (DocumentSearchResult, error) {
+func searchReadViewDocuments(ctx context.Context, published *ReadView, calculator vector.Calculator, maxResults, maxCandidates, maxChunksPerDocumentHit int, query []float32, k int, options SearchOptions) (DocumentSearchResult, error) {
 	candidateBudget, err := resolveCandidateBudget(options.CandidateChunks, maxCandidates)
 	if err != nil {
 		return DocumentSearchResult{}, err
@@ -146,13 +146,10 @@ func searchReadViewDocuments(ctx context.Context, published *ReadView, vectorSpa
 		if err := ctx.Err(); err != nil {
 			return DocumentSearchResult{}, err
 		}
-		if _, err := vectorSpace.Prepare(query); err != nil {
-			return DocumentSearchResult{}, err
-		}
 		return DocumentSearchResult{Hits: []DocumentHit{}}, nil
 	}
 	budget := min(liveCount, candidateBudget)
-	chunks, err := searchSegmentsChunks(ctx, vectorSpace, published.segments, query, budget, candidateBudget, vector.SearchOptions{EfSearch: options.EfSearch, VisitLimit: options.VisitLimit})
+	chunks, err := searchSegmentsChunks(ctx, calculator, published.segments, query, budget, candidateBudget, vector.SearchOptions{EfSearch: options.EfSearch, VisitLimit: options.VisitLimit})
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
@@ -177,7 +174,7 @@ func resolveCandidateBudget(candidateChunks, maxCandidates int) (int, error) {
 	return min(candidateChunks, maxCandidates), nil
 }
 
-func searchSegmentsChunks(ctx context.Context, vectorSpace vector.Space, views []segmentView, query []float32, k, maxResults int, searchOptions vector.SearchOptions) (chunkSearchResult, error) {
+func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, views []visibleSegment, query []float32, k, maxResults int, searchOptions vector.SearchOptions) (chunkSearchResult, error) {
 	if k <= 0 || k > maxResults {
 		return chunkSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxResults)
 	}
@@ -187,7 +184,7 @@ func searchSegmentsChunks(ctx context.Context, vectorSpace vector.Space, views [
 	if err := ctx.Err(); err != nil {
 		return chunkSearchResult{}, err
 	}
-	if _, err := vectorSpace.Prepare(query); err != nil {
+	if _, err := calculator.Prepare(query); err != nil {
 		return chunkSearchResult{}, err
 	}
 	if len(views) == 0 {
@@ -264,7 +261,7 @@ func searchSegmentsChunks(ctx context.Context, vectorSpace vector.Space, views [
 	return chunkSearchResult{Hits: hits, Stats: stats, Incomplete: incomplete}, nil
 }
 
-func searchDocuments(ctx context.Context, view segmentView, vectorSpace vector.Space, query []float32, k, maxResults, maxChunkCandidates, maxChunksPerDocumentHit int) (DocumentSearchResult, error) {
+func searchDocuments(ctx context.Context, view visibleSegment, calculator vector.Calculator, query []float32, k, maxResults, maxChunkCandidates, maxChunksPerDocumentHit int) (DocumentSearchResult, error) {
 	if k <= 0 || k > maxResults {
 		return DocumentSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxResults)
 	}
@@ -277,7 +274,7 @@ func searchDocuments(ctx context.Context, view segmentView, vectorSpace vector.S
 		if err := ctx.Err(); err != nil {
 			return DocumentSearchResult{}, err
 		}
-		if _, err := vectorSpace.Prepare(query); err != nil {
+		if _, err := calculator.Prepare(query); err != nil {
 			return DocumentSearchResult{}, err
 		}
 		return DocumentSearchResult{Hits: []DocumentHit{}}, nil

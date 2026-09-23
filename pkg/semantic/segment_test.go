@@ -28,7 +28,7 @@ func TestSegmentAccessorsAndSearch(t *testing.T) {
 
 func TestReadViewPublishesImmutableSegments(t *testing.T) {
 	segment := testImmutableSegment(t)
-	view, err := NewReadView(7, []*Segment{segment})
+	view, err := NewReadView(7, []*Segment{segment}, SearchPolicy{MaxK: 10, MaxChunkCandidates: 20, MaxChunksPerDocumentHit: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,15 +50,28 @@ func TestSegmentValidationRejectsDuplicateRows(t *testing.T) {
 	}
 }
 
+func TestNewReadViewRejectsIncompatibleSegments(t *testing.T) {
+	first := testImmutableSegment(t)
+	second := testImmutableSegment(t)
+	metadata := second.Metadata()
+	metadata.Embedding.ModelID = "different-model"
+	second.metadata = metadata
+
+	_, err := NewReadView(1, []*Segment{first, second}, SearchPolicy{MaxK: 2, MaxChunkCandidates: 4, MaxChunksPerDocumentHit: 1})
+	if !errors.Is(err, ErrEmbeddingMismatch) {
+		t.Fatalf("NewReadView error = %v, want ErrEmbeddingMismatch", err)
+	}
+}
+
 func testImmutableSegment(t *testing.T) *Segment {
 	t.Helper()
 	config := testConfig(10, 100)
-	vectorSpace, err := config.Embedding.VectorSpace()
+	calculator, err := config.Embedding.Calculator()
 	if err != nil {
 		t.Fatal(err)
 	}
 	values := [][]float32{{0, 0}, {1, 0}, {2, 0}}
-	source, err := vector.NewMemorySource(vectorSpace, values)
+	source, err := vector.NewMemorySource(calculator, values)
 	if err != nil {
 		t.Fatal(err)
 	}

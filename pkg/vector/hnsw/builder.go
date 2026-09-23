@@ -12,7 +12,7 @@ type Builder struct {
 	buildConfig  BuildConfig
 	searchConfig SearchConfig
 	buildInfo    BuildInfo
-	space        vector.Space
+	calculator   vector.Calculator
 	expected     int
 	present      []bool
 	graph        graphData
@@ -21,7 +21,7 @@ type Builder struct {
 }
 
 func NewBuilder(buildConfig BuildConfig, searchConfig SearchConfig, vectorCount int) (*Builder, error) {
-	space, components, err := buildConfig.validate(vectorCount)
+	calculator, components, err := buildConfig.validate(vectorCount)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func NewBuilder(buildConfig BuildConfig, searchConfig SearchConfig, vectorCount 
 	}
 	return &Builder{
 		buildConfig: buildConfig, searchConfig: searchConfig, buildInfo: buildConfig.info(),
-		space: space, expected: vectorCount, present: make([]bool, vectorCount),
+		calculator: calculator, expected: vectorCount, present: make([]bool, vectorCount),
 		graph: graphData{values: make([]float32, components), nodes: make([]mutableNode, 0, vectorCount)},
 		rng:   newLevelRNG(buildConfig.Seed),
 	}, nil
@@ -53,7 +53,7 @@ func (b *Builder) Add(ctx context.Context, ordinal vector.Ordinal, value []float
 	if b.present[ordinal] {
 		return 0, fmt.Errorf("%w: %d", ErrDuplicateOrdinal, ordinal)
 	}
-	prepared, err := b.space.Prepare(value)
+	prepared, err := b.calculator.Prepare(value)
 	if err != nil {
 		return 0, err
 	}
@@ -72,15 +72,15 @@ func (b *Builder) addPrepared(ordinal vector.Ordinal, prepared []float32) (NodeO
 	if b.present[ordinal] {
 		return 0, fmt.Errorf("%w: %d", ErrDuplicateOrdinal, ordinal)
 	}
-	if err := validatePreparedVector(b.space, prepared); err != nil {
+	if err := validatePreparedVector(b.calculator, prepared); err != nil {
 		return 0, err
 	}
 
 	nextRNG := b.rng
 	level := nextRNG.level(b.buildConfig.MaxNeighbors)
 	nodeOrdinal := NodeOrdinal(len(b.graph.nodes))
-	rowStart := int(ordinal) * b.space.Dimensions()
-	copy(b.graph.values[rowStart:rowStart+b.space.Dimensions()], prepared)
+	rowStart := int(ordinal) * b.calculator.Dimensions()
+	copy(b.graph.values[rowStart:rowStart+b.calculator.Dimensions()], prepared)
 	b.graph.nodes = append(b.graph.nodes, mutableNode{
 		vectorOrdinal: ordinal, level: level, links: make([][]NodeOrdinal, int(level)+1),
 	})
@@ -103,22 +103,22 @@ func (b *Builder) Check() (GraphStats, error) {
 	// The backing matrix includes rows for ordinals not added yet. Compact only
 	// present rows so the common validator can also check an incomplete build.
 	compact := graphData{nodes: make([]mutableNode, len(b.graph.nodes)), hasEntry: b.graph.hasEntry, entry: b.graph.entry}
-	compact.values = make([]float32, len(b.graph.nodes)*b.space.Dimensions())
+	compact.values = make([]float32, len(b.graph.nodes)*b.calculator.Dimensions())
 	seen := make([]bool, b.expected)
 	for nodeOrdinal, node := range b.graph.nodes {
 		if uint64(node.vectorOrdinal) >= uint64(b.expected) || seen[node.vectorOrdinal] || !b.present[node.vectorOrdinal] {
 			return GraphStats{}, ErrInvalidGraph
 		}
 		seen[node.vectorOrdinal] = true
-		sourceStart := int(node.vectorOrdinal) * b.space.Dimensions()
-		targetStart := nodeOrdinal * b.space.Dimensions()
-		copy(compact.values[targetStart:targetStart+b.space.Dimensions()], b.graph.values[sourceStart:sourceStart+b.space.Dimensions()])
+		sourceStart := int(node.vectorOrdinal) * b.calculator.Dimensions()
+		targetStart := nodeOrdinal * b.calculator.Dimensions()
+		copy(compact.values[targetStart:targetStart+b.calculator.Dimensions()], b.graph.values[sourceStart:sourceStart+b.calculator.Dimensions()])
 		compact.nodes[nodeOrdinal] = mutableNode{vectorOrdinal: vector.Ordinal(nodeOrdinal), level: node.level, links: make([][]NodeOrdinal, len(node.links))}
 		for level := range node.links {
 			compact.nodes[nodeOrdinal].links[level] = append([]NodeOrdinal(nil), node.links[level]...)
 		}
 	}
-	return validateGraphData(b.space, b.buildInfo, compact)
+	return validateGraphData(b.calculator, b.buildInfo, compact)
 }
 
 // Freeze validates and copies a complete graph into an immutable packed Searcher.
@@ -133,7 +133,7 @@ func (b *Builder) Freeze() (*Searcher, error) {
 	}
 	// newSearcherFromGraph validates and copies every retained section, so passing
 	// the mutable graph directly avoids a redundant full graph clone.
-	return newSearcherFromGraph(b.space, b.searchConfig, b.buildInfo, b.graph, b.source)
+	return newSearcherFromGraph(b.calculator, b.searchConfig, b.buildInfo, b.graph, b.source)
 }
 
 func (b *Builder) insert(node NodeOrdinal) {

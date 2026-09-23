@@ -8,11 +8,11 @@ import (
 )
 
 func TestNewSpaceValidation(t *testing.T) {
-	if _, err := NewSpace(0, MetricCosine); !errors.Is(err, ErrInvalidDimensions) {
-		t.Fatalf("NewSpace(0, cosine) error = %v, want ErrInvalidDimensions", err)
+	if _, err := NewCalculator(0, MetricCosine); !errors.Is(err, ErrInvalidDimensions) {
+		t.Fatalf("NewCalculator(0, cosine) error = %v, want ErrInvalidDimensions", err)
 	}
-	if _, err := NewSpace(3, Metric(255)); !errors.Is(err, ErrUnsupportedMetric) {
-		t.Fatalf("NewSpace(3, unknown) error = %v, want ErrUnsupportedMetric", err)
+	if _, err := NewCalculator(3, Metric(255)); !errors.Is(err, ErrUnsupportedMetric) {
+		t.Fatalf("NewCalculator(3, unknown) error = %v, want ErrUnsupportedMetric", err)
 	}
 }
 
@@ -197,11 +197,11 @@ func TestDistanceProperties(t *testing.T) {
 	}
 }
 
-func mustSpace(t *testing.T, dimensions int, metric Metric) Space {
+func mustSpace(t *testing.T, dimensions int, metric Metric) Calculator {
 	t.Helper()
-	space, err := NewSpace(dimensions, metric)
+	space, err := NewCalculator(dimensions, metric)
 	if err != nil {
-		t.Fatalf("NewSpace() error = %v", err)
+		t.Fatalf("NewCalculator() error = %v", err)
 	}
 	return space
 }

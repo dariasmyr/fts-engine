@@ -30,10 +30,10 @@ func BuildSearcher(ctx context.Context, source vector.PreparedVectorSource, opti
 	dimensions := source.Dimensions()
 	metric := source.Metric()
 	normalization := source.Normalization()
-	if dimensions != builder.space.Dimensions() || metric != builder.space.Metric() || normalization != builder.space.Normalization() {
+	if dimensions != builder.calculator.Dimensions() || metric != builder.calculator.Metric() || normalization != builder.calculator.Normalization() {
 		return nil, fmt.Errorf("%w: source dimensions=%d metric=%s normalization=%s, build dimensions=%d metric=%s normalization=%s",
 			ErrBuildSourceMismatch, dimensions, metric, normalization,
-			builder.space.Dimensions(), builder.space.Metric(), builder.space.Normalization())
+			builder.calculator.Dimensions(), builder.calculator.Metric(), builder.calculator.Normalization())
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func BuildSearcher(ctx context.Context, source vector.PreparedVectorSource, opti
 	reportBuildProgress(options.Progress, BuildPhaseVectors, 0, total)
 	var scratch []float32
 	if total > 0 {
-		scratch = make([]float32, builder.space.Dimensions())
+		scratch = make([]float32, builder.calculator.Dimensions())
 	}
 	for row := range total {
 		if err := ctx.Err(); err != nil {

@@ -31,9 +31,9 @@ type Service struct {
 	mu      sync.RWMutex
 	flushMu sync.Mutex
 
-	config      Config
-	vectorSpace vector.Space
-	published   *ReadView
+	config     Config
+	calculator vector.Calculator
+	published  *ReadView
 
 	pendingVectors           []pendingVector
 	pendingVisibilityChanges []livenessChange
@@ -45,7 +45,7 @@ type Service struct {
 }
 
 func New(config Config) (*Service, error) {
-	vectorSpace, err := config.Embedding.VectorSpace()
+	calculator, err := config.Embedding.Calculator()
 	if err != nil {
 		return nil, err
 	}
@@ -64,8 +64,8 @@ func New(config Config) (*Service, error) {
 	}
 	return &Service{
 		config:          config,
-		vectorSpace:     vectorSpace,
-		published:       &ReadView{},
+		calculator:      calculator,
+		published:       newEmptyReadView(SearchPolicy{MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}),
 		maxAllocatedID:  config.InitialMaxAllocatedVectorID,
 		nextComponentID: MutableHeadID + 1,
 		currentByDoc:    make(map[fts.DocID][]VectorID),
@@ -76,16 +76,16 @@ func New(config Config) (*Service, error) {
 
 func normalizeBuildConfig(config hnsw.BuildConfig, embedding EmbeddingDescriptor, maxVectors int) hnsw.BuildConfig {
 	if config.Dimensions == 0 {
-		config.Dimensions = embedding.Vector.Dimensions
+		config.Dimensions = embedding.Dimensions
 	}
 	if config.Metric == 0 {
-		config.Metric = embedding.Vector.Metric
+		config.Metric = embedding.Metric
 	}
 	if config.MaxVectors == 0 {
 		config.MaxVectors = maxVectors
 	}
 	if config.MaxVectorBytes == 0 {
-		config.MaxVectorBytes = uint64(maxVectors) * uint64(embedding.Vector.Dimensions) * 4
+		config.MaxVectorBytes = uint64(maxVectors) * uint64(embedding.Dimensions) * 4
 	}
 	if config.MaxNeighbors == 0 {
 		config.MaxNeighbors = 16
@@ -301,15 +301,15 @@ func buildPendingSegment(ctx context.Context, componentID ComponentID, pending [
 }
 
 func newInMemoryVectorSourceFromConfig(config Config, values [][]float32) (*vector.MemorySource, error) {
-	vectorSpace, err := config.Embedding.VectorSpace()
+	calculator, err := config.Embedding.Calculator()
 	if err != nil {
 		return nil, err
 	}
-	return vector.NewMemorySource(vectorSpace, values)
+	return vector.NewMemorySource(calculator, values)
 }
 
 func publishIndex(base *ReadView, locations map[VectorID]vectorLocation, changes []livenessChange, pending *Segment, pendingComponent ComponentID, documents map[fts.DocID][]VectorID, generation uint64) (*ReadView, map[VectorID]vectorLocation, error) {
-	segments := append([]segmentView(nil), base.segments...)
+	segments := append([]visibleSegment(nil), base.segments...)
 	componentIndexes := make(map[ComponentID]int, len(segments))
 	for i, view := range segments {
 		if view.segment == nil {
@@ -357,12 +357,12 @@ func publishIndex(base *ReadView, locations map[VectorID]vectorLocation, changes
 		if err != nil {
 			return nil, nil, err
 		}
-		segments = append(segments, segmentView{segment: pending, filter: filter})
+		segments = append(segments, visibleSegment{segment: pending, filter: filter})
 		for ordinal, row := range pending.Rows() {
 			resultLocations[row.VectorID] = vectorLocation{component: pendingComponent, ordinal: vector.Ordinal(ordinal)}
 		}
 	}
-	return newReadView(generation, segments), resultLocations, nil
+	return newReadView(generation, segments, SearchPolicy{MaxK: base.maxK, MaxChunkCandidates: base.maxCandidates, MaxChunksPerDocumentHit: base.maxChunksPerDocumentHit}), resultLocations, nil
 }
 
 func filterForDocumentMapping(segment *Segment, documents map[fts.DocID][]VectorID) (vector.BitSet, error) {
@@ -430,7 +430,7 @@ func (s *Service) queueVersionLocked(docID fts.DocID, batch []ChunkVector, old [
 	return nil
 }
 
-func (s *Service) viewSegmentsPhysical() []segmentView {
+func (s *Service) viewSegmentsPhysical() []visibleSegment {
 	if s.published == nil {
 		return nil
 	}
@@ -498,7 +498,7 @@ func (s *Service) Compact(ctx context.Context) error {
 		for ordinal, row := range rows {
 			locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
 		}
-		s.published = newReadView(version, []segmentView{{segment: merged, filter: filter}})
+		s.published = newReadView(version, []visibleSegment{{segment: merged, filter: filter}}, SearchPolicy{MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit})
 		s.locations = locations
 		s.nextComponentID++
 		s.mu.Unlock()
@@ -538,7 +538,7 @@ func (s *Service) validateBatch(ctx context.Context, docID fts.DocID, batch []Ch
 		if item.Ref.DocID != docID || item.Ref.ID == "" || item.Ref.Field == "" || item.Ref.StartByte > item.Ref.EndByte {
 			return ErrInvalidBatch
 		}
-		if err := s.vectorSpace.Validate(item.Vector); err != nil {
+		if err := s.calculator.Validate(item.Vector); err != nil {
 			return err
 		}
 	}

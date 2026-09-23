@@ -20,7 +20,7 @@ func main() {
 	}
 	defer os.RemoveAll(root)
 
-	embedding, err := semantic.NewEmbeddingDescriptor("example-provider", "example-embedding", "v1", "example-embedding-v1", semantic.VectorSpec{Dimensions: 2, Metric: vector.MetricL2Squared, VectorFormatVersion: 1})
+	embedding, err := semantic.NewEmbeddingDescriptor("example-provider", "example-embedding", "v1", "example-embedding-v1", 2, vector.MetricL2Squared, 1)
 	must(err)
 	chunking := semantic.ChunkingDescriptor{ID: "example-chunks-v1", Version: 1, Fingerprint: "example-chunks-fp-v1"}
 	service, err := semantic.New(semantic.Config{
@@ -50,7 +50,7 @@ func main() {
 	segment := view.Segments()[0]
 	stats := service.Statistics()
 	sealed := semanticpersist.SealedSegment{
-		Segment: segment, Embedding: service.Embedding(), Chunking: service.Chunking(),
+		Segment:              segment,
 		MaxAllocatedVectorID: stats.MaxAllocatedVectorID, MaxK: 10,
 		MaxChunkCandidates: 100, MaxChunksPerDocumentHit: 3,
 	}
@@ -63,7 +63,7 @@ func main() {
 	loaded, err := semanticpersist.Open(root, semanticpersist.OpenOptions{Limits: semanticpersist.DefaultLimits(), ExpectedDescriptors: semantic.PipelineDescriptor{Embedding: embedding, Chunking: chunking}})
 	must(err)
 	defer loaded.Close()
-	loadedView, err := semantic.NewReadView(generation.ID, []*semantic.Segment{loaded.Sealed.Segment})
+	loadedView, err := semantic.NewReadView(generation.ID, []*semantic.Segment{loaded.Sealed.Segment}, semantic.SearchPolicy{MaxK: 10, MaxChunkCandidates: 100, MaxChunksPerDocumentHit: 3})
 	must(err)
 	result, err := loadedView.SearchDocuments(ctx, encoder, semantic.Document{ID: "query", Fields: map[string]string{"body": "query"}}, 2)
 	must(err)

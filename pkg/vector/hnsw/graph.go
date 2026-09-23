@@ -43,11 +43,11 @@ func validatePersistedBuildInfo(info BuildInfo) error {
 	return nil
 }
 
-func validateGraphData(space vector.Space, info BuildInfo, graph graphData) (GraphStats, error) {
+func validateGraphData(calculator vector.Calculator, info BuildInfo, graph graphData) (GraphStats, error) {
 	if err := validateBuildInfo(info); err != nil {
 		return GraphStats{}, err
 	}
-	vectorCount, err := validateGraphShape(space, graph)
+	vectorCount, err := validateGraphShape(calculator, graph)
 	if err != nil {
 		return GraphStats{}, err
 	}
@@ -65,7 +65,7 @@ func validateGraphData(space vector.Space, info BuildInfo, graph graphData) (Gra
 	maxLevel := 0
 	var totalLinks uint64
 	for nodeOrdinal, node := range graph.nodes {
-		if err := validateGraphNode(space, graph, nodeOrdinal, seenOrdinals); err != nil {
+		if err := validateGraphNode(calculator, graph, nodeOrdinal, seenOrdinals); err != nil {
 			return GraphStats{}, err
 		}
 		if err := validateNodeLinks(info, graph, nodeOrdinal, &totalLinks); err != nil {
@@ -79,8 +79,8 @@ func validateGraphData(space vector.Space, info BuildInfo, graph graphData) (Gra
 	return graphStatistics(graph, maxLevel), nil
 }
 
-func validateGraphShape(space vector.Space, graph graphData) (int, error) {
-	dimensions := space.Dimensions()
+func validateGraphShape(calculator vector.Calculator, graph graphData) (int, error) {
+	dimensions := calculator.Dimensions()
 	if dimensions <= 0 || len(graph.values)%dimensions != 0 {
 		return 0, ErrInvalidGraph
 	}
@@ -91,16 +91,16 @@ func validateGraphShape(space vector.Space, graph graphData) (int, error) {
 	return vectorCount, nil
 }
 
-func validateGraphNode(space vector.Space, graph graphData, nodeOrdinal int, seenOrdinals []bool) error {
+func validateGraphNode(calculator vector.Calculator, graph graphData, nodeOrdinal int, seenOrdinals []bool) error {
 	node := graph.nodes[nodeOrdinal]
 	if int(node.level) > MaxLevel || len(node.links) != int(node.level)+1 ||
 		uint64(node.vectorOrdinal) >= uint64(len(seenOrdinals)) || seenOrdinals[node.vectorOrdinal] {
 		return fmt.Errorf("%w: node %d metadata", ErrInvalidGraph, nodeOrdinal)
 	}
 	seenOrdinals[node.vectorOrdinal] = true
-	dimensions := space.Dimensions()
+	dimensions := calculator.Dimensions()
 	rowStart := int(node.vectorOrdinal) * dimensions
-	if err := validatePreparedVector(space, graph.values[rowStart:rowStart+dimensions]); err != nil {
+	if err := validatePreparedVector(calculator, graph.values[rowStart:rowStart+dimensions]); err != nil {
 		return fmt.Errorf("%w: node %d vector: %v", ErrInvalidGraph, nodeOrdinal, err)
 	}
 	return nil
@@ -129,11 +129,11 @@ func validateNodeLinks(info BuildInfo, graph graphData, nodeOrdinal int, totalLi
 	return nil
 }
 
-func validatePreparedVector(space vector.Space, value []float32) error {
-	if err := space.Validate(value); err != nil {
+func validatePreparedVector(calculator vector.Calculator, value []float32) error {
+	if err := calculator.Validate(value); err != nil {
 		return err
 	}
-	if space.Normalization() == vector.NormalizationUnitLength {
+	if calculator.Normalization() == vector.NormalizationUnitLength {
 		var normSquared float64
 		for _, component := range value {
 			normSquared += float64(component) * float64(component)

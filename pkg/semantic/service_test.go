@@ -15,7 +15,7 @@ import (
 )
 
 func testConfig(maxK, maxCandidates int) Config {
-	embedding, err := NewEmbeddingDescriptor("test-provider", "test-model", "v1", "test-embedding-v1", VectorSpec{Dimensions: 2, Metric: vector.MetricL2Squared, VectorFormatVersion: 1})
+	embedding, err := NewEmbeddingDescriptor("test-provider", "test-model", "v1", "test-embedding-v1", 2, vector.MetricL2Squared, 1)
 	if err != nil {
 		panic(err)
 	}

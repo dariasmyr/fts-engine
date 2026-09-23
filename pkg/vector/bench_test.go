@@ -10,9 +10,9 @@ func BenchmarkDistancePrepared(b *testing.B) {
 	for _, metric := range []Metric{MetricCosine, MetricL2Squared} {
 		for _, dimensions := range []int{128, 384, 768, 1536} {
 			b.Run(fmt.Sprintf("%s/dims=%d", metric, dimensions), func(b *testing.B) {
-				space, err := NewSpace(dimensions, metric)
+				space, err := NewCalculator(dimensions, metric)
 				if err != nil {
-					b.Fatalf("NewSpace() error = %v", err)
+					b.Fatalf("NewCalculator() error = %v", err)
 				}
 				rng := rand.New(rand.NewSource(42))
 				a, err := space.Prepare(randomVector(rng, dimensions))

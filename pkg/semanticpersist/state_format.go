@@ -29,15 +29,15 @@ func encodeState(sealed SealedSegment, limits Limits) ([]byte, fileReference, er
 		return nil, fileReference{}, ErrLimitExceeded
 	}
 	e := newEncoder(stateMagic, stateVersion, limits.MaxFileBytes)
-	space, err := vector.NewSpace(metadata.Embedding.Vector.Dimensions, metadata.Embedding.Vector.Metric)
+	calculator, err := metadata.Embedding.Calculator()
 	if err != nil {
 		return nil, fileReference{}, err
 	}
-	e.u32(uint32(metadata.Embedding.Vector.Dimensions))
-	e.u8(uint8(metadata.Embedding.Vector.Metric))
-	e.u8(uint8(space.Normalization()))
+	e.u32(uint32(metadata.Embedding.Dimensions))
+	e.u8(uint8(metadata.Embedding.Metric))
+	e.u8(uint8(calculator.Normalization()))
 	e.u16(0)
-	e.u32(metadata.Embedding.Vector.VectorFormatVersion)
+	e.u32(metadata.Embedding.VectorFormatVersion)
 	e.string(metadata.Embedding.ProviderID, limits.MaxStringBytes)
 	e.string(metadata.Embedding.ModelID, limits.MaxStringBytes)
 	e.string(metadata.Embedding.ModelVersion, limits.MaxStringBytes)
@@ -85,8 +85,8 @@ func decodeState(data []byte, limits Limits) (decodedState, error) {
 	if dimensions <= 0 || dimensions > limits.MaxDimensions || maxK <= 0 || maxK > limits.MaxK || maxCandidates < maxK || maxChunksHit <= 0 || formatVersion == 0 || providerID == "" || modelID == "" || modelVersion == "" || pipelineFingerprint == "" || chunkingID == "" || componentID == 0 {
 		return decodedState{}, ErrCorrupt
 	}
-	space, err := vector.NewSpace(dimensions, metric)
-	if err != nil || space.Normalization() != normalization {
+	calculator, err := vector.NewCalculator(dimensions, metric)
+	if err != nil || calculator.Normalization() != normalization {
 		return decodedState{}, ErrCorrupt
 	}
 	refCount := int(d.u32())
@@ -116,7 +116,7 @@ func decodeState(data []byte, limits Limits) (decodedState, error) {
 		return decodedState{}, err
 	}
 	return decodedState{
-		Embedding: semantic.EmbeddingDescriptor{ProviderID: providerID, ModelID: modelID, ModelVersion: modelVersion, PipelineFingerprint: pipelineFingerprint, Vector: semantic.VectorSpec{Dimensions: dimensions, Metric: metric, VectorFormatVersion: formatVersion}},
+		Embedding: semantic.EmbeddingDescriptor{ProviderID: providerID, ModelID: modelID, ModelVersion: modelVersion, PipelineFingerprint: pipelineFingerprint, Dimensions: dimensions, Metric: metric, VectorFormatVersion: formatVersion},
 		Chunking:  semantic.ChunkingDescriptor{ID: chunkingID, Version: chunkingVersion, Fingerprint: chunkingFingerprint}, MaxAllocatedVectorID: maxAllocatedVectorID,
 		Rows: rows, ComponentID: componentID, MaxK: maxK, MaxChunkCandidates: maxCandidates, MaxChunksPerDocumentHit: maxChunksHit,
 	}, nil

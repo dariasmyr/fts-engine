@@ -97,12 +97,11 @@ type Generation struct {
 }
 
 // SealedSegment is the persistence payload for one immutable semantic ANN
-// component. It deliberately contains no mutable service state or generation
-// publication metadata.
+// component. Segment.Metadata is the single source of truth for embedding and
+// chunking compatibility. It deliberately contains no mutable service state or
+// generation publication metadata.
 type SealedSegment struct {
 	Segment                 *semantic.Segment
-	Embedding               semantic.EmbeddingDescriptor
-	Chunking                semantic.ChunkingDescriptor
 	MaxAllocatedVectorID    semantic.VectorID
 	MaxK                    int
 	MaxChunkCandidates      int

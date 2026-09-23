@@ -35,43 +35,35 @@ type ComponentID uint64
 
 const MutableHeadID ComponentID = 1
 
-type VectorSpec struct {
-	Dimensions          int
-	Metric              vector.Metric
-	VectorFormatVersion uint32
-}
-
-func (spec VectorSpec) VectorSpace() (vector.Space, error) {
-	return vector.NewSpace(spec.Dimensions, spec.Metric)
-}
-
 type EmbeddingDescriptor struct {
 	ProviderID          string
 	ModelID             string
 	ModelVersion        string
 	PipelineFingerprint string
-	Vector              VectorSpec
+	Dimensions          int
+	Metric              vector.Metric
+	VectorFormatVersion uint32
 }
 
-func NewEmbeddingDescriptor(providerID, modelID, modelVersion, pipelineFingerprint string, vectorSpec VectorSpec) (EmbeddingDescriptor, error) {
-	if _, err := vectorSpec.VectorSpace(); err != nil {
+func NewEmbeddingDescriptor(providerID, modelID, modelVersion, pipelineFingerprint string, dimensions int, metric vector.Metric, vectorFormatVersion uint32) (EmbeddingDescriptor, error) {
+	if providerID == "" || modelID == "" || modelVersion == "" || pipelineFingerprint == "" {
+		return EmbeddingDescriptor{}, ErrInvalidConfig
+	}
+	if _, err := vector.NewCalculator(dimensions, metric); err != nil {
 		return EmbeddingDescriptor{}, err
 	}
-	if vectorSpec.VectorFormatVersion == 0 {
+	if vectorFormatVersion == 0 {
 		return EmbeddingDescriptor{}, ErrInvalidConfig
 	}
 	return EmbeddingDescriptor{
 		ProviderID: providerID, ModelID: modelID, ModelVersion: modelVersion,
-		PipelineFingerprint: pipelineFingerprint, Vector: vectorSpec,
+		PipelineFingerprint: pipelineFingerprint, Dimensions: dimensions, Metric: metric,
+		VectorFormatVersion: vectorFormatVersion,
 	}, nil
 }
 
-func (descriptor EmbeddingDescriptor) VectorSpace() (vector.Space, error) {
-	vectorSpace, err := descriptor.Vector.VectorSpace()
-	if err != nil {
-		return vector.Space{}, err
-	}
-	return vectorSpace, nil
+func (descriptor EmbeddingDescriptor) Calculator() (vector.Calculator, error) {
+	return vector.NewCalculator(descriptor.Dimensions, descriptor.Metric)
 }
 
 type ChunkingDescriptor struct {
@@ -87,7 +79,7 @@ type PipelineDescriptor struct {
 
 func (descriptor EmbeddingDescriptor) IsValid() bool {
 	return descriptor.ProviderID != "" && descriptor.ModelID != "" && descriptor.ModelVersion != "" &&
-		descriptor.PipelineFingerprint != "" && descriptor.Vector.Dimensions > 0 && descriptor.Vector.VectorFormatVersion > 0 && descriptor.Vector.Metric.Valid()
+		descriptor.PipelineFingerprint != "" && descriptor.Dimensions > 0 && descriptor.VectorFormatVersion > 0 && descriptor.Metric.Valid()
 }
 
 func (descriptor ChunkingDescriptor) IsValid() bool {
@@ -120,6 +112,21 @@ type Config struct {
 	// InitialMaxAllocatedVectorID seeds the allocator; the first new vector gets
 	// the following ID. Use it when continuing an existing ID namespace.
 	InitialMaxAllocatedVectorID VectorID
+}
+
+// SearchPolicy contains the immutable limits required to search and group a
+// read view. It is separate from request-local SearchOptions.
+type SearchPolicy struct {
+	MaxK                    int
+	MaxChunkCandidates      int
+	MaxChunksPerDocumentHit int
+}
+
+func (p SearchPolicy) Validate() error {
+	if p.MaxK <= 0 || p.MaxChunkCandidates < p.MaxK || p.MaxChunksPerDocumentHit <= 0 {
+		return ErrInvalidConfig
+	}
+	return nil
 }
 
 type ChunkVector struct {

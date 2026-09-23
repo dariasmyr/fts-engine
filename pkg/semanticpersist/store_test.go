@@ -23,7 +23,7 @@ type staticEncoder struct {
 }
 
 func testEmbeddingDescriptor(model, fingerprint string) semantic.EmbeddingDescriptor {
-	descriptor, err := semantic.NewEmbeddingDescriptor("test-provider", model, "v1", fingerprint, semantic.VectorSpec{Dimensions: 2, Metric: vector.MetricL2Squared, VectorFormatVersion: 1})
+	descriptor, err := semantic.NewEmbeddingDescriptor("test-provider", model, "v1", fingerprint, 2, vector.MetricL2Squared, 1)
 	if err != nil {
 		panic(err)
 	}
@@ -77,7 +77,7 @@ func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer loaded.Close()
-			view, err := semantic.NewReadView(loaded.Generation.ID, []*semantic.Segment{loaded.Sealed.Segment})
+			view, err := semantic.NewReadView(loaded.Generation.ID, []*semantic.Segment{loaded.Sealed.Segment}, semantic.SearchPolicy{MaxK: 10, MaxChunkCandidates: 20, MaxChunksPerDocumentHit: 3})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -88,7 +88,7 @@ func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
 			if !equalDocumentHits(gotDocuments.Hits, wantDocuments.Hits) {
 				t.Fatalf("round-trip document search mismatch\ndocuments=%+v", gotDocuments)
 			}
-			if loaded.Sealed.Embedding != checkpoint.Embedding || loaded.Sealed.Chunking != checkpoint.Chunking || loaded.Sealed.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID {
+			if loaded.Sealed.Segment.Metadata() != checkpoint.Segment.Metadata() || loaded.Sealed.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID {
 				t.Fatal("checkpoint metadata changed during round trip")
 			}
 			if !slices.Equal(loaded.Sealed.Segment.Rows(), checkpoint.Segment.Rows()) {
@@ -144,7 +144,7 @@ func TestPublishOpenChunkHNSWRoundTrip(t *testing.T) {
 	if loaded.Sealed.Segment.Kind() != semantic.SegmentKindChunkHNSW || loaded.Sealed.Segment.Searcher() == nil {
 		t.Fatalf("opened segment = kind %d, searcher %p", loaded.Sealed.Segment.Kind(), loaded.Sealed.Segment.Searcher())
 	}
-	view, err := semantic.NewReadView(loaded.Generation.ID, []*semantic.Segment{loaded.Sealed.Segment})
+	view, err := semantic.NewReadView(loaded.Generation.ID, []*semantic.Segment{loaded.Sealed.Segment}, semantic.SearchPolicy{MaxK: 10, MaxChunkCandidates: 20, MaxChunksPerDocumentHit: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -699,7 +699,7 @@ func TestPublicationContainsOnlyLiveRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	segment := view.Segments()[0]
-	sealed := SealedSegment{Segment: segment, Embedding: segment.Metadata().Embedding, Chunking: segment.Metadata().Chunking, MaxAllocatedVectorID: service.Statistics().MaxAllocatedVectorID, MaxK: 2, MaxChunkCandidates: 10, MaxChunksPerDocumentHit: 2}
+	sealed := SealedSegment{Segment: segment, MaxAllocatedVectorID: service.Statistics().MaxAllocatedVectorID, MaxK: 2, MaxChunkCandidates: 10, MaxChunksPerDocumentHit: 2}
 	if segment.Len() != 1 || len(segment.Rows()) != 1 || segment.Rows()[0].Chunk.ID != "new" {
 		t.Fatalf("sealed segment retained stale rows: %+v", sealed)
 	}
@@ -716,7 +716,7 @@ func TestPublicationContainsOnlyLiveRows(t *testing.T) {
 	if loaded.Generation.ID != 1 || loaded.Sealed.Segment.Len() != 1 || len(loaded.Sealed.Segment.Rows()) != 1 {
 		t.Fatalf("opened dense generation = %+v", loaded.Sealed)
 	}
-	openedView, err := semantic.NewReadView(1, []*semantic.Segment{loaded.Sealed.Segment})
+	openedView, err := semantic.NewReadView(1, []*semantic.Segment{loaded.Sealed.Segment}, semantic.SearchPolicy{MaxK: 2, MaxChunkCandidates: 10, MaxChunksPerDocumentHit: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -770,7 +770,7 @@ func persistenceFixture(t testing.TB, extra bool) (SealedSegment, chunkExpectati
 	}
 	segment := view.Segments()[0]
 	stats := service.Statistics()
-	checkpoint := SealedSegment{Segment: segment, Embedding: config.Embedding, Chunking: config.Chunking, MaxAllocatedVectorID: stats.MaxAllocatedVectorID, MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}
+	checkpoint := SealedSegment{Segment: segment, MaxAllocatedVectorID: stats.MaxAllocatedVectorID, MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}
 	encoder.vectors["query"] = []semantic.ChunkVector{{Ref: chunk.Ref{ID: "query", DocID: "query", Field: fts.DefaultField, EndByte: 5}, Vector: []float32{0, 0}}}
 	allDocuments, err := service.SearchDocuments(ctx, encoder, semantic.Document{ID: "query"}, min(3, len(checkpoint.Segment.Rows())))
 	if err != nil {
@@ -792,8 +792,8 @@ func withHNSW(t testing.TB, checkpoint SealedSegment, seed uint64) SealedSegment
 	maxK := max(checkpoint.MaxK, checkpoint.MaxChunkCandidates)
 	graph, err := hnsw.BuildSearcher(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
-			Dimensions: checkpoint.Embedding.Vector.Dimensions, Metric: checkpoint.Embedding.Vector.Metric,
-			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Embedding.Vector.Dimensions * 4),
+			Dimensions: checkpoint.Segment.Metadata().Embedding.Dimensions, Metric: checkpoint.Segment.Metadata().Embedding.Metric,
+			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Segment.Metadata().Embedding.Dimensions * 4),
 			MaxNeighbors: 2, EfConstruction: 8, Seed: seed,
 		},
 		SearchConfig: hnsw.SearchConfig{
@@ -804,7 +804,7 @@ func withHNSW(t testing.TB, checkpoint SealedSegment, seed uint64) SealedSegment
 	if err != nil {
 		t.Fatal(err)
 	}
-	segment, err := semantic.NewSegment(semantic.MutableHeadID, semantic.SegmentMetadata{Embedding: checkpoint.Embedding, Chunking: checkpoint.Chunking}, graph, checkpoint.Segment.Rows())
+	segment, err := semantic.NewSegment(semantic.MutableHeadID, checkpoint.Segment.Metadata(), graph, checkpoint.Segment.Rows())
 	if err != nil {
 		t.Fatal(err)
 	}

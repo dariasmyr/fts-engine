@@ -13,7 +13,7 @@ import (
 // This example shows that mutations become searchable only after Flush.
 func main() {
 	ctx := context.Background()
-	embedding, err := semantic.NewEmbeddingDescriptor("example-provider", "publication-example", "v1", "publication-embedding-v1", semantic.VectorSpec{Dimensions: 2, Metric: vector.MetricL2Squared, VectorFormatVersion: 1})
+	embedding, err := semantic.NewEmbeddingDescriptor("example-provider", "publication-example", "v1", "publication-embedding-v1", 2, vector.MetricL2Squared, 1)
 	if err != nil {
 		panic(err)
 	}

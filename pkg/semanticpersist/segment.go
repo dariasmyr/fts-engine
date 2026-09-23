@@ -182,7 +182,7 @@ func OpenSealedSegment(paths SegmentPaths, options OpenOptions) (*LoadedSealedSe
 		return nil, err
 	}
 	sealed := SealedSegment{
-		Segment: segment, Embedding: state.Embedding, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
+		Segment: segment, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
 		MaxK: state.MaxK, MaxChunkCandidates: state.MaxChunkCandidates,
 		MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
 	}
@@ -204,10 +204,11 @@ func validateExpectedDescriptors(sealed SealedSegment, expected semantic.Pipelin
 	if expected == (semantic.PipelineDescriptor{}) {
 		return nil
 	}
-	if sealed.Embedding != expected.Embedding {
+	metadata := sealed.Segment.Metadata()
+	if metadata.Embedding != expected.Embedding {
 		return ErrEmbeddingMismatch
 	}
-	if sealed.Chunking != expected.Chunking {
+	if metadata.Chunking != expected.Chunking {
 		return ErrChunkingMismatch
 	}
 	return nil

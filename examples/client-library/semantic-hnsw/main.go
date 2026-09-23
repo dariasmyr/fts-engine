@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	embedding, err := semantic.NewEmbeddingDescriptor("example-provider", "example-embedding", "v1", "example-embedding-v1", semantic.VectorSpec{Dimensions: 3, Metric: vector.MetricCosine, VectorFormatVersion: 1})
+	embedding, err := semantic.NewEmbeddingDescriptor("example-provider", "example-embedding", "v1", "example-embedding-v1", 3, vector.MetricCosine, 1)
 	if err != nil {
 		panic(err)
 	}

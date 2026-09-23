@@ -142,22 +142,22 @@ func (c SearchConfig) validate() error {
 	return nil
 }
 
-func (c BuildConfig) validate(vectorCount int) (vector.Space, int, error) {
-	space, err := vector.NewSpace(c.Dimensions, c.Metric)
+func (c BuildConfig) validate(vectorCount int) (vector.Calculator, int, error) {
+	calculator, err := vector.NewCalculator(c.Dimensions, c.Metric)
 	if err != nil {
-		return vector.Space{}, 0, err
+		return vector.Calculator{}, 0, err
 	}
 	if err := c.validateCapacity(vectorCount); err != nil {
-		return vector.Space{}, 0, err
+		return vector.Calculator{}, 0, err
 	}
 	if err := c.validateConstructionParameters(); err != nil {
-		return vector.Space{}, 0, err
+		return vector.Calculator{}, 0, err
 	}
 	components, err := c.validateVectorAllocation(vectorCount)
 	if err != nil {
-		return vector.Space{}, 0, err
+		return vector.Calculator{}, 0, err
 	}
-	return space, components, nil
+	return calculator, components, nil
 }
 
 func (c BuildConfig) validateCapacity(vectorCount int) error {

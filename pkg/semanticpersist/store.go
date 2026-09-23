@@ -582,7 +582,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		return nil, ErrCorrupt
 	}
 	sealed := SealedSegment{
-		Segment: segment, Embedding: state.Embedding, Chunking: state.Chunking, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
+		Segment: segment, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
 		MaxK: state.MaxK, MaxChunkCandidates: state.MaxChunkCandidates,
 		MaxChunksPerDocumentHit: state.MaxChunksPerDocumentHit,
 	}

@@ -71,7 +71,7 @@ func WriteSource(writer io.Writer, source vector.PreparedVectorSource, maxK int)
 	if writer == nil || source == nil || source.Dimensions() <= 0 || maxK <= 0 || source.Len() < 0 {
 		return FileMetadata{}, ErrCorruptSegment
 	}
-	space, err := vector.NewSpace(source.Dimensions(), source.Metric())
+	space, err := vector.NewCalculator(source.Dimensions(), source.Metric())
 	if err != nil || space.Normalization() != source.Normalization() {
 		return FileMetadata{}, ErrCorruptSegment
 	}
@@ -199,7 +199,7 @@ func openBytes(data []byte, limits CodecLimits) (*Searcher, FileMetadata, error)
 	if !ok || expectedSize != uint64(len(data)) || expectedComponents > uint64(math.MaxInt) {
 		return nil, FileMetadata{}, ErrCorruptSegment
 	}
-	space, err := vector.NewSpace(dimensions, metric)
+	space, err := vector.NewCalculator(dimensions, metric)
 	if err != nil || space.Normalization() != normalization {
 		return nil, FileMetadata{}, ErrCorruptSegment
 	}
@@ -240,11 +240,11 @@ func normalizeCodecLimits(limits CodecLimits) CodecLimits {
 	return limits
 }
 
-func validatePreparedRow(space vector.Space, value []float32) error {
-	if err := space.Validate(value); err != nil {
+func validatePreparedRow(calculator vector.Calculator, value []float32) error {
+	if err := calculator.Validate(value); err != nil {
 		return err
 	}
-	if space.Normalization() == vector.NormalizationUnitLength {
+	if calculator.Normalization() == vector.NormalizationUnitLength {
 		var normSquared float64
 		for _, component := range value {
 			normSquared += float64(component) * float64(component)

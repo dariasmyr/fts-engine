@@ -11,9 +11,9 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-func testSpace(t *testing.T, dimensions int, metric vector.Metric) vector.Space {
+func testSpace(t *testing.T, dimensions int, metric vector.Metric) vector.Calculator {
 	t.Helper()
-	space, err := vector.NewSpace(dimensions, metric)
+	space, err := vector.NewCalculator(dimensions, metric)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,9 +38,9 @@ func testBuildInfo() BuildInfo {
 	}
 }
 
-func newTestReader(t *testing.T, space vector.Space, config SearchConfig, graph graphData) *Searcher {
+func newTestReader(t *testing.T, calculator vector.Calculator, config SearchConfig, graph graphData) *Searcher {
 	t.Helper()
-	reader, err := newSearcherFromGraph(space, config, testBuildInfo(), graph)
+	reader, err := newSearcherFromGraph(calculator, config, testBuildInfo(), graph)
 	if err != nil {
 		t.Fatal(err)
 	}

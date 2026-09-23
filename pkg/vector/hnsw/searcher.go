@@ -8,7 +8,7 @@ import (
 )
 
 type topology struct {
-	space        vector.Space
+	calculator   vector.Calculator
 	searchConfig SearchConfig
 	buildInfo    BuildInfo
 	stats        GraphStats
@@ -41,23 +41,23 @@ func newSearcher(source vector.PreparedVectorSource, topology topology) (*Search
 	if source == nil || isNilPreparedVectorSource(source) || !topology.validated {
 		return nil, ErrBuildSourceMismatch
 	}
-	if source.Len() != len(topology.nodeToVector) || source.Dimensions() != topology.space.Dimensions() ||
-		source.Metric() != topology.space.Metric() || source.Normalization() != topology.space.Normalization() {
+	if source.Len() != len(topology.nodeToVector) || source.Dimensions() != topology.calculator.Dimensions() ||
+		source.Metric() != topology.calculator.Metric() || source.Normalization() != topology.calculator.Normalization() {
 		return nil, ErrBuildSourceMismatch
 	}
 	return &Searcher{topology: topology, vectors: source}, nil
 }
 
-func newSearcherFromGraph(space vector.Space, searchConfig SearchConfig, buildInfo BuildInfo, graph graphData, sourceOverride ...vector.PreparedVectorSource) (*Searcher, error) {
+func newSearcherFromGraph(calculator vector.Calculator, searchConfig SearchConfig, buildInfo BuildInfo, graph graphData, sourceOverride ...vector.PreparedVectorSource) (*Searcher, error) {
 	if err := searchConfig.validate(); err != nil {
 		return nil, err
 	}
-	stats, err := validateGraphData(space, buildInfo, graph)
+	stats, err := validateGraphData(calculator, buildInfo, graph)
 	if err != nil {
 		return nil, err
 	}
 	topology := &topology{
-		space: space, searchConfig: searchConfig, buildInfo: buildInfo, stats: cloneGraphStats(stats),
+		calculator: calculator, searchConfig: searchConfig, buildInfo: buildInfo, stats: cloneGraphStats(stats),
 		levels:       make([]uint8, len(graph.nodes)),
 		nodeToVector: make([]vector.Ordinal, len(graph.nodes)), entry: graph.entry, hasEntry: graph.hasEntry,
 		level0Offsets: make([]uint32, len(graph.nodes)+1), upperNodeOffsets: make([]uint32, len(graph.nodes)+1),
@@ -104,7 +104,7 @@ func newSearcherFromGraph(space vector.Space, searchConfig SearchConfig, buildIn
 	if len(sourceOverride) > 0 && sourceOverride[0] != nil && !isNilPreparedVectorSource(sourceOverride[0]) {
 		return newSearcher(sourceOverride[0], *topology)
 	}
-	source, err := vector.NewPreparedMemorySource(space, graph.values)
+	source, err := vector.NewPreparedMemorySource(calculator, graph.values)
 	if err != nil {
 		return nil, err
 	}
@@ -128,21 +128,21 @@ func (r *Searcher) Dimensions() int {
 	if r == nil {
 		return 0
 	}
-	return r.topology.space.Dimensions()
+	return r.topology.calculator.Dimensions()
 }
 
 func (r *Searcher) Metric() vector.Metric {
 	if r == nil {
 		return 0
 	}
-	return r.topology.space.Metric()
+	return r.topology.calculator.Metric()
 }
 
 func (r *Searcher) Normalization() vector.Normalization {
 	if r == nil {
 		return 0
 	}
-	return r.topology.space.Normalization()
+	return r.topology.calculator.Normalization()
 }
 
 func (r *Searcher) MaxK() int {

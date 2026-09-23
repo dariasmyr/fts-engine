@@ -7,13 +7,13 @@ import (
 func (b *Builder) distanceNodes(a, c NodeOrdinal) float64 {
 	aVector := b.vectorByNode(a)
 	cVector := b.vectorByNode(c)
-	return b.space.DistancePrepared(aVector, cVector)
+	return b.calculator.DistancePrepared(aVector, cVector)
 }
 
 func (b *Builder) vectorByNode(node NodeOrdinal) []float32 {
 	ordinal := b.graph.nodes[node].vectorOrdinal
-	start := int(ordinal) * b.space.Dimensions()
-	return b.graph.values[start : start+b.space.Dimensions()]
+	start := int(ordinal) * b.calculator.Dimensions()
+	return b.graph.values[start : start+b.calculator.Dimensions()]
 }
 
 func (b *Builder) selectNeighbors(owner NodeOrdinal, candidates []NodeOrdinal, limit int) []NodeOrdinal {

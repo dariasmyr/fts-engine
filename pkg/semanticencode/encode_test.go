@@ -42,7 +42,7 @@ func testService(t *testing.T) *semantic.Service {
 }
 
 func testDescriptors() (semantic.EmbeddingDescriptor, semantic.ChunkingDescriptor) {
-	embedding, err := semantic.NewEmbeddingDescriptor("test-provider", "test-model", "v1", "test-embedding", semantic.VectorSpec{Dimensions: 2, Metric: vector.MetricL2Squared, VectorFormatVersion: 1})
+	embedding, err := semantic.NewEmbeddingDescriptor("test-provider", "test-model", "v1", "test-embedding", 2, vector.MetricL2Squared, 1)
 	if err != nil {
 		panic(err)
 	}

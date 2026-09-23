@@ -285,8 +285,8 @@ func openGraphBytes(ctx context.Context, data []byte, vectors vector.PreparedVec
 	dimensions := int(dimensions64)
 	metric := vector.Metric(data[12])
 	normalization := vector.Normalization(data[13])
-	space, err := vector.NewSpace(dimensions, metric)
-	if err != nil || space.Normalization() != normalization {
+	calculator, err := vector.NewCalculator(dimensions, metric)
+	if err != nil || calculator.Normalization() != normalization {
 		return nil, FileMetadata{}, ErrCorruptGraphData
 	}
 	searchConfig, ok := getSearchConfig(data[24:44])
@@ -310,7 +310,7 @@ func openGraphBytes(ctx context.Context, data []byte, vectors vector.PreparedVec
 
 	reader := &Searcher{
 		topology: topology{
-			space: space, searchConfig: searchConfig, buildInfo: buildInfo,
+			calculator: calculator, searchConfig: searchConfig, buildInfo: buildInfo,
 			nodeToVector: make([]vector.Ordinal, int(nodes)), levels: make([]uint8, int(nodes)),
 			level0Offsets: make([]uint32, int(nodes)+1), level0Neighbors: make([]NodeOrdinal, int(level0Links)),
 			upperNodeOffsets: make([]uint32, int(nodes)+1), upperLinkOffsets: make([]uint32, int(upperPlacements)+1),
@@ -444,7 +444,7 @@ func validateSearcherVectorsContext(ctx context.Context, reader *Searcher) error
 		if err := reader.vectors.ReadVectorInto(ctx, vector.Ordinal(row), scratch); err != nil {
 			return fmt.Errorf("%w: read vector row %d: %v", ErrGraphVectorSource, row, err)
 		}
-		if err := validatePreparedVector(reader.topology.space, scratch); err != nil {
+		if err := validatePreparedVector(reader.topology.calculator, scratch); err != nil {
 			return fmt.Errorf("%w: vector row %d: %v", ErrGraphVectorSource, row, err)
 		}
 	}

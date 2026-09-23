@@ -15,7 +15,7 @@ var errVisitLimit = errors.New("vector/hnsw: visit limit reached")
 type searchState struct {
 	ctx           context.Context
 	index         *Searcher
-	space         vector.Space
+	calculator    vector.Calculator
 	preparedQuery []float32
 	filter        vector.ResultFilter
 	visitLimit    int
@@ -36,7 +36,7 @@ func search(ctx context.Context, reader *Searcher, query []float32, k int, optio
 		return vector.SearchResult{}, ErrInvalidGraph
 	}
 	config := reader.topology.searchConfig
-	space := reader.topology.space
+	calculator := reader.topology.calculator
 	if err := config.validate(); err != nil {
 		return vector.SearchResult{}, err
 	}
@@ -61,7 +61,7 @@ func search(ctx context.Context, reader *Searcher, query []float32, k int, optio
 	if visitLimit > config.MaxVisitLimit {
 		return vector.SearchResult{}, fmt.Errorf("%w: visitLimit=%d max=%d", vector.ErrInvalidSearchOptions, visitLimit, config.MaxVisitLimit)
 	}
-	preparedQuery, err := space.Prepare(query)
+	preparedQuery, err := calculator.Prepare(query)
 	if err != nil {
 		return vector.SearchResult{}, err
 	}
@@ -99,7 +99,7 @@ func search(ctx context.Context, reader *Searcher, query []float32, k int, optio
 		return vector.SearchResult{}, ErrInvalidGraph
 	}
 	state := searchState{
-		ctx: ctx, index: reader, space: space, preparedQuery: preparedQuery, filter: filter,
+		ctx: ctx, index: reader, calculator: calculator, preparedQuery: preparedQuery, filter: filter,
 		visitLimit: visitLimit, vectorCount: vectorCount,
 		candidates: make(map[NodeOrdinal]searchCandidate, min(visitLimit, nodeCount)),
 		stats:      vector.SearchStats{Termination: vector.TerminationComplete},
@@ -220,14 +220,14 @@ func (state *searchState) score(node NodeOrdinal) (searchCandidate, error) {
 	if uint64(ordinal) >= uint64(state.vectorCount) {
 		return searchCandidate{}, ErrInvalidGraph
 	}
-	value := make([]float32, state.space.Dimensions())
+	value := make([]float32, state.calculator.Dimensions())
 	if err := state.index.VectorSource().ReadVectorInto(state.ctx, ordinal, value); err != nil {
 		if state.ctx.Err() != nil {
 			return searchCandidate{}, state.ctx.Err()
 		}
 		return searchCandidate{}, fmt.Errorf("%w: read vector row %d: %v", ErrInvalidGraph, ordinal, err)
 	}
-	distance := state.space.DistancePrepared(state.preparedQuery, value)
+	distance := state.calculator.DistancePrepared(state.preparedQuery, value)
 	if math.IsNaN(distance) || math.IsInf(distance, 0) {
 		return searchCandidate{}, ErrInvalidGraph
 	}

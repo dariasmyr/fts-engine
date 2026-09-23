@@ -8,41 +8,41 @@ import (
 // MemorySource is immutable prepared vector storage backed by a contiguous
 // in-memory matrix. It implements the vector source contract, not search.
 type MemorySource struct {
-	space  Space
-	values []float32
+	calculator Calculator
+	values     []float32
 }
 
 // NewMemorySource prepares and stores a set of vector rows in memory.
-func NewMemorySource(space Space, values [][]float32) (*MemorySource, error) {
-	prepared := make([]float32, len(values)*space.Dimensions())
+func NewMemorySource(calculator Calculator, values [][]float32) (*MemorySource, error) {
+	prepared := make([]float32, len(values)*calculator.Dimensions())
 	for row, value := range values {
-		start := row * space.Dimensions()
-		if err := space.PrepareInto(prepared[start:start+space.Dimensions()], value); err != nil {
+		start := row * calculator.Dimensions()
+		if err := calculator.PrepareInto(prepared[start:start+calculator.Dimensions()], value); err != nil {
 			return nil, err
 		}
 	}
-	return NewPreparedMemorySource(space, prepared)
+	return NewPreparedMemorySource(calculator, prepared)
 }
 
 // NewPreparedMemorySource stores a copy of an already prepared contiguous
 // vector matrix. The input slice is not retained.
-func NewPreparedMemorySource(space Space, prepared []float32) (*MemorySource, error) {
-	if space.Dimensions() <= 0 {
+func NewPreparedMemorySource(calculator Calculator, prepared []float32) (*MemorySource, error) {
+	if calculator.Dimensions() <= 0 {
 		return nil, ErrInvalidDimensions
 	}
-	if len(prepared)%space.Dimensions() != 0 {
-		return nil, fmt.Errorf("%w: got %d values for dimension %d", ErrDimensionMismatch, len(prepared), space.Dimensions())
+	if len(prepared)%calculator.Dimensions() != 0 {
+		return nil, fmt.Errorf("%w: got %d values for dimension %d", ErrDimensionMismatch, len(prepared), calculator.Dimensions())
 	}
-	return &MemorySource{space: space, values: append([]float32(nil), prepared...)}, nil
+	return &MemorySource{calculator: calculator, values: append([]float32(nil), prepared...)}, nil
 }
 
-func (s *MemorySource) Len() int { return len(s.values) / s.space.Dimensions() }
+func (s *MemorySource) Len() int { return len(s.values) / s.calculator.Dimensions() }
 
-func (s *MemorySource) Dimensions() int { return s.space.Dimensions() }
+func (s *MemorySource) Dimensions() int { return s.calculator.Dimensions() }
 
-func (s *MemorySource) Metric() Metric { return s.space.Metric() }
+func (s *MemorySource) Metric() Metric { return s.calculator.Metric() }
 
-func (s *MemorySource) Normalization() Normalization { return s.space.Normalization() }
+func (s *MemorySource) Normalization() Normalization { return s.calculator.Normalization() }
 
 // ReadVectorInto copies one prepared row into dst without exposing storage.
 func (s *MemorySource) ReadVectorInto(ctx context.Context, ordinal Ordinal, dst []float32) error {

@@ -18,7 +18,7 @@ func TestStandaloneSegmentRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := semantic.NewReadView(1, []*semantic.Segment{loaded.Sealed.Segment})
+	view, err := semantic.NewReadView(1, []*semantic.Segment{loaded.Sealed.Segment}, semantic.SearchPolicy{MaxK: 10, MaxChunkCandidates: 20, MaxChunksPerDocumentHit: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +38,6 @@ func TestSealedSegmentAPIIsIndependentFromLegacyCallerContract(t *testing.T) {
 	fixture, _, _ := persistenceFixture(t, true)
 	sealed := SealedSegment{
 		Segment:                 fixture.Segment,
-		Embedding:               fixture.Embedding,
-		Chunking:                fixture.Chunking,
 		MaxAllocatedVectorID:    fixture.MaxAllocatedVectorID,
 		MaxK:                    fixture.MaxK,
 		MaxChunkCandidates:      fixture.MaxChunkCandidates,

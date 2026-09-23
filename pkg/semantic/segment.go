@@ -211,10 +211,10 @@ func (s *Segment) validateContents() error {
 	if !s.metadata.Embedding.IsValid() || !s.metadata.Chunking.IsValid() {
 		return ErrInvalidSegment
 	}
-	vectorSpace, err := s.metadata.Embedding.VectorSpace()
+	calculator, err := s.metadata.Embedding.Calculator()
 	if err != nil || s.component == 0 || len(s.rows) != vectors.Len() || s.searcher.Len() != vectors.Len() ||
-		vectors.Dimensions() != vectorSpace.Dimensions() || vectors.Metric() != vectorSpace.Metric() ||
-		vectors.Normalization() != vectorSpace.Normalization() {
+		vectors.Dimensions() != calculator.Dimensions() || vectors.Metric() != calculator.Metric() ||
+		vectors.Normalization() != calculator.Normalization() {
 		return ErrInvalidSegment
 	}
 	return nil

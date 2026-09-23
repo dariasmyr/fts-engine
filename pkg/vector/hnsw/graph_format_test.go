@@ -70,18 +70,18 @@ func TestGraphFormatRoundTripExactTopologyAndSearch(t *testing.T) {
 func TestGraphFormatEmptySingletonAndCosine(t *testing.T) {
 	reference := testVectorFileReference()
 	spaces := []struct {
-		name  string
-		space vector.Space
-		graph graphData
-		query []float32
-		want  []vector.Hit
+		name       string
+		calculator vector.Calculator
+		graph      graphData
+		query      []float32
+		want       []vector.Hit
 	}{
-		{name: "empty l2", space: readerTestSpace(t, 2, vector.MetricL2Squared), graph: graphData{}, query: []float32{0, 0}},
-		{name: "singleton cosine", space: readerTestSpace(t, 2, vector.MetricCosine), graph: graphData{values: []float32{0.6, 0.8}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}, hasEntry: true}, query: []float32{3, 4}, want: []vector.Hit{{Ordinal: 0}}},
+		{name: "empty l2", calculator: readerTestSpace(t, 2, vector.MetricL2Squared), graph: graphData{}, query: []float32{0, 0}},
+		{name: "singleton cosine", calculator: readerTestSpace(t, 2, vector.MetricCosine), graph: graphData{values: []float32{0.6, 0.8}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}, hasEntry: true}, query: []float32{3, 4}, want: []vector.Hit{{Ordinal: 0}}},
 	}
 	for _, test := range spaces {
 		t.Run(test.name, func(t *testing.T) {
-			original := newReaderForTest(t, test.space, test.graph)
+			original := newReaderForTest(t, test.calculator, test.graph)
 			data, metadata, err := MarshalGraph(original, reference)
 			if err != nil {
 				t.Fatal(err)
@@ -425,7 +425,7 @@ func rewriteGraphChecksum(data []byte) {
 
 func FuzzOpenSearcher(f *testing.F) {
 	reference := testVectorFileReference()
-	space, err := vector.NewSpace(2, vector.MetricL2Squared)
+	space, err := vector.NewCalculator(2, vector.MetricL2Squared)
 	if err != nil {
 		f.Fatal(err)
 	}

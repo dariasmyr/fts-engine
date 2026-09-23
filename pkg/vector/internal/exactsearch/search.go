@@ -9,7 +9,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector/internal/contextcheck"
 )
 
-func Search(ctx context.Context, space vector.Space, matrix []float32, maxK int, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func Search(ctx context.Context, calculator vector.Calculator, matrix []float32, maxK int, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	if ctx == nil {
 		return vector.SearchResult{}, vector.ErrNilContext
 	}
@@ -22,12 +22,12 @@ func Search(ctx context.Context, space vector.Space, matrix []float32, maxK int,
 	if options.EfSearch < 0 || options.VisitLimit < 0 {
 		return vector.SearchResult{}, vector.ErrInvalidSearchOptions
 	}
-	preparedQuery, err := space.Prepare(query)
+	preparedQuery, err := calculator.Prepare(query)
 	if err != nil {
 		return vector.SearchResult{}, err
 	}
 
-	rowCount := len(matrix) / space.Dimensions()
+	rowCount := len(matrix) / calculator.Dimensions()
 	allowedCount, err := AllowedCount(rowCount, options.ResultFilter)
 	if err != nil {
 		return vector.SearchResult{}, err
@@ -51,8 +51,8 @@ func Search(ctx context.Context, space vector.Space, matrix []float32, maxK int,
 			stats.RejectedNodes++
 			continue
 		}
-		rowStart := row * space.Dimensions()
-		distance := space.DistancePrepared(preparedQuery, matrix[rowStart:rowStart+space.Dimensions()])
+		rowStart := row * calculator.Dimensions()
+		distance := calculator.DistancePrepared(preparedQuery, matrix[rowStart:rowStart+calculator.Dimensions()])
 		stats.DistanceComputations++
 		topK.Add(vector.Hit{Ordinal: ordinal, Distance: distance})
 	}
@@ -80,11 +80,11 @@ func SearchSource(ctx context.Context, source vector.PreparedVectorSource, maxK 
 	if options.EfSearch < 0 || options.VisitLimit < 0 {
 		return vector.SearchResult{}, vector.ErrInvalidSearchOptions
 	}
-	space, err := vector.NewSpace(source.Dimensions(), source.Metric())
-	if err != nil || space.Normalization() != source.Normalization() {
+	calculator, err := vector.NewCalculator(source.Dimensions(), source.Metric())
+	if err != nil || calculator.Normalization() != source.Normalization() {
 		return vector.SearchResult{}, vector.ErrInvalidSearchOptions
 	}
-	preparedQuery, err := space.Prepare(query)
+	preparedQuery, err := calculator.Prepare(query)
 	if err != nil {
 		return vector.SearchResult{}, err
 	}
@@ -114,7 +114,7 @@ func SearchSource(ctx context.Context, source vector.PreparedVectorSource, maxK 
 		if err := source.ReadVectorInto(ctx, ordinal, value); err != nil {
 			return vector.SearchResult{}, err
 		}
-		distance := space.DistancePrepared(preparedQuery, value)
+		distance := calculator.DistancePrepared(preparedQuery, value)
 		stats.DistanceComputations++
 		topK.Add(vector.Hit{Ordinal: ordinal, Distance: distance})
 	}
