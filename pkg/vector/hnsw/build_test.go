@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/flat"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
@@ -27,16 +26,17 @@ func testSearchConfig(count int) hnsw.SearchConfig {
 	}
 }
 
-func testFlatReader(t testing.TB, values [][]float32, metric vector.Metric) *flat.Searcher {
+func testFlatReader(t testing.TB, values [][]float32, metric vector.Metric) *vector.MemorySource {
 	t.Helper()
-	idx, err := flat.New(flat.Config{Dimensions: len(values[0]), Metric: metric, MaxVectors: len(values), MaxK: len(values)})
+	calculator, err := vector.NewCalculator(len(values[0]), metric)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := idx.AppendBatch(values); err != nil {
+	idx, err := vector.NewMemorySource(calculator, values)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return idx.Freeze()
+	return idx
 }
 
 func testBuild(t testing.TB, source vector.PreparedVectorSource, dimensions, count int, metric vector.Metric) *hnsw.Searcher {
@@ -64,7 +64,7 @@ func readPreparedVector(source vector.PreparedVectorSource, ordinal vector.Ordin
 func TestBuildProgressStableOrderAndPreparedCosineBits(t *testing.T) {
 	source := testFlatReader(t, [][]float32{{3, 4}, {-5, 12}, {8, 15}}, vector.MetricCosine)
 	var progress []hnsw.BuildProgress
-	reader, err := hnsw.BuildSearcher(context.Background(), source.VectorSource(), hnsw.BuildOptions{
+	reader, err := hnsw.BuildSearcher(context.Background(), source, hnsw.BuildOptions{
 		BuildConfig:  testBuildConfig(2, source.Len(), vector.MetricCosine),
 		SearchConfig: testSearchConfig(source.Len()),
 		Progress: func(value hnsw.BuildProgress) {
@@ -87,7 +87,7 @@ func TestBuildProgressStableOrderAndPreparedCosineBits(t *testing.T) {
 		t.Fatalf("progress = %+v, want %+v", progress, wantProgress)
 	}
 	for row := range source.Len() {
-		want, _ := source.VectorSource().Vector(vector.Ordinal(row))
+		want, _ := readPreparedVector(source, vector.Ordinal(row))
 		got, _ := readPreparedVector(reader.VectorSource(), vector.Ordinal(row))
 		if !slices.EqualFunc(got, want, func(a, b float32) bool { return math.Float32bits(a) == math.Float32bits(b) }) {
 			t.Fatalf("row %d bits changed: got %v want %v", row, got, want)
@@ -97,6 +97,21 @@ func TestBuildProgressStableOrderAndPreparedCosineBits(t *testing.T) {
 		value, ok := readPreparedVector(reader.VectorSource(), vector.Ordinal(node))
 		if !ok || len(value) != 2 {
 			t.Fatalf("dense row %d unavailable", node)
+		}
+	}
+}
+
+func TestBuildTopologyUsesTheBoundSourceValues(t *testing.T) {
+	values := [][]float32{{0, 0}, {10, 0}, {0, 10}, {10, 10}, {5, 5}}
+	source := testFlatReader(t, values, vector.MetricL2Squared)
+	reader := testBuild(t, source, 2, len(values), vector.MetricL2Squared)
+	for ordinal, query := range values {
+		result, err := reader.Search(context.Background(), query, 1, vector.SearchOptions{EfSearch: len(values), VisitLimit: len(values)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Hits) != 1 || result.Hits[0].Ordinal != vector.Ordinal(ordinal) {
+			t.Fatalf("query %d returned %+v, want ordinal %d", ordinal, result.Hits, ordinal)
 		}
 	}
 }
@@ -151,10 +166,6 @@ func (s *testSource) ReadVectorInto(ctx context.Context, ordinal vector.Ordinal,
 
 func TestBuildPreflightReadErrorsAndContext(t *testing.T) {
 	options := hnsw.BuildOptions{BuildConfig: testBuildConfig(2, 2, vector.MetricL2Squared), SearchConfig: testSearchConfig(2)}
-	var nilFlat *flat.VectorSource
-	if _, err := hnsw.BuildSearcher(context.Background(), nilFlat, options); !errors.Is(err, hnsw.ErrBuildSourceMismatch) {
-		t.Fatalf("typed nil source error = %v", err)
-	}
 	mismatch := &testSource{values: [][]float32{{1}, {2}}, dimensions: 1, metric: vector.MetricL2Squared}
 	if _, err := hnsw.BuildSearcher(context.Background(), mismatch, options); !errors.Is(err, hnsw.ErrBuildSourceMismatch) {
 		t.Fatalf("metadata error = %v", err)

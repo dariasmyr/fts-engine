@@ -13,7 +13,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/vectorann"
+	vectorann "github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
@@ -59,18 +59,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if output != "" {
 		if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
-			return fmt.Errorf("vector-ann: create JSON output directory: %w", err)
+			return fmt.Errorf("vector-search: create JSON output directory: %w", err)
 		}
 		file, err := os.Create(output)
 		if err != nil {
-			return fmt.Errorf("vector-ann: create JSON output: %w", err)
+			return fmt.Errorf("vector-search: create JSON output: %w", err)
 		}
 		if err := vectorann.WriteJSON(file, report); err != nil {
 			_ = file.Close()
-			return fmt.Errorf("vector-ann: write JSON output: %w", err)
+			return fmt.Errorf("vector-search: write JSON output: %w", err)
 		}
 		if err := file.Close(); err != nil {
-			return fmt.Errorf("vector-ann: close JSON output: %w", err)
+			return fmt.Errorf("vector-search: close JSON output: %w", err)
 		}
 	}
 	if format == "json" {
@@ -81,7 +81,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 func parseFlags(args []string, stderr io.Writer) (vectorann.Config, string, string, error) {
 	defaults := vectorann.DefaultConfig()
-	flags := flag.NewFlagSet("vector-ann", flag.ContinueOnError)
+	flags := flag.NewFlagSet("vector-search", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "Synthetic Phase 6 ANN baseline (not the complete real-corpus quality gate).")
@@ -112,7 +112,7 @@ func parseFlags(args []string, stderr io.Writer) (vectorann.Config, string, stri
 		return vectorann.Config{}, "", "", err
 	}
 	if flags.NArg() != 0 {
-		return vectorann.Config{}, "", "", fmt.Errorf("vector-ann: unexpected positional arguments: %s", strings.Join(flags.Args(), " "))
+		return vectorann.Config{}, "", "", fmt.Errorf("vector-search: unexpected positional arguments: %s", strings.Join(flags.Args(), " "))
 	}
 
 	config := defaults
@@ -127,19 +127,19 @@ func parseFlags(args []string, stderr io.Writer) (vectorann.Config, string, stri
 	}
 	config.MaxNeighbors, err = parseInts(*neighbors)
 	if err != nil {
-		return vectorann.Config{}, "", "", fmt.Errorf("vector-ann: max-neighbors: %w", err)
+		return vectorann.Config{}, "", "", fmt.Errorf("vector-search: max-neighbors: %w", err)
 	}
 	config.EfConstruction, err = parseInts(*efConstruction)
 	if err != nil {
-		return vectorann.Config{}, "", "", fmt.Errorf("vector-ann: ef-construction: %w", err)
+		return vectorann.Config{}, "", "", fmt.Errorf("vector-search: ef-construction: %w", err)
 	}
 	config.EfSearch, err = parseInts(*efSearch)
 	if err != nil {
-		return vectorann.Config{}, "", "", fmt.Errorf("vector-ann: ef-search: %w", err)
+		return vectorann.Config{}, "", "", fmt.Errorf("vector-search: ef-search: %w", err)
 	}
 	config.BuildSeeds, err = parseUint64s(*seeds)
 	if err != nil {
-		return vectorann.Config{}, "", "", fmt.Errorf("vector-ann: build-seeds: %w", err)
+		return vectorann.Config{}, "", "", fmt.Errorf("vector-search: build-seeds: %w", err)
 	}
 	config.BuildOrders, err = parseOrders(*orders, *shuffleSeed)
 	if err != nil {
@@ -147,7 +147,7 @@ func parseFlags(args []string, stderr io.Writer) (vectorann.Config, string, stri
 	}
 	config.FilterSelectivities, err = parseFloat64s(*filterSelectivities)
 	if err != nil {
-		return vectorann.Config{}, "", "", fmt.Errorf("vector-ann: filter-selectivities: %w", err)
+		return vectorann.Config{}, "", "", fmt.Errorf("vector-search: filter-selectivities: %w", err)
 	}
 	config.Dimensions = *dimensions
 	config.VectorCount = *vectors
@@ -162,7 +162,7 @@ func parseFlags(args []string, stderr io.Writer) (vectorann.Config, string, stri
 		config.VisitLimit = config.VectorCount
 	}
 	if *format != "table" && *format != "json" {
-		return vectorann.Config{}, "", "", fmt.Errorf("vector-ann: unknown format %q", *format)
+		return vectorann.Config{}, "", "", fmt.Errorf("vector-search: unknown format %q", *format)
 	}
 	return config, *format, strings.TrimSpace(*output), nil
 }
@@ -176,7 +176,7 @@ func parseKinds(value string) ([]vectorann.DatasetKind, error) {
 		case vectorann.DatasetUniform, vectorann.DatasetClustered, vectorann.DatasetDuplicate:
 			kinds = append(kinds, kind)
 		default:
-			return nil, fmt.Errorf("vector-ann: unknown dataset %q", part)
+			return nil, fmt.Errorf("vector-search: unknown dataset %q", part)
 		}
 	}
 	return kinds, nil
@@ -192,7 +192,7 @@ func parseMetrics(value string) ([]vector.Metric, error) {
 		case "cosine":
 			metrics = append(metrics, vector.MetricCosine)
 		default:
-			return nil, fmt.Errorf("vector-ann: unknown metric %q", part)
+			return nil, fmt.Errorf("vector-search: unknown metric %q", part)
 		}
 	}
 	return metrics, nil
@@ -208,7 +208,7 @@ func parseOrders(value string, shuffleSeed uint64) ([]vectorann.BuildOrder, erro
 		case "shuffled":
 			orders = append(orders, vectorann.BuildOrder{Name: part, Seed: shuffleSeed})
 		default:
-			return nil, fmt.Errorf("vector-ann: unknown build order %q", part)
+			return nil, fmt.Errorf("vector-search: unknown build order %q", part)
 		}
 	}
 	return orders, nil

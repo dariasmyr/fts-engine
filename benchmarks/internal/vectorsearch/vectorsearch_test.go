@@ -1,4 +1,4 @@
-package vectorann
+package vectorsearch
 
 import (
 	"bytes"
@@ -252,6 +252,46 @@ func TestSmokeRunner(t *testing.T) {
 	}
 	if limitedReport.Runs[0].SearchOutcome.IncompleteRate == 0 || limitedReport.Runs[0].SearchOutcome.VisitLimitTerminationRate == 0 {
 		t.Fatalf("visit-limit outcome was not recorded: %+v", limitedReport.Runs[0].SearchOutcome)
+	}
+}
+
+func TestQualityGateSmokeRunner(t *testing.T) {
+	config := Config{
+		DatasetKinds:        []DatasetKind{DatasetUniform, DatasetClustered, DatasetDuplicate},
+		Metrics:             []vector.Metric{vector.MetricL2Squared, vector.MetricCosine},
+		Dimensions:          4,
+		VectorCount:         64,
+		QueryCount:          8,
+		DatasetSeed:         19,
+		Clusters:            4,
+		ChunksPerDocument:   2,
+		K:                   5,
+		MaxNeighbors:        []int{8},
+		EfConstruction:      []int{32},
+		EfSearch:            []int{64},
+		BuildSeeds:          []uint64{23},
+		BuildOrders:         []BuildOrder{{Name: "ascending"}},
+		FilterSelectivities: []float64{1},
+		FilterSeed:          7,
+		VisitLimit:          64,
+	}
+	report, err := Run(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gates := make([]QualityGate, 0, len(config.DatasetKinds)*len(config.Metrics))
+	for _, dataset := range config.DatasetKinds {
+		for _, metric := range config.Metrics {
+			gates = append(gates, QualityGate{
+				Dataset: dataset, Metric: metric.String(), EffectiveEfSearch: 64,
+				MinRecallAtK: 0.90, MinDocumentRecallAtK: 0.90, RequireComplete: true,
+			})
+		}
+	}
+	if failures := CheckQualityGates(report, gates); len(failures) != 0 {
+		for _, failure := range failures {
+			t.Errorf("quality gate failed dataset=%s metric=%s ef=%d metric=%s got=%v expected=%v", failure.Run.Dataset.Kind, failure.Run.Dataset.Metric, failure.Run.Request.EffectiveEfSearch, failure.Metric, failure.Got, failure.Expected)
+		}
 	}
 }
 

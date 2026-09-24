@@ -9,7 +9,6 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	vectorflat "github.com/dariasmyr/fts-engine/pkg/vector/flat"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
@@ -153,7 +152,7 @@ func OpenSealedSegment(paths SegmentPaths, options OpenOptions) (*LoadedSealedSe
 	if err != nil {
 		return nil, err
 	}
-	vectorReader, vectorMetadata, err := vectorflat.Open(bytes.NewReader(vectorData), vectorflat.CodecLimits{
+	vectorReader, vectorMetadata, err := OpenVectorSource(bytes.NewReader(vectorData), CodecLimits{
 		MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes, MaxK: limits.MaxK,
 	})
 	if err != nil {
@@ -166,7 +165,7 @@ func OpenSealedSegment(paths SegmentPaths, options OpenOptions) (*LoadedSealedSe
 	if err != nil {
 		return nil, err
 	}
-	searcher, graphMetadata, err := hnsw.OpenSearcher(bytes.NewReader(graphData), vectorReader.VectorSource(), hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256}, hnsw.GraphLimits{
+	searcher, graphMetadata, err := hnsw.OpenSearcher(bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256}, hnsw.GraphLimits{
 		MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes,
 		MaxGraphBytes: min(limits.MaxFileBytes, limits.MaxGraphBytes), MaxLinks: limits.MaxGraphLinks,
 		MaxK: limits.MaxK, MaxEfSearch: limits.MaxEfSearch, MaxVisitLimit: limits.MaxVisitLimit,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/dariasmyr/fts-engine/pkg/persist"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 )
 
@@ -140,10 +141,7 @@ func (l *Loaded) Close() error {
 	return l.closeErr
 }
 
-type fileReference struct {
-	Size   uint64
-	SHA256 [sha256.Size]byte
-}
+type fileReference = persist.Reference
 
 type manifest struct {
 	Version      uint16

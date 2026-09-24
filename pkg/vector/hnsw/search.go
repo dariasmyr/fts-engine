@@ -7,7 +7,7 @@ import (
 	"math"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/internal/contextcheck"
+	"github.com/dariasmyr/fts-engine/pkg/vector/contextcheck"
 )
 
 var errVisitLimit = errors.New("vector/hnsw: visit limit reached")

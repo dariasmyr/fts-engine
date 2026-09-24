@@ -1,4 +1,4 @@
-package vectorann
+package vectorsearch
 
 import (
 	"crypto/sha256"
@@ -38,20 +38,20 @@ type Dataset struct {
 
 func GenerateDataset(config DatasetConfig) (Dataset, error) {
 	if config.Dimensions <= 0 || config.Vectors <= 0 || config.Queries <= 0 {
-		return Dataset{}, fmt.Errorf("vectorann: dimensions, vectors, and queries must be positive")
+		return Dataset{}, fmt.Errorf("vectorsearch: dimensions, vectors, and queries must be positive")
 	}
 	if config.ChunksPerDocument == 0 {
 		config.ChunksPerDocument = 1
 	}
 	if config.ChunksPerDocument < 1 {
-		return Dataset{}, fmt.Errorf("vectorann: chunks per document must be positive")
+		return Dataset{}, fmt.Errorf("vectorsearch: chunks per document must be positive")
 	}
 	if config.Kind == DatasetClustered {
 		if config.Clusters == 0 {
 			config.Clusters = 8
 		}
 		if config.Clusters < 1 {
-			return Dataset{}, fmt.Errorf("vectorann: clusters must be positive")
+			return Dataset{}, fmt.Errorf("vectorsearch: clusters must be positive")
 		}
 	} else {
 		config.Clusters = 0
@@ -80,7 +80,7 @@ func GenerateDataset(config DatasetConfig) (Dataset, error) {
 		// Queries use an independent stream and are never selected from stored rows.
 		fillUniform(queryRNG, queries, config.Dimensions)
 	default:
-		return Dataset{}, fmt.Errorf("vectorann: unknown dataset kind %q", config.Kind)
+		return Dataset{}, fmt.Errorf("vectorsearch: unknown dataset kind %q", config.Kind)
 	}
 
 	dataset := Dataset{Config: config, Vectors: vectors, Queries: queries}

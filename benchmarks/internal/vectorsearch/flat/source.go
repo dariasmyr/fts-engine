@@ -9,7 +9,7 @@ import (
 	"slices"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/internal/contextcheck"
+	"github.com/dariasmyr/fts-engine/pkg/vector/contextcheck"
 )
 
 // VectorSource is immutable prepared vector storage backed by a flat matrix.

@@ -9,8 +9,7 @@ import (
 	"sync"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/internal/contextcheck"
-	"github.com/dariasmyr/fts-engine/pkg/vector/internal/exactsearch"
+	"github.com/dariasmyr/fts-engine/pkg/vector/contextcheck"
 )
 
 var (
@@ -127,7 +126,7 @@ func (idx *Index) AppendBatch(vectors [][]float32) (OrdinalRange, error) {
 func (idx *Index) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	return exactsearch.Search(ctx, idx.calculator, idx.values, idx.maxK, query, k, options)
+	return Search(ctx, idx.calculator, idx.values, idx.maxK, query, k, options)
 }
 
 // Compact returns a new mutable index containing only rows allowed by filter.

@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dariasmyr/fts-engine/pkg/semanticpersist"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/flat"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
@@ -18,16 +18,12 @@ func main() {
 		{10, 0}, {11, 0}, {10, 1}, {11, 1},
 	}
 
-	mutable, err := flat.New(flat.Config{
-		Dimensions: 2, Metric: vector.MetricL2Squared,
-		MaxVectors: len(values), MaxK: 10,
-	})
+	calculator, err := vector.NewCalculator(2, vector.MetricL2Squared)
 	must(err)
-	_, err = mutable.AppendBatch(values)
+	source, err := vector.NewMemorySource(calculator, values)
 	must(err)
-	source := mutable.Freeze()
 
-	searcher, err := hnsw.BuildSearcher(ctx, source.VectorSource(), hnsw.BuildOptions{
+	searcher, err := hnsw.BuildSearcher(ctx, source, hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
 			Dimensions: 2, Metric: vector.MetricL2Squared,
 			MaxVectors: len(values), MaxVectorBytes: uint64(len(values) * 2 * 4),
@@ -55,9 +51,9 @@ func main() {
 	}
 
 	stats := searcher.GraphStats()
-	storage := searcher.StorageStats()
+	storageStats := searcher.StorageStats()
 	fmt.Printf("\ngraph nodes=%d links=%d reachable=%d unreachable=%d bytes=%d\n",
-		stats.NodeCount, storage.DirectedLinks, stats.ReachableNodes, stats.UnreachableNodes, storage.TotalBytes)
+		stats.NodeCount, storageStats.DirectedLinks, stats.ReachableNodes, stats.UnreachableNodes, storageStats.TotalBytes)
 
 	query := []float32{5.2, 5.1}
 	result, err := searcher.Search(ctx, query, 3, vector.SearchOptions{EfSearch: 8})
@@ -65,17 +61,17 @@ func main() {
 	fmt.Printf("ANN query=%v hits=%v visited=%d distances=%d\n",
 		query, result.Hits, result.Stats.VisitedNodes, result.Stats.DistanceComputations)
 
-	vectorData, vectorMetadata, err := flat.Marshal(source)
+	vectorData, vectorMetadata, err := semanticpersist.MarshalSource(source, 10)
 	must(err)
 	vectorReference := hnsw.VectorFileReference{Size: vectorMetadata.Size, SHA256: vectorMetadata.SHA256}
 	graphData, graphMetadata, err := hnsw.MarshalGraph(searcher, vectorReference)
 	must(err)
 	fmt.Printf("\npersist vectors.bin=%d bytes graph.bin=%d bytes\n", vectorMetadata.Size, graphMetadata.Size)
 
-	openedVectors, openedVectorMetadata, err := flat.Open(bytes.NewReader(vectorData), flat.DefaultCodecLimits())
+	openedVectors, openedVectorMetadata, err := semanticpersist.OpenVectorSource(bytes.NewReader(vectorData), semanticpersist.DefaultCodecLimits())
 	must(err)
 	openedReference := hnsw.VectorFileReference{Size: openedVectorMetadata.Size, SHA256: openedVectorMetadata.SHA256}
-	openedSearcher, _, err := hnsw.OpenSearcherContext(ctx, bytes.NewReader(graphData), openedVectors.VectorSource(), openedReference, hnsw.DefaultGraphLimits())
+	openedSearcher, _, err := hnsw.OpenSearcherContext(ctx, bytes.NewReader(graphData), openedVectors, openedReference, hnsw.DefaultGraphLimits())
 	must(err)
 
 	reopened, err := openedSearcher.Search(ctx, query, 3, vector.SearchOptions{EfSearch: 8})

@@ -1,4 +1,4 @@
-package hnsw_test
+package vectorsearch
 
 import (
 	"context"
@@ -35,8 +35,8 @@ func TestDifferentialRecallAgainstFlatUsingPublicAPIs(t *testing.T) {
 			values[row][dimension] = rng.Float32()*2 - 1
 		}
 	}
-	flatReader := testFlatReader(t, values, vector.MetricL2Squared)
-	reader := testBuild(t, flatReader.VectorSource(), dimensions, rows, vector.MetricL2Squared)
+	flatReader := benchmarkFlatReader(t, values, vector.MetricL2Squared)
+	reader := benchmarkBuild(t, flatReader.VectorSource(), dimensions, rows, vector.MetricL2Squared)
 	var totalRecall float64
 	for range 20 {
 		query := make([]float32, dimensions)

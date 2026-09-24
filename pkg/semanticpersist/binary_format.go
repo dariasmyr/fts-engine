@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
-	"fmt"
 	"hash/crc32"
-	"io"
 	"math"
 	"unicode/utf8"
 )
@@ -182,20 +180,6 @@ func (d *decoder) remaining() int {
 		return 0
 	}
 	return len(d.data) - d.offset
-}
-
-func readBounded(reader io.Reader, limit uint64) ([]byte, error) {
-	if reader == nil || limit == 0 || limit >= math.MaxInt64 {
-		return nil, ErrLimitExceeded
-	}
-	data, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
-	if err != nil {
-		return nil, fmt.Errorf("semanticpersist: read: %w", err)
-	}
-	if uint64(len(data)) > limit {
-		return nil, ErrLimitExceeded
-	}
-	return data, nil
 }
 
 func normalizeLimits(limits Limits) Limits {

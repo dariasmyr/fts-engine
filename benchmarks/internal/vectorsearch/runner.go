@@ -1,4 +1,4 @@
-package vectorann
+package vectorsearch
 
 import (
 	"context"
@@ -6,8 +6,8 @@ import (
 	"math"
 	"time"
 
+	flat "github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/flat"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/flat"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
@@ -106,7 +106,7 @@ func Run(ctx context.Context, config Config) (Report, error) {
 		for _, metric := range config.Metrics {
 			exact, err := newFlatReader(dataset.Vectors, config.Dimensions, metric, config.VectorCount)
 			if err != nil {
-				return Report{}, fmt.Errorf("vectorann: build flat ground truth: %w", err)
+				return Report{}, fmt.Errorf("vectorsearch: build flat ground truth: %w", err)
 			}
 			truth, err := exactTruthSweeps(ctx, exact, dataset.Queries, config)
 			if err != nil {
@@ -192,7 +192,7 @@ func buildReader(ctx context.Context, source *flat.Searcher, rawVectors [][]floa
 	case "shuffled":
 		reader, err = buildShuffled(ctx, rawVectors, order.Seed, buildConfig, searchConfig, reportProgress)
 	default:
-		err = fmt.Errorf("vectorann: unknown build order %q", order.Name)
+		err = fmt.Errorf("vectorsearch: unknown build order %q", order.Name)
 	}
 	wallDuration := time.Since(started)
 	timing := buildTiming{
@@ -202,7 +202,7 @@ func buildReader(ctx context.Context, source *flat.Searcher, rawVectors [][]floa
 		timing.Duration = 0
 	}
 	if err != nil {
-		return nil, buildPath, timing, fmt.Errorf("vectorann: %s build: %w", buildPath, err)
+		return nil, buildPath, timing, fmt.Errorf("vectorsearch: %s build: %w", buildPath, err)
 	}
 	return reader, buildPath, timing, nil
 }
@@ -252,7 +252,7 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 		result, err := reader.Search(ctx, query, config.K, request)
 		latencies[i] = time.Since(started)
 		if err != nil {
-			return RunReport{}, fmt.Errorf("vectorann: search query %d: %w", i, err)
+			return RunReport{}, fmt.Errorf("vectorsearch: search query %d: %w", i, err)
 		}
 		recall += StrictRecallAtK(result.Hits, truth.hits[i], config.K)
 		documentRecall += DocumentRecallAtK(result.Hits, truth.hits[i], config.K, config.ChunksPerDocument)
@@ -355,7 +355,7 @@ func exactTruthSweeps(ctx context.Context, reader *flat.Searcher, queries [][]fl
 		for i, query := range queries {
 			result, err := reader.Search(ctx, query, reader.Len(), vector.SearchOptions{ResultFilter: filter})
 			if err != nil {
-				return nil, fmt.Errorf("vectorann: flat query %d at selectivity %g: %w", i, selectivity, err)
+				return nil, fmt.Errorf("vectorsearch: flat query %d at selectivity %g: %w", i, selectivity, err)
 			}
 			hits[i] = result.Hits
 		}
@@ -383,7 +383,7 @@ func deterministicFilter(count int, selectivity float64, seed uint64) (vector.Re
 	}
 	filter, err := vector.NewBitSet(uint32(count), allowed...)
 	if err != nil {
-		return nil, FilterParametersReport{}, fmt.Errorf("vectorann: construct result filter: %w", err)
+		return nil, FilterParametersReport{}, fmt.Errorf("vectorsearch: construct result filter: %w", err)
 	}
 	return filter, report, nil
 }
@@ -425,42 +425,42 @@ func topDocumentSet(hits []vector.Hit, k, chunksPerDocument int) map[int]struct{
 
 func validateConfig(config Config) error {
 	if configListsEmpty(config) {
-		return fmt.Errorf("vectorann: dataset, metric, filter, and parameter sweeps must not be empty")
+		return fmt.Errorf("vectorsearch: dataset, metric, filter, and parameter sweeps must not be empty")
 	}
 	if config.Dimensions <= 0 || config.VectorCount <= 0 || config.QueryCount <= 0 || config.K <= 0 || config.K > config.VectorCount {
-		return fmt.Errorf("vectorann: invalid dimensions, counts, or k")
+		return fmt.Errorf("vectorsearch: invalid dimensions, counts, or k")
 	}
 	if config.ChunksPerDocument <= 0 {
-		return fmt.Errorf("vectorann: chunks per document must be positive")
+		return fmt.Errorf("vectorsearch: chunks per document must be positive")
 	}
 	if config.VisitLimit <= 0 || config.VisitLimit > config.VectorCount {
-		return fmt.Errorf("vectorann: visit limit must be in [1, vector count]")
+		return fmt.Errorf("vectorsearch: visit limit must be in [1, vector count]")
 	}
 	for _, metric := range config.Metrics {
 		if !metric.Valid() {
-			return fmt.Errorf("vectorann: invalid metric %d", metric)
+			return fmt.Errorf("vectorsearch: invalid metric %d", metric)
 		}
 	}
 	for _, order := range config.BuildOrders {
 		if order.Name != "ascending" && order.Name != "shuffled" {
-			return fmt.Errorf("vectorann: unknown build order %q", order.Name)
+			return fmt.Errorf("vectorsearch: unknown build order %q", order.Name)
 		}
 	}
 	for _, maxNeighbors := range config.MaxNeighbors {
 		for _, efConstruction := range config.EfConstruction {
 			if maxNeighbors < 2 || efConstruction < maxNeighbors {
-				return fmt.Errorf("vectorann: ef construction must be >= max neighbors >= 2")
+				return fmt.Errorf("vectorsearch: ef construction must be >= max neighbors >= 2")
 			}
 		}
 	}
 	for _, efSearch := range config.EfSearch {
 		if efSearch <= 0 {
-			return fmt.Errorf("vectorann: requested ef search must be positive")
+			return fmt.Errorf("vectorsearch: requested ef search must be positive")
 		}
 	}
 	for _, selectivity := range config.FilterSelectivities {
 		if selectivity <= 0 || selectivity > 1 || math.IsNaN(selectivity) {
-			return fmt.Errorf("vectorann: filter selectivity must be in (0, 1]")
+			return fmt.Errorf("vectorsearch: filter selectivity must be in (0, 1]")
 		}
 	}
 	return nil

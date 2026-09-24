@@ -1,4 +1,4 @@
-package flat
+package semanticpersist
 
 import (
 	"bytes"
@@ -15,16 +15,35 @@ import (
 )
 
 const (
-	codecMagic      = "VFLT"
-	codecVersion    = uint16(1)
-	codecHeaderSize = 40
-	codecFooterSize = 4
+	codecMagic            = "VFLT"
+	codecVersion          = uint16(1)
+	codecHeaderSize       = 40
+	codecFooterSize       = 4
+	float32ByteSize       = 4
+	unitNormTolerance     = 1e-4
+	negativeZeroBits      = uint32(1) << 31
+	defaultMaxDimensions  = 65_536
+	defaultMaxVectors     = 10_000_000
+	defaultMaxVectorBytes = 512 << 20
+	defaultMaxK           = 1_000_000
+
+	headerMagicOffset         = 0
+	headerVersionOffset       = 4
+	headerSizeOffset          = 6
+	headerDimensionsOffset    = 8
+	headerMetricOffset        = 12
+	headerNormalizationOffset = 13
+	headerReservedOffset      = 14
+	headerCountOffset         = 16
+	headerMaxKOffset          = 20
+	headerVectorBytesOffset   = 24
+	headerTailOffset          = 32
 )
 
 var (
-	ErrCorruptSegment   = errors.New("vector/flat: corrupt segment")
-	ErrUnsupportedCodec = errors.New("vector/flat: unsupported segment codec")
-	ErrSegmentLimit     = errors.New("vector/flat: segment exceeds configured limit")
+	ErrCorruptSegment   = errors.New("semanticpersist: corrupt vector segment")
+	ErrUnsupportedCodec = errors.New("semanticpersist: unsupported vector codec")
+	ErrSegmentLimit     = errors.New("semanticpersist: vector segment exceeds configured limit")
 )
 
 type CodecLimits struct {
@@ -35,7 +54,12 @@ type CodecLimits struct {
 }
 
 func DefaultCodecLimits() CodecLimits {
-	return CodecLimits{MaxDimensions: 65_536, MaxVectors: 10_000_000, MaxVectorBytes: 512 << 20, MaxK: 1_000_000}
+	return CodecLimits{
+		MaxDimensions:  defaultMaxDimensions,
+		MaxVectors:     defaultMaxVectors,
+		MaxVectorBytes: defaultMaxVectorBytes,
+		MaxK:           defaultMaxK,
+	}
 }
 
 type FileMetadata struct {
@@ -44,9 +68,9 @@ type FileMetadata struct {
 	SHA256 [sha256.Size]byte
 }
 
-func Marshal(reader *Searcher) ([]byte, FileMetadata, error) {
+func Marshal(source vector.PreparedVectorSource, maxK int) ([]byte, FileMetadata, error) {
 	var buffer bytes.Buffer
-	metadata, err := Write(&buffer, reader)
+	metadata, err := Write(&buffer, source, maxK)
 	return buffer.Bytes(), metadata, err
 }
 
@@ -58,11 +82,8 @@ func MarshalSource(source vector.PreparedVectorSource, maxK int) ([]byte, FileMe
 }
 
 // Write streams one immutable fixed-width matrix and its checksum.
-func Write(writer io.Writer, reader *Searcher) (FileMetadata, error) {
-	if reader == nil {
-		return FileMetadata{}, ErrCorruptSegment
-	}
-	return WriteSource(writer, reader.VectorSource(), reader.maxK)
+func Write(writer io.Writer, source vector.PreparedVectorSource, maxK int) (FileMetadata, error) {
+	return WriteSource(writer, source, maxK)
 }
 
 // WriteSource streams an immutable prepared vector source as fixed-width VFLT
@@ -82,7 +103,7 @@ func WriteSource(writer io.Writer, source vector.PreparedVectorSource, maxK int)
 	if !ok || components > uint64(math.MaxInt) {
 		return FileMetadata{}, ErrSegmentLimit
 	}
-	vectorBytes := components * 4
+	vectorBytes := components * float32ByteSize
 	if vectorBytes > math.MaxUint64-uint64(codecHeaderSize+codecFooterSize) {
 		return FileMetadata{}, ErrSegmentLimit
 	}
@@ -99,23 +120,23 @@ func WriteSource(writer io.Writer, source vector.PreparedVectorSource, maxK int)
 		}
 	}
 	header := make([]byte, codecHeaderSize)
-	copy(header[:4], codecMagic)
-	binary.LittleEndian.PutUint16(header[4:6], codecVersion)
-	binary.LittleEndian.PutUint16(header[6:8], codecHeaderSize)
-	binary.LittleEndian.PutUint32(header[8:12], uint32(source.Dimensions()))
-	header[12] = byte(source.Metric())
-	header[13] = byte(source.Normalization())
-	binary.LittleEndian.PutUint32(header[16:20], uint32(source.Len()))
-	binary.LittleEndian.PutUint32(header[20:24], uint32(maxK))
-	binary.LittleEndian.PutUint64(header[24:32], vectorBytes)
+	copy(header[headerMagicOffset:], codecMagic)
+	binary.LittleEndian.PutUint16(header[headerVersionOffset:headerSizeOffset], codecVersion)
+	binary.LittleEndian.PutUint16(header[headerSizeOffset:headerDimensionsOffset], codecHeaderSize)
+	binary.LittleEndian.PutUint32(header[headerDimensionsOffset:headerMetricOffset], uint32(source.Dimensions()))
+	header[headerMetricOffset] = byte(source.Metric())
+	header[headerNormalizationOffset] = byte(source.Normalization())
+	binary.LittleEndian.PutUint32(header[headerCountOffset:headerMaxKOffset], uint32(source.Len()))
+	binary.LittleEndian.PutUint32(header[headerMaxKOffset:headerVectorBytesOffset], uint32(maxK))
+	binary.LittleEndian.PutUint64(header[headerVectorBytesOffset:headerTailOffset], vectorBytes)
 
 	crc := crc32.NewIEEE()
 	identity := sha256.New()
 	body := io.MultiWriter(writer, crc, identity)
 	if err := writeAll(body, header); err != nil {
-		return FileMetadata{}, fmt.Errorf("vector/flat: write header: %w", err)
+		return FileMetadata{}, fmt.Errorf("semanticpersist: write vector header: %w", err)
 	}
-	rowBytes := source.Dimensions() * 4
+	rowBytes := source.Dimensions() * float32ByteSize
 	buffer := make([]byte, rowBytes)
 	for row := range source.Len() {
 		if err := source.ReadVectorInto(context.Background(), vector.Ordinal(row), scratch); err != nil {
@@ -126,21 +147,21 @@ func WriteSource(writer io.Writer, source vector.PreparedVectorSource, maxK int)
 			binary.LittleEndian.PutUint32(encoded[i*4:(i+1)*4], math.Float32bits(value))
 		}
 		if err := writeAll(body, encoded); err != nil {
-			return FileMetadata{}, fmt.Errorf("vector/flat: write vectors: %w", err)
+			return FileMetadata{}, fmt.Errorf("semanticpersist: write vectors: %w", err)
 		}
 	}
 	checksum := crc.Sum32()
 	var footer [codecFooterSize]byte
 	binary.LittleEndian.PutUint32(footer[:], checksum)
 	if err := writeAll(io.MultiWriter(writer, identity), footer[:]); err != nil {
-		return FileMetadata{}, fmt.Errorf("vector/flat: write checksum: %w", err)
+		return FileMetadata{}, fmt.Errorf("semanticpersist: write vector checksum: %w", err)
 	}
 	metadata := FileMetadata{Size: codecHeaderSize + vectorBytes + codecFooterSize, CRC32: checksum}
 	copy(metadata.SHA256[:], identity.Sum(nil))
 	return metadata, nil
 }
 
-func Open(source io.Reader, limits CodecLimits) (*Searcher, FileMetadata, error) {
+func OpenVectorSource(source io.Reader, limits CodecLimits) (vector.PreparedVectorSource, FileMetadata, error) {
 	if source == nil {
 		return nil, FileMetadata{}, ErrCorruptSegment
 	}
@@ -154,7 +175,7 @@ func Open(source io.Reader, limits CodecLimits) (*Searcher, FileMetadata, error)
 	}
 	data, err := io.ReadAll(io.LimitReader(source, int64(maxFileBytes)+1))
 	if err != nil {
-		return nil, FileMetadata{}, fmt.Errorf("vector/flat: read segment: %w", err)
+		return nil, FileMetadata{}, fmt.Errorf("semanticpersist: read vector segment: %w", err)
 	}
 	if uint64(len(data)) > maxFileBytes {
 		return nil, FileMetadata{}, ErrSegmentLimit
@@ -163,14 +184,16 @@ func Open(source io.Reader, limits CodecLimits) (*Searcher, FileMetadata, error)
 	return reader, metadata, err
 }
 
-func openBytes(data []byte, limits CodecLimits) (*Searcher, FileMetadata, error) {
-	if len(data) < codecHeaderSize+codecFooterSize || string(data[:4]) != codecMagic {
+func openBytes(data []byte, limits CodecLimits) (vector.PreparedVectorSource, FileMetadata, error) {
+	if len(data) < codecHeaderSize+codecFooterSize || string(data[headerMagicOffset:headerVersionOffset]) != codecMagic {
 		return nil, FileMetadata{}, ErrCorruptSegment
 	}
-	if binary.LittleEndian.Uint16(data[4:6]) != codecVersion {
+	if binary.LittleEndian.Uint16(data[headerVersionOffset:headerSizeOffset]) != codecVersion {
 		return nil, FileMetadata{}, ErrUnsupportedCodec
 	}
-	if binary.LittleEndian.Uint16(data[6:8]) != codecHeaderSize || data[14] != 0 || data[15] != 0 || binary.LittleEndian.Uint64(data[32:40]) != 0 {
+	if binary.LittleEndian.Uint16(data[headerSizeOffset:headerDimensionsOffset]) != codecHeaderSize ||
+		data[headerReservedOffset] != 0 || data[headerReservedOffset+1] != 0 ||
+		binary.LittleEndian.Uint64(data[headerTailOffset:codecHeaderSize]) != 0 {
 		return nil, FileMetadata{}, ErrCorruptSegment
 	}
 	body, footer := data[:len(data)-codecFooterSize], data[len(data)-codecFooterSize:]
@@ -178,12 +201,12 @@ func openBytes(data []byte, limits CodecLimits) (*Searcher, FileMetadata, error)
 	if crc32.ChecksumIEEE(body) != checksum {
 		return nil, FileMetadata{}, ErrCorruptSegment
 	}
-	dimensions := int(binary.LittleEndian.Uint32(data[8:12]))
-	metric := vector.Metric(data[12])
-	normalization := vector.Normalization(data[13])
-	count := uint64(binary.LittleEndian.Uint32(data[16:20]))
-	maxK := uint64(binary.LittleEndian.Uint32(data[20:24]))
-	vectorBytes := binary.LittleEndian.Uint64(data[24:32])
+	dimensions := int(binary.LittleEndian.Uint32(data[headerDimensionsOffset:headerMetricOffset]))
+	metric := vector.Metric(data[headerMetricOffset])
+	normalization := vector.Normalization(data[headerNormalizationOffset])
+	count := uint64(binary.LittleEndian.Uint32(data[headerCountOffset:headerMaxKOffset]))
+	maxK := uint64(binary.LittleEndian.Uint32(data[headerMaxKOffset:headerVectorBytesOffset]))
+	vectorBytes := binary.LittleEndian.Uint64(data[headerVectorBytesOffset:headerTailOffset])
 	if dimensions <= 0 || dimensions > limits.MaxDimensions || count > uint64(limits.MaxVectors) || maxK == 0 || maxK > uint64(limits.MaxK) || vectorBytes > limits.MaxVectorBytes {
 		return nil, FileMetadata{}, ErrSegmentLimit
 	}
@@ -191,7 +214,7 @@ func openBytes(data []byte, limits CodecLimits) (*Searcher, FileMetadata, error)
 	if !ok {
 		return nil, FileMetadata{}, ErrSegmentLimit
 	}
-	expectedBytes, ok := checkedMultiply(expectedComponents, 4)
+	expectedBytes, ok := checkedMultiply(expectedComponents, float32ByteSize)
 	if !ok || expectedBytes != vectorBytes {
 		return nil, FileMetadata{}, ErrCorruptSegment
 	}
@@ -206,8 +229,8 @@ func openBytes(data []byte, limits CodecLimits) (*Searcher, FileMetadata, error)
 	values := make([]float32, int(expectedComponents))
 	payload := data[codecHeaderSize : len(data)-codecFooterSize]
 	for i := range values {
-		bits := binary.LittleEndian.Uint32(payload[i*4 : (i+1)*4])
-		if bits == 1<<31 {
+		bits := binary.LittleEndian.Uint32(payload[i*float32ByteSize : (i+1)*float32ByteSize])
+		if bits == negativeZeroBits {
 			return nil, FileMetadata{}, ErrCorruptSegment
 		}
 		values[i] = math.Float32frombits(bits)
@@ -220,7 +243,11 @@ func openBytes(data []byte, limits CodecLimits) (*Searcher, FileMetadata, error)
 		}
 	}
 	identity := sha256.Sum256(data)
-	return newReader(space, int(maxK), values), FileMetadata{Size: uint64(len(data)), CRC32: checksum, SHA256: identity}, nil
+	prepared, err := vector.NewPreparedMemorySource(space, values)
+	if err != nil {
+		return nil, FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptSegment, err)
+	}
+	return prepared, FileMetadata{Size: uint64(len(data)), CRC32: checksum, SHA256: identity}, nil
 }
 
 func normalizeCodecLimits(limits CodecLimits) CodecLimits {
@@ -249,12 +276,12 @@ func validatePreparedRow(calculator vector.Calculator, value []float32) error {
 		for _, component := range value {
 			normSquared += float64(component) * float64(component)
 		}
-		if math.Abs(normSquared-1) > 1e-4 {
+		if math.Abs(normSquared-1) > unitNormTolerance {
 			return errors.New("vector is not unit normalized")
 		}
 	}
 	for _, component := range value {
-		if math.Float32bits(component) == 1<<31 {
+		if math.Float32bits(component) == negativeZeroBits {
 			return errors.New("vector contains negative zero")
 		}
 	}

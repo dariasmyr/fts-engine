@@ -13,7 +13,6 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	vectorflat "github.com/dariasmyr/fts-engine/pkg/vector/flat"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
@@ -533,7 +532,7 @@ func TestOpenEnforcesAllocationLimits(t *testing.T) {
 	}
 	limits := DefaultLimits()
 	limits.MaxVectors = 1
-	if _, err := Open(root, OpenOptions{Limits: limits}); !errors.Is(err, ErrLimitExceeded) && !errors.Is(err, vectorflat.ErrSegmentLimit) {
+	if _, err := Open(root, OpenOptions{Limits: limits}); !errors.Is(err, ErrLimitExceeded) && !errors.Is(err, ErrSegmentLimit) {
 		t.Fatalf("Open() limit error = %v", err)
 	}
 	limits = DefaultLimits()

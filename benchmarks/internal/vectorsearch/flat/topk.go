@@ -1,4 +1,4 @@
-package exactsearch
+package flat
 
 import (
 	"math"

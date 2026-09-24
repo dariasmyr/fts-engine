@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/internal/exactsearch"
 )
 
 // Searcher is an immutable exact-search index backed by a VectorSource.
@@ -18,7 +17,7 @@ func newReader(calculator vector.Calculator, maxK int, values []float32) *Search
 }
 
 func (r *Searcher) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
-	return exactsearch.Search(ctx, r.source.calculator, r.source.values, r.maxK, query, k, options)
+	return Search(ctx, r.source.calculator, r.source.values, r.maxK, query, k, options)
 }
 
 // Compact returns an immutable reader containing only rows allowed by filter.

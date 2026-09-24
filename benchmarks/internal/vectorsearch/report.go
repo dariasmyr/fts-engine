@@ -1,4 +1,4 @@
-package vectorann
+package vectorsearch
 
 import (
 	"encoding/json"
@@ -200,17 +200,17 @@ func WriteJSON(writer io.Writer, report Report) error {
 
 func WriteTable(writer io.Writer, report Report) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(table, "DATASET\tMETRIC\tORDER/PATH\tFILTER\tM\tEFC\tEFS(req/eff)\tSEED\tRECALL@K\tDOC-RECALL\tP50(us)\tP95(us)\tP99(us)\tINCOMPLETE"); err != nil {
+	if _, err := fmt.Fprintln(table, "DATASET\tMETRIC\tORDER/PATH\tFILTER\tM\tEFC\tEFS(req/eff)\tSEED\tRECALL@K\tDOC-RECALL\tP50(us)\tP95(us)\tP99(us)\tVISITED\tDISTANCES\tINCOMPLETE"); err != nil {
 		return err
 	}
 	for _, run := range report.Runs {
-		if _, err := fmt.Fprintf(table, "%s\t%s\t%s/%s\t%.1f%%\t%d\t%d\t%d/%d\t%d\t%.4f\t%.4f\t%.1f\t%.1f\t%.1f\t%.1f%%\n",
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s/%s\t%.1f%%\t%d\t%d\t%d/%d\t%d\t%.4f\t%.4f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f%%\n",
 			run.Dataset.Kind, run.Dataset.Metric, run.BuildOrder.Name, run.BuildPath,
 			run.Request.ResultFilter.EffectiveSelectivity*100, run.BuildParameters.MaxNeighbors,
 			run.BuildParameters.EfConstruction, run.Request.RequestedEfSearch, run.Request.EffectiveEfSearch, run.BuildParameters.Seed,
 			run.Quality.MeanRecallAtK, run.Quality.MeanDocumentRecallAtK,
 			float64(run.Latency.P50NS)/1e3, float64(run.Latency.P95NS)/1e3,
-			float64(run.Latency.P99NS)/1e3, run.SearchOutcome.IncompleteRate*100); err != nil {
+			float64(run.Latency.P99NS)/1e3, run.SearchWork.AverageVisitedNodes, run.SearchWork.AverageDistanceComputations, run.SearchOutcome.IncompleteRate*100); err != nil {
 			return err
 		}
 	}

@@ -10,9 +10,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/dariasmyr/fts-engine/pkg/persist"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	vectorflat "github.com/dariasmyr/fts-engine/pkg/vector/flat"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
@@ -541,7 +541,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 	if err != nil {
 		return nil, err
 	}
-	vectorReader, vectorMetadata, err := vectorflat.Open(bytes.NewReader(vectorsData), vectorflat.CodecLimits{
+	vectorReader, vectorMetadata, err := OpenVectorSource(bytes.NewReader(vectorsData), CodecLimits{
 		MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes, MaxK: limits.MaxK,
 	})
 	if err != nil {
@@ -558,7 +558,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		if readErr != nil {
 			return nil, readErr
 		}
-		searcher, graphMetadata, openErr := hnsw.OpenSearcher(bytes.NewReader(graphData), vectorReader.VectorSource(), hnsw.VectorFileReference{
+		searcher, graphMetadata, openErr := hnsw.OpenSearcher(bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{
 			Size: manifestValue.Vectors.Size, SHA256: manifestValue.Vectors.SHA256,
 		}, hnsw.GraphLimits{
 			MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes,
@@ -617,7 +617,7 @@ func writeVectorsFile(path string, source vector.PreparedVectorSource, maxK int,
 	if err != nil {
 		return fileReference{}, err
 	}
-	metadata, writeErr := vectorflat.WriteSource(file, source, maxK)
+	metadata, writeErr := WriteSource(file, source, maxK)
 	if writeErr == nil && durability == DurabilitySynchronous {
 		writeErr = file.Sync()
 	}
@@ -775,7 +775,14 @@ func readRegularFile(path string, limit uint64) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	return readBounded(file, limit)
+	data, err := persist.ReadBounded(file, limit)
+	if errors.Is(err, persist.ErrLimitExceeded) {
+		return nil, ErrLimitExceeded
+	}
+	if err != nil {
+		return nil, fmt.Errorf("semanticpersist: read: %w", err)
+	}
+	return data, nil
 }
 
 func readReferencedFile(path string, reference fileReference, limit uint64) ([]byte, error) {
@@ -797,7 +804,10 @@ func readReferencedFile(path string, reference fileReference, limit uint64) ([]b
 		return nil, err
 	}
 	defer file.Close()
-	data, err := readBounded(file, reference.Size)
+	data, err := persist.ReadBounded(file, reference.Size)
+	if errors.Is(err, persist.ErrLimitExceeded) {
+		return nil, ErrLimitExceeded
+	}
 	if err != nil {
 		return nil, err
 	}

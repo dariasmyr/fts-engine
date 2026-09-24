@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
-	vectorflat "github.com/dariasmyr/fts-engine/pkg/vector/flat"
 )
 
 func TestSemanticFormatsRejectTruncationAndTrailingData(t *testing.T) {
@@ -169,7 +168,7 @@ func FuzzDecodeManifestAndCurrent(f *testing.F) {
 }
 
 func vectorBytes(sealed SealedSegment) ([]byte, fileReference, error) {
-	data, metadata, err := vectorflat.MarshalSource(sealed.Segment.Vectors(), sealed.Segment.MaxK())
+	data, metadata, err := MarshalSource(sealed.Segment.Vectors(), sealed.Segment.MaxK())
 	return data, fileReference{Size: metadata.Size, SHA256: metadata.SHA256}, err
 }
 

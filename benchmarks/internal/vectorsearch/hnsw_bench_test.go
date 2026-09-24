@@ -1,4 +1,4 @@
-package vectorann
+package vectorsearch
 
 import (
 	"bytes"
@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"testing"
 
+	flat "github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/flat"
+	"github.com/dariasmyr/fts-engine/pkg/semanticpersist"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/flat"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
@@ -47,7 +48,7 @@ func BenchmarkOpenSearcher(b *testing.B) {
 	}
 	source := benchmarkFlatReader(b, values, vector.MetricL2Squared)
 	reader := benchmarkBuild(b, source.VectorSource(), dimensions, rows, vector.MetricL2Squared)
-	_, vectorMetadata, err := flat.Marshal(source)
+	_, vectorMetadata, err := semanticpersist.MarshalSource(source.VectorSource(), source.MaxK())
 	if err != nil {
 		b.Fatal(err)
 	}
