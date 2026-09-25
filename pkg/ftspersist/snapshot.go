@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/persist"
 )
 
 type SaveOptions struct {
@@ -62,7 +63,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 		for fieldName := range fields {
 			fieldCodecs[fieldName] = indexName
 		}
-		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
+		if err := persist.WriteAtomic(paths.IndexPath, persist.AtomicWriteOptions{BufferSize: opts.BufferSize, FlushThreshold: opts.FlushThreshold, SyncFile: opts.SyncFile}, func(w io.Writer) error {
 			return fts.SaveMultiIndexSnapshotWithState(w, fieldCodecs, fields, stats, registry, tombstones)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot: %w", err)
@@ -78,7 +79,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 		if index == nil {
 			return fmt.Errorf("ftspersist: save snapshot: nil index")
 		}
-		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
+		if err := persist.WriteAtomic(paths.IndexPath, persist.AtomicWriteOptions{BufferSize: opts.BufferSize, FlushThreshold: opts.FlushThreshold, SyncFile: opts.SyncFile}, func(w io.Writer) error {
 			return fts.SaveIndexSnapshotWithState(w, indexName, index, stats, registry, tombstones)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot: %w", err)
@@ -89,7 +90,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 		if paths.FilterPath == "" {
 			return fmt.Errorf("ftspersist: save snapshot: empty filter path")
 		}
-		if err := saveAtomicWithOptions(paths.FilterPath, opts, func(w io.Writer) error {
+		if err := persist.WriteAtomic(paths.FilterPath, persist.AtomicWriteOptions{BufferSize: opts.BufferSize, FlushThreshold: opts.FlushThreshold, SyncFile: opts.SyncFile}, func(w io.Writer) error {
 			return fts.SaveFilterSnapshot(w, filterName, searchFilter)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot filter: %w", err)

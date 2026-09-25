@@ -6,7 +6,7 @@ import (
 	"io"
 	"math/rand"
 
-	"github.com/dariasmyr/fts-engine/internal/fnv"
+	"github.com/dariasmyr/fts-engine/pkg/fnv"
 )
 
 type Bucket struct {

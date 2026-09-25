@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dariasmyr/fts-engine/internal/fnv"
+	"github.com/dariasmyr/fts-engine/pkg/fnv"
 )
 
 const (
@@ -419,8 +419,3 @@ func (t *Index) nextNode(n nodeptr, hash uint32) (nodeptr, bool) {
 	index := bits.OnesCount32(node.bitmap & (mask - 1))
 	return node.children[index], true
 }
-
-var _ fts.Index = (*Index)(nil)
-var _ fts.PrefixIndex = (*Index)(nil)
-var _ fts.PositionalIndex = (*Index)(nil)
-var _ segment.Source = (*Index)(nil)
