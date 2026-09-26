@@ -19,9 +19,10 @@ For external integrations, prefer these public packages:
 - `pkg/index/slicedradix` - exact, positional, and prefix index
 - `pkg/index/hamt` - exact and positional index
 - `pkg/index/flat` - pointer-light exact, positional, and prefix index for high-cardinality data
-- `pkg/keygen` - token-to-key generators
+- `fts.WordKeys` - default token-to-key generator
 - `pkg/ftspersist` - recommended snapshot and segment persistence API
-- `pkg/segment` - lower-level sealed segment API
+- `pkg/segment` - low-level sealed segment format and export contract
+- `pkg/segmentbundle` - stream/blob bundle API
 - `pkg/textproc` - tokenizers and filters
 - `pkg/ftspreset` - ready-to-use pipeline presets
 - `pkg/filter` - bloom, cuckoo, and ribbon filters
@@ -50,11 +51,10 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
-	engine := fts.New(slicedradix.New(), keygen.Word)
+	engine := fts.New(slicedradix.New(), fts.WordKeys)
 
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Wikipedia: Rosa is a French hotel barge"}}})
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Rosa runs hotel operations in France"}}})
@@ -102,7 +102,7 @@ search does not require that initialization.
 Use a preset when the defaults fit your language mix:
 
 ```go
-engine := fts.New(slicedradix.New(), keygen.Word, ftspreset.Multilingual())
+engine := fts.New(slicedradix.New(), fts.WordKeys, ftspreset.Multilingual())
 ```
 
 Available presets:
@@ -122,7 +122,7 @@ pipe := textproc.NewPipeline(
 	textproc.EnglishStemFilter{},
 )
 
-engine := fts.New(slicedradix.New(), keygen.Word, fts.WithPipeline(pipe))
+engine := fts.New(slicedradix.New(), fts.WordKeys, fts.WithPipeline(pipe))
 ```
 
 Each `fts.Field` can also override the service-level pipeline with its own `Field.Pipeline`.
@@ -157,7 +157,7 @@ checkout-api/v2 -> checkout-api/v2, checkout, api, v2
 ```go
 engine := fts.New(
 	flat.New(),
-	keygen.Word,
+	fts.WordKeys,
 	fts.WithPipeline(textproc.ObservabilityPipeline()),
 )
 ```
@@ -217,7 +217,7 @@ factory := func(string) (fts.Index, error) {
 	return slicedradix.New(), nil
 }
 
-engine := fts.NewMultiField(factory, keygen.Word)
+engine := fts.NewMultiField(factory, fts.WordKeys)
 
 _ = engine.Index(context.Background(), fts.Document{
 	ID: "doc-1",
@@ -242,7 +242,7 @@ BM25 or TF-IDF:
 ```go
 engine := fts.NewMultiField(
 	factory,
-	keygen.Word,
+	fts.WordKeys,
 	fts.WithRankProfile(fts.RankProfile{
 		Name: "docs",
 		Base: fts.BM25(),
@@ -277,7 +277,7 @@ implementation directly:
 ```go
 engine := fts.NewMultiField(
 	factory,
-	keygen.Word,
+	fts.WordKeys,
 	fts.WithScorer(fts.BM25()),
 )
 ```
@@ -324,8 +324,9 @@ Important details:
 
 - snapshot and segment formats are different and not interchangeable
 - `mmap` is available only for segments via `ftspersist.SegmentLoadOptions{Access: ftspersist.AccessMmap}`
-- `pkg/segment` is a lower-level API for raw segment files; prefer `pkg/ftspersist` unless you need direct segment access
-- if you persist built-in indexes through snapshots, or built-in filters through snapshots or segments, call `ftsbuiltin.RegisterSnapshotCodecs()` once at startup
+- `pkg/segment` is a low-level API for raw segments and export contracts; prefer `pkg/ftspersist` for filesystem persistence
+- `pkg/segmentbundle` stores a complete sealed index as one `io.Reader`/`io.Writer` bundle
+- create one `fts.SnapshotRegistry`, register built-in codecs with `ftsbuiltin.RegisterSnapshotCodecs(registry)`, and pass it through persistence options
 
 Sealed segment manifests store the service's default analyzer descriptor. Supply
 the same pipeline when restoring the service. An optional expected fingerprint
@@ -337,7 +338,7 @@ descriptor := pipe.Descriptor()
 
 loaded, err := ftspersist.LoadSegment(
 	ftspersist.SegmentPaths{Dir: "./data/segments/events"},
-	keygen.Word,
+	fts.WordKeys,
 	ftspersist.SegmentLoadOptions{
 		Access:                      ftspersist.AccessFile,
 		ExpectedAnalyzerFingerprint: descriptor.Fingerprint,
@@ -365,8 +366,42 @@ Current working persistence examples:
 - `examples/client-library/segment-load-files/main.go`
 - `examples/client-library/segment-load-files-low-level/main.go`
 - `examples/client-library/segment-load-mmap/main.go`
+- `examples/client-library/segment-bundle/main.go`
 
 See `examples/client-library/README.md` for the exact run order. The load examples expect artifacts created by the corresponding save examples.
+
+### Stream Bundles
+
+Use `pkg/segmentbundle` when the sealed index should be stored as one self-contained
+blob instead of a filesystem directory. `SaveBundle` writes to any
+`io.Writer`, and `LoadBundle` reads from any `io.Reader`, so the blob can be
+stored in memory, a database, object storage, or a network stream:
+
+```go
+var blob bytes.Buffer
+if err := segmentbundle.SaveService(&blob, service); err != nil {
+	panic(err)
+}
+
+bundle, err := segmentbundle.LoadBundle(bytes.NewReader(blob.Bytes()))
+if err != nil {
+	panic(err)
+}
+restored, err := segmentbundle.RestoreService(bundle, fts.WordKeys)
+```
+
+This bundle format is separate from `ftspersist.SaveSegment`: it has no
+filesystem manifest, atomic file replacement, or mmap access mode. New bundles
+store an analyzer descriptor for every field and validate them during restore.
+Use `fts.WithFieldPipelines` when restoring field-specific pipelines. See
+`examples/client-library/segment-bundle` for a complete round-trip example.
+
+The v3 bundle format requires analyzer metadata; bundles created by older
+formats must be rebuilt.
+
+When exporting custom `segment.Source` values directly, pass analyzer identities
+through `segmentbundle.BundleSaveOptions{Analyzers: ...}` instead of using
+`SaveService`.
 
 ## Diagnostics and Stats
 

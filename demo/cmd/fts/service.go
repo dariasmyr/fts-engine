@@ -9,7 +9,6 @@ import (
 	"github.com/dariasmyr/fts-engine/demo/internal/config"
 	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
@@ -67,7 +66,7 @@ func rankProfileConfigured(profile config.RankProfileConfig) bool {
 	return len(profile.FieldWeights) > 0 || profile.QueryTypeWeights != (config.QueryTypeWeightsConfig{})
 }
 
-func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
+func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, registry *pkgfts.SnapshotRegistry, pipeline textproc.Pipeline) (*pkgfts.Service, bool, error) {
 	if cfg == nil {
 		return nil, false, fmt.Errorf("nil config")
 	}
@@ -96,7 +95,7 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 	)
 
 	if cfg.Mode.Type == "prod" && cfg.FTS.Persistence.Enabled && cfg.FTS.Persistence.LoadOnStart {
-		svc, ok, err := tryLoadPersistence(log, cfg, keyGen, serviceOpts)
+		svc, ok, err := tryLoadPersistence(log, cfg, keyGen, registry, serviceOpts)
 		if err != nil {
 			return nil, false, err
 		}
@@ -123,7 +122,7 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {
 	switch kind {
 	case "word":
-		return keygen.Word, nil
+		return pkgfts.WordKeys, nil
 	default:
 		return nil, fmt.Errorf("unknown keygen %q", kind)
 	}

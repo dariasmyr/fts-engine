@@ -6,14 +6,13 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/index/flat"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
 func main() {
 	ctx := context.Background()
 	pipeline := textproc.ObservabilityPipeline()
-	engine := fts.New(flat.New(), keygen.Word, fts.WithPipeline(pipeline))
+	engine := fts.New(flat.New(), fts.WordKeys, fts.WithPipeline(pipeline))
 
 	docs := []fts.Document{
 		{ID: "event-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "checkout-api/v2 failed with io.EOF from 10.0.0.1"}}},

@@ -10,11 +10,11 @@ import (
 )
 
 type snapshotIndex struct {
-	data map[string][]DocRef
+	data map[string][]Posting
 }
 
 func newSnapshotIndex() *snapshotIndex {
-	return &snapshotIndex{data: make(map[string][]DocRef)}
+	return &snapshotIndex{data: make(map[string][]Posting)}
 }
 
 func (m *snapshotIndex) Insert(key string, ord DocOrd) error {
@@ -26,12 +26,12 @@ func (m *snapshotIndex) Insert(key string, ord DocOrd) error {
 			return nil
 		}
 	}
-	m.data[key] = append(rows, DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
+	m.data[key] = append(rows, Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
 	return nil
 }
 
-func (m *snapshotIndex) Search(key string) ([]DocRef, error) {
-	return append([]DocRef(nil), m.data[key]...), nil
+func (m *snapshotIndex) Search(key string) ([]Posting, error) {
+	return append([]Posting(nil), m.data[key]...), nil
 }
 
 func (m *snapshotIndex) Serialize(w io.Writer) error {

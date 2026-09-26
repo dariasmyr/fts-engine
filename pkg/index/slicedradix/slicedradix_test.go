@@ -80,7 +80,7 @@ func TestIndexInsertOutOfOrderKeepsPostingsSorted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
-	want := []fts.DocRef{
+	want := []fts.Posting{
 		{Ord: 1, Count: 1, Seq: 1},
 		{Ord: 3, Count: 2, Seq: 3},
 		{Ord: 5, Count: 1, Seq: 5},

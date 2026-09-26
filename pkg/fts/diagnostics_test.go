@@ -218,13 +218,13 @@ func TestSearchDiagnosticsBooleanAndFastDriverInstrumentation(t *testing.T) {
 	title := newMemoryIndex()
 	body := newMemoryIndex()
 	registry := NewDocRegistry()
-	alphaDocs := make([]DocRef, 0, 60)
-	betaDocs := make([]DocRef, 0, 60)
+	alphaDocs := make([]Posting, 0, 60)
+	betaDocs := make([]Posting, 0, 60)
 	for i := 0; i < 60; i++ {
 		id := DocID(fmt.Sprintf("doc-%d", i))
 		ord := registry.GetOrAssign(id)
-		alphaDocs = append(alphaDocs, DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
-		betaDocs = append(betaDocs, DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
+		alphaDocs = append(alphaDocs, Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
+		betaDocs = append(betaDocs, Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
 	}
 	title.entries["alpha"] = alphaDocs
 	body.entries["beta"] = betaDocs

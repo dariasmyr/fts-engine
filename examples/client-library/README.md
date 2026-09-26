@@ -40,6 +40,7 @@ Standalone examples:
 - `field-clauses/main.go` - field-specific query clauses
 - `flat-observability/main.go` - flat index with observability-oriented tokenization
 - `segment-analyzer-compatibility/main.go` - self-contained segment save and analyzer-compatible restore
+- `segment-bundle/main.go` - save and restore one sealed segment as an `io.Writer`/`io.Reader` blob
 - `rank-profile/main.go` - multi-field ranking with weighted field scoring
 
 Snapshot examples:
@@ -52,7 +53,6 @@ Segment examples:
 
 - `segment-save-files/main.go` - export a sealed read-only segment directory
 - `segment-load-files/main.go` - restore it with the high-level `ftspersist.LoadSegment(...)` API
-- `segment-load-files-low-level/main.go` - restore it with `LoadSegmentData(...)` and `RestoreSegmentService(...)`
 - `segment-load-mmap/main.go` - restore it with `ftspersist.LoadSegment(...)` using `mmap`
 
 ## Running from this repository
@@ -68,6 +68,7 @@ go run ./examples/client-library/custom-options
 go run ./examples/client-library/field-clauses
 go run ./examples/client-library/flat-observability
 go run ./examples/client-library/segment-analyzer-compatibility
+go run ./examples/client-library/segment-bundle
 go run ./examples/client-library/rank-profile
 ```
 

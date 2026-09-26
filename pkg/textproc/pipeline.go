@@ -1,3 +1,4 @@
+// Package textproc provides tokenizers, filters, and analyzer pipelines.
 package textproc
 
 import (

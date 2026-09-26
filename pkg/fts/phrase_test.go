@@ -7,13 +7,13 @@ import (
 )
 
 type positionalMemoryIndex struct {
-	postings  map[string][]DocRef
+	postings  map[string][]Posting
 	positions map[string]map[DocOrd][]uint32
 }
 
 func newPositionalMemoryIndex() *positionalMemoryIndex {
 	return &positionalMemoryIndex{
-		postings:  make(map[string][]DocRef),
+		postings:  make(map[string][]Posting),
 		positions: make(map[string]map[DocOrd][]uint32),
 	}
 }
@@ -43,18 +43,18 @@ func (p *positionalMemoryIndex) bumpCount(key string, ord DocOrd) {
 			return
 		}
 	}
-	p.postings[key] = append(entries, DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
+	p.postings[key] = append(entries, Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
 }
 
-func (p *positionalMemoryIndex) Search(key string) ([]DocRef, error) {
+func (p *positionalMemoryIndex) Search(key string) ([]Posting, error) {
 	return p.postings[key], nil
 }
 
-func (p *positionalMemoryIndex) SearchPositional(key string) ([]PositionalDocRef, error) {
+func (p *positionalMemoryIndex) SearchPositional(key string) ([]PositionalPosting, error) {
 	entries := p.postings[key]
-	out := make([]PositionalDocRef, 0, len(entries))
+	out := make([]PositionalPosting, 0, len(entries))
 	for _, entry := range entries {
-		out = append(out, PositionalDocRef{
+		out = append(out, PositionalPosting{
 			Ord:       entry.Ord,
 			Positions: p.positions[key][entry.Ord],
 		})

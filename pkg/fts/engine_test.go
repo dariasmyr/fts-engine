@@ -8,7 +8,7 @@ import (
 )
 
 type memoryIndex struct {
-	entries map[string][]DocRef
+	entries map[string][]Posting
 	inserts []struct {
 		key string
 		ord DocOrd
@@ -22,7 +22,7 @@ type namedPosting struct {
 }
 
 func newMemoryIndex() *memoryIndex {
-	return &memoryIndex{entries: make(map[string][]DocRef)}
+	return &memoryIndex{entries: make(map[string][]Posting)}
 }
 
 func (m *memoryIndex) Insert(key string, ord DocOrd) error {
@@ -33,16 +33,16 @@ func (m *memoryIndex) Insert(key string, ord DocOrd) error {
 	return nil
 }
 
-func (m *memoryIndex) Search(key string) ([]DocRef, error) {
+func (m *memoryIndex) Search(key string) ([]Posting, error) {
 	m.searches = append(m.searches, key)
 	return m.entries[key], nil
 }
 
-func refsForIDs(reg *DocRegistry, specs ...namedPosting) []DocRef {
-	out := make([]DocRef, 0, len(specs))
+func refsForIDs(reg *DocRegistry, specs ...namedPosting) []Posting {
+	out := make([]Posting, 0, len(specs))
 	for _, spec := range specs {
 		ord := reg.GetOrAssign(spec.id)
-		out = append(out, DocRef{Ord: ord, Count: spec.count, Seq: uint32(ord)})
+		out = append(out, Posting{Ord: ord, Count: spec.count, Seq: uint32(ord)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
 	return out

@@ -7,18 +7,18 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
-	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+	registry, err := ftsbuiltin.NewSnapshotRegistry()
+	if err != nil {
 		panic(err)
 	}
 
 	loaded, err := ftspersist.LoadSnapshot(ftspersist.SnapshotPaths{
 		IndexPath:  "./data/segments/default.index.fidx",
 		FilterPath: "./data/segments/default.filter.fidx",
-	}, keygen.Word, fts.WithScorer(fts.BM25()))
+	}, fts.WordKeys, ftspersist.SnapshotLoadOptions{Registry: registry}, fts.WithScorer(fts.BM25()))
 	if err != nil {
 		panic(err)
 	}

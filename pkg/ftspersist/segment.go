@@ -1,3 +1,4 @@
+// Package ftspersist provides filesystem persistence for FTS snapshots and segments.
 package ftspersist
 
 import (
@@ -29,9 +30,10 @@ type SegmentPaths struct {
 type SegmentLoadOptions struct {
 	Access                      AccessMode
 	ExpectedAnalyzerFingerprint string
+	Registry                    *fts.SnapshotRegistry
 }
 
-type LoadedSegment struct {
+type loadedSegment struct {
 	Segment         *segment.Reader
 	Fields          map[string]*segment.Reader
 	Filter          fts.Filter
@@ -40,6 +42,7 @@ type LoadedSegment struct {
 	Registry        []fts.DocID
 	Tombstones      []uint64
 	DefaultAnalyzer *fts.AnalyzerDescriptor
+	KeyGenerator    *fts.KeyGeneratorDescriptor
 	Close           func() error
 }
 
@@ -51,6 +54,7 @@ type segmentManifest struct {
 	Tombstones      []uint64
 	Filter          *filterMeta
 	DefaultAnalyzer *fts.AnalyzerDescriptor
+	KeyGenerator    *fts.KeyGeneratorDescriptor
 }
 
 type segmentFieldMeta struct {
@@ -77,6 +81,13 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 	if paths.Dir == "" {
 		return fmt.Errorf("ftspersist: save segment: empty dir")
 	}
+	if opts.Registry == nil {
+		return fmt.Errorf("ftspersist: save segment: nil snapshot registry")
+	}
+	keyGenerator, ok := svc.KeyGeneratorDescriptor()
+	if !ok {
+		return fmt.Errorf("ftspersist: save segment: key generator descriptor is unavailable")
+	}
 
 	fields, searchFilter := svc.SnapshotFields()
 	if len(fields) == 0 {
@@ -95,6 +106,7 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 		CollectionStats: svc.SnapshotCollectionStats(),
 		Registry:        append([]fts.DocID(nil), svc.SnapshotRegistry()...),
 		Tombstones:      append([]uint64(nil), svc.SnapshotTombstones()...),
+		KeyGenerator:    &keyGenerator,
 	}
 	if descriptor, ok := svc.DefaultAnalyzerDescriptor(); ok {
 		manifest.DefaultAnalyzer = &descriptor
@@ -125,7 +137,7 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 		manifest.Filter = &filterMeta{FilterName: filterName, FileName: segmentFilterFile}
 		filterPath := filepath.Join(paths.Dir, segmentFilterFile)
 		if err := saveAtomicWithOptions(filterPath, opts, func(w io.Writer) error {
-			return fts.SaveFilterSnapshot(w, filterName, searchFilter)
+			return opts.Registry.SaveFilterSnapshot(w, filterName, searchFilter)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save segment filter: %w", err)
 		}
@@ -141,9 +153,12 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 	return nil
 }
 
-func LoadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*LoadedSegment, error) {
+func loadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*loadedSegment, error) {
 	if paths.Dir == "" {
 		return nil, fmt.Errorf("ftspersist: load segment: empty dir")
+	}
+	if load.Registry == nil {
+		return nil, fmt.Errorf("ftspersist: load segment: nil snapshot registry")
 	}
 	if load.Access == "" {
 		load.Access = AccessFile
@@ -202,12 +217,13 @@ func LoadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*LoadedSegmen
 		}
 	}
 
-	loaded := &LoadedSegment{
+	loaded := &loadedSegment{
 		Fields:          make(map[string]*segment.Reader, len(manifest.Fields)),
 		CollectionStats: manifest.CollectionStats,
 		Registry:        append([]fts.DocID(nil), manifest.Registry...),
 		Tombstones:      append([]uint64(nil), manifest.Tombstones...),
 		DefaultAnalyzer: cloneAnalyzerDescriptor(manifest.DefaultAnalyzer),
+		KeyGenerator:    cloneKeyGeneratorDescriptor(manifest.KeyGenerator),
 		Close:           func() error { return nil },
 	}
 	closers := make([]func() error, 0, len(manifest.Fields))
@@ -257,7 +273,7 @@ func LoadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*LoadedSegmen
 			_ = loaded.Close()
 			return nil, fmt.Errorf("ftspersist: load segment filter %q: %w", filterPath, err)
 		}
-		loadedFilter, loadErr := fts.LoadFilterSnapshot(filterFile)
+		loadedFilter, loadErr := load.Registry.LoadFilterSnapshot(filterFile)
 		closeErr := filterFile.Close()
 		if closeErr != nil {
 			_ = loaded.Close()
@@ -283,6 +299,14 @@ func cloneAnalyzerDescriptor(descriptor *fts.AnalyzerDescriptor) *fts.AnalyzerDe
 	return &cloned
 }
 
+func cloneKeyGeneratorDescriptor(descriptor *fts.KeyGeneratorDescriptor) *fts.KeyGeneratorDescriptor {
+	if descriptor == nil {
+		return nil
+	}
+	cloned := *descriptor
+	return &cloned
+}
+
 func validateSegmentFileName(fileName string) error {
 	if fileName == "" {
 		return fmt.Errorf("empty file name")
@@ -293,7 +317,7 @@ func validateSegmentFileName(fileName string) error {
 	return nil
 }
 
-func RestoreSegmentService(loaded *LoadedSegment, keyGen fts.KeyGenerator, opts ...fts.Option) (*fts.Service, error) {
+func restoreSegmentService(loaded *loadedSegment, keyGen fts.KeyGenerator, opts ...fts.Option) (*fts.Service, error) {
 	if loaded == nil {
 		return nil, fmt.Errorf("ftspersist: restore segment service: nil segment")
 	}
@@ -341,15 +365,22 @@ func RestoreSegmentService(loaded *LoadedSegment, keyGen fts.KeyGenerator, opts 
 			return nil, fmt.Errorf("ftspersist: restore segment service: analyzer fingerprint mismatch: got %q, want %q", restored.Fingerprint, loaded.DefaultAnalyzer.Fingerprint)
 		}
 	}
+	if loaded.KeyGenerator == nil {
+		return nil, fmt.Errorf("ftspersist: restore segment service: key generator descriptor is unavailable")
+	}
+	restoredKeyGenerator, ok := service.KeyGeneratorDescriptor()
+	if !ok || restoredKeyGenerator.Fingerprint != loaded.KeyGenerator.Fingerprint {
+		return nil, fmt.Errorf("ftspersist: restore segment service: key generator fingerprint mismatch")
+	}
 	return service, nil
 }
 
 func LoadSegment(paths SegmentPaths, keyGen fts.KeyGenerator, load SegmentLoadOptions, opts ...fts.Option) (*LoadedService, error) {
-	loadedSegment, err := LoadSegmentData(paths, load)
+	loadedSegment, err := loadSegmentData(paths, load)
 	if err != nil {
 		return nil, err
 	}
-	service, err := RestoreSegmentService(loadedSegment, keyGen, opts...)
+	service, err := restoreSegmentService(loadedSegment, keyGen, opts...)
 	if err != nil {
 		if loadedSegment.Close != nil {
 			_ = loadedSegment.Close()

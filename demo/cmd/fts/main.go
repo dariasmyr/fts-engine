@@ -81,7 +81,8 @@ func main() {
 	log.Info("fts", "compaction_auto_check", cfg.FTS.Compaction.AutoCheck)
 	log.Info("fts", "mode", cfg.Mode.Type)
 
-	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+	registry, err := ftsbuiltin.NewSnapshotRegistry()
+	if err != nil {
 		panic(err)
 	}
 
@@ -94,7 +95,7 @@ func main() {
 	}
 
 	pipeline := buildPipeline(cfg)
-	svc, loadedFromSnapshot, err := buildService(log, cfg, keyGen, pipeline)
+	svc, loadedFromSnapshot, err := buildService(log, cfg, keyGen, registry, pipeline)
 	if err != nil {
 		log.Error("Failed to initialize search service", "error", sl.Err(err))
 		return
@@ -146,7 +147,7 @@ func main() {
 			return
 		}
 
-		if err := savePersistenceIfEnabled(log, cfg, ftsEngine.service); err != nil {
+		if err := savePersistenceIfEnabled(log, cfg, ftsEngine.service, registry); err != nil {
 			log.Error("Failed to persist state", "error", sl.Err(err))
 			return
 		}

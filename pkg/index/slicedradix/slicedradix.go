@@ -1,3 +1,4 @@
+// Package slicedradix provides a sliced-radix full-text index.
 package slicedradix
 
 import (
@@ -13,7 +14,7 @@ import (
 type node struct {
 	prefix    string
 	children  []int
-	docs      []fts.DocRef
+	docs      []fts.Posting
 	positions [][]uint32
 }
 
@@ -26,7 +27,7 @@ type Index struct {
 type snapshotNode struct {
 	Prefix    string
 	Children  []int
-	Docs      []fts.DocRef
+	Docs      []fts.Posting
 	Positions [][]uint32
 }
 
@@ -62,7 +63,7 @@ func (t *Index) Serialize(w io.Writer) error {
 		snap.Nodes = append(snap.Nodes, snapshotNode{
 			Prefix:    n.prefix,
 			Children:  append([]int(nil), n.children...),
-			Docs:      append([]fts.DocRef(nil), n.docs...),
+			Docs:      append([]fts.Posting(nil), n.docs...),
 			Positions: positions,
 		})
 	}
@@ -97,7 +98,7 @@ func Load(r io.Reader) (fts.Index, error) {
 		idx.nodes = append(idx.nodes, node{
 			prefix:    s.Prefix,
 			children:  append([]int(nil), s.Children...),
-			docs:      append([]fts.DocRef(nil), s.Docs...),
+			docs:      append([]fts.Posting(nil), s.Docs...),
 			positions: positions,
 		})
 	}
@@ -202,7 +203,7 @@ func (t *Index) addDoc(nodeIdx int, ord fts.DocOrd, hasPos bool, pos uint32) {
 		return
 	}
 	if last < 0 || ord > n.docs[last].Ord {
-		n.docs = append(n.docs, fts.DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
+		n.docs = append(n.docs, fts.Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
 		if hasPos {
 			t.growPositions(nodeIdx, len(n.docs))
 			n.positions[len(n.docs)-1] = []uint32{pos}
@@ -220,9 +221,9 @@ func (t *Index) addDoc(nodeIdx int, ord fts.DocOrd, hasPos bool, pos uint32) {
 		return
 	}
 
-	n.docs = append(n.docs, fts.DocRef{})
+	n.docs = append(n.docs, fts.Posting{})
 	copy(n.docs[i+1:], n.docs[i:])
-	n.docs[i] = fts.DocRef{Ord: ord, Count: 1, Seq: uint32(ord)}
+	n.docs[i] = fts.Posting{Ord: ord, Count: 1, Seq: uint32(ord)}
 	if hasPos || i < len(n.positions) {
 		t.growPositions(nodeIdx, len(n.docs))
 		copy(n.positions[i+1:], n.positions[i:])
@@ -240,7 +241,7 @@ func (t *Index) growPositions(nodeIdx int, want int) {
 	}
 }
 
-func (t *Index) Search(word string) ([]fts.DocRef, error) {
+func (t *Index) Search(word string) ([]fts.Posting, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
@@ -253,23 +254,23 @@ func (t *Index) Search(word string) ([]fts.DocRef, error) {
 			return nil, nil
 		}
 		if exact {
-			return append([]fts.DocRef(nil), t.nodes[nextNode].docs...), nil
+			return append([]fts.Posting(nil), t.nodes[nextNode].docs...), nil
 		}
 		current = nextNode
 		rest = nextRest
 	}
 }
 
-func (t *Index) SearchPrefix(prefix string) ([]fts.DocRef, error) {
+func (t *Index) SearchPrefix(prefix string) ([]fts.Posting, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	merged := make(map[fts.DocOrd]fts.DocRef)
+	merged := make(map[fts.DocOrd]fts.Posting)
 	t.collectPrefixDocs(t.root, prefix, merged)
 	return mergedDocsSlice(merged), nil
 }
 
-func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
+func (t *Index) SearchPositional(word string) ([]fts.PositionalPosting, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
@@ -283,13 +284,13 @@ func (t *Index) SearchPositional(word string) ([]fts.PositionalDocRef, error) {
 		}
 		if exact {
 			n := &t.nodes[nextNode]
-			out := make([]fts.PositionalDocRef, 0, len(n.docs))
+			out := make([]fts.PositionalPosting, 0, len(n.docs))
 			for i := range n.docs {
 				var positions []uint32
 				if i < len(n.positions) {
 					positions = n.positions[i]
 				}
-				out = append(out, fts.PositionalDocRef{
+				out = append(out, fts.PositionalPosting{
 					Ord:       n.docs[i].Ord,
 					Positions: positions,
 				})
@@ -353,8 +354,8 @@ func (t *Index) exportNodeTerms(current int, prefix string, yield func(segment.T
 	return nil
 }
 
-func cloneDocsAndPositions(docs []fts.DocRef, positions [][]uint32) ([]fts.DocRef, [][]uint32) {
-	postings := append([]fts.DocRef(nil), docs...)
+func cloneDocsAndPositions(docs []fts.Posting, positions [][]uint32) ([]fts.Posting, [][]uint32) {
+	postings := append([]fts.Posting(nil), docs...)
 	if len(positions) == 0 {
 		return postings, nil
 	}
@@ -365,18 +366,18 @@ func cloneDocsAndPositions(docs []fts.DocRef, positions [][]uint32) ([]fts.DocRe
 	return postings, cloned
 }
 
-func addMergedDoc(merged map[fts.DocOrd]fts.DocRef, ord fts.DocOrd, count, seq uint32) {
+func addMergedDoc(merged map[fts.DocOrd]fts.Posting, ord fts.DocOrd, count, seq uint32) {
 	ref, ok := merged[ord]
 	if !ok {
-		merged[ord] = fts.DocRef{Ord: ord, Count: count, Seq: seq}
+		merged[ord] = fts.Posting{Ord: ord, Count: count, Seq: seq}
 		return
 	}
 	ref.Count += count
 	merged[ord] = ref
 }
 
-func mergedDocsSlice(merged map[fts.DocOrd]fts.DocRef) []fts.DocRef {
-	out := make([]fts.DocRef, 0, len(merged))
+func mergedDocsSlice(merged map[fts.DocOrd]fts.Posting) []fts.Posting {
+	out := make([]fts.Posting, 0, len(merged))
 	for _, doc := range merged {
 		out = append(out, doc)
 	}
@@ -384,7 +385,7 @@ func mergedDocsSlice(merged map[fts.DocOrd]fts.DocRef) []fts.DocRef {
 	return out
 }
 
-func (t *Index) collectPrefixDocs(current int, prefix string, merged map[fts.DocOrd]fts.DocRef) {
+func (t *Index) collectPrefixDocs(current int, prefix string, merged map[fts.DocOrd]fts.Posting) {
 	if prefix == "" {
 		t.collectSubtreeDocs(current, merged)
 		return
@@ -405,7 +406,7 @@ func (t *Index) collectPrefixDocs(current int, prefix string, merged map[fts.Doc
 	}
 }
 
-func (t *Index) collectSubtreeDocs(current int, merged map[fts.DocOrd]fts.DocRef) {
+func (t *Index) collectSubtreeDocs(current int, merged map[fts.DocOrd]fts.Posting) {
 	n := &t.nodes[current]
 	for _, doc := range n.docs {
 		addMergedDoc(merged, doc.Ord, doc.Count, doc.Seq)

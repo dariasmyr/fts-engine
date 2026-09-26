@@ -14,11 +14,17 @@ type SaveOptions struct {
 	BufferSize     int
 	FlushThreshold int
 	SyncFile       bool
+	Registry       *fts.SnapshotRegistry
 }
 
 type SnapshotPaths struct {
 	IndexPath  string
 	FilterPath string
+}
+
+// SnapshotLoadOptions controls snapshot codec resolution during load.
+type SnapshotLoadOptions struct {
+	Registry *fts.SnapshotRegistry
 }
 
 type LoadedSnapshot struct {
@@ -31,6 +37,7 @@ type LoadedSnapshot struct {
 	CollectionStats *fts.CollectionStatsSnapshot
 	Registry        []fts.DocID
 	Tombstones      []uint64
+	KeyGenerator    *fts.KeyGeneratorDescriptor
 	Close           func() error
 }
 
@@ -52,6 +59,13 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 	if indexName == "" {
 		return fmt.Errorf("ftspersist: save snapshot: empty index name")
 	}
+	if opts.Registry == nil {
+		return fmt.Errorf("ftspersist: save snapshot: nil snapshot registry")
+	}
+	keyGenerator, ok := svc.KeyGeneratorDescriptor()
+	if !ok {
+		return fmt.Errorf("ftspersist: save snapshot: key generator descriptor is unavailable")
+	}
 
 	fields, searchFilter := svc.SnapshotFields()
 	stats := svc.SnapshotCollectionStats()
@@ -63,7 +77,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 			fieldCodecs[fieldName] = indexName
 		}
 		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
-			return fts.SaveMultiIndexSnapshotWithState(w, fieldCodecs, fields, stats, registry, tombstones)
+			return opts.Registry.SaveMultiIndexSnapshotWithState(w, fieldCodecs, fields, stats, registry, tombstones, &keyGenerator)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot: %w", err)
 		}
@@ -79,7 +93,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 			return fmt.Errorf("ftspersist: save snapshot: nil index")
 		}
 		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
-			return fts.SaveIndexSnapshotWithState(w, indexName, index, stats, registry, tombstones)
+			return opts.Registry.SaveIndexSnapshotWithState(w, indexName, index, stats, registry, tombstones, &keyGenerator)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot: %w", err)
 		}
@@ -90,7 +104,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 			return fmt.Errorf("ftspersist: save snapshot: empty filter path")
 		}
 		if err := saveAtomicWithOptions(paths.FilterPath, opts, func(w io.Writer) error {
-			return fts.SaveFilterSnapshot(w, filterName, searchFilter)
+			return opts.Registry.SaveFilterSnapshot(w, filterName, searchFilter)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot filter: %w", err)
 		}
@@ -103,9 +117,12 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 	return nil
 }
 
-func LoadSnapshotData(paths SnapshotPaths) (*LoadedSnapshot, error) {
+func LoadSnapshotData(paths SnapshotPaths, opts SnapshotLoadOptions) (*LoadedSnapshot, error) {
 	if paths.IndexPath == "" {
 		return nil, fmt.Errorf("ftspersist: load snapshot: empty index path")
+	}
+	if opts.Registry == nil {
+		return nil, fmt.Errorf("ftspersist: load snapshot: nil snapshot registry")
 	}
 
 	indexPayload, err := os.ReadFile(paths.IndexPath)
@@ -119,7 +136,7 @@ func LoadSnapshotData(paths SnapshotPaths) (*LoadedSnapshot, error) {
 		if err != nil {
 			return nil, fmt.Errorf("ftspersist: load snapshot filter %q: %w", paths.FilterPath, err)
 		}
-		loadedFilter, err := fts.LoadFilterSnapshot(filterFile)
+		loadedFilter, err := opts.Registry.LoadFilterSnapshot(filterFile)
 		_ = filterFile.Close()
 		if err != nil {
 			return nil, fmt.Errorf("ftspersist: decode snapshot filter %q: %w", paths.FilterPath, err)
@@ -128,7 +145,7 @@ func LoadSnapshotData(paths SnapshotPaths) (*LoadedSnapshot, error) {
 		loaded.Filter = loadedFilter.Filter
 	}
 
-	loadedMulti, multiErr := fts.LoadMultiIndexSnapshot(bytes.NewReader(indexPayload))
+	loadedMulti, multiErr := opts.Registry.LoadMultiIndexSnapshot(bytes.NewReader(indexPayload))
 	if multiErr == nil && len(loadedMulti.Fields) > 0 {
 		indexes := make(map[string]fts.Index, len(loadedMulti.Fields))
 		fieldIndexNames := make(map[string]string, len(loadedMulti.Fields))
@@ -141,10 +158,11 @@ func LoadSnapshotData(paths SnapshotPaths) (*LoadedSnapshot, error) {
 		loaded.CollectionStats = loadedMulti.CollectionStats
 		loaded.Registry = append([]fts.DocID(nil), loadedMulti.Registry...)
 		loaded.Tombstones = append([]uint64(nil), loadedMulti.Tombstones...)
+		loaded.KeyGenerator = loadedMulti.KeyGenerator
 		return loaded, nil
 	}
 
-	loadedIndex, singleErr := fts.LoadIndexSnapshot(bytes.NewReader(indexPayload))
+	loadedIndex, singleErr := opts.Registry.LoadIndexSnapshot(bytes.NewReader(indexPayload))
 	if singleErr != nil {
 		return nil, fmt.Errorf("ftspersist: load snapshot: decode as multi-field: %v; decode as single-field: %w", multiErr, singleErr)
 	}
@@ -153,12 +171,16 @@ func LoadSnapshotData(paths SnapshotPaths) (*LoadedSnapshot, error) {
 	loaded.CollectionStats = loadedIndex.CollectionStats
 	loaded.Registry = append([]fts.DocID(nil), loadedIndex.Registry...)
 	loaded.Tombstones = append([]uint64(nil), loadedIndex.Tombstones...)
+	loaded.KeyGenerator = loadedIndex.KeyGenerator
 	return loaded, nil
 }
 
 func RestoreSnapshotService(snapshot *LoadedSnapshot, keyGen fts.KeyGenerator, opts ...fts.Option) (*fts.Service, error) {
 	if snapshot == nil {
 		return nil, fmt.Errorf("ftspersist: restore snapshot service: nil snapshot")
+	}
+	if snapshot.KeyGenerator == nil {
+		return nil, fmt.Errorf("ftspersist: restore snapshot service: key generator descriptor is unavailable")
 	}
 
 	builtOpts := append([]fts.Option(nil), opts...)
@@ -176,16 +198,32 @@ func RestoreSnapshotService(snapshot *LoadedSnapshot, keyGen fts.KeyGenerator, o
 	}
 
 	if len(snapshot.Fields) > 0 {
-		return fts.NewMultiFieldFromIndexes(snapshot.Fields, keyGen, builtOpts...), nil
+		service := fts.NewMultiFieldFromIndexes(snapshot.Fields, keyGen, builtOpts...)
+		if err := validateSnapshotKeyGenerator(service, snapshot.KeyGenerator); err != nil {
+			return nil, err
+		}
+		return service, nil
 	}
 	if snapshot.Index == nil {
 		return nil, fmt.Errorf("ftspersist: restore snapshot service: nil index")
 	}
-	return fts.New(snapshot.Index, keyGen, builtOpts...), nil
+	service := fts.New(snapshot.Index, keyGen, builtOpts...)
+	if err := validateSnapshotKeyGenerator(service, snapshot.KeyGenerator); err != nil {
+		return nil, err
+	}
+	return service, nil
 }
 
-func LoadSnapshot(paths SnapshotPaths, keyGen fts.KeyGenerator, opts ...fts.Option) (*LoadedService, error) {
-	loadedSnapshot, err := LoadSnapshotData(paths)
+func validateSnapshotKeyGenerator(service *fts.Service, expected *fts.KeyGeneratorDescriptor) error {
+	got, ok := service.KeyGeneratorDescriptor()
+	if !ok || got.Fingerprint != expected.Fingerprint {
+		return fmt.Errorf("ftspersist: restore snapshot service: key generator fingerprint mismatch")
+	}
+	return nil
+}
+
+func LoadSnapshot(paths SnapshotPaths, keyGen fts.KeyGenerator, loadOpts SnapshotLoadOptions, opts ...fts.Option) (*LoadedService, error) {
+	loadedSnapshot, err := LoadSnapshotData(paths, loadOpts)
 	if err != nil {
 		return nil, err
 	}
