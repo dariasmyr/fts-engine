@@ -7,15 +7,15 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
-	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+	registry, err := ftsbuiltin.NewSnapshotRegistry()
+	if err != nil {
 		panic(err)
 	}
 
-	loaded, err := ftspersist.LoadSegment(ftspersist.SegmentPaths{Dir: "./data/segments/default"}, keygen.Word, ftspersist.SegmentLoadOptions{Access: ftspersist.AccessFile}, fts.WithScorer(fts.BM25()))
+	loaded, err := ftspersist.LoadSegment(ftspersist.SegmentPaths{Dir: "./data/segments/default"}, fts.WordKeys, ftspersist.SegmentLoadOptions{Access: ftspersist.AccessFile, Registry: registry}, fts.WithScorer(fts.BM25()))
 	if err != nil {
 		panic(err)
 	}

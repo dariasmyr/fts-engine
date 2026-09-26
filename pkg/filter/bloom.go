@@ -1,3 +1,4 @@
+// Package filter provides probabilistic filters used to skip absent terms.
 package filter
 
 import (

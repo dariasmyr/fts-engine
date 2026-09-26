@@ -187,11 +187,11 @@ func (s *Service) scoreTermHit(ctx context.Context, field string, term string, q
 	return score
 }
 
-func (s *Service) scoreTermExpansionDoc(ctx context.Context, exp termExpansion, doc DocRef) float64 {
+func (s *Service) scoreTermExpansionDoc(ctx context.Context, exp termExpansion, doc Posting) float64 {
 	return s.scoreTermExpansionDocType(ctx, exp, doc, QueryTypeTerm)
 }
 
-func (s *Service) scoreTermExpansionDocType(ctx context.Context, exp termExpansion, doc DocRef, queryType QueryType) float64 {
+func (s *Service) scoreTermExpansionDocType(ctx context.Context, exp termExpansion, doc Posting, queryType QueryType) float64 {
 	return s.scoreTermHit(ctx, exp.field, exp.term, queryType, doc.Ord, doc.Count, exp.df, exp.fieldStats)
 }
 

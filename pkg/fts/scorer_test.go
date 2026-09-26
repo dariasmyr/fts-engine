@@ -8,7 +8,7 @@ import (
 )
 
 type prefixMemoryIndex struct {
-	entries   map[string][]DocRef
+	entries   map[string][]Posting
 	positions map[string]map[DocOrd][]uint32
 }
 
@@ -22,7 +22,7 @@ func (tfScorer) Score(t TermStats, _ DocStats, _ FieldStats) float64 { return fl
 
 func newPrefixMemoryIndex() *prefixMemoryIndex {
 	return &prefixMemoryIndex{
-		entries:   make(map[string][]DocRef),
+		entries:   make(map[string][]Posting),
 		positions: make(map[string]map[DocOrd][]uint32),
 	}
 }
@@ -47,7 +47,7 @@ func (p *prefixMemoryIndex) insert(key string, ord DocOrd, position uint32, hasP
 			return nil
 		}
 	}
-	p.entries[key] = append(entries, DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
+	p.entries[key] = append(entries, Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
 	if hasPosition {
 		p.addPosition(key, ord, position)
 	}
@@ -63,21 +63,21 @@ func (p *prefixMemoryIndex) addPosition(key string, ord DocOrd, position uint32)
 	perKey[ord] = append(perKey[ord], position)
 }
 
-func (p *prefixMemoryIndex) Search(key string) ([]DocRef, error) {
+func (p *prefixMemoryIndex) Search(key string) ([]Posting, error) {
 	return p.entries[key], nil
 }
 
-func (p *prefixMemoryIndex) SearchPositional(key string) ([]PositionalDocRef, error) {
+func (p *prefixMemoryIndex) SearchPositional(key string) ([]PositionalPosting, error) {
 	docs := p.entries[key]
-	out := make([]PositionalDocRef, 0, len(docs))
+	out := make([]PositionalPosting, 0, len(docs))
 	perKey := p.positions[key]
 	for _, doc := range docs {
-		out = append(out, PositionalDocRef{Ord: doc.Ord, Positions: perKey[doc.Ord]})
+		out = append(out, PositionalPosting{Ord: doc.Ord, Positions: perKey[doc.Ord]})
 	}
 	return out, nil
 }
 
-func (p *prefixMemoryIndex) SearchPrefix(prefix string) ([]DocRef, error) {
+func (p *prefixMemoryIndex) SearchPrefix(prefix string) ([]Posting, error) {
 	merged := make(map[DocOrd]uint32)
 	for key, docs := range p.entries {
 		if !strings.HasPrefix(key, prefix) {
@@ -88,9 +88,9 @@ func (p *prefixMemoryIndex) SearchPrefix(prefix string) ([]DocRef, error) {
 		}
 	}
 
-	out := make([]DocRef, 0, len(merged))
+	out := make([]Posting, 0, len(merged))
 	for ord, count := range merged {
-		out = append(out, DocRef{Ord: ord, Count: count, Seq: uint32(ord)})
+		out = append(out, Posting{Ord: ord, Count: count, Seq: uint32(ord)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
 	return out, nil

@@ -7,13 +7,12 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftspreset"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
 	engine := fts.New(
 		slicedradix.New(),
-		keygen.Word,
+		fts.WordKeys,
 		ftspreset.Multilingual(),
 	)
 

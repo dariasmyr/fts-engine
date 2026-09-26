@@ -1,3 +1,4 @@
+// Package ftspreset provides ready-to-use FTS configuration presets.
 package ftspreset
 
 import (

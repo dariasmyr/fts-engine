@@ -1,3 +1,4 @@
+// Package hamt provides a HAMT-based full-text index.
 package hamt
 
 import (
@@ -21,7 +22,7 @@ const (
 	depth     = 7
 )
 
-type documents []fts.DocRef
+type documents []fts.Posting
 
 func (d documents) Add(ord fts.DocOrd, positions [][]uint32, hasPos bool, pos uint32) (documents, [][]uint32) {
 	last := len(d) - 1
@@ -34,7 +35,7 @@ func (d documents) Add(ord fts.DocOrd, positions [][]uint32, hasPos bool, pos ui
 		return d, positions
 	}
 	if last < 0 || ord > d[last].Ord {
-		d = append(d, fts.DocRef{Ord: ord, Count: 1, Seq: uint32(ord)})
+		d = append(d, fts.Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
 		if hasPos {
 			positions = growPositions(positions, len(d))
 			positions[len(d)-1] = []uint32{pos}
@@ -51,9 +52,9 @@ func (d documents) Add(ord fts.DocOrd, positions [][]uint32, hasPos bool, pos ui
 		}
 		return d, positions
 	}
-	d = append(d, fts.DocRef{})
+	d = append(d, fts.Posting{})
 	copy(d[i+1:], d[i:])
-	d[i] = fts.DocRef{Ord: ord, Count: 1, Seq: uint32(ord)}
+	d[i] = fts.Posting{Ord: ord, Count: 1, Seq: uint32(ord)}
 	if hasPos || i < len(positions) {
 		positions = growPositions(positions, len(d))
 		copy(positions[i+1:], positions[i:])
@@ -100,7 +101,7 @@ func (t *terminal) Find(word string) documents {
 	return nil
 }
 
-func (t *terminal) FindPositional(word string) []fts.PositionalDocRef {
+func (t *terminal) FindPositional(word string) []fts.PositionalPosting {
 	i := sort.Search(len(t.entries), func(i int) bool { return t.entries[i].key >= word })
 	if i < len(t.entries) && t.entries[i].key == word {
 		return collectPositionalDocs(t.entries[i].docs, t.entries[i].positions)
@@ -129,7 +130,7 @@ type Index struct {
 
 type snapshotEntry struct {
 	Key       string
-	Docs      []fts.DocRef
+	Docs      []fts.Posting
 	Positions [][]uint32
 }
 
@@ -172,7 +173,7 @@ func (t *Index) Serialize(w io.Writer) error {
 		term := t.terms[i]
 		entries := make([]snapshotEntry, 0, len(term.entries))
 		for _, e := range term.entries {
-			entries = append(entries, snapshotEntry{Key: e.key, Docs: append([]fts.DocRef(nil), e.docs...), Positions: clonePositions(e.positions)})
+			entries = append(entries, snapshotEntry{Key: e.key, Docs: append([]fts.Posting(nil), e.docs...), Positions: clonePositions(e.positions)})
 		}
 		snap.Terms = append(snap.Terms, snapshotTerminal{Entries: entries})
 	}
@@ -207,7 +208,7 @@ func Load(r io.Reader) (fts.Index, error) {
 		s := snap.Terms[i]
 		entries := make([]entry, 0, len(s.Entries))
 		for _, e := range s.Entries {
-			entries = append(entries, entry{key: e.Key, docs: append([]fts.DocRef(nil), e.Docs...), positions: clonePositions(e.Positions)})
+			entries = append(entries, entry{key: e.Key, docs: append([]fts.Posting(nil), e.Docs...), positions: clonePositions(e.Positions)})
 		}
 		idx.terms = append(idx.terms, terminal{entries: entries})
 	}
@@ -219,7 +220,7 @@ func Load(r io.Reader) (fts.Index, error) {
 	return idx, nil
 }
 
-func (t *Index) Search(key string) ([]fts.DocRef, error) {
+func (t *Index) Search(key string) ([]fts.Posting, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
@@ -244,12 +245,12 @@ func (t *Index) Search(key string) ([]fts.DocRef, error) {
 		return nil, nil
 	}
 
-	out := append([]fts.DocRef(nil), docs...)
+	out := append([]fts.Posting(nil), docs...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
 	return out, nil
 }
 
-func (t *Index) SearchPositional(key string) ([]fts.PositionalDocRef, error) {
+func (t *Index) SearchPositional(key string) ([]fts.PositionalPosting, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
@@ -277,11 +278,11 @@ func (t *Index) SearchPositional(key string) ([]fts.PositionalDocRef, error) {
 	return docs, nil
 }
 
-func (t *Index) SearchPrefix(prefix string) ([]fts.DocRef, error) {
+func (t *Index) SearchPrefix(prefix string) ([]fts.Posting, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	merged := make(map[fts.DocOrd]fts.DocRef)
+	merged := make(map[fts.DocOrd]fts.Posting)
 	for i := range t.terms {
 		for _, entry := range t.terms[i].entries {
 			if !strings.HasPrefix(entry.key, prefix) {
@@ -305,7 +306,7 @@ func (t *Index) ExportSegmentTerms(yield func(segment.TermPostings) error) error
 		for j := range entries {
 			if err := yield(segment.TermPostings{
 				Term:      entries[j].key,
-				Postings:  append([]fts.DocRef(nil), entries[j].docs...),
+				Postings:  append([]fts.Posting(nil), entries[j].docs...),
 				Positions: clonePositions(entries[j].positions),
 			}); err != nil {
 				return err
@@ -369,30 +370,30 @@ func clonePositions(src [][]uint32) [][]uint32 {
 	return out
 }
 
-func collectPositionalDocs(docs []fts.DocRef, positions [][]uint32) []fts.PositionalDocRef {
-	out := make([]fts.PositionalDocRef, 0, len(docs))
+func collectPositionalDocs(docs []fts.Posting, positions [][]uint32) []fts.PositionalPosting {
+	out := make([]fts.PositionalPosting, 0, len(docs))
 	for i := range docs {
 		var pos []uint32
 		if i < len(positions) {
 			pos = positions[i]
 		}
-		out = append(out, fts.PositionalDocRef{Ord: docs[i].Ord, Positions: pos})
+		out = append(out, fts.PositionalPosting{Ord: docs[i].Ord, Positions: pos})
 	}
 	return out
 }
 
-func addMergedDoc(merged map[fts.DocOrd]fts.DocRef, ord fts.DocOrd, count, seq uint32) {
+func addMergedDoc(merged map[fts.DocOrd]fts.Posting, ord fts.DocOrd, count, seq uint32) {
 	ref, ok := merged[ord]
 	if !ok {
-		merged[ord] = fts.DocRef{Ord: ord, Count: count, Seq: seq}
+		merged[ord] = fts.Posting{Ord: ord, Count: count, Seq: seq}
 		return
 	}
 	ref.Count += count
 	merged[ord] = ref
 }
 
-func mergedDocsSlice(merged map[fts.DocOrd]fts.DocRef) []fts.DocRef {
-	out := make([]fts.DocRef, 0, len(merged))
+func mergedDocsSlice(merged map[fts.DocOrd]fts.Posting) []fts.Posting {
+	out := make([]fts.Posting, 0, len(merged))
 	for _, doc := range merged {
 		out = append(out, doc)
 	}
