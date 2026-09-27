@@ -1,7 +1,6 @@
 package persist
 
 import (
-	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -16,19 +15,10 @@ func TestReferenceHash(t *testing.T) {
 	}
 }
 
-func TestReadBounded(t *testing.T) {
-	if got, err := ReadBounded(bytes.NewReader([]byte("abc")), 3); err != nil || string(got) != "abc" {
-		t.Fatalf("ReadBounded exact read = %q, %v", got, err)
-	}
-	if _, err := ReadBounded(bytes.NewReader([]byte("abcd")), 3); !errors.Is(err, ErrLimitExceeded) {
-		t.Fatalf("oversized read error = %v", err)
-	}
-}
-
 func TestWriteAtomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "payload")
-	if err := WriteAtomic(path, AtomicWriteOptions{}, func(writer io.Writer) error {
+	if err := WriteAtomic(path, false, func(writer io.Writer) error {
 		_, err := io.WriteString(writer, "payload")
 		return err
 	}); err != nil {
@@ -47,7 +37,7 @@ func TestWriteAtomicKeepsOldFileOnWriteError(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := errors.New("boom")
-	if err := WriteAtomic(path, AtomicWriteOptions{}, func(writer io.Writer) error {
+	if err := WriteAtomic(path, false, func(writer io.Writer) error {
 		_, _ = io.WriteString(writer, "new")
 		return expected
 	}); !errors.Is(err, expected) {

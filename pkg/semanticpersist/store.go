@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dariasmyr/fts-engine/pkg/persist"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
@@ -775,10 +774,7 @@ func readRegularFile(path string, limit uint64) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	data, err := persist.ReadBounded(file, limit)
-	if errors.Is(err, persist.ErrLimitExceeded) {
-		return nil, ErrLimitExceeded
-	}
+	data, err := io.ReadAll(file)
 	if err != nil {
 		return nil, fmt.Errorf("semanticpersist: read: %w", err)
 	}
@@ -804,10 +800,7 @@ func readReferencedFile(path string, reference fileReference, limit uint64) ([]b
 		return nil, err
 	}
 	defer file.Close()
-	data, err := persist.ReadBounded(file, reference.Size)
-	if errors.Is(err, persist.ErrLimitExceeded) {
-		return nil, ErrLimitExceeded
-	}
+	data, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}
