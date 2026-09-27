@@ -1,3 +1,4 @@
+// Package ftsstats provides search statistics and aggregation helpers.
 package ftsstats
 
 import (

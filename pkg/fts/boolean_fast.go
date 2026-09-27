@@ -13,7 +13,7 @@ type termExpansion struct {
 	df    uint32
 
 	fieldStats FieldStats
-	docs       []DocRef
+	docs       []Posting
 	byDoc      map[DocOrd]uint32
 }
 

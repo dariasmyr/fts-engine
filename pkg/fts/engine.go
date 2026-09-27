@@ -1,3 +1,4 @@
+// Package fts provides the full-text indexing and search service.
 package fts
 
 import (
@@ -34,6 +35,9 @@ type Service struct {
 	pendingTombstonesSnapshot      []uint64
 	pendingCollectionStatsSnapshot *CollectionStatsSnapshot
 	singleField                    bool
+	fieldPipelines                 map[string]Pipeline
+	fieldAnalyzers                 map[string]AnalyzerDescriptor
+	keyGenerator                   *KeyGeneratorDescriptor
 
 	mu      sync.RWMutex
 	indexes map[string]Index
@@ -76,7 +80,7 @@ func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opt
 }
 
 // DefaultAnalyzerDescriptor returns the identity of the service's default
-// analyzer. Per-field pipeline overrides are outside this contract.
+// analyzer.
 func (s *Service) DefaultAnalyzerDescriptor() (AnalyzerDescriptor, bool) {
 	if s == nil {
 		return AnalyzerDescriptor{}, false
@@ -84,11 +88,93 @@ func (s *Service) DefaultAnalyzerDescriptor() (AnalyzerDescriptor, bool) {
 	return DescribePipeline(s.pipeline)
 }
 
+// KeyGeneratorDescriptor returns the identity of the service key generator.
+func (s *Service) KeyGeneratorDescriptor() (KeyGeneratorDescriptor, bool) {
+	if s == nil || s.keyGenerator == nil {
+		return KeyGeneratorDescriptor{}, false
+	}
+	return *s.keyGenerator, true
+}
+
+// AnalyzerDescriptors returns the analyzer identities observed for each field.
+// It returns false when a field uses an undescribed pipeline.
+func (s *Service) AnalyzerDescriptors() (map[string]AnalyzerDescriptor, bool) {
+	if s == nil {
+		return nil, false
+	}
+
+	fields := s.fieldNames()
+	result := make(map[string]AnalyzerDescriptor, len(fields))
+	for _, fieldName := range fields {
+		descriptor, ok := s.fieldAnalyzer(fieldName)
+		if !ok {
+			return nil, false
+		}
+		result[fieldName] = descriptor
+	}
+	return result, true
+}
+
+// ValidateAnalyzerDescriptors checks the pipelines configured for the fields
+// against persisted analyzer identities.
+func (s *Service) ValidateAnalyzerDescriptors(expected map[string]AnalyzerDescriptor) error {
+	if s == nil {
+		return fmt.Errorf("fts: nil service")
+	}
+	for fieldName, want := range expected {
+		pipeline := s.pipeline
+		s.mu.RLock()
+		if fieldPipeline := s.fieldPipelines[fieldName]; fieldPipeline != nil {
+			pipeline = fieldPipeline
+		}
+		s.mu.RUnlock()
+
+		got, ok := DescribePipeline(pipeline)
+		if !ok {
+			return fmt.Errorf("fts: field %q: analyzer descriptor is unavailable", fieldName)
+		}
+		if got.Fingerprint != want.Fingerprint {
+			return fmt.Errorf("fts: field %q: analyzer fingerprint mismatch: got %q, want %q", fieldName, got.Fingerprint, want.Fingerprint)
+		}
+	}
+	return nil
+}
+
+func (s *Service) fieldAnalyzer(fieldName string) (AnalyzerDescriptor, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	descriptor, ok := s.fieldAnalyzers[fieldName]
+	return descriptor, ok
+}
+
+func (s *Service) recordFieldAnalyzer(fieldName string, pipeline Pipeline) error {
+	descriptor, ok := DescribePipeline(pipeline)
+	if !ok {
+		s.mu.RLock()
+		_, known := s.fieldAnalyzers[fieldName]
+		s.mu.RUnlock()
+		if known {
+			return fmt.Errorf("fts: field %q: analyzer descriptor is unavailable after a described pipeline was used", fieldName)
+		}
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if previous, exists := s.fieldAnalyzers[fieldName]; exists && previous.Fingerprint != descriptor.Fingerprint {
+		return fmt.Errorf("fts: field %q: analyzer fingerprint mismatch: got %q, want %q", fieldName, descriptor.Fingerprint, previous.Fingerprint)
+	}
+	s.fieldAnalyzers[fieldName] = descriptor
+	return nil
+}
+
 func newService(keyGen KeyGenerator, opts ...Option) *Service {
 	s := &Service{
 		keyGen:              keyGen,
 		pipeline:            defaultPipeline{},
 		indexes:             make(map[string]Index),
+		fieldPipelines:      make(map[string]Pipeline),
+		fieldAnalyzers:      make(map[string]AnalyzerDescriptor),
 		collection:          newCollectionStats(),
 		registry:            NewDocRegistry(),
 		tombstones:          NewTombstones(),
@@ -103,6 +189,9 @@ func newService(keyGen KeyGenerator, opts ...Option) *Service {
 
 	if s.keyGen == nil {
 		s.keyGen = WordKeys
+	}
+	if descriptor, ok := defaultKeyGeneratorDescriptor(s.keyGen); ok && s.keyGenerator == nil {
+		s.keyGenerator = &descriptor
 	}
 
 	s.finalizeRestoreState()

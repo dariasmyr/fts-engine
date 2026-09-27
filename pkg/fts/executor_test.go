@@ -15,7 +15,7 @@ func newExecPrefixPositionalMemoryIndex() *execPrefixPositionalMemoryIndex {
 	return &execPrefixPositionalMemoryIndex{positionalMemoryIndex: newPositionalMemoryIndex()}
 }
 
-func (p *execPrefixPositionalMemoryIndex) SearchPrefix(prefix string) ([]DocRef, error) {
+func (p *execPrefixPositionalMemoryIndex) SearchPrefix(prefix string) ([]Posting, error) {
 	merged := make(map[DocOrd]uint32)
 	for key, docs := range p.postings {
 		if !strings.HasPrefix(key, prefix) {
@@ -26,9 +26,9 @@ func (p *execPrefixPositionalMemoryIndex) SearchPrefix(prefix string) ([]DocRef,
 		}
 	}
 
-	out := make([]DocRef, 0, len(merged))
+	out := make([]Posting, 0, len(merged))
 	for ord, count := range merged {
-		out = append(out, DocRef{Ord: ord, Count: count, Seq: uint32(ord)})
+		out = append(out, Posting{Ord: ord, Count: count, Seq: uint32(ord)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
 	return out, nil

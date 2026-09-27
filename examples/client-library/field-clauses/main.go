@@ -6,13 +6,12 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
 	engine := fts.NewMultiField(func(string) (fts.Index, error) {
 		return slicedradix.New(), nil
-	}, keygen.Word)
+	}, fts.WordKeys)
 
 	ctx := context.Background()
 	index := func(id string, fields map[string]string) {

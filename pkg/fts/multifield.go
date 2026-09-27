@@ -41,7 +41,15 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 
 	pipeline := field.Pipeline
 	if pipeline == nil {
-		pipeline = s.pipeline
+		s.mu.RLock()
+		pipeline = s.fieldPipelines[name]
+		if pipeline == nil {
+			pipeline = s.pipeline
+		}
+		s.mu.RUnlock()
+	}
+	if err := s.recordFieldAnalyzer(name, pipeline); err != nil {
+		return fmt.Errorf("fts: index document %q: %w", docID, err)
 	}
 
 	positional, supportsPositions := index.(PositionalIndex)

@@ -6,7 +6,6 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
@@ -53,7 +52,7 @@ func main() {
 func newEngine(opts ...fts.Option) *fts.Service {
 	return fts.NewMultiField(func(string) (fts.Index, error) {
 		return slicedradix.New(), nil
-	}, keygen.Word, opts...)
+	}, fts.WordKeys, opts...)
 }
 
 func printResults(ctx context.Context, label string, engine *fts.Service) {

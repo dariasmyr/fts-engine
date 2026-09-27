@@ -46,9 +46,9 @@ var importRules = []importRule{
 	{
 		ownerPrefix:      rootModule + "/pkg/",
 		ownerDescription: "pkg/*",
-		allowedPrefixes:  []string{rootModule + "/pkg/"},
-		rule:             "pkg/* may import only pkg/* within the repository",
-		hint:             "keep library implementation inside pkg/* or move app-specific code into demo/ or benchmarks/",
+		allowedPrefixes:  []string{rootModule + "/pkg/", rootModule + "/internal/"},
+		rule:             "pkg/* may import pkg/* and root internal/* within the repository",
+		hint:             "keep library implementation inside pkg/* or root internal/*; move app-specific code into demo/ or benchmarks/",
 	},
 	{
 		ownerPrefix:      rootModule + "/examples/",

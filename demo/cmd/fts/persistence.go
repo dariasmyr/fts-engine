@@ -13,7 +13,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
 )
 
-func tryLoadPersistence(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, serviceOpts []pkgfts.Option) (*pkgfts.Service, bool, error) {
+func tryLoadPersistence(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, registry *pkgfts.SnapshotRegistry, serviceOpts []pkgfts.Option) (*pkgfts.Service, bool, error) {
 	if cfg == nil || cfg.FTS.Persistence.Path == "" {
 		return nil, false, nil
 	}
@@ -34,7 +34,7 @@ func tryLoadPersistence(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyG
 				return nil, false, fmt.Errorf("check persistence filter path: %w", err)
 			}
 		}
-		loaded, err := ftspersist.LoadSnapshot(ftspersist.SnapshotPaths{IndexPath: indexPath, FilterPath: filterPath}, keyGen, serviceOpts...)
+		loaded, err := ftspersist.LoadSnapshot(ftspersist.SnapshotPaths{IndexPath: indexPath, FilterPath: filterPath}, keyGen, ftspersist.SnapshotLoadOptions{Registry: registry}, serviceOpts...)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return nil, false, nil
@@ -61,7 +61,7 @@ func tryLoadPersistence(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyG
 		loaded, err := ftspersist.LoadSegment(
 			ftspersist.SegmentPaths{Dir: cfg.FTS.Persistence.Path},
 			keyGen,
-			ftspersist.SegmentLoadOptions{Access: persistenceAccessMode(cfg)},
+			ftspersist.SegmentLoadOptions{Access: persistenceAccessMode(cfg), Registry: registry},
 			serviceOpts...,
 		)
 		if err != nil {
@@ -84,7 +84,7 @@ func tryLoadPersistence(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyG
 	}
 }
 
-func savePersistenceIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Service) error {
+func savePersistenceIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Service, registry *pkgfts.SnapshotRegistry) error {
 	if cfg == nil || svc == nil {
 		return nil
 	}
@@ -101,6 +101,7 @@ func savePersistenceIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.
 		BufferSize:     cfg.FTS.Persistence.BufferSize,
 		FlushThreshold: cfg.FTS.Persistence.FlushThreshold,
 		SyncFile:       cfg.FTS.Persistence.SyncFile,
+		Registry:       registry,
 	}
 
 	switch cfg.FTS.Persistence.Format {

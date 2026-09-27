@@ -7,11 +7,11 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
-	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+	registry, err := ftsbuiltin.NewSnapshotRegistry()
+	if err != nil {
 		panic(err)
 	}
 
@@ -34,12 +34,12 @@ func main() {
 	}
 
 	// Enable scorer so collection stats are populated and can be persisted with the segment manifest.
-	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
+	svc := fts.New(idx, fts.WordKeys, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
 	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "snapshot with bloom filter"}}}); err != nil {
 		panic(err)
 	}
 
-	if err := ftspersist.SaveSegment(ftspersist.SegmentPaths{Dir: "./data/segments/default"}, svc, "bloom", ftspersist.SaveOptions{SyncFile: true}); err != nil {
+	if err := ftspersist.SaveSegment(ftspersist.SegmentPaths{Dir: "./data/segments/default"}, svc, "bloom", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
 		panic(err)
 	}
 }

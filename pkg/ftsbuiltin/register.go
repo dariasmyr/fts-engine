@@ -1,9 +1,9 @@
+// Package ftsbuiltin provides built-in index, filter, and snapshot codecs.
 package ftsbuiltin
 
 import (
 	"fmt"
 	"io"
-	"sync"
 
 	"github.com/dariasmyr/fts-engine/pkg/filter"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
@@ -28,53 +28,56 @@ type FilterOptions struct {
 	RibbonMaxAttempts   uint32
 }
 
-var (
-	registerSnapshotCodecsOnce sync.Once
-	registerSnapshotCodecsErr  error
-)
-
-func RegisterSnapshotCodecs() error {
-	registerSnapshotCodecsOnce.Do(func() {
-		registerSnapshotCodecsErr = registerSnapshotCodecs()
-	})
-
-	return registerSnapshotCodecsErr
+func RegisterSnapshotCodecs(registry *fts.SnapshotRegistry) error {
+	if registry == nil {
+		return fmt.Errorf("ftsbuiltin: nil snapshot registry")
+	}
+	return registerSnapshotCodecs(registry)
 }
 
-func registerSnapshotCodecs() error {
-	if err := RegisterIndexes(); err != nil {
+// NewSnapshotRegistry creates a registry populated with built-in codecs.
+func NewSnapshotRegistry() (*fts.SnapshotRegistry, error) {
+	registry := fts.NewSnapshotRegistry()
+	if err := RegisterSnapshotCodecs(registry); err != nil {
+		return nil, err
+	}
+	return registry, nil
+}
+
+func registerSnapshotCodecs(registry *fts.SnapshotRegistry) error {
+	if err := RegisterIndexes(registry); err != nil {
 		return err
 	}
 
-	if err := RegisterFilters(); err != nil {
+	if err := RegisterFilters(registry); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func RegisterIndexes() error {
-	if err := fts.RegisterIndexSnapshotCodec("flat", saveSerializableIndex, flat.Load); err != nil {
+func RegisterIndexes(registry *fts.SnapshotRegistry) error {
+	if err := registry.RegisterIndexSnapshotCodec("flat", saveSerializableIndex, flat.Load); err != nil {
 		return err
 	}
-	if err := fts.RegisterIndexSnapshotCodec("slicedradix", saveSerializableIndex, slicedradix.Load); err != nil {
+	if err := registry.RegisterIndexSnapshotCodec("slicedradix", saveSerializableIndex, slicedradix.Load); err != nil {
 		return err
 	}
-	if err := fts.RegisterIndexSnapshotCodec("hamt", saveSerializableIndex, hamt.Load); err != nil {
+	if err := registry.RegisterIndexSnapshotCodec("hamt", saveSerializableIndex, hamt.Load); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func RegisterFilters() error {
-	if err := fts.RegisterFilterSnapshotCodec("bloom", saveSerializableFilter, loadBloomFilter); err != nil {
+func RegisterFilters(registry *fts.SnapshotRegistry) error {
+	if err := registry.RegisterFilterSnapshotCodec("bloom", saveSerializableFilter, loadBloomFilter); err != nil {
 		return err
 	}
-	if err := fts.RegisterFilterSnapshotCodec("cuckoo", saveSerializableFilter, loadCuckooFilter); err != nil {
+	if err := registry.RegisterFilterSnapshotCodec("cuckoo", saveSerializableFilter, loadCuckooFilter); err != nil {
 		return err
 	}
-	if err := fts.RegisterFilterSnapshotCodec("ribbon", saveSerializableFilter, loadRibbonFilter); err != nil {
+	if err := registry.RegisterFilterSnapshotCodec("ribbon", saveSerializableFilter, loadRibbonFilter); err != nil {
 		return err
 	}
 

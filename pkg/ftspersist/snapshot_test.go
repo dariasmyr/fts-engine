@@ -9,11 +9,11 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
-	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+	registry := fts.NewSnapshotRegistry()
+	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
 		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
 	}
 
@@ -30,7 +30,7 @@ func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
 		t.Fatalf("BuildFilter() error = %v", err)
 	}
 
-	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
+	svc := fts.New(idx, fts.WordKeys, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
 	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "snapshot roundtrip"}}}); err != nil {
 		t.Fatalf("Index(doc-1) error = %v", err)
 	}
@@ -40,11 +40,11 @@ func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
 		IndexPath:  filepath.Join(dir, "default.index.fidx"),
 		FilterPath: filepath.Join(dir, "default.filter.fidx"),
 	}
-	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "bloom", ftspersist.SaveOptions{SyncFile: true}); err != nil {
+	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "bloom", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
 		t.Fatalf("SaveSnapshot() error = %v", err)
 	}
 
-	loaded, err := ftspersist.LoadSnapshot(paths, keygen.Word, fts.WithScorer(fts.BM25()))
+	loaded, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, ftspersist.SnapshotLoadOptions{Registry: registry}, fts.WithScorer(fts.BM25()))
 	if err != nil {
 		t.Fatalf("LoadSnapshot() error = %v", err)
 	}
@@ -83,7 +83,8 @@ func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
 }
 
 func TestLoadSnapshotDataAllowsExplicitRestore(t *testing.T) {
-	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+	registry := fts.NewSnapshotRegistry()
+	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
 		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
 	}
 
@@ -100,7 +101,7 @@ func TestLoadSnapshotDataAllowsExplicitRestore(t *testing.T) {
 		t.Fatalf("BuildFilter() error = %v", err)
 	}
 
-	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
+	svc := fts.New(idx, fts.WordKeys, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
 	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "explicit restore path"}}}); err != nil {
 		t.Fatalf("Index(doc-1) error = %v", err)
 	}
@@ -110,11 +111,11 @@ func TestLoadSnapshotDataAllowsExplicitRestore(t *testing.T) {
 		IndexPath:  filepath.Join(dir, "default.index.fidx"),
 		FilterPath: filepath.Join(dir, "default.filter.fidx"),
 	}
-	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "bloom", ftspersist.SaveOptions{SyncFile: true}); err != nil {
+	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "bloom", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
 		t.Fatalf("SaveSnapshot() error = %v", err)
 	}
 
-	loaded, err := ftspersist.LoadSnapshotData(paths)
+	loaded, err := ftspersist.LoadSnapshotData(paths, ftspersist.SnapshotLoadOptions{Registry: registry})
 	if err != nil {
 		t.Fatalf("LoadSnapshotData() error = %v", err)
 	}
@@ -128,7 +129,7 @@ func TestLoadSnapshotDataAllowsExplicitRestore(t *testing.T) {
 
 	restored := fts.New(
 		loaded.Index,
-		keygen.Word,
+		fts.WordKeys,
 		fts.WithFilter(loaded.Filter),
 		fts.WithScorer(fts.BM25()),
 		fts.WithCollectionStatsSnapshot(loaded.CollectionStats),
@@ -146,12 +147,13 @@ func TestLoadSnapshotDataAllowsExplicitRestore(t *testing.T) {
 }
 
 func TestSaveLoadSnapshotRoundTripMultiField(t *testing.T) {
-	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+	registry := fts.NewSnapshotRegistry()
+	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
 		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
 	}
 
 	factory := func(name string) (fts.Index, error) { return slicedradix.New(), nil }
-	svc := fts.NewMultiField(factory, keygen.Word, fts.WithScorer(fts.BM25()))
+	svc := fts.NewMultiField(factory, fts.WordKeys, fts.WithScorer(fts.BM25()))
 	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
 		"title": {Value: "alpha title"},
 		"body":  {Value: "beta body"},
@@ -161,11 +163,11 @@ func TestSaveLoadSnapshotRoundTripMultiField(t *testing.T) {
 
 	dir := t.TempDir()
 	paths := ftspersist.SnapshotPaths{IndexPath: filepath.Join(dir, "default.index.fidx")}
-	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "", ftspersist.SaveOptions{SyncFile: true}); err != nil {
+	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
 		t.Fatalf("SaveSnapshot() error = %v", err)
 	}
 
-	loaded, err := ftspersist.LoadSnapshot(paths, keygen.Word, fts.WithScorer(fts.BM25()))
+	loaded, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, ftspersist.SnapshotLoadOptions{Registry: registry}, fts.WithScorer(fts.BM25()))
 	if err != nil {
 		t.Fatalf("LoadSnapshot() error = %v", err)
 	}

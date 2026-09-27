@@ -18,12 +18,17 @@ type IndexSnapshotLoader func(r io.Reader) (Index, error)
 type FilterSnapshotSaver func(filter Filter, w io.Writer) error
 type FilterSnapshotLoader func(r io.Reader) (Filter, error)
 
+type Serializable interface {
+	Serialize(w io.Writer) error
+}
+
 type LoadedIndexSnapshot struct {
 	IndexName       string
 	Index           Index
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	KeyGenerator    *KeyGeneratorDescriptor
 }
 
 type LoadedMultiIndexSnapshot struct {
@@ -31,6 +36,7 @@ type LoadedMultiIndexSnapshot struct {
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	KeyGenerator    *KeyGeneratorDescriptor
 }
 
 type LoadedFilterSnapshot struct {
@@ -45,6 +51,7 @@ type indexEnvelope struct {
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	KeyGenerator    *KeyGeneratorDescriptor
 }
 
 type multiIndexField struct {
@@ -59,6 +66,7 @@ type multiIndexEnvelope struct {
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	KeyGenerator    *KeyGeneratorDescriptor
 }
 
 type filterEnvelope struct {
@@ -67,11 +75,20 @@ type filterEnvelope struct {
 	FilterPayload []byte
 }
 
-var (
-	snapshotRegistryMu   sync.RWMutex
-	indexSnapshotCodecs  = make(map[string]indexSnapshotCodec)
-	filterSnapshotCodecs = make(map[string]filterSnapshotCodec)
-)
+// SnapshotRegistry owns index and filter snapshot codecs for one persistence context.
+type SnapshotRegistry struct {
+	mu                   sync.RWMutex
+	indexSnapshotCodecs  map[string]indexSnapshotCodec
+	filterSnapshotCodecs map[string]filterSnapshotCodec
+}
+
+// NewSnapshotRegistry creates an empty snapshot codec registry.
+func NewSnapshotRegistry() *SnapshotRegistry {
+	return &SnapshotRegistry{
+		indexSnapshotCodecs:  make(map[string]indexSnapshotCodec),
+		filterSnapshotCodecs: make(map[string]filterSnapshotCodec),
+	}
+}
 
 type indexSnapshotCodec struct {
 	save IndexSnapshotSaver
@@ -83,7 +100,10 @@ type filterSnapshotCodec struct {
 	load FilterSnapshotLoader
 }
 
-func RegisterIndexSnapshotCodec(name string, saver IndexSnapshotSaver, loader IndexSnapshotLoader) error {
+func (r *SnapshotRegistry) RegisterIndexSnapshotCodec(name string, saver IndexSnapshotSaver, loader IndexSnapshotLoader) error {
+	if r == nil {
+		return fmt.Errorf("fts: register index snapshot codec: nil registry")
+	}
 	if name == "" {
 		return fmt.Errorf("fts: register index snapshot codec: empty name")
 	}
@@ -94,18 +114,24 @@ func RegisterIndexSnapshotCodec(name string, saver IndexSnapshotSaver, loader In
 		return fmt.Errorf("fts: register index snapshot codec: nil loader")
 	}
 
-	snapshotRegistryMu.Lock()
-	defer snapshotRegistryMu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.indexSnapshotCodecs == nil {
+		r.indexSnapshotCodecs = make(map[string]indexSnapshotCodec)
+	}
 
-	if _, exists := indexSnapshotCodecs[name]; exists {
+	if _, exists := r.indexSnapshotCodecs[name]; exists {
 		return fmt.Errorf("fts: register index snapshot codec: duplicate name %q", name)
 	}
 
-	indexSnapshotCodecs[name] = indexSnapshotCodec{save: saver, load: loader}
+	r.indexSnapshotCodecs[name] = indexSnapshotCodec{save: saver, load: loader}
 	return nil
 }
 
-func RegisterFilterSnapshotCodec(name string, saver FilterSnapshotSaver, loader FilterSnapshotLoader) error {
+func (r *SnapshotRegistry) RegisterFilterSnapshotCodec(name string, saver FilterSnapshotSaver, loader FilterSnapshotLoader) error {
+	if r == nil {
+		return fmt.Errorf("fts: register filter snapshot codec: nil registry")
+	}
 	if name == "" {
 		return fmt.Errorf("fts: register filter snapshot codec: empty name")
 	}
@@ -116,18 +142,21 @@ func RegisterFilterSnapshotCodec(name string, saver FilterSnapshotSaver, loader 
 		return fmt.Errorf("fts: register filter snapshot codec: nil loader")
 	}
 
-	snapshotRegistryMu.Lock()
-	defer snapshotRegistryMu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.filterSnapshotCodecs == nil {
+		r.filterSnapshotCodecs = make(map[string]filterSnapshotCodec)
+	}
 
-	if _, exists := filterSnapshotCodecs[name]; exists {
+	if _, exists := r.filterSnapshotCodecs[name]; exists {
 		return fmt.Errorf("fts: register filter snapshot codec: duplicate name %q", name)
 	}
 
-	filterSnapshotCodecs[name] = filterSnapshotCodec{save: saver, load: loader}
+	r.filterSnapshotCodecs[name] = filterSnapshotCodec{save: saver, load: loader}
 	return nil
 }
 
-func SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64) error {
+func (r *SnapshotRegistry) SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64, keyGenerators ...*KeyGeneratorDescriptor) error {
 	if w == nil {
 		return fmt.Errorf("fts: save index snapshot: nil writer")
 	}
@@ -138,7 +167,7 @@ func SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stat
 		return fmt.Errorf("fts: save index snapshot: empty index name")
 	}
 
-	indexCodec, ok := indexCodecByName(indexName)
+	indexCodec, ok := r.indexCodecByName(indexName)
 	if !ok {
 		return fmt.Errorf("fts: save index snapshot: unknown index codec %q", indexName)
 	}
@@ -156,6 +185,9 @@ func SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stat
 		Registry:        append([]DocID(nil), registry...),
 		Tombstones:      append([]uint64(nil), tombstones...),
 	}
+	if len(keyGenerators) > 0 {
+		envelope.KeyGenerator = cloneKeyGeneratorDescriptor(keyGenerators[0])
+	}
 
 	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
 		return fmt.Errorf("fts: save index snapshot: encode envelope: %w", err)
@@ -164,13 +196,16 @@ func SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stat
 	return nil
 }
 
-func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
-	if r == nil {
+func (registry *SnapshotRegistry) LoadIndexSnapshot(reader io.Reader) (*LoadedIndexSnapshot, error) {
+	if registry == nil {
+		return nil, fmt.Errorf("fts: load index snapshot: nil registry")
+	}
+	if reader == nil {
 		return nil, fmt.Errorf("fts: load index snapshot: nil reader")
 	}
 
 	var envelope indexEnvelope
-	if err := gob.NewDecoder(r).Decode(&envelope); err != nil {
+	if err := gob.NewDecoder(reader).Decode(&envelope); err != nil {
 		return nil, fmt.Errorf("fts: load index snapshot: decode envelope: %w", err)
 	}
 
@@ -181,7 +216,7 @@ func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
 		return nil, fmt.Errorf("fts: load index snapshot: empty index name")
 	}
 
-	indexCodec, ok := indexCodecByName(envelope.IndexName)
+	indexCodec, ok := registry.indexCodecByName(envelope.IndexName)
 	if !ok {
 		return nil, fmt.Errorf("fts: load index snapshot: unknown index codec %q", envelope.IndexName)
 	}
@@ -197,10 +232,11 @@ func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
 		CollectionStats: envelope.CollectionStats,
 		Registry:        append([]DocID(nil), envelope.Registry...),
 		Tombstones:      append([]uint64(nil), envelope.Tombstones...),
+		KeyGenerator:    cloneKeyGeneratorDescriptor(envelope.KeyGenerator),
 	}, nil
 }
 
-func SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64) error {
+func (r *SnapshotRegistry) SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64, keyGenerators ...*KeyGeneratorDescriptor) error {
 	if w == nil {
 		return fmt.Errorf("fts: save multi-index snapshot: nil writer")
 	}
@@ -230,7 +266,7 @@ func SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string,
 			return fmt.Errorf("fts: save multi-index snapshot: no codec configured for field %q", fieldName)
 		}
 
-		indexCodec, ok := indexCodecByName(codecName)
+		indexCodec, ok := r.indexCodecByName(codecName)
 		if !ok {
 			return fmt.Errorf("fts: save multi-index snapshot: unknown index codec %q for field %q", codecName, fieldName)
 		}
@@ -254,6 +290,9 @@ func SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string,
 		Registry:        append([]DocID(nil), registry...),
 		Tombstones:      append([]uint64(nil), tombstones...),
 	}
+	if len(keyGenerators) > 0 {
+		envelope.KeyGenerator = cloneKeyGeneratorDescriptor(keyGenerators[0])
+	}
 
 	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
 		return fmt.Errorf("fts: save multi-index snapshot: encode envelope: %w", err)
@@ -262,13 +301,16 @@ func SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string,
 	return nil
 }
 
-func LoadMultiIndexSnapshot(r io.Reader) (*LoadedMultiIndexSnapshot, error) {
-	if r == nil {
+func (registry *SnapshotRegistry) LoadMultiIndexSnapshot(reader io.Reader) (*LoadedMultiIndexSnapshot, error) {
+	if registry == nil {
+		return nil, fmt.Errorf("fts: load multi-index snapshot: nil registry")
+	}
+	if reader == nil {
 		return nil, fmt.Errorf("fts: load multi-index snapshot: nil reader")
 	}
 
 	var envelope multiIndexEnvelope
-	if err := gob.NewDecoder(r).Decode(&envelope); err != nil {
+	if err := gob.NewDecoder(reader).Decode(&envelope); err != nil {
 		return nil, fmt.Errorf("fts: load multi-index snapshot: decode envelope: %w", err)
 	}
 
@@ -281,6 +323,7 @@ func LoadMultiIndexSnapshot(r io.Reader) (*LoadedMultiIndexSnapshot, error) {
 		CollectionStats: envelope.CollectionStats,
 		Registry:        append([]DocID(nil), envelope.Registry...),
 		Tombstones:      append([]uint64(nil), envelope.Tombstones...),
+		KeyGenerator:    cloneKeyGeneratorDescriptor(envelope.KeyGenerator),
 	}
 	for _, field := range envelope.Fields {
 		if field.FieldName == "" {
@@ -290,7 +333,7 @@ func LoadMultiIndexSnapshot(r io.Reader) (*LoadedMultiIndexSnapshot, error) {
 			return nil, fmt.Errorf("fts: load multi-index snapshot: empty index codec name for field %q", field.FieldName)
 		}
 
-		indexCodec, ok := indexCodecByName(field.IndexName)
+		indexCodec, ok := registry.indexCodecByName(field.IndexName)
 		if !ok {
 			return nil, fmt.Errorf("fts: load multi-index snapshot: unknown index codec %q for field %q", field.IndexName, field.FieldName)
 		}
@@ -306,7 +349,7 @@ func LoadMultiIndexSnapshot(r io.Reader) (*LoadedMultiIndexSnapshot, error) {
 	return loaded, nil
 }
 
-func SaveFilterSnapshot(w io.Writer, filterName string, filter Filter) error {
+func (r *SnapshotRegistry) SaveFilterSnapshot(w io.Writer, filterName string, filter Filter) error {
 	if w == nil {
 		return fmt.Errorf("fts: save filter snapshot: nil writer")
 	}
@@ -323,7 +366,7 @@ func SaveFilterSnapshot(w io.Writer, filterName string, filter Filter) error {
 		}
 	}
 
-	filterCodec, ok := filterCodecByName(filterName)
+	filterCodec, ok := r.filterCodecByName(filterName)
 	if !ok {
 		return fmt.Errorf("fts: save filter snapshot: unknown filter codec %q", filterName)
 	}
@@ -346,13 +389,16 @@ func SaveFilterSnapshot(w io.Writer, filterName string, filter Filter) error {
 	return nil
 }
 
-func LoadFilterSnapshot(r io.Reader) (*LoadedFilterSnapshot, error) {
-	if r == nil {
+func (registry *SnapshotRegistry) LoadFilterSnapshot(reader io.Reader) (*LoadedFilterSnapshot, error) {
+	if registry == nil {
+		return nil, fmt.Errorf("fts: load filter snapshot: nil registry")
+	}
+	if reader == nil {
 		return nil, fmt.Errorf("fts: load filter snapshot: nil reader")
 	}
 
 	var envelope filterEnvelope
-	if err := gob.NewDecoder(r).Decode(&envelope); err != nil {
+	if err := gob.NewDecoder(reader).Decode(&envelope); err != nil {
 		return nil, fmt.Errorf("fts: load filter snapshot: decode envelope: %w", err)
 	}
 
@@ -363,7 +409,7 @@ func LoadFilterSnapshot(r io.Reader) (*LoadedFilterSnapshot, error) {
 		return nil, fmt.Errorf("fts: load filter snapshot: empty filter name")
 	}
 
-	filterCodec, ok := filterCodecByName(envelope.FilterName)
+	filterCodec, ok := registry.filterCodecByName(envelope.FilterName)
 	if !ok {
 		return nil, fmt.Errorf("fts: load filter snapshot: unknown filter codec %q", envelope.FilterName)
 	}
@@ -376,16 +422,30 @@ func LoadFilterSnapshot(r io.Reader) (*LoadedFilterSnapshot, error) {
 	return &LoadedFilterSnapshot{FilterName: envelope.FilterName, Filter: filter}, nil
 }
 
-func indexCodecByName(name string) (indexSnapshotCodec, bool) {
-	snapshotRegistryMu.RLock()
-	codec, ok := indexSnapshotCodecs[name]
-	snapshotRegistryMu.RUnlock()
+func (r *SnapshotRegistry) indexCodecByName(name string) (indexSnapshotCodec, bool) {
+	if r == nil {
+		return indexSnapshotCodec{}, false
+	}
+	r.mu.RLock()
+	codec, ok := r.indexSnapshotCodecs[name]
+	r.mu.RUnlock()
 	return codec, ok
 }
 
-func filterCodecByName(name string) (filterSnapshotCodec, bool) {
-	snapshotRegistryMu.RLock()
-	codec, ok := filterSnapshotCodecs[name]
-	snapshotRegistryMu.RUnlock()
+func (r *SnapshotRegistry) filterCodecByName(name string) (filterSnapshotCodec, bool) {
+	if r == nil {
+		return filterSnapshotCodec{}, false
+	}
+	r.mu.RLock()
+	codec, ok := r.filterSnapshotCodecs[name]
+	r.mu.RUnlock()
 	return codec, ok
+}
+
+func cloneKeyGeneratorDescriptor(descriptor *KeyGeneratorDescriptor) *KeyGeneratorDescriptor {
+	if descriptor == nil {
+		return nil
+	}
+	cloned := *descriptor
+	return &cloned
 }

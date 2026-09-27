@@ -224,7 +224,7 @@ type wandClause struct {
 	cursor int
 }
 
-func (c *wandClause) currentDoc() DocRef    { return c.exp.docs[c.cursor] }
+func (c *wandClause) currentDoc() Posting   { return c.exp.docs[c.cursor] }
 func (c *wandClause) currentSeq() uint32    { return c.exp.docs[c.cursor].Seq }
 func (c *wandClause) currentDocOrd() DocOrd { return c.exp.docs[c.cursor].Ord }
 func (c *wandClause) exhausted() bool       { return c.cursor >= len(c.exp.docs) }

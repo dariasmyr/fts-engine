@@ -11,7 +11,6 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
 	"github.com/dariasmyr/fts-engine/pkg/ftspreset"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 	"github.com/dariasmyr/fts-engine/pkg/textproc"
 
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
@@ -97,7 +96,7 @@ func (a *Adapter) Open(_ context.Context, dir string) error {
 		opts = append(opts, fts.WithFilter(flt))
 	}
 
-	a.svc = fts.New(index, keygen.Word, opts...)
+	a.svc = fts.New(index, fts.WordKeys, opts...)
 	a.workDir = dir
 	a.indexBytes = 0
 	a.extra = extras{
@@ -259,14 +258,15 @@ func (a *Adapter) BenchmarkExtras() map[string]any {
 }
 
 func (a *Adapter) saveSnapshot() error {
-	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+	registry, err := ftsbuiltin.NewSnapshotRegistry()
+	if err != nil {
 		return fmt.Errorf("register snapshot codecs: %w", err)
 	}
 	paths := ftspersist.SnapshotPaths{IndexPath: filepath.Join(a.workDir, "default.index.fidx")}
 	if a.cfg.Filter != "none" && a.cfg.Filter != "" {
 		paths.FilterPath = filepath.Join(a.workDir, "default.filter.fidx")
 	}
-	if err := ftspersist.SaveSnapshot(paths, a.svc, a.cfg.Index, filterCodecName(a.cfg.Filter), ftspersist.SaveOptions{}); err != nil {
+	if err := ftspersist.SaveSnapshot(paths, a.svc, a.cfg.Index, filterCodecName(a.cfg.Filter), ftspersist.SaveOptions{Registry: registry}); err != nil {
 		return fmt.Errorf("save snapshot: %w", err)
 	}
 	size, err := pathSize(a.workDir)
@@ -278,14 +278,15 @@ func (a *Adapter) saveSnapshot() error {
 }
 
 func (a *Adapter) saveSegment() error {
-	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+	registry, err := ftsbuiltin.NewSnapshotRegistry()
+	if err != nil {
 		return fmt.Errorf("register snapshot codecs: %w", err)
 	}
 	segmentDir := filepath.Join(a.workDir, "segment")
 	if err := os.MkdirAll(segmentDir, 0o755); err != nil {
 		return fmt.Errorf("create segment dir: %w", err)
 	}
-	if err := ftspersist.SaveSegment(ftspersist.SegmentPaths{Dir: segmentDir}, a.svc, filterCodecName(a.cfg.Filter), ftspersist.SaveOptions{}); err != nil {
+	if err := ftspersist.SaveSegment(ftspersist.SegmentPaths{Dir: segmentDir}, a.svc, filterCodecName(a.cfg.Filter), ftspersist.SaveOptions{Registry: registry}); err != nil {
 		return fmt.Errorf("save segment: %w", err)
 	}
 	size, err := pathSize(segmentDir)

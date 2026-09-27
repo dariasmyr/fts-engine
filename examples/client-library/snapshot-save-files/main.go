@@ -7,11 +7,11 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
-	"github.com/dariasmyr/fts-engine/pkg/keygen"
 )
 
 func main() {
-	if err := ftsbuiltin.RegisterSnapshotCodecs(); err != nil {
+	registry, err := ftsbuiltin.NewSnapshotRegistry()
+	if err != nil {
 		panic(err)
 	}
 
@@ -33,7 +33,7 @@ func main() {
 		panic(err)
 	}
 
-	svc := fts.New(idx, keygen.Word, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
+	svc := fts.New(idx, fts.WordKeys, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
 	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "snapshot with bloom filter"}}}); err != nil {
 		panic(err)
 	}
@@ -41,7 +41,7 @@ func main() {
 	if err := ftspersist.SaveSnapshot(ftspersist.SnapshotPaths{
 		IndexPath:  "./data/segments/default.index.fidx",
 		FilterPath: "./data/segments/default.filter.fidx",
-	}, svc, "slicedradix", "bloom", ftspersist.SaveOptions{SyncFile: true}); err != nil {
+	}, svc, "slicedradix", "bloom", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
 		panic(err)
 	}
 }
