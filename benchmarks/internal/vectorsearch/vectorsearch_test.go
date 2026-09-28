@@ -127,12 +127,12 @@ func TestDocumentRecallAndCardinality(t *testing.T) {
 }
 
 func TestExactTruthGroupsOverAllEligibleChunks(t *testing.T) {
-	reader, err := newFlatReader([][]float32{{0}, {0.1}, {0.2}, {0.3}, {0.4}}, 1, vector.MetricL2Squared, 5)
+	flatIndex, err := newFlatIndex([][]float32{{0}, {0.1}, {0.2}, {0.3}, {0.4}}, 1, vector.MetricL2Squared, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	config := Config{K: 3, ChunksPerDocument: 2, FilterSelectivities: []float64{1}, FilterSeed: 1}
-	truth, err := exactTruthSweeps(context.Background(), reader, [][]float32{{0}}, config)
+	truth, err := exactTruthSweeps(context.Background(), flatIndex, [][]float32{{0}}, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestShuffledBuildPreservesOriginalOrdinals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := newFlatReader(dataset.Vectors, 3, vector.MetricL2Squared, 3)
+	flatIndex, err := newFlatIndex(dataset.Vectors, 3, vector.MetricL2Squared, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestShuffledBuildPreservesOriginalOrdinals(t *testing.T) {
 		MaxNeighbors: 2, EfConstruction: 8, Seed: 4,
 	}
 	searchConfig := hnsw.SearchConfig{DefaultEfSearch: 3, MaxEfSearch: 8, DefaultVisitLimit: 24, MaxVisitLimit: 24, MaxK: 3}
-	reader, path, _, err := buildReader(context.Background(), source, dataset.Vectors, BuildOrder{Name: "shuffled", Seed: 12}, buildConfig, searchConfig, Progress{}, nil)
+	reader, path, _, err := buildReader(context.Background(), flatIndex, dataset.Vectors, BuildOrder{Name: "shuffled", Seed: 12}, buildConfig, searchConfig, Progress{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestShuffledBuildPreservesOriginalOrdinals(t *testing.T) {
 		t.Fatalf("build path = %q, want %q", path, BuildPathBuilder)
 	}
 	for ordinal, want := range dataset.Vectors {
-		got, ok := readPreparedVector(reader.VectorSource(), vector.Ordinal(ordinal))
+		got, ok := readPreparedVector(reader.Vectors(), vector.Ordinal(ordinal))
 		if !ok || !slices.Equal(got, want) {
 			t.Fatalf("ordinal %d changed identity: got %v want %v", ordinal, got, want)
 		}
@@ -329,7 +329,7 @@ func TestBuildTimingSeparatesProgressCallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := newFlatReader(dataset.Vectors, 2, vector.MetricL2Squared, 1)
+	flatIndex, err := newFlatIndex(dataset.Vectors, 2, vector.MetricL2Squared, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestBuildTimingSeparatesProgressCallback(t *testing.T) {
 		MaxNeighbors: 2, EfConstruction: 4, Seed: 1,
 	}
 	searchConfig := hnsw.SearchConfig{DefaultEfSearch: 1, MaxEfSearch: 1, DefaultVisitLimit: 8, MaxVisitLimit: 8, MaxK: 1}
-	_, path, timing, err := buildReader(context.Background(), source, dataset.Vectors, BuildOrder{Name: "ascending"}, buildConfig, searchConfig, Progress{}, func(Progress) {
+	_, path, timing, err := buildReader(context.Background(), flatIndex, dataset.Vectors, BuildOrder{Name: "ascending"}, buildConfig, searchConfig, Progress{}, func(Progress) {
 		time.Sleep(100 * time.Microsecond)
 	})
 	if err != nil {

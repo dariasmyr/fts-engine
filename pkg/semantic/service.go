@@ -10,6 +10,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 type pendingVector struct {
@@ -49,12 +50,7 @@ func New(config Config) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !config.Embedding.IsValid() || !config.Chunking.IsValid() ||
-		config.MaxVectors <= 0 || config.MaxChunksPerDocument <= 0 || config.MaxK <= 0 ||
-		config.MaxChunkCandidates < config.MaxK || config.MaxChunkCandidates > config.MaxVectors ||
-		config.MaxChunksPerDocument > config.MaxVectors || config.MaxChunksPerDocumentHit <= 0 ||
-		config.MaxChunksPerDocumentHit > config.MaxChunksPerDocument || config.InitialVectorCapacity < 0 ||
-		config.InitialVectorCapacity > config.MaxVectors {
+	if err := config.Validate(); err != nil {
 		return nil, ErrInvalidConfig
 	}
 	config.HNSWBuild = normalizeBuildConfig(config.HNSWBuild, config.Embedding, config.MaxVectors)
@@ -290,7 +286,7 @@ func buildPendingSegment(ctx context.Context, componentID ComponentID, pending [
 		values[i] = item.vector
 		rows[i] = item.row
 	}
-	source, err := newInMemoryVectorSourceFromConfig(config, values)
+	source, err := newInMemoryVectorStoreFromConfig(config, values)
 	if err != nil {
 		return nil, err
 	}
@@ -300,12 +296,12 @@ func buildPendingSegment(ctx context.Context, componentID ComponentID, pending [
 	})
 }
 
-func newInMemoryVectorSourceFromConfig(config Config, values [][]float32) (*vector.MemorySource, error) {
+func newInMemoryVectorStoreFromConfig(config Config, values [][]float32) (*vectorstore.MemoryVectorStore, error) {
 	calculator, err := config.Embedding.Calculator()
 	if err != nil {
 		return nil, err
 	}
-	return vector.NewMemorySource(calculator, values)
+	return vectorstore.NewMemoryVectorStore(calculator, values)
 }
 
 func publishIndex(base *ReadView, locations map[VectorID]vectorLocation, changes []livenessChange, pending *Segment, pendingComponent ComponentID, documents map[fts.DocID][]VectorID, generation uint64) (*ReadView, map[VectorID]vectorLocation, error) {

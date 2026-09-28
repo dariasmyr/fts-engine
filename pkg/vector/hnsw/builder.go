@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 // Builder constructs one HNSW graph. It is single-writer and is not searchable.
@@ -17,7 +18,7 @@ type Builder struct {
 	present      []bool
 	graph        graphData
 	rng          levelRNG
-	source       vector.PreparedVectorSource
+	source       vectorstore.PreparedVectorStore
 }
 
 func NewBuilder(buildConfig BuildConfig, searchConfig SearchConfig, vectorCount int) (*Builder, error) {
@@ -121,8 +122,8 @@ func (b *Builder) Check() (GraphStats, error) {
 	return validateGraphData(b.calculator, b.buildInfo, compact)
 }
 
-// Freeze validates and copies a complete graph into an immutable packed Searcher.
-func (b *Builder) Freeze() (*Searcher, error) {
+// Freeze validates and copies a complete graph into an immutable packed HNSW index.
+func (b *Builder) Freeze() (*HNSWIndex, error) {
 	if len(b.graph.nodes) != b.expected {
 		return nil, ErrBuilderIncomplete
 	}
@@ -131,9 +132,9 @@ func (b *Builder) Freeze() (*Searcher, error) {
 			return nil, ErrBuilderIncomplete
 		}
 	}
-	// newSearcherFromGraph validates and copies every retained section, so passing
+	// newHNSWIndexFromGraph validates and copies every retained section, so passing
 	// the mutable graph directly avoids a redundant full graph clone.
-	return newSearcherFromGraph(b.calculator, b.searchConfig, b.buildInfo, b.graph, b.source)
+	return newHNSWIndexFromGraph(b.calculator, b.searchConfig, b.buildInfo, b.graph, b.source)
 }
 
 func (b *Builder) insert(node NodeOrdinal) {

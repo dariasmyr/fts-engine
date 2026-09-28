@@ -155,23 +155,23 @@ func (idx *Index) Metric() vector.Metric { return idx.calculator.Metric() }
 // lenLocked returns the number of vectors in the index. The caller must hold a read or write lock.
 func (idx *Index) lenLocked() int { return len(idx.values) / idx.calculator.Dimensions() }
 
-// Freeze copies the current matrix into an immutable concurrent reader.
-func (idx *Index) Freeze() *Searcher {
+// Freeze copies the current matrix into an immutable concurrent flat index.
+func (idx *Index) Freeze() *FlatIndex {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	return newReader(idx.calculator, idx.maxK, append([]float32(nil), idx.values...))
+	return newFlatIndex(idx.calculator, idx.maxK, append([]float32(nil), idx.values...))
 }
 
-// FreezeCompact returns an immutable reader containing only rows allowed by
+// FreezeCompact returns an immutable flat index containing only rows allowed by
 // filter. Prepared components are copied once and are not normalized again.
-func (idx *Index) FreezeCompact(ctx context.Context, filter vector.ResultFilter) (*Searcher, error) {
+func (idx *Index) FreezeCompact(ctx context.Context, filter vector.ResultFilter) (*FlatIndex, error) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	values, err := compactPrepared(ctx, idx.calculator.Dimensions(), idx.values, filter)
 	if err != nil {
 		return nil, err
 	}
-	return newReader(idx.calculator, idx.maxK, values), nil
+	return newFlatIndex(idx.calculator, idx.maxK, values), nil
 }
 
 func compactPrepared(ctx context.Context, dimensions int, matrix []float32, filter vector.ResultFilter) ([]float32, error) {

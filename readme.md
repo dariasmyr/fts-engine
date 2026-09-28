@@ -380,7 +380,7 @@ engine := fts.NewMultiField(
 ## HNSW Vector Index
 
 `pkg/vector/hnsw` provides observable deterministic construction, an immutable
-packed reader, and a binary graph format bound to a separate authoritative vector
+packed HNSW index, and a binary graph format bound to a separate authoritative vector
 file. The low-level package still contains an explicit exact-fallback primitive
 for compatibility and benchmarking, but semantic search must not use it as a
 runtime strategy.
@@ -406,7 +406,7 @@ search := hnsw.SearchConfig{
 	MaxK:              100,
 }
 
-reader, err := hnsw.Build(ctx, flatReader, hnsw.BuildOptions{
+	index, err := hnsw.Build(ctx, flatReader, hnsw.BuildOptions{
 	BuildConfig:  build,
 	SearchConfig: search,
 	Progress: func(progress hnsw.BuildProgress) {
@@ -416,7 +416,7 @@ reader, err := hnsw.Build(ctx, flatReader, hnsw.BuildOptions{
 if err != nil {
 	return err
 }
-result, err := reader.Search(ctx, query, 10, vector.SearchOptions{EfSearch: 64})
+	result, err := index.Search(ctx, query, 10, vector.SearchOptions{EfSearch: 64})
 ```
 
 `hnsw.Build` reads prepared rows in stable dense ordinal order and hides manual

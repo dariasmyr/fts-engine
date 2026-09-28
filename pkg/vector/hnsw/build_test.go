@@ -9,6 +9,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func testBuildConfig(dimensions, count int, metric vector.Metric) hnsw.BuildConfig {
@@ -26,22 +27,22 @@ func testSearchConfig(count int) hnsw.SearchConfig {
 	}
 }
 
-func testFlatReader(t testing.TB, values [][]float32, metric vector.Metric) *vector.MemorySource {
+func testFlatReader(t testing.TB, values [][]float32, metric vector.Metric) *vectorstore.MemoryVectorStore {
 	t.Helper()
 	calculator, err := vector.NewCalculator(len(values[0]), metric)
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx, err := vector.NewMemorySource(calculator, values)
+	idx, err := vectorstore.NewMemoryVectorStore(calculator, values)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return idx
 }
 
-func testBuild(t testing.TB, source vector.PreparedVectorSource, dimensions, count int, metric vector.Metric) *hnsw.Searcher {
+func testBuild(t testing.TB, source vectorstore.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.HNSWIndex {
 	t.Helper()
-	reader, err := hnsw.BuildSearcher(context.Background(), source, hnsw.BuildOptions{
+	reader, err := hnsw.BuildIndex(context.Background(), source, hnsw.BuildOptions{
 		BuildConfig: testBuildConfig(dimensions, count, metric), SearchConfig: testSearchConfig(count),
 	})
 	if err != nil {
@@ -50,7 +51,7 @@ func testBuild(t testing.TB, source vector.PreparedVectorSource, dimensions, cou
 	return reader
 }
 
-func readPreparedVector(source vector.PreparedVectorSource, ordinal vector.Ordinal) ([]float32, bool) {
+func readPreparedVector(source vectorstore.PreparedVectorStore, ordinal vector.Ordinal) ([]float32, bool) {
 	if source == nil || uint64(ordinal) >= uint64(source.Len()) {
 		return nil, false
 	}
@@ -64,7 +65,7 @@ func readPreparedVector(source vector.PreparedVectorSource, ordinal vector.Ordin
 func TestBuildProgressStableOrderAndPreparedCosineBits(t *testing.T) {
 	source := testFlatReader(t, [][]float32{{3, 4}, {-5, 12}, {8, 15}}, vector.MetricCosine)
 	var progress []hnsw.BuildProgress
-	reader, err := hnsw.BuildSearcher(context.Background(), source, hnsw.BuildOptions{
+	reader, err := hnsw.BuildIndex(context.Background(), source, hnsw.BuildOptions{
 		BuildConfig:  testBuildConfig(2, source.Len(), vector.MetricCosine),
 		SearchConfig: testSearchConfig(source.Len()),
 		Progress: func(value hnsw.BuildProgress) {
@@ -88,13 +89,13 @@ func TestBuildProgressStableOrderAndPreparedCosineBits(t *testing.T) {
 	}
 	for row := range source.Len() {
 		want, _ := readPreparedVector(source, vector.Ordinal(row))
-		got, _ := readPreparedVector(reader.VectorSource(), vector.Ordinal(row))
+		got, _ := readPreparedVector(reader.Vectors(), vector.Ordinal(row))
 		if !slices.EqualFunc(got, want, func(a, b float32) bool { return math.Float32bits(a) == math.Float32bits(b) }) {
 			t.Fatalf("row %d bits changed: got %v want %v", row, got, want)
 		}
 	}
 	for node := range reader.NodeCount() {
-		value, ok := readPreparedVector(reader.VectorSource(), vector.Ordinal(node))
+		value, ok := readPreparedVector(reader.Vectors(), vector.Ordinal(node))
 		if !ok || len(value) != 2 {
 			t.Fatalf("dense row %d unavailable", node)
 		}
@@ -125,8 +126,8 @@ func TestBuildRetainsPreparedSource(t *testing.T) {
 	reader := testBuild(t, source, 2, 2, vector.MetricL2Squared)
 	source.reads = nil
 
-	if _, ok := readPreparedVector(reader.VectorSource(), 1); !ok {
-		t.Fatal("reader.VectorSource row 1 failed")
+	if _, ok := readPreparedVector(reader.Vectors(), 1); !ok {
+		t.Fatal("reader.Vectors row 1 failed")
 	}
 	if !slices.Equal(source.reads, []vector.Ordinal{1}) {
 		t.Fatalf("reader did not retain prepared source, reads = %v", source.reads)
@@ -167,7 +168,7 @@ func (s *testSource) ReadVectorInto(ctx context.Context, ordinal vector.Ordinal,
 func TestBuildPreflightReadErrorsAndContext(t *testing.T) {
 	options := hnsw.BuildOptions{BuildConfig: testBuildConfig(2, 2, vector.MetricL2Squared), SearchConfig: testSearchConfig(2)}
 	mismatch := &testSource{values: [][]float32{{1}, {2}}, dimensions: 1, metric: vector.MetricL2Squared}
-	if _, err := hnsw.BuildSearcher(context.Background(), mismatch, options); !errors.Is(err, hnsw.ErrBuildSourceMismatch) {
+	if _, err := hnsw.BuildIndex(context.Background(), mismatch, options); !errors.Is(err, hnsw.ErrBuildSourceMismatch) {
 		t.Fatalf("metadata error = %v", err)
 	}
 	if len(mismatch.reads) != 0 {
@@ -176,23 +177,23 @@ func TestBuildPreflightReadErrorsAndContext(t *testing.T) {
 
 	sentinel := errors.New("source read failed")
 	failing := &testSource{values: [][]float32{{1, 2}, {3, 4}}, dimensions: 2, metric: vector.MetricL2Squared, readErrAt: 1, readErr: sentinel}
-	if _, err := hnsw.BuildSearcher(context.Background(), failing, options); !errors.Is(err, sentinel) {
+	if _, err := hnsw.BuildIndex(context.Background(), failing, options); !errors.Is(err, sentinel) {
 		t.Fatalf("read error = %v", err)
 	}
 	if !slices.Equal(failing.reads, []vector.Ordinal{0, 1}) {
 		t.Fatalf("read order = %v", failing.reads)
 	}
 	partial := &testSource{values: [][]float32{{1, 2}, {3, 4}}, dimensions: 2, metric: vector.MetricL2Squared, partial: true}
-	if _, err := hnsw.BuildSearcher(context.Background(), partial, options); !errors.Is(err, vector.ErrNonFiniteVector) {
+	if _, err := hnsw.BuildIndex(context.Background(), partial, options); !errors.Is(err, vector.ErrNonFiniteVector) {
 		t.Fatalf("partial source row error = %v", err)
 	}
 
-	if _, err := hnsw.BuildSearcher(nil, failing, options); !errors.Is(err, vector.ErrNilContext) {
+	if _, err := hnsw.BuildIndex(nil, failing, options); !errors.Is(err, vector.ErrNilContext) {
 		t.Fatalf("nil context error = %v", err)
 	}
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := hnsw.BuildSearcher(canceled, failing, options); !errors.Is(err, context.Canceled) {
+	if _, err := hnsw.BuildIndex(canceled, failing, options); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled context error = %v", err)
 	}
 
@@ -203,7 +204,7 @@ func TestBuildPreflightReadErrorsAndContext(t *testing.T) {
 			progressCancel()
 		}
 	}
-	if _, err := hnsw.BuildSearcher(progressCtx, progressSource, options); !errors.Is(err, context.Canceled) {
+	if _, err := hnsw.BuildIndex(progressCtx, progressSource, options); !errors.Is(err, context.Canceled) {
 		t.Fatalf("progress cancellation error = %v", err)
 	}
 	if !slices.Equal(progressSource.reads, []vector.Ordinal{0}) {

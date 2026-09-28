@@ -7,6 +7,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func Search(ctx context.Context, calculator vector.Calculator, matrix []float32, maxK int, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
@@ -64,7 +65,7 @@ func Search(ctx context.Context, calculator vector.Calculator, matrix []float32,
 }
 
 // SearchSource performs the same exact scan over an immutable prepared source.
-func SearchSource(ctx context.Context, source vector.PreparedVectorSource, maxK int, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func SearchSource(ctx context.Context, source vectorstore.PreparedVectorStore, maxK int, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	if source == nil {
 		return vector.SearchResult{}, vector.ErrInvalidSearchOptions
 	}

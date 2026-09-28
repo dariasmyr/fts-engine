@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func readerTestSearchConfig() SearchConfig {
@@ -22,7 +23,7 @@ func readerTestSearchConfig() SearchConfig {
 	}
 }
 
-func readPreparedVector(source vector.PreparedVectorSource, ordinal vector.Ordinal) ([]float32, bool) {
+func readPreparedVector(source vectorstore.PreparedVectorStore, ordinal vector.Ordinal) ([]float32, bool) {
 	if source == nil || uint64(ordinal) >= uint64(source.Len()) {
 		return nil, false
 	}
@@ -72,9 +73,9 @@ func readerTestGraph() graphData {
 	}
 }
 
-func newReaderForTest(t *testing.T, calculator vector.Calculator, graph graphData) *Searcher {
+func newReaderForTest(t *testing.T, calculator vector.Calculator, graph graphData) *HNSWIndex {
 	t.Helper()
-	reader, err := newSearcherFromGraph(calculator, readerTestSearchConfig(), readerTestBuildInfo(), graph)
+	reader, err := newHNSWIndexFromGraph(calculator, readerTestSearchConfig(), readerTestBuildInfo(), graph)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,9 +109,9 @@ func TestSearchConfigValidation(t *testing.T) {
 	}
 
 	space := readerTestSpace(t, 1, vector.MetricL2Squared)
-	_, err := newSearcherFromGraph(space, SearchConfig{}, readerTestBuildInfo(), graphData{})
+	_, err := newHNSWIndexFromGraph(space, SearchConfig{}, readerTestBuildInfo(), graphData{})
 	if !errors.Is(err, ErrInvalidSearchConfig) {
-		t.Fatalf("newSearcherFromGraph invalid search config error = %v", err)
+		t.Fatalf("newHNSWIndexFromGraph invalid search config error = %v", err)
 	}
 }
 
@@ -129,7 +130,7 @@ func TestReaderEmptyAndSingleton(t *testing.T) {
 	if _, ok := empty.Neighbors(0, 0); ok {
 		t.Fatal("empty reader has adjacency for node 0")
 	}
-	if _, ok := readPreparedVector(empty.VectorSource(), 0); ok {
+	if _, ok := readPreparedVector(empty.Vectors(), 0); ok {
 		t.Fatal("empty reader has vector 0")
 	}
 	if got := empty.GraphStats(); !reflect.DeepEqual(got, GraphStats{MaxLevel: -1}) {
@@ -224,7 +225,7 @@ func TestReaderExplicitLevelsMembershipPackingAndMapping(t *testing.T) {
 		t.Fatalf("node mapping = %v, want %v", got, want)
 	}
 	for ordinal, want := range [][]float32{{0, 0}, {1, 0}, {2, 0}, {3, 0}} {
-		got, ok := readPreparedVector(reader.VectorSource(), vector.Ordinal(ordinal))
+		got, ok := readPreparedVector(reader.Vectors(), vector.Ordinal(ordinal))
 		if !ok || !slices.Equal(got, want) {
 			t.Errorf("Vector(%d) = (%v, %v), want (%v, true)", ordinal, got, ok, want)
 		}
@@ -297,7 +298,7 @@ func TestReaderRejectsInvalidGraphData(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := newSearcherFromGraph(test.calculator, validSearch, test.info, test.graph)
+			_, err := newHNSWIndexFromGraph(test.calculator, validSearch, test.info, test.graph)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("error = %v, want %v", err, test.want)
 			}
@@ -311,16 +312,16 @@ func TestReaderReturnsImmutableCopies(t *testing.T) {
 
 	graph.values[0] = 99
 	graph.nodes[0].links[0][0] = 3
-	if got, _ := readPreparedVector(reader.VectorSource(), 0); !slices.Equal(got, []float32{0, 0}) {
+	if got, _ := readPreparedVector(reader.Vectors(), 0); !slices.Equal(got, []float32{0, 0}) {
 		t.Fatalf("reader retained input values: %v", got)
 	}
 	if got, _ := reader.Neighbors(0, 0); !slices.Equal(got, []NodeOrdinal{1, 2}) {
 		t.Fatalf("reader retained input links: %v", got)
 	}
 
-	value, _ := readPreparedVector(reader.VectorSource(), 0)
+	value, _ := readPreparedVector(reader.Vectors(), 0)
 	value[0] = 77
-	valueAgain, _ := readPreparedVector(reader.VectorSource(), 0)
+	valueAgain, _ := readPreparedVector(reader.Vectors(), 0)
 	if !slices.Equal(valueAgain, []float32{0, 0}) {
 		t.Fatalf("Vector returned mutable storage: %v", valueAgain)
 	}
@@ -346,14 +347,14 @@ func TestNewReaderFromGraphRetainsPreparedSource(t *testing.T) {
 		metric:        vector.MetricL2Squared,
 		normalization: vector.NormalizationNone,
 	}
-	reader, err := newSearcherFromGraph(readerTestSpace(t, 2, vector.MetricL2Squared), readerTestSearchConfig(), readerTestBuildInfo(), readerTestGraph(), source)
+	reader, err := newHNSWIndexFromGraph(readerTestSpace(t, 2, vector.MetricL2Squared), readerTestSearchConfig(), readerTestBuildInfo(), readerTestGraph(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	source.reads = 0
 
-	if _, ok := readPreparedVector(reader.VectorSource(), 1); !ok {
-		t.Fatal("reader.VectorSource row 1 failed")
+	if _, ok := readPreparedVector(reader.Vectors(), 1); !ok {
+		t.Fatal("reader.Vectors row 1 failed")
 	}
 	if source.reads != 1 {
 		t.Fatalf("reader did not retain prepared source, reads = %d", source.reads)

@@ -151,15 +151,15 @@ func TestCompactRebuildsDenseMutableAndImmutableIndexes(t *testing.T) {
 		t.Fatalf("source/compacted lengths = %d/%d, values = %v", idx.Len(), compacted.Len(), compacted.values)
 	}
 
-	reader, err := idx.FreezeCompact(context.Background(), live)
+	flatIndex, err := idx.FreezeCompact(context.Background(), live)
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := reader.VectorSource()
-	first, firstOK := source.Vector(0)
-	second, secondOK := source.Vector(1)
+	values := flatIndex.Vectors()
+	first, firstOK := values.Vector(0)
+	second, secondOK := values.Vector(1)
 	if !firstOK || !secondOK || !slices.Equal(first, []float32{2, 3}) || !slices.Equal(second, []float32{6, 7}) {
-		t.Fatalf("compacted reader vectors = %v/%v", first, second)
+		t.Fatalf("compacted flat index vectors = %v/%v", first, second)
 	}
 
 	canceled, cancel := context.WithCancel(context.Background())

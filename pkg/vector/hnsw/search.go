@@ -14,7 +14,7 @@ var errVisitLimit = errors.New("vector/hnsw: visit limit reached")
 
 type searchState struct {
 	ctx           context.Context
-	index         *Searcher
+	index         *HNSWIndex
 	calculator    vector.Calculator
 	preparedQuery []float32
 	filter        vector.ResultFilter
@@ -25,7 +25,7 @@ type searchState struct {
 	stats         vector.SearchStats
 }
 
-func search(ctx context.Context, reader *Searcher, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func search(ctx context.Context, reader *HNSWIndex, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	if ctx == nil {
 		return vector.SearchResult{}, vector.ErrNilContext
 	}
@@ -221,7 +221,7 @@ func (state *searchState) score(node NodeOrdinal) (searchCandidate, error) {
 		return searchCandidate{}, ErrInvalidGraph
 	}
 	value := make([]float32, state.calculator.Dimensions())
-	if err := state.index.VectorSource().ReadVectorInto(state.ctx, ordinal, value); err != nil {
+	if err := state.index.Vectors().ReadVectorInto(state.ctx, ordinal, value); err != nil {
 		if state.ctx.Err() != nil {
 			return searchCandidate{}, state.ctx.Err()
 		}

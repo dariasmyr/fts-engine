@@ -12,6 +12,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func BenchmarkSaveSealedSegment(b *testing.B) {
@@ -157,13 +158,13 @@ func newSemanticPersistenceBenchmarkFixture(tb testing.TB, rows, dimensions int)
 		}
 		values[row] = value
 	}
-	source, err := vector.NewMemorySource(calculator, values)
+	source, err := vectorstore.NewMemoryVectorStore(calculator, values)
 	if err != nil {
 		tb.Fatal(err)
 	}
 
 	maxK := min(10, rows)
-	searcher, err := hnsw.BuildSearcher(context.Background(), source, hnsw.BuildOptions{
+	index, err := hnsw.BuildIndex(context.Background(), source, hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
 			Dimensions: dimensions, Metric: vector.MetricL2Squared,
 			MaxVectors: rows, MaxVectorBytes: uint64(rows * dimensions * 4),
@@ -200,7 +201,7 @@ func newSemanticPersistenceBenchmarkFixture(tb testing.TB, rows, dimensions int)
 	segment, err := semantic.NewSegment(2, semantic.SegmentMetadata{
 		Embedding: embedding,
 		Chunking:  semantic.ChunkingDescriptor{ID: "benchmark-chunks", Version: 1, Fingerprint: "benchmark-chunks-v1"},
-	}, searcher, rowsMetadata)
+	}, index, rowsMetadata)
 	if err != nil {
 		tb.Fatal(err)
 	}

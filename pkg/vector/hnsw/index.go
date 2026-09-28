@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 type topology struct {
@@ -27,28 +28,28 @@ type topology struct {
 	upperNeighbors   []NodeOrdinal
 }
 
-// Searcher is an immutable HNSW search index paired with an authoritative
-// vector source. The source is never mutated by Searcher.
-type Searcher struct {
+// HNSWIndex is an immutable HNSW index paired with authoritative vector
+// storage. The vector storage is never mutated by HNSWIndex.
+type HNSWIndex struct {
 	topology topology
-	vectors  vector.PreparedVectorSource
+	vectors  vectorstore.PreparedVectorStore
 }
 
-// newSearcher binds an immutable topology to an authoritative prepared vector
-// source. The source must have the same ordinal layout and vector metadata as
+// newHNSWIndex binds an immutable topology to authoritative prepared vector
+// storage. The storage must have the same ordinal layout and vector metadata as
 // the topology.
-func newSearcher(source vector.PreparedVectorSource, topology topology) (*Searcher, error) {
-	if source == nil || isNilPreparedVectorSource(source) || !topology.validated {
+func newHNSWIndex(vectors vectorstore.PreparedVectorStore, topology topology) (*HNSWIndex, error) {
+	if vectors == nil || isNilPreparedVectorStore(vectors) || !topology.validated {
 		return nil, ErrBuildSourceMismatch
 	}
-	if source.Len() != len(topology.nodeToVector) || source.Dimensions() != topology.calculator.Dimensions() ||
-		source.Metric() != topology.calculator.Metric() || source.Normalization() != topology.calculator.Normalization() {
+	if vectors.Len() != len(topology.nodeToVector) || vectors.Dimensions() != topology.calculator.Dimensions() ||
+		vectors.Metric() != topology.calculator.Metric() || vectors.Normalization() != topology.calculator.Normalization() {
 		return nil, ErrBuildSourceMismatch
 	}
-	return &Searcher{topology: topology, vectors: source}, nil
+	return &HNSWIndex{topology: topology, vectors: vectors}, nil
 }
 
-func newSearcherFromGraph(calculator vector.Calculator, searchConfig SearchConfig, buildInfo BuildInfo, graph graphData, sourceOverride ...vector.PreparedVectorSource) (*Searcher, error) {
+func newHNSWIndexFromGraph(calculator vector.Calculator, searchConfig SearchConfig, buildInfo BuildInfo, graph graphData, sourceOverride ...vectorstore.PreparedVectorStore) (*HNSWIndex, error) {
 	if err := searchConfig.validate(); err != nil {
 		return nil, err
 	}
@@ -101,67 +102,67 @@ func newSearcherFromGraph(calculator vector.Calculator, searchConfig SearchConfi
 	}
 	topology.upperLinkOffsets[placement] = uint32(len(topology.upperNeighbors))
 	topology.validated = true
-	if len(sourceOverride) > 0 && sourceOverride[0] != nil && !isNilPreparedVectorSource(sourceOverride[0]) {
-		return newSearcher(sourceOverride[0], *topology)
+	if len(sourceOverride) > 0 && sourceOverride[0] != nil && !isNilPreparedVectorStore(sourceOverride[0]) {
+		return newHNSWIndex(sourceOverride[0], *topology)
 	}
-	source, err := vector.NewPreparedMemorySource(calculator, graph.values)
+	vectors, err := vectorstore.NewPreparedMemoryVectorStore(calculator, graph.values)
 	if err != nil {
 		return nil, err
 	}
-	return &Searcher{topology: *topology, vectors: source}, nil
+	return &HNSWIndex{topology: *topology, vectors: vectors}, nil
 }
 
-func (r *Searcher) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func (r *HNSWIndex) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	return search(ctx, r, query, k, options)
 }
 
-func (r *Searcher) Len() int {
+func (r *HNSWIndex) Len() int {
 	if r == nil {
 		return 0
 	}
 	return len(r.topology.nodeToVector)
 }
 
-func (r *Searcher) NodeCount() int { return r.Len() }
+func (r *HNSWIndex) NodeCount() int { return r.Len() }
 
-func (r *Searcher) Dimensions() int {
+func (r *HNSWIndex) Dimensions() int {
 	if r == nil {
 		return 0
 	}
 	return r.topology.calculator.Dimensions()
 }
 
-func (r *Searcher) Metric() vector.Metric {
+func (r *HNSWIndex) Metric() vector.Metric {
 	if r == nil {
 		return 0
 	}
 	return r.topology.calculator.Metric()
 }
 
-func (r *Searcher) Normalization() vector.Normalization {
+func (r *HNSWIndex) Normalization() vector.Normalization {
 	if r == nil {
 		return 0
 	}
 	return r.topology.calculator.Normalization()
 }
 
-func (r *Searcher) MaxK() int {
+func (r *HNSWIndex) MaxK() int {
 	if r == nil {
 		return 0
 	}
 	return r.topology.searchConfig.MaxK
 }
 
-// SearchConfig returns the immutable request limits stored with the reader.
-func (r *Searcher) SearchConfig() SearchConfig {
+// SearchConfig returns the immutable request limits stored with the HNSW index.
+func (r *HNSWIndex) SearchConfig() SearchConfig {
 	if r == nil {
 		return SearchConfig{}
 	}
 	return r.topology.searchConfig
 }
 
-// StorageStats reports cardinalities and logical bytes of packed reader slices.
-func (r *Searcher) StorageStats() StorageStats {
+// StorageStats reports cardinalities and logical bytes of packed HNSW index slices.
+func (r *HNSWIndex) StorageStats() StorageStats {
 	if r == nil {
 		return StorageStats{}
 	}
@@ -181,28 +182,28 @@ func (r *Searcher) StorageStats() StorageStats {
 	return stats
 }
 
-func (r *Searcher) BuildInfo() BuildInfo {
+func (r *HNSWIndex) BuildInfo() BuildInfo {
 	if r == nil {
 		return BuildInfo{}
 	}
 	return r.topology.buildInfo
 }
 
-func (r *Searcher) GraphStats() GraphStats {
+func (r *HNSWIndex) GraphStats() GraphStats {
 	if r == nil {
 		return GraphStats{}
 	}
 	return cloneGraphStats(r.topology.stats)
 }
 
-func (r *Searcher) EntryPoint() (NodeOrdinal, int, bool) {
+func (r *HNSWIndex) EntryPoint() (NodeOrdinal, int, bool) {
 	if r == nil || !r.topology.hasEntry {
 		return 0, 0, false
 	}
 	return r.topology.entry, int(r.topology.levels[r.topology.entry]), true
 }
 
-func (r *Searcher) NodeLevel(node NodeOrdinal) (uint8, bool) {
+func (r *HNSWIndex) NodeLevel(node NodeOrdinal) (uint8, bool) {
 	if r == nil || uint64(node) >= uint64(len(r.topology.levels)) {
 		return 0, false
 	}
@@ -211,21 +212,21 @@ func (r *Searcher) NodeLevel(node NodeOrdinal) (uint8, bool) {
 
 // Neighbors returns a copy of one directed adjacency list. A node with an empty
 // list still exists at level when level <= NodeLevel(node).
-func (r *Searcher) Neighbors(node NodeOrdinal, level int) ([]NodeOrdinal, bool) {
+func (r *HNSWIndex) Neighbors(node NodeOrdinal, level int) ([]NodeOrdinal, bool) {
 	neighbors, ok := r.neighborView(node, level)
 	return append([]NodeOrdinal(nil), neighbors...), ok
 }
 
-// VectorSource returns the authoritative vector storage paired with the
-// index. The source is immutable and is never mutated by Searcher.
-func (r *Searcher) VectorSource() vector.PreparedVectorSource {
+// Vectors returns the authoritative vector storage paired with the index. The
+// storage is immutable and is never mutated by HNSWIndex.
+func (r *HNSWIndex) Vectors() vectorstore.PreparedVectorStore {
 	if r == nil {
 		return nil
 	}
 	return r.vectors
 }
 
-func (r *Searcher) vectorByNode(node NodeOrdinal) ([]float32, vector.Ordinal, bool) {
+func (r *HNSWIndex) vectorByNode(node NodeOrdinal) ([]float32, vector.Ordinal, bool) {
 	if r == nil || uint64(node) >= uint64(len(r.topology.nodeToVector)) {
 		return nil, 0, false
 	}
@@ -237,7 +238,7 @@ func (r *Searcher) vectorByNode(node NodeOrdinal) ([]float32, vector.Ordinal, bo
 	return value, ordinal, true
 }
 
-func (r *Searcher) neighborView(node NodeOrdinal, level int) ([]NodeOrdinal, bool) {
+func (r *HNSWIndex) neighborView(node NodeOrdinal, level int) ([]NodeOrdinal, bool) {
 	if r == nil || level < 0 || uint64(node) >= uint64(len(r.topology.levels)) || level > int(r.topology.levels[node]) {
 		return nil, false
 	}

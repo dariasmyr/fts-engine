@@ -10,28 +10,29 @@ import (
 
 	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
-// VectorSource is immutable prepared vector storage backed by a flat matrix.
-type VectorSource struct {
+// VectorStore is immutable prepared vector storage backed by a flat matrix.
+type VectorStore struct {
 	calculator vector.Calculator
 	values     []float32
 }
 
-func newVectorSource(calculator vector.Calculator, values []float32) *VectorSource {
-	return &VectorSource{calculator: calculator, values: values}
+func newVectorStore(calculator vector.Calculator, values []float32) *VectorStore {
+	return &VectorStore{calculator: calculator, values: values}
 }
 
-func (s *VectorSource) Len() int { return len(s.values) / s.calculator.Dimensions() }
+func (s *VectorStore) Len() int { return len(s.values) / s.calculator.Dimensions() }
 
-func (s *VectorSource) Dimensions() int { return s.calculator.Dimensions() }
+func (s *VectorStore) Dimensions() int { return s.calculator.Dimensions() }
 
-func (s *VectorSource) Metric() vector.Metric { return s.calculator.Metric() }
+func (s *VectorStore) Metric() vector.Metric { return s.calculator.Metric() }
 
-func (s *VectorSource) Normalization() vector.Normalization { return s.calculator.Normalization() }
+func (s *VectorStore) Normalization() vector.Normalization { return s.calculator.Normalization() }
 
-// ReadVectorInto copies one prepared row into dst without exposing source storage.
-func (s *VectorSource) ReadVectorInto(ctx context.Context, ord vector.Ordinal, dst []float32) error {
+// ReadVectorInto copies one prepared row into dst without exposing store storage.
+func (s *VectorStore) ReadVectorInto(ctx context.Context, ord vector.Ordinal, dst []float32) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
@@ -50,7 +51,7 @@ func (s *VectorSource) ReadVectorInto(ctx context.Context, ord vector.Ordinal, d
 }
 
 // Vector returns a copy of one prepared vector row.
-func (s *VectorSource) Vector(ord vector.Ordinal) ([]float32, bool) {
+func (s *VectorStore) Vector(ord vector.Ordinal) ([]float32, bool) {
 	value, ok := s.vectorView(ord)
 	if !ok {
 		return nil, false
@@ -58,7 +59,7 @@ func (s *VectorSource) Vector(ord vector.Ordinal) ([]float32, bool) {
 	return append([]float32(nil), value...), true
 }
 
-func (s *VectorSource) vectorView(ord vector.Ordinal) ([]float32, bool) {
+func (s *VectorStore) vectorView(ord vector.Ordinal) ([]float32, bool) {
 	if uint32(ord) >= uint32(s.Len()) {
 		return nil, false
 	}
@@ -76,14 +77,14 @@ type DuplicateStats struct {
 
 // ExactDuplicateStats groups exact prepared float32 rows without coalescing
 // physical storage. namespace should identify the embedding space and format.
-func (s *VectorSource) ExactDuplicateStats(namespace string) DuplicateStats {
+func (s *VectorStore) ExactDuplicateStats(namespace string) DuplicateStats {
 	stats, _ := s.ExactDuplicateStatsContext(context.Background(), namespace)
 	return stats
 }
 
 // ExactDuplicateStatsContext is ExactDuplicateStats with cancellation for the
 // full row scan.
-func (s *VectorSource) ExactDuplicateStatsContext(ctx context.Context, namespace string) (DuplicateStats, error) {
+func (s *VectorStore) ExactDuplicateStatsContext(ctx context.Context, namespace string) (DuplicateStats, error) {
 	if ctx == nil {
 		return DuplicateStats{}, vector.ErrNilContext
 	}
@@ -141,4 +142,4 @@ func (s *VectorSource) ExactDuplicateStatsContext(ctx context.Context, namespace
 	return stats, nil
 }
 
-var _ vector.PreparedVectorSource = (*VectorSource)(nil)
+var _ vectorstore.PreparedVectorStore = (*VectorStore)(nil)

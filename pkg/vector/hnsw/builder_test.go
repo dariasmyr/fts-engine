@@ -43,7 +43,7 @@ func addTestVector(t *testing.T, builder *Builder, ordinal vector.Ordinal, value
 	return node
 }
 
-func readerTopology(t *testing.T, reader *Searcher) [][][]NodeOrdinal {
+func readerTopology(t *testing.T, reader *HNSWIndex) [][][]NodeOrdinal {
 	t.Helper()
 	topology := make([][][]NodeOrdinal, reader.NodeCount())
 	for node := range reader.NodeCount() {
@@ -170,7 +170,7 @@ func TestBuilderCompleteAndIncompleteFreeze(t *testing.T) {
 		t.Fatalf("BuildInfo = %+v, want %+v", got, wantInfo)
 	}
 	for ordinal, want := range [][]float32{{0, 10}, {1, 15}, {2, 20}} {
-		got, ok := readPreparedVector(reader.VectorSource(), vector.Ordinal(ordinal))
+		got, ok := readPreparedVector(reader.Vectors(), vector.Ordinal(ordinal))
 		if !ok || !slices.Equal(got, want) {
 			t.Errorf("Vector(%d) = (%v, %v), want (%v, true)", ordinal, got, ok, want)
 		}
@@ -292,7 +292,7 @@ func TestBuilderMaxDegreesDuplicatesAndClusteredVectors(t *testing.T) {
 
 func TestBuilderFixedSeedTopologyDeterminism(t *testing.T) {
 	values := [][]float32{{0, 0}, {1, 0}, {0, 1}, {1, 1}, {2, 0}, {0, 2}, {2, 2}, {1, 2}, {2, 1}}
-	build := func() *Searcher {
+	build := func() *HNSWIndex {
 		builder := newTestBuilder(t, 0x12345678, len(values))
 		for ordinal, value := range values {
 			addTestVector(t, builder, vector.Ordinal(ordinal), value)
@@ -336,7 +336,7 @@ func TestBuilderSeedAndOrderPermutationsRemainValid(t *testing.T) {
 				t.Fatalf("seed %d order %d stats = %+v", seed, orderIndex, stats)
 			}
 			for ordinal, want := range values {
-				got, ok := readPreparedVector(reader.VectorSource(), vector.Ordinal(ordinal))
+				got, ok := readPreparedVector(reader.Vectors(), vector.Ordinal(ordinal))
 				if !ok || !slices.Equal(got, want) {
 					t.Fatalf("seed %d order %d Vector(%d) = (%v, %v), want %v", seed, orderIndex, ordinal, got, ok, want)
 				}
@@ -362,17 +362,17 @@ func TestBuilderFreezeIndependenceAndIdempotence(t *testing.T) {
 		t.Fatal("repeated Freeze was not independent and idempotent")
 	}
 
-	firstValue, _ := readPreparedVector(first.VectorSource(), 0)
+	firstValue, _ := readPreparedVector(first.Vectors(), 0)
 	firstValue[0] = 99
 	first.topology.level0Neighbors[0] = NodeOrdinal(first.NodeCount() - 1)
-	if got, _ := readPreparedVector(second.VectorSource(), 0); !slices.Equal(got, []float32{0, 0}) {
+	if got, _ := readPreparedVector(second.Vectors(), 0); !slices.Equal(got, []float32{0, 0}) {
 		t.Fatalf("frozen readers share values: %v", got)
 	}
 	third, err := builder.Freeze()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := readPreparedVector(third.VectorSource(), 0); !slices.Equal(got, []float32{0, 0}) || !reflect.DeepEqual(readerTopology(t, third), readerTopology(t, second)) {
+	if got, _ := readPreparedVector(third.Vectors(), 0); !slices.Equal(got, []float32{0, 0}) || !reflect.DeepEqual(readerTopology(t, third), readerTopology(t, second)) {
 		t.Fatal("frozen reader mutation affected builder or later Freeze")
 	}
 }

@@ -14,7 +14,7 @@ func buildCompactedSegment(ctx context.Context, view *ReadView, componentID Comp
 	if err != nil {
 		return nil, nil, err
 	}
-	source, err := newInMemoryVectorSourceFromConfig(config, values)
+	source, err := newInMemoryVectorStoreFromConfig(config, values)
 	if err != nil {
 		return nil, nil, err
 	}

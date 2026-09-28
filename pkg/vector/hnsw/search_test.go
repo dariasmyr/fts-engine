@@ -38,9 +38,9 @@ func testBuildInfo() BuildInfo {
 	}
 }
 
-func newTestReader(t *testing.T, calculator vector.Calculator, config SearchConfig, graph graphData) *Searcher {
+func newTestReader(t *testing.T, calculator vector.Calculator, config SearchConfig, graph graphData) *HNSWIndex {
 	t.Helper()
-	reader, err := newSearcherFromGraph(calculator, config, testBuildInfo(), graph)
+	reader, err := newHNSWIndexFromGraph(calculator, config, testBuildInfo(), graph)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +472,7 @@ func TestSearchNilPreCancelledAndMidSearchCancellation(t *testing.T) {
 	config := testSearchConfig()
 	config.DefaultVisitLimit = neighborCount + 1
 	config.MaxVisitLimit = neighborCount + 1
-	largeReader, err := newSearcherFromGraph(space, config, BuildInfo{
+	largeReader, err := newHNSWIndexFromGraph(space, config, BuildInfo{
 		BuildVersion:          BuildVersion,
 		LevelGeneratorVersion: LevelGeneratorVersion,
 		MaxNeighbors:          128,

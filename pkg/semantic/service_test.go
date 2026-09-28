@@ -163,7 +163,7 @@ func TestServiceSearchUsesImmutableHNSWSegmentSet(t *testing.T) {
 		t.Fatalf("segments = %d, want one flushed segment", len(segments))
 	}
 	for _, segment := range segments {
-		if segment.Searcher() == nil || segment.Vectors() == nil || segment.Kind() != SegmentKindChunkHNSW {
+		if segment.Index() == nil || segment.Vectors() == nil || segment.Kind() != SegmentKindChunkHNSW {
 			t.Fatalf("segment is not HNSW-backed: %+v", segment)
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 // SegmentMetadata describes the embedding and chunking contracts of a segment.
@@ -21,12 +22,12 @@ type SegmentKind uint8
 const SegmentKindChunkHNSW SegmentKind = 1
 
 // Segment searches one immutable HNSW component. The vector source is
-// authoritative row storage and the searcher contains only navigation topology.
+// authoritative row storage and the HNSW index contains only navigation topology.
 type Segment struct {
 	component ComponentID
 	metadata  SegmentMetadata
 	rows      []VectorRow
-	searcher  *hnsw.Searcher
+	index     *hnsw.HNSWIndex
 }
 
 func (s *Segment) Kind() SegmentKind {
@@ -36,28 +37,28 @@ func (s *Segment) Kind() SegmentKind {
 	return SegmentKindChunkHNSW
 }
 
-// BuildSegment builds the target immutable semantic segment. The searcher
+// BuildSegment builds the target immutable semantic segment. The HNSW index
 // navigates source rows by local ordinal; rows resolve those ordinals to stable
 // semantic identities.
-func BuildSegment(ctx context.Context, component ComponentID, metadata SegmentMetadata, source vector.PreparedVectorSource, rows []VectorRow, options hnsw.BuildOptions) (*Segment, error) {
-	searcher, err := hnsw.BuildSearcher(ctx, source, options)
+func BuildSegment(ctx context.Context, component ComponentID, metadata SegmentMetadata, source vectorstore.PreparedVectorStore, rows []VectorRow, options hnsw.BuildOptions) (*Segment, error) {
+	index, err := hnsw.BuildIndex(ctx, source, options)
 	if err != nil {
 		return nil, err
 	}
-	return NewSegment(component, metadata, searcher, rows)
+	return NewSegment(component, metadata, index, rows)
 }
 
-// NewSegment creates an immutable semantic segment from an HNSW searcher and
+// NewSegment creates an immutable semantic segment from an HNSW index and
 // rows that resolve its local ordinals to stable semantic identities.
-func NewSegment(component ComponentID, metadata SegmentMetadata, searcher *hnsw.Searcher, rows []VectorRow) (*Segment, error) {
-	if component == 0 || searcher == nil || len(rows) != searcher.Len() {
+func NewSegment(component ComponentID, metadata SegmentMetadata, index *hnsw.HNSWIndex, rows []VectorRow) (*Segment, error) {
+	if component == 0 || index == nil || len(rows) != index.Len() {
 		return nil, ErrInvalidSegment
 	}
 	segment := &Segment{
 		component: component,
 		metadata:  metadata,
 		rows:      append([]VectorRow(nil), rows...),
-		searcher:  searcher,
+		index:     index,
 	}
 	if err := segment.validateContents(); err != nil {
 		return nil, err
@@ -94,62 +95,62 @@ func (s *Segment) rowAt(index int) (VectorRow, bool) {
 }
 
 // Vectors returns the immutable authoritative source rows.
-func (s *Segment) Vectors() vector.PreparedVectorSource {
+func (s *Segment) Vectors() vectorstore.PreparedVectorStore {
 	if s == nil {
 		return nil
 	}
-	return s.searcher.VectorSource()
+	return s.index.Vectors()
 }
 
-// Searcher returns the immutable ANN searcher used by this segment.
-func (s *Segment) Searcher() *hnsw.Searcher {
+// Index returns the immutable HNSW index used by this segment.
+func (s *Segment) Index() *hnsw.HNSWIndex {
 	if s == nil {
 		return nil
 	}
-	return s.searcher
+	return s.index
 }
 
 func (s *Segment) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
-	if s == nil || s.searcher == nil {
+	if s == nil || s.index == nil {
 		return vector.SearchResult{}, ErrInvalidSegment
 	}
-	return s.searcher.Search(ctx, query, k, options)
+	return s.index.Search(ctx, query, k, options)
 }
 
 func (s *Segment) Len() int {
-	if s == nil || s.searcher == nil {
+	if s == nil || s.index == nil {
 		return 0
 	}
-	return s.searcher.Len()
+	return s.index.Len()
 }
 
 func (s *Segment) Dimensions() int {
-	if s == nil || s.searcher == nil {
+	if s == nil || s.index == nil {
 		return 0
 	}
-	return s.searcher.Dimensions()
+	return s.index.Dimensions()
 }
 
 func (s *Segment) Metric() vector.Metric {
-	if s == nil || s.searcher == nil {
+	if s == nil || s.index == nil {
 		return 0
 	}
-	return s.searcher.Metric()
+	return s.index.Metric()
 }
 
 func (s *Segment) Normalization() vector.Normalization {
-	if s == nil || s.searcher == nil {
+	if s == nil || s.index == nil {
 		return 0
 	}
-	return s.searcher.Normalization()
+	return s.index.Normalization()
 }
 
 func (s *Segment) MaxK() int {
-	if s == nil || s.searcher == nil {
+	if s == nil || s.index == nil {
 		return 0
 	}
-	if s.searcher != nil {
-		return s.searcher.MaxK()
+	if s.index != nil {
+		return s.index.MaxK()
 	}
 	return 0
 }
@@ -204,15 +205,15 @@ func (s *Segment) Validate() error {
 }
 
 func (s *Segment) validateContents() error {
-	if s == nil || s.searcher == nil || s.searcher.VectorSource() == nil {
+	if s == nil || s.index == nil || s.index.Vectors() == nil {
 		return ErrInvalidSegment
 	}
-	vectors := s.searcher.VectorSource()
+	vectors := s.index.Vectors()
 	if !s.metadata.Embedding.IsValid() || !s.metadata.Chunking.IsValid() {
 		return ErrInvalidSegment
 	}
 	calculator, err := s.metadata.Embedding.Calculator()
-	if err != nil || s.component == 0 || len(s.rows) != vectors.Len() || s.searcher.Len() != vectors.Len() ||
+	if err != nil || s.component == 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
 		vectors.Dimensions() != calculator.Dimensions() || vectors.Metric() != calculator.Metric() ||
 		vectors.Normalization() != calculator.Normalization() {
 		return ErrInvalidSegment

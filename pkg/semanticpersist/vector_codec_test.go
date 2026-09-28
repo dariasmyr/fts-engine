@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func TestCodecRoundTripPreparedSource(t *testing.T) {
@@ -14,7 +15,7 @@ func TestCodecRoundTripPreparedSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := vector.NewMemorySource(calculator, [][]float32{{1, 2, 3}, {3, 2, 1}})
+	source, err := vectorstore.NewMemoryVectorStore(calculator, [][]float32{{1, 2, 3}, {3, 2, 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +23,7 @@ func TestCodecRoundTripPreparedSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opened, openedMetadata, err := OpenVectorSource(bytes.NewReader(data), DefaultCodecLimits())
+	opened, openedMetadata, err := OpenVectorFile(bytes.NewReader(data), DefaultCodecLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func TestCodecRejectsTruncatedAndCorruptData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := vector.NewMemorySource(calculator, [][]float32{{1, 2}})
+	source, err := vectorstore.NewMemoryVectorStore(calculator, [][]float32{{1, 2}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,12 +60,12 @@ func TestCodecRejectsTruncatedAndCorruptData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := OpenVectorSource(bytes.NewReader(data[:len(data)-1]), DefaultCodecLimits()); err == nil {
+	if _, _, err := OpenVectorFile(bytes.NewReader(data[:len(data)-1]), DefaultCodecLimits()); err == nil {
 		t.Fatal("truncated codec accepted")
 	}
 	corrupt := append([]byte(nil), data...)
 	corrupt[codecHeaderSize] ^= 0xff
-	if _, _, err := OpenVectorSource(bytes.NewReader(corrupt), DefaultCodecLimits()); !errors.Is(err, ErrCorruptSegment) {
+	if _, _, err := OpenVectorFile(bytes.NewReader(corrupt), DefaultCodecLimits()); !errors.Is(err, ErrCorruptSegment) {
 		t.Fatalf("corrupt codec error = %v", err)
 	}
 }

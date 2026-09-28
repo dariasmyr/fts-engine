@@ -7,12 +7,13 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func TestSegmentAccessorsAndSearch(t *testing.T) {
 	segment := testImmutableSegment(t)
-	if segment.Kind() != SegmentKindChunkHNSW || segment.Vectors() == nil || segment.Searcher() == nil {
-		t.Fatalf("segment accessors = kind %d, vectors %p, searcher %p", segment.Kind(), segment.Vectors(), segment.Searcher())
+	if segment.Kind() != SegmentKindChunkHNSW || segment.Vectors() == nil || segment.Index() == nil {
+		t.Fatalf("segment accessors = kind %d, vectors %p, index %p", segment.Kind(), segment.Vectors(), segment.Index())
 	}
 	result, err := segment.Search(context.Background(), []float32{0, 0}, 2, vector.SearchOptions{})
 	if err != nil {
@@ -44,7 +45,7 @@ func TestSegmentValidationRejectsDuplicateRows(t *testing.T) {
 	segment := testImmutableSegment(t)
 	rows := segment.Rows()
 	rows[1].VectorID = rows[0].VectorID
-	invalid := &Segment{component: segment.component, metadata: segment.metadata, rows: rows, searcher: segment.searcher}
+	invalid := &Segment{component: segment.component, metadata: segment.metadata, rows: rows, index: segment.index}
 	if err := invalid.Validate(); !errors.Is(err, ErrInvalidSegment) {
 		t.Fatalf("duplicate row error = %v", err)
 	}
@@ -71,7 +72,7 @@ func testImmutableSegment(t *testing.T) *Segment {
 		t.Fatal(err)
 	}
 	values := [][]float32{{0, 0}, {1, 0}, {2, 0}}
-	source, err := vector.NewMemorySource(calculator, values)
+	source, err := vectorstore.NewMemoryVectorStore(calculator, values)
 	if err != nil {
 		t.Fatal(err)
 	}

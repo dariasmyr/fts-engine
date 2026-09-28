@@ -1,19 +1,21 @@
-package vector
+package vectorstore
 
 import (
 	"context"
 	"errors"
 	"slices"
 	"testing"
+
+	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-func TestMemorySourceStoresPreparedRowsWithoutAliasing(t *testing.T) {
-	space, err := NewCalculator(2, MetricCosine)
+func TestMemoryVectorStoreStoresPreparedRowsWithoutAliasing(t *testing.T) {
+	space, err := vector.NewCalculator(2, vector.MetricCosine)
 	if err != nil {
 		t.Fatal(err)
 	}
 	input := [][]float32{{3, 4}, {0, 2}}
-	source, err := NewMemorySource(space, input)
+	source, err := NewMemoryVectorStore(space, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,12 +37,12 @@ func TestMemorySourceStoresPreparedRowsWithoutAliasing(t *testing.T) {
 	}
 }
 
-func TestPreparedMemorySourceValidatesMatrixShape(t *testing.T) {
-	space, err := NewCalculator(2, MetricL2Squared)
+func TestPreparedMemoryVectorStoreValidatesMatrixShape(t *testing.T) {
+	space, err := vector.NewCalculator(2, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewPreparedMemorySource(space, []float32{1}); !errors.Is(err, ErrDimensionMismatch) {
+	if _, err := NewPreparedMemoryVectorStore(space, []float32{1}); !errors.Is(err, vector.ErrDimensionMismatch) {
 		t.Fatalf("shape error = %v, want ErrDimensionMismatch", err)
 	}
 }

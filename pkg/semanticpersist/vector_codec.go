@@ -12,6 +12,7 @@ import (
 	"math"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 const (
@@ -68,27 +69,27 @@ type FileMetadata struct {
 	SHA256 [sha256.Size]byte
 }
 
-func Marshal(source vector.PreparedVectorSource, maxK int) ([]byte, FileMetadata, error) {
+func Marshal(source vectorstore.PreparedVectorStore, maxK int) ([]byte, FileMetadata, error) {
 	var buffer bytes.Buffer
 	metadata, err := Write(&buffer, source, maxK)
 	return buffer.Bytes(), metadata, err
 }
 
 // MarshalSource encodes any immutable prepared vector source as VFLT data.
-func MarshalSource(source vector.PreparedVectorSource, maxK int) ([]byte, FileMetadata, error) {
+func MarshalSource(source vectorstore.PreparedVectorStore, maxK int) ([]byte, FileMetadata, error) {
 	var buffer bytes.Buffer
-	metadata, err := WriteSource(&buffer, source, maxK)
+	metadata, err := WriteVectorFile(&buffer, source, maxK)
 	return buffer.Bytes(), metadata, err
 }
 
 // Write streams one immutable fixed-width matrix and its checksum.
-func Write(writer io.Writer, source vector.PreparedVectorSource, maxK int) (FileMetadata, error) {
-	return WriteSource(writer, source, maxK)
+func Write(writer io.Writer, source vectorstore.PreparedVectorStore, maxK int) (FileMetadata, error) {
+	return WriteVectorFile(writer, source, maxK)
 }
 
-// WriteSource streams an immutable prepared vector source as fixed-width VFLT
+// WriteVectorFile streams an immutable prepared vector source as fixed-width VFLT
 // data. The source remains the caller's responsibility and is not retained.
-func WriteSource(writer io.Writer, source vector.PreparedVectorSource, maxK int) (FileMetadata, error) {
+func WriteVectorFile(writer io.Writer, source vectorstore.PreparedVectorStore, maxK int) (FileMetadata, error) {
 	if writer == nil || source == nil || source.Dimensions() <= 0 || maxK <= 0 || source.Len() < 0 {
 		return FileMetadata{}, ErrCorruptSegment
 	}
@@ -161,7 +162,8 @@ func WriteSource(writer io.Writer, source vector.PreparedVectorSource, maxK int)
 	return metadata, nil
 }
 
-func OpenVectorSource(source io.Reader, limits CodecLimits) (vector.PreparedVectorSource, FileMetadata, error) {
+// OpenVectorFile validates and opens an immutable VFLT vector file.
+func OpenVectorFile(source io.Reader, limits CodecLimits) (vectorstore.PreparedVectorStore, FileMetadata, error) {
 	if source == nil {
 		return nil, FileMetadata{}, ErrCorruptSegment
 	}
@@ -184,7 +186,7 @@ func OpenVectorSource(source io.Reader, limits CodecLimits) (vector.PreparedVect
 	return reader, metadata, err
 }
 
-func openBytes(data []byte, limits CodecLimits) (vector.PreparedVectorSource, FileMetadata, error) {
+func openBytes(data []byte, limits CodecLimits) (vectorstore.PreparedVectorStore, FileMetadata, error) {
 	if len(data) < codecHeaderSize+codecFooterSize || string(data[headerMagicOffset:headerVersionOffset]) != codecMagic {
 		return nil, FileMetadata{}, ErrCorruptSegment
 	}
@@ -243,7 +245,7 @@ func openBytes(data []byte, limits CodecLimits) (vector.PreparedVectorSource, Fi
 		}
 	}
 	identity := sha256.Sum256(data)
-	prepared, err := vector.NewPreparedMemorySource(space, values)
+	prepared, err := vectorstore.NewPreparedMemoryVectorStore(space, values)
 	if err != nil {
 		return nil, FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptSegment, err)
 	}

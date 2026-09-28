@@ -10,7 +10,7 @@
 HNSW topology navigates nearest-vector candidates.
 Maps связывают известный документ с его векторами и разрешают найденные векторы обратно в chunks.
 Arrays и bitsets дают быстрый доступ внутри конкретного сегмента.
-VectorSource хранит prepared embeddings отдельно от HNSW topology.
+VectorStore хранит prepared embeddings отдельно от HNSW topology.
 ```
 
 ## Виды Доступа
@@ -36,7 +36,7 @@ VectorSource хранит prepared embeddings отдельно от HNSW topolog
 | `DeleteDocument` | Не используется | через maps находятся ordinals и публикуется новый live bitset |
 | `Search` | Используется | каждый visible HNSW segment выполняет `HNSW.Search`, затем hits merge-ятся |
 | `Compaction` | Используется Builder | из live vectors выбранных segments строится новый HNSW segment |
-| `Restart/Open` | Открывается Reader | graph загружается как immutable HNSW reader; поиск ещё не выполняется |
+| `Restart/Open` | Открывается HNSW index | graph загружается как immutable HNSW index; поиск ещё не выполняется |
 
 Самое важное:
 
@@ -93,7 +93,7 @@ flowchart LR
 
 | Данные | На диске | Runtime |
 | --- | --- | --- |
-| vectors и HNSW graph | segment files | immutable segment reader |
+| vectors и HNSW graph | segment files | immutable segment index |
 | `VectorOrdinal -> VectorID` | segment file | `segment.vectorIDs` |
 | `DocID -> current []VectorID` | `semantic-state.bin` | `currentByDoc` |
 | `VectorID -> ChunkRef` | `semantic-state.bin` | `refByVector` |
@@ -898,7 +898,7 @@ flowchart TD
 
     GEN --> MANIFEST["Read manifest"]
 
-    MANIFEST --> SEGMENTS["Open active flat/HNSW readers<br/>No search yet"]
+    MANIFEST --> SEGMENTS["Open active flat/HNSW indexes<br/>No search yet"]
     MANIFEST --> STATE["Load semantic-state.bin"]
 
     SEGMENTS --> ORDMAP["Rebuild VectorID -> segment/ordinal locations"]

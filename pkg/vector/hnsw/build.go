@@ -7,18 +7,19 @@ import (
 	"reflect"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
-// BuildSearcher constructs and freezes one HNSW searcher from prepared source rows in
+// BuildIndex constructs and freezes one HNSW index from prepared source rows in
 // stable ordinal order 0..source.Len()-1.
-func BuildSearcher(ctx context.Context, source vector.PreparedVectorSource, options BuildOptions) (*Searcher, error) {
+func BuildIndex(ctx context.Context, source vectorstore.PreparedVectorStore, options BuildOptions) (*HNSWIndex, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if source == nil || isNilPreparedVectorSource(source) {
+	if source == nil || isNilPreparedVectorStore(source) {
 		return nil, fmt.Errorf("%w: nil source", ErrBuildSourceMismatch)
 	}
 	total := source.Len()
@@ -72,7 +73,7 @@ func BuildSearcher(ctx context.Context, source vector.PreparedVectorSource, opti
 	}
 
 	reportBuildProgress(options.Progress, BuildPhaseFreeze, total, total)
-	reader, err := builder.Freeze()
+	index, err := builder.Freeze()
 	if err != nil {
 		return nil, err
 	}
@@ -80,10 +81,10 @@ func BuildSearcher(ctx context.Context, source vector.PreparedVectorSource, opti
 		return nil, err
 	}
 	reportBuildProgress(options.Progress, BuildPhaseComplete, total, total)
-	return reader, nil
+	return index, nil
 }
 
-func isNilPreparedVectorSource(source vector.PreparedVectorSource) bool {
+func isNilPreparedVectorStore(source vectorstore.PreparedVectorStore) bool {
 	value := reflect.ValueOf(source)
 	switch value.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:

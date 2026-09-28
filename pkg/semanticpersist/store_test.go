@@ -140,8 +140,8 @@ func TestPublishOpenChunkHNSWRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer loaded.Close()
-	if loaded.Sealed.Segment.Kind() != semantic.SegmentKindChunkHNSW || loaded.Sealed.Segment.Searcher() == nil {
-		t.Fatalf("opened segment = kind %d, searcher %p", loaded.Sealed.Segment.Kind(), loaded.Sealed.Segment.Searcher())
+	if loaded.Sealed.Segment.Kind() != semantic.SegmentKindChunkHNSW || loaded.Sealed.Segment.Index() == nil {
+		t.Fatalf("opened segment = kind %d, index %p", loaded.Sealed.Segment.Kind(), loaded.Sealed.Segment.Index())
 	}
 	view, err := semantic.NewReadView(loaded.Generation.ID, []*semantic.Segment{loaded.Sealed.Segment}, semantic.SearchPolicy{MaxK: 10, MaxChunkCandidates: 20, MaxChunksPerDocumentHit: 3})
 	if err != nil {
@@ -565,10 +565,10 @@ func TestHNSWSearchWorkLimits(t *testing.T) {
 
 	for name, limit := range map[string]func(*Limits){
 		"ef search": func(limits *Limits) {
-			limits.MaxEfSearch = checkpoint.Segment.Searcher().SearchConfig().MaxEfSearch - 1
+			limits.MaxEfSearch = checkpoint.Segment.Index().SearchConfig().MaxEfSearch - 1
 		},
 		"visit limit": func(limits *Limits) {
-			limits.MaxVisitLimit = checkpoint.Segment.Searcher().SearchConfig().MaxVisitLimit - 1
+			limits.MaxVisitLimit = checkpoint.Segment.Index().SearchConfig().MaxVisitLimit - 1
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -789,7 +789,7 @@ func persistenceFixture(t testing.TB, extra bool) (SealedSegment, chunkExpectati
 func withHNSW(t testing.TB, checkpoint SealedSegment, seed uint64) SealedSegment {
 	t.Helper()
 	maxK := max(checkpoint.MaxK, checkpoint.MaxChunkCandidates)
-	graph, err := hnsw.BuildSearcher(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
+	graph, err := hnsw.BuildIndex(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
 		BuildConfig: hnsw.BuildConfig{
 			Dimensions: checkpoint.Segment.Metadata().Embedding.Dimensions, Metric: checkpoint.Segment.Metadata().Embedding.Metric,
 			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Segment.Metadata().Embedding.Dimensions * 4),
@@ -824,7 +824,7 @@ func substituteGraphAndReferences(t *testing.T, root string, generation Generati
 		t.Fatal(err)
 	}
 	replacement := withHNSW(t, checkpoint, 99)
-	graphData, _, err := hnsw.MarshalGraph(replacement.Segment.Searcher(), hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256})
+	graphData, _, err := hnsw.MarshalGraph(replacement.Segment.Index(), hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256})
 	if err != nil {
 		t.Fatal(err)
 	}
