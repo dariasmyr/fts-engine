@@ -6,7 +6,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/dariasmyr/fts-engine/pkg/persist"
+	"github.com/dariasmyr/fts-engine/internal/persist"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 )
 

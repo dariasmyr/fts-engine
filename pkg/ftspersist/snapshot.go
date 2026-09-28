@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
+	"github.com/dariasmyr/fts-engine/internal/persist"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/persist"
 )
 
 type SaveOptions struct {

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dariasmyr/fts-engine/pkg/fnv"
+	"github.com/dariasmyr/fts-engine/internal/fnv"
 )
 
 const (

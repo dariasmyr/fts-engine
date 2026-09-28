@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/contextcheck"
 )
 
 func Search(ctx context.Context, calculator vector.Calculator, matrix []float32, maxK int, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {

@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/dariasmyr/fts-engine/internal/persist"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/persist"
 	"github.com/dariasmyr/fts-engine/pkg/segment"
 )
 
