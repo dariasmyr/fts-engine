@@ -559,6 +559,25 @@ func TestPublishPreflightsLimitsBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestPublishRejectsUnusableSearchPolicy(t *testing.T) {
+	for _, name := range []string{"zero policy", "candidate budget exceeds index"} {
+		t.Run(name, func(t *testing.T) {
+			checkpoint, _, _ := persistenceFixture(t, false)
+			checkpoint = withHNSW(t, checkpoint, 7)
+			if name == "zero policy" {
+				checkpoint.MaxK = 0
+				checkpoint.MaxChunkCandidates = 0
+				checkpoint.MaxChunksPerDocumentHit = 0
+			} else {
+				checkpoint.MaxChunkCandidates = checkpoint.Segment.Index().MaxK() + 1
+			}
+			if _, err := Publish(context.Background(), t.TempDir(), 1, checkpoint, Options{}); !errors.Is(err, ErrLimitExceeded) {
+				t.Fatalf("Publish() error = %v, want %v", err, ErrLimitExceeded)
+			}
+		})
+	}
+}
+
 func TestHNSWSearchWorkLimits(t *testing.T) {
 	checkpoint, _, _ := persistenceFixture(t, false)
 	checkpoint = withHNSW(t, checkpoint, 7)

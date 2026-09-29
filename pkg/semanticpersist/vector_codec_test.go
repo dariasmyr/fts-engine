@@ -69,3 +69,20 @@ func TestCodecRejectsTruncatedAndCorruptData(t *testing.T) {
 		t.Fatalf("corrupt codec error = %v", err)
 	}
 }
+
+func TestWriteVectorFileContextStopsBeforeReading(t *testing.T) {
+	calculator, err := vector.NewCalculator(1, vector.MetricL2Squared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := vectorstore.NewMemoryVectorStore(calculator, [][]float32{{1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = WriteVectorFileContext(ctx, &bytes.Buffer{}, source, 1)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("WriteVectorFileContext() = %v, want context.Canceled", err)
+	}
+}

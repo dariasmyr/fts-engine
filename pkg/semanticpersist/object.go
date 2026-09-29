@@ -33,7 +33,7 @@ func writeSegmentObject(ctx context.Context, paths storePaths, sealed SealedSegm
 	if err := beforeStep(ctx, options, StepWriteVectors); err != nil {
 		return segmentObject{}, err
 	}
-	vectorsRef, err := writeVectorsFile(filepath.Join(segmentTemp, vectorsFileName), sealed.Segment.Vectors(), sealed.Segment.MaxK(), options.Durability)
+	vectorsRef, err := writeVectorsFile(ctx, filepath.Join(segmentTemp, vectorsFileName), sealed.Segment.Vectors(), sealed.Segment.MaxK(), options.Durability)
 	if err != nil {
 		return segmentObject{}, err
 	}
@@ -109,12 +109,12 @@ func writeSegmentObject(ctx context.Context, paths storePaths, sealed SealedSegm
 	return segmentObject{ID: objectID, Vectors: vectorsRef, Graph: graphRef}, nil
 }
 
-func writeVectorsFile(path string, source vectorstore.PreparedVectorStore, maxK int, durability DurabilityMode) (fileReference, error) {
+func writeVectorsFile(ctx context.Context, path string, source vectorstore.PreparedVectorStore, maxK int, durability DurabilityMode) (fileReference, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fileReference{}, err
 	}
-	metadata, writeErr := WriteVectorFile(file, source, maxK)
+	metadata, writeErr := WriteVectorFileContext(ctx, file, source, maxK)
 	if writeErr == nil && durability == DurabilitySynchronous {
 		writeErr = file.Sync()
 	}

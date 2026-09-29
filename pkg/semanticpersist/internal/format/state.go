@@ -11,6 +11,8 @@ import (
 
 const stateVersion = uint16(6)
 
+const minimumRowBytes = 32
+
 // State is the decoded SSTA payload.
 type State struct {
 	Embedding               semantic.EmbeddingDescriptor
@@ -24,9 +26,12 @@ type State struct {
 }
 
 func EncodeState(value State, limits Limits) ([]byte, FileReference, error) {
-	if len(value.Rows) > limits.MaxVectors || value.MaxK > limits.MaxK || value.MaxChunkCandidates > limits.MaxVectors ||
+	if len(value.Rows) > limits.MaxVectors || value.MaxK <= 0 || value.MaxK > limits.MaxK || value.MaxChunkCandidates < value.MaxK || value.MaxChunkCandidates > limits.MaxVectors || value.MaxChunksPerDocumentHit <= 0 ||
 		uint64(value.MaxK) > math.MaxUint32 || uint64(value.MaxChunkCandidates) > math.MaxUint32 || uint64(value.MaxChunksPerDocumentHit) > math.MaxUint32 {
 		return nil, FileReference{}, ErrLimitExceeded
+	}
+	if len(value.Rows) > 0 && value.MaxAllocatedVectorID < value.Rows[len(value.Rows)-1].VectorID {
+		return nil, FileReference{}, ErrCorrupt
 	}
 	calculator, err := value.Embedding.Calculator()
 	if err != nil {
@@ -81,7 +86,7 @@ func DecodeState(data []byte, limits Limits) (State, error) {
 		return State{}, ErrCorrupt
 	}
 	refCount := int(d.u32())
-	if refCount > limits.MaxVectors || refCount > d.remaining()/40 {
+	if refCount > limits.MaxVectors || refCount > d.remaining()/minimumRowBytes {
 		return State{}, ErrLimitExceeded
 	}
 	value.Rows = make([]semantic.VectorRow, refCount)
@@ -102,6 +107,9 @@ func DecodeState(data []byte, limits Limits) (State, error) {
 		if documentChunks[docID] > limits.MaxChunksPerDocument {
 			return State{}, ErrLimitExceeded
 		}
+	}
+	if len(value.Rows) > 0 && value.MaxAllocatedVectorID < value.Rows[len(value.Rows)-1].VectorID {
+		return State{}, ErrCorrupt
 	}
 	if err := d.done(); err != nil {
 		return State{}, err

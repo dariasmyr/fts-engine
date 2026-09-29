@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -182,7 +183,9 @@ func validateSealedSegment(sealed SealedSegment, limits Limits) error {
 	if sealed.Segment == nil || sealed.Segment.Vectors() == nil ||
 		sealed.Segment.Dimensions() > limits.MaxDimensions || sealed.Segment.Len() > limits.MaxVectors ||
 		sealed.Segment.MaxK() > limits.MaxK || sealed.Segment.Len() > limits.MaxVectors ||
-		sealed.MaxK > limits.MaxK || sealed.MaxChunkCandidates > limits.MaxK {
+		sealed.MaxK <= 0 || sealed.MaxK > limits.MaxK || sealed.MaxK > sealed.Segment.MaxK() ||
+		sealed.MaxChunkCandidates < sealed.MaxK || sealed.MaxChunkCandidates > limits.MaxK || sealed.MaxChunkCandidates > sealed.Segment.MaxK() ||
+		sealed.MaxChunksPerDocumentHit <= 0 || sealed.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
 		return ErrLimitExceeded
 	}
 	if err := sealed.Segment.Validate(); err != nil {
@@ -272,6 +275,9 @@ func validateOpenReferences(manifestData []byte, value manifest, limits Limits) 
 }
 
 func readRegularFile(path string, limit uint64) ([]byte, error) {
+	if limit >= math.MaxInt64 {
+		return nil, ErrLimitExceeded
+	}
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -287,9 +293,12 @@ func readRegularFile(path string, limit uint64) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(file)
+	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	if err != nil {
 		return nil, fmt.Errorf("semanticpersist: read: %w", err)
+	}
+	if uint64(len(data)) > limit {
+		return nil, ErrLimitExceeded
 	}
 	return data, nil
 }
@@ -313,7 +322,7 @@ func readReferencedFile(path string, reference fileReference, limit uint64) ([]b
 		return nil, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(file)
+	data, err := io.ReadAll(io.LimitReader(file, int64(reference.Size)+1))
 	if err != nil {
 		return nil, err
 	}

@@ -62,7 +62,7 @@ func SaveSealedSegment(ctx context.Context, paths SegmentPaths, sealed SealedSeg
 		}
 	}()
 
-	vectorsRef, err := writeVectorsFile(filepath.Join(temp, segmentVectorsFile), sealed.Segment.Vectors(), sealed.Segment.MaxK(), options.Durability)
+	vectorsRef, err := writeVectorsFile(ctx, filepath.Join(temp, segmentVectorsFile), sealed.Segment.Vectors(), sealed.Segment.MaxK(), options.Durability)
 	if err != nil {
 		return err
 	}

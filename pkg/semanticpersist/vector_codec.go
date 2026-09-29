@@ -90,6 +90,14 @@ func Write(writer io.Writer, source vectorstore.PreparedVectorStore, maxK int) (
 // WriteVectorFile streams an immutable prepared vector source as fixed-width VFLT
 // data. The source remains the caller's responsibility and is not retained.
 func WriteVectorFile(writer io.Writer, source vectorstore.PreparedVectorStore, maxK int) (FileMetadata, error) {
+	return WriteVectorFileContext(context.Background(), writer, source, maxK)
+}
+
+// WriteVectorFileContext is the context-aware form of WriteVectorFile.
+func WriteVectorFileContext(ctx context.Context, writer io.Writer, source vectorstore.PreparedVectorStore, maxK int) (FileMetadata, error) {
+	if ctx == nil {
+		return FileMetadata{}, vector.ErrNilContext
+	}
 	if writer == nil || source == nil || source.Dimensions() <= 0 || maxK <= 0 || source.Len() < 0 {
 		return FileMetadata{}, ErrCorruptSegment
 	}
@@ -110,10 +118,16 @@ func WriteVectorFile(writer io.Writer, source vectorstore.PreparedVectorStore, m
 	}
 	scratch := make([]float32, source.Dimensions())
 	for row := range source.Len() {
+		if err := ctx.Err(); err != nil {
+			return FileMetadata{}, err
+		}
 		for i := range scratch {
 			scratch[i] = float32(math.NaN())
 		}
-		if err := source.ReadVectorInto(context.Background(), vector.Ordinal(row), scratch); err != nil {
+		if err := source.ReadVectorInto(ctx, vector.Ordinal(row), scratch); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return FileMetadata{}, err
+			}
 			return FileMetadata{}, fmt.Errorf("%w: row %d: %v", ErrCorruptSegment, row, err)
 		}
 		if err := validatePreparedRow(space, scratch); err != nil {
@@ -140,7 +154,13 @@ func WriteVectorFile(writer io.Writer, source vectorstore.PreparedVectorStore, m
 	rowBytes := source.Dimensions() * float32ByteSize
 	buffer := make([]byte, rowBytes)
 	for row := range source.Len() {
-		if err := source.ReadVectorInto(context.Background(), vector.Ordinal(row), scratch); err != nil {
+		if err := ctx.Err(); err != nil {
+			return FileMetadata{}, err
+		}
+		if err := source.ReadVectorInto(ctx, vector.Ordinal(row), scratch); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return FileMetadata{}, err
+			}
 			return FileMetadata{}, fmt.Errorf("%w: row %d: %v", ErrCorruptSegment, row, err)
 		}
 		encoded := buffer[:rowBytes]

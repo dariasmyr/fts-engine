@@ -42,10 +42,10 @@ step. Readers continue using the previous generation until that replacement.
 
 ## Shared Codec
 
-`internal/format` contains only bounded binary framing primitives: headers,
-little-endian values, strings, limits, and decoder errors. The VHNG wire format
-itself is implemented by the HNSW package's internal VHNG format codec, which
-exposes DTOs instead of
-depending on HNSW's private topology. Neither package knows about generations
-or semantic metadata. Each format retains its own magic, version, validation,
-and payload schema.
+`internal/format` contains only checksum helpers shared by semantic persistence
+and the HNSW package. The semantic persistence framing and state codecs live in
+`pkg/semanticpersist/internal/format`. The VHNG wire format itself is
+implemented by the HNSW package's internal VHNG format codec, which exposes
+DTOs instead of depending on HNSW's private topology. Neither package knows
+about generations or semantic metadata. Each format retains its own magic,
+version, validation, and payload schema.
