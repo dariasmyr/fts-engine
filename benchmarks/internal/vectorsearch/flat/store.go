@@ -8,7 +8,6 @@ import (
 	"math"
 	"slices"
 
-	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
@@ -99,7 +98,7 @@ func (s *VectorStore) ExactDuplicateStatsContext(ctx context.Context, namespace 
 	groups := make([]*group, 0, s.Len())
 	var encoded [4]byte
 	for row := range s.Len() {
-		if err := contextcheck.PeriodicError(ctx, row); err != nil {
+		if err := periodicContextError(ctx, row); err != nil {
 			return DuplicateStats{}, err
 		}
 		vectorValue, _ := s.vectorView(vector.Ordinal(row))

@@ -25,12 +25,12 @@ func BenchmarkBuildPreparedSource(b *testing.B) {
 				}
 			}
 			flatIndex := benchmarkFlatIndex(b, values, vector.MetricL2Squared)
-			options := hnsw.BuildOptions{BuildConfig: benchmarkBuildConfig(dimensions, rows, vector.MetricL2Squared), SearchConfig: benchmarkSearchConfig(rows)}
+			options := hnsw.BuildOptions{Build: benchmarkBuildConfig(dimensions, rows, vector.MetricL2Squared), Search: benchmarkSearchConfig(rows)}
 			b.ReportAllocs()
 			b.SetBytes(int64(rows * dimensions * 4))
 			b.ResetTimer()
 			for b.Loop() {
-				if _, err := hnsw.BuildIndex(context.Background(), flatIndex.Vectors(), options); err != nil {
+				if _, err := hnsw.Build(context.Background(), flatIndex.Vectors(), options); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -38,7 +38,7 @@ func BenchmarkBuildPreparedSource(b *testing.B) {
 	}
 }
 
-func BenchmarkOpenGraphFile(b *testing.B) {
+func BenchmarkOpenGraph(b *testing.B) {
 	const rows, dimensions = 10_000, 32
 	values := make([][]float32, rows)
 	for row := range values {
@@ -54,16 +54,17 @@ func BenchmarkOpenGraphFile(b *testing.B) {
 		b.Fatal(err)
 	}
 	reference := hnsw.VectorFileReference{Size: vectorMetadata.Size, SHA256: vectorMetadata.SHA256}
-	graphData, _, err := hnsw.MarshalGraph(reader, reference)
+	var graphData bytes.Buffer
+	_, err = hnsw.WriteGraph(context.Background(), &graphData, reader, reference)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	b.ReportAllocs()
-	b.SetBytes(int64(len(graphData)))
+	b.SetBytes(int64(graphData.Len()))
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, err := hnsw.OpenGraphFileContext(context.Background(), bytes.NewReader(graphData), flatIndex.Vectors(), reference, hnsw.DefaultGraphLimits()); err != nil {
+		if _, _, err := hnsw.OpenGraph(context.Background(), bytes.NewReader(graphData.Bytes()), flatIndex.Vectors(), reference, hnsw.DefaultGraphLimits()); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -120,10 +121,10 @@ func benchmarkFlatIndex(t testing.TB, values [][]float32, metric vector.Metric) 
 	return index.Freeze()
 }
 
-func benchmarkBuild(t testing.TB, source vectorstore.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.HNSWIndex {
+func benchmarkBuild(t testing.TB, source vectorstore.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.Index {
 	t.Helper()
-	reader, err := hnsw.BuildIndex(context.Background(), source, hnsw.BuildOptions{
-		BuildConfig: benchmarkBuildConfig(dimensions, count, metric), SearchConfig: benchmarkSearchConfig(count),
+	reader, err := hnsw.Build(context.Background(), source, hnsw.BuildOptions{
+		Build: benchmarkBuildConfig(dimensions, count, metric), Search: benchmarkSearchConfig(count),
 	})
 	if err != nil {
 		t.Fatal(err)

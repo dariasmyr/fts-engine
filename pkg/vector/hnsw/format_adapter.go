@@ -13,7 +13,7 @@ func fileMetadata(metadata vhng.Metadata) FileMetadata {
 	return FileMetadata{Size: metadata.Size, CRC32: metadata.CRC32, SHA256: metadata.SHA256}
 }
 
-func graphToFormat(reader *HNSWIndex, vectors VectorFileReference) vhng.Graph {
+func graphToFormat(reader *Index, vectors VectorFileReference) vhng.Graph {
 	levels := append([]uint8(nil), reader.topology.levels...)
 	maxLevel := uint8(0xff)
 	if reader.Len() != 0 {
@@ -25,7 +25,7 @@ func graphToFormat(reader *HNSWIndex, vectors VectorFileReference) vhng.Graph {
 		}
 	}
 	return vhng.Graph{
-		Dimensions: uint32(reader.Dimensions()), Metric: uint8(reader.Metric()), Normalization: uint8(reader.Normalization()), HasEntry: reader.topology.hasEntry, Entry: uint32(reader.topology.entry), MaxLevel: maxLevel,
+		Dimensions: uint32(reader.Dimensions()), Metric: uint8(reader.Metric()), Normalization: uint8(reader.topology.calculator.Normalization()), HasEntry: reader.topology.hasEntry, Entry: uint32(reader.topology.entry), MaxLevel: maxLevel,
 		Search:  vhng.SearchConfig{DefaultEfSearch: uint32(reader.topology.searchConfig.DefaultEfSearch), MaxEfSearch: uint32(reader.topology.searchConfig.MaxEfSearch), DefaultVisitLimit: uint32(reader.topology.searchConfig.DefaultVisitLimit), MaxVisitLimit: uint32(reader.topology.searchConfig.MaxVisitLimit), MaxK: uint32(reader.topology.searchConfig.MaxK)},
 		Build:   vhng.BuildInfo{BuildVersion: reader.topology.buildInfo.BuildVersion, LevelGeneratorVersion: reader.topology.buildInfo.LevelGeneratorVersion, MaxNeighbors: uint32(reader.topology.buildInfo.MaxNeighbors), LevelZeroMaxNeighbors: uint32(reader.topology.buildInfo.LevelZeroMaxNeighbors), EfConstruction: uint32(reader.topology.buildInfo.EfConstruction), Seed: reader.topology.buildInfo.Seed},
 		Vectors: vhng.Reference{Size: vectors.Size, SHA256: vectors.SHA256}, NodeToVector: toUint32s(reader.topology.nodeToVector), Levels: levels,
@@ -37,7 +37,7 @@ func formatLimits(limits GraphLimits) vhng.Limits {
 	return vhng.Limits{MaxGraphBytes: limits.MaxGraphBytes, MaxVectors: uint64(limits.MaxVectors), MaxLinks: limits.MaxLinks, MaxDimensions: uint64(limits.MaxDimensions), MaxLevel: uint64(limits.MaxLevel)}
 }
 
-func indexFromFormat(ctx context.Context, graph vhng.Graph, vectors vectorstore.PreparedVectorStore, limits GraphLimits) (*HNSWIndex, error) {
+func indexFromFormat(ctx context.Context, graph vhng.Graph, vectors vectorstore.PreparedVectorStore, limits GraphLimits) (*Index, error) {
 	dimensions := int(graph.Dimensions)
 	metric := vector.Metric(graph.Metric)
 	normalization := vector.Normalization(graph.Normalization)
@@ -64,8 +64,8 @@ func indexFromFormat(ctx context.Context, graph vhng.Graph, vectors vectorstore.
 	if !ok || !bytesOK || vectorBytes > limits.MaxVectorBytes {
 		return nil, ErrGraphLimitExceeded
 	}
-	reader := &HNSWIndex{topology: topology{calculator: calculator, searchConfig: searchConfig, buildInfo: buildInfo, nodeToVector: toOrdinals(graph.NodeToVector), levels: append([]uint8(nil), graph.Levels...), level0Offsets: append([]uint32(nil), graph.Level0Offsets...), level0Neighbors: toNodeOrdinals(graph.Level0Links), upperNodeOffsets: append([]uint32(nil), graph.UpperNodeOffsets...), upperLinkOffsets: append([]uint32(nil), graph.UpperLinkOffsets...), upperNeighbors: toNodeOrdinals(graph.UpperLinks)}, vectors: vectors}
-	reader.topology.hasEntry, reader.topology.entry = graph.HasEntry, NodeOrdinal(graph.Entry)
+	reader := &Index{topology: topology{calculator: calculator, searchConfig: searchConfig, buildInfo: buildInfo, nodeToVector: toOrdinals(graph.NodeToVector), levels: append([]uint8(nil), graph.Levels...), level0Offsets: append([]uint32(nil), graph.Level0Offsets...), level0Neighbors: toNodeOrdinals(graph.Level0Links), upperNodeOffsets: append([]uint32(nil), graph.UpperNodeOffsets...), upperLinkOffsets: append([]uint32(nil), graph.UpperLinkOffsets...), upperNeighbors: toNodeOrdinals(graph.UpperLinks)}, vectors: vectors, workspaces: newSearchWorkspacePool()}
+	reader.topology.hasEntry, reader.topology.entry = graph.HasEntry, nodeOrdinal(graph.Entry)
 	stats, err := validatePackedTopologyContext(ctx, reader)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -82,7 +82,7 @@ func indexFromFormat(ctx context.Context, graph vhng.Graph, vectors vectorstore.
 	if vectors.Len() != reader.Len() || vectors.Dimensions() != dimensions || vectors.Metric() != metric || vectors.Normalization() != normalization {
 		return nil, ErrGraphVectorStore
 	}
-	if err := validateHNSWIndexVectorsContext(ctx, reader); err != nil {
+	if err := validateIndexVectorsContext(ctx, reader); err != nil {
 		return nil, err
 	}
 	reader.topology.stats, reader.topology.validated = cloneGraphStats(stats), true
@@ -117,10 +117,10 @@ func toOrdinals(values []uint32) []vector.Ordinal {
 	}
 	return result
 }
-func toNodeOrdinals(values []uint32) []NodeOrdinal {
-	result := make([]NodeOrdinal, len(values))
+func toNodeOrdinals(values []uint32) []nodeOrdinal {
+	result := make([]nodeOrdinal, len(values))
 	for i, value := range values {
-		result[i] = NodeOrdinal(value)
+		result[i] = nodeOrdinal(value)
 	}
 	return result
 }

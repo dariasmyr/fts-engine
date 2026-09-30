@@ -19,8 +19,8 @@ func buildCompactedSegment(ctx context.Context, view *ReadView, componentID Comp
 		return nil, nil, err
 	}
 	segment, err := BuildSegment(ctx, componentID, SegmentMetadata{Embedding: config.Embedding, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
-		BuildConfig:  withBuildCapacity(config.HNSWBuild, len(rows)),
-		SearchConfig: config.HNSWSearch,
+		Build:  withBuildCapacity(config.HNSWBuild, len(rows)),
+		Search: config.HNSWSearch,
 	})
 	if err != nil {
 		return nil, nil, err

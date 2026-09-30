@@ -1,7 +1,6 @@
 package hnsw
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -64,19 +63,22 @@ type FileMetadata struct {
 	SHA256 [32]byte
 }
 
-func MarshalGraph(index *HNSWIndex, vectors VectorFileReference) ([]byte, FileMetadata, error) {
-	var buffer bytes.Buffer
-	metadata, err := WriteGraphFile(&buffer, index, vectors)
-	return buffer.Bytes(), metadata, err
-}
-
-// WriteGraphFile writes exact packed topology and configuration. Vector values are
+// WriteGraph writes exact packed topology and configuration. Vector values are
 // not included; vectors identifies their authoritative separate file.
-func WriteGraphFile(writer io.Writer, index *HNSWIndex, vectors VectorFileReference) (FileMetadata, error) {
+func WriteGraph(ctx context.Context, writer io.Writer, index *Index, vectors VectorFileReference) (FileMetadata, error) {
+	if ctx == nil {
+		return FileMetadata{}, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return FileMetadata{}, err
+	}
 	if writer == nil || index == nil || !validVectorFileReference(vectors) {
 		return FileMetadata{}, ErrCorruptGraphData
 	}
-	if _, err := validatePackedTopology(index); err != nil {
+	if _, err := validatePackedTopologyContext(ctx, index); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return FileMetadata{}, err
+		}
 		return FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptGraphData, err)
 	}
 	if err := index.topology.searchConfig.validate(); err != nil {
@@ -88,25 +90,19 @@ func WriteGraphFile(writer io.Writer, index *HNSWIndex, vectors VectorFileRefere
 	if !indexConfigEncodable(index) {
 		return FileMetadata{}, ErrGraphLimitExceeded
 	}
-	if err := validateHNSWIndexVectors(index); err != nil {
+	if err := validateIndexVectorsContext(ctx, index); err != nil {
 		return FileMetadata{}, err
 	}
-	metadata, err := vhng.Encode(writer, graphToFormat(index, vectors))
+	metadata, err := vhng.Encode(contextWriter{ctx: ctx, writer: writer}, graphToFormat(index, vectors))
 	if err != nil {
 		return FileMetadata{}, mapFormatError(err)
 	}
 	return fileMetadata(metadata), nil
 }
 
-// OpenGraphFile validates a graph file and its vector-file binding, then opens
-// an immutable HNSW index.
-func OpenGraphFile(source io.Reader, vectors vectorstore.PreparedVectorStore, vectorFile VectorFileReference, limits GraphLimits) (*HNSWIndex, FileMetadata, error) {
-	return OpenGraphFileContext(context.Background(), source, vectors, vectorFile, limits)
-}
-
-// OpenGraphFileContext is OpenGraphFile with cancellation for reads,
-// decoding, validation, and vector access.
-func OpenGraphFileContext(ctx context.Context, source io.Reader, vectors vectorstore.PreparedVectorStore, vectorFile VectorFileReference, limits GraphLimits) (*HNSWIndex, FileMetadata, error) {
+// OpenGraph validates a graph stream and its vector-file binding, then opens an
+// immutable HNSW index.
+func OpenGraph(ctx context.Context, source io.Reader, vectors vectorstore.PreparedVectorStore, vectorFile VectorFileReference, limits GraphLimits) (*Index, FileMetadata, error) {
 	if ctx == nil {
 		return nil, FileMetadata{}, vector.ErrNilContext
 	}
@@ -135,4 +131,16 @@ func OpenGraphFileContext(ctx context.Context, source io.Reader, vectors vectors
 		return nil, FileMetadata{}, err
 	}
 	return index, fileMetadata(metadata), nil
+}
+
+type contextWriter struct {
+	ctx    context.Context
+	writer io.Writer
+}
+
+func (w contextWriter) Write(p []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return w.writer.Write(p)
 }

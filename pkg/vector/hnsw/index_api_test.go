@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func TestPreparedReadersReadVectorInto(t *testing.T) {
 	flatReader := testFlatReader(t, [][]float32{{1, 2}, {3, 4}}, vector.MetricL2Squared)
-	hnswReader := testBuild(t, flatReader, 2, 2, vector.MetricL2Squared)
-	for name, source := range map[string]vectorstore.PreparedVectorStore{"flat": flatReader, "hnsw source": hnswReader.Vectors()} {
+	for name, source := range map[string]vectorstore.PreparedVectorStore{"flat": flatReader} {
 		t.Run(name, func(t *testing.T) {
 			dst := []float32{9, 9}
 			if err := source.ReadVectorInto(context.Background(), 1, dst); err != nil || !slices.Equal(dst, []float32{3, 4}) {
@@ -40,15 +40,68 @@ func TestPreparedReadersReadVectorInto(t *testing.T) {
 func TestReaderReportAccessors(t *testing.T) {
 	flatReader := testFlatReader(t, [][]float32{{0, 0}, {1, 0}, {2, 0}}, vector.MetricL2Squared)
 	reader := testBuild(t, flatReader, 2, 3, vector.MetricL2Squared)
-	if reader.SearchConfig() != testSearchConfig(3) {
-		t.Fatalf("search config = %+v", reader.SearchConfig())
+	report := reader.Report()
+	if report.Search != testSearchConfig(3) {
+		t.Fatalf("search config = %+v", report.Search)
 	}
-	storage := reader.StorageStats()
-	graph := reader.GraphStats()
+	storage := report.Storage
+	graph := report.Graph
 	if storage.VectorRows != 3 || storage.GraphNodes != 3 || storage.LevelPlacements != sumInts(graph.LevelNodeCounts) ||
 		storage.DirectedLinks != sumInts(graph.LevelLinkCounts) || storage.VectorBytes != 24 || storage.TotalBytes == 0 {
 		t.Fatalf("storage stats = %+v, graph = %+v", storage, graph)
 	}
+}
+
+func TestIndexValidateSource(t *testing.T) {
+	source := testFlatReader(t, [][]float32{{1, 2}, {3, 4}}, vector.MetricL2Squared)
+	index := testBuild(t, source, 2, 2, vector.MetricL2Squared)
+	if err := index.ValidateSource(context.Background(), source); err != nil {
+		t.Fatal(err)
+	}
+	equal := testFlatReader(t, [][]float32{{1, 2}, {3, 4}}, vector.MetricL2Squared)
+	if err := index.ValidateSource(context.Background(), equal); err != nil {
+		t.Fatalf("equal source error = %v", err)
+	}
+	different := testFlatReader(t, [][]float32{{1, 2}, {3, 5}}, vector.MetricL2Squared)
+	if err := index.ValidateSource(context.Background(), different); !errors.Is(err, hnsw.ErrBuildSourceMismatch) {
+		t.Fatalf("different source error = %v", err)
+	}
+	if err := index.ValidateSource(nil, source); !errors.Is(err, vector.ErrNilContext) {
+		t.Fatalf("nil context error = %v", err)
+	}
+}
+
+func TestIndexValidateSourceWithNonComparableValueStore(t *testing.T) {
+	calculator, err := vector.NewCalculator(2, vector.MetricL2Squared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := valuePreparedStore{
+		calculator: calculator,
+		rows:       any([][]float32{{1, 2}, {3, 4}}),
+	}
+	index := testBuild(t, source, 2, source.Len(), vector.MetricL2Squared)
+	if err := index.ValidateSource(context.Background(), source); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type valuePreparedStore struct {
+	calculator vector.Calculator
+	rows       any
+}
+
+func (s valuePreparedStore) Len() int                            { return len(s.rows.([][]float32)) }
+func (s valuePreparedStore) Dimensions() int                     { return s.calculator.Dimensions() }
+func (s valuePreparedStore) Metric() vector.Metric               { return s.calculator.Metric() }
+func (s valuePreparedStore) Normalization() vector.Normalization { return s.calculator.Normalization() }
+
+func (s valuePreparedStore) ReadVectorInto(ctx context.Context, ordinal vector.Ordinal, dst []float32) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	copy(dst, s.rows.([][]float32)[ordinal])
+	return nil
 }
 
 func sumInts(values []int) int {

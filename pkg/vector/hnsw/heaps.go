@@ -77,7 +77,11 @@ type resultHeap struct {
 }
 
 func newResultHeap(capacity int) resultHeap {
-	return resultHeap{items: make([]searchCandidate, 0, capacity), capacity: capacity}
+	return newResultHeapWithBuffer(capacity, nil)
+}
+
+func newResultHeapWithBuffer(capacity int, buffer []searchCandidate) resultHeap {
+	return resultHeap{items: resetSearchCandidates(buffer, capacity), capacity: capacity}
 }
 
 func (h *resultHeap) Len() int { return len(h.items) }

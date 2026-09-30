@@ -164,15 +164,16 @@ func newSemanticPersistenceBenchmarkFixture(tb testing.TB, rows, dimensions int)
 	}
 
 	maxK := min(10, rows)
-	index, err := hnsw.BuildIndex(context.Background(), source, hnsw.BuildOptions{
-		BuildConfig: hnsw.BuildConfig{
+	segmentMaxK := min(100, rows)
+	index, err := hnsw.Build(context.Background(), source, hnsw.BuildOptions{
+		Build: hnsw.BuildConfig{
 			Dimensions: dimensions, Metric: vector.MetricL2Squared,
 			MaxVectors: rows, MaxVectorBytes: uint64(rows * dimensions * 4),
 			MaxNeighbors: 4, EfConstruction: 32, Seed: 17,
 		},
-		SearchConfig: hnsw.SearchConfig{
+		Search: hnsw.SearchConfig{
 			DefaultEfSearch: min(64, rows), MaxEfSearch: rows,
-			DefaultVisitLimit: rows, MaxVisitLimit: rows, MaxK: maxK,
+			DefaultVisitLimit: rows, MaxVisitLimit: rows, MaxK: segmentMaxK,
 		},
 	})
 	if err != nil {
@@ -198,10 +199,10 @@ func newSemanticPersistenceBenchmarkFixture(tb testing.TB, rows, dimensions int)
 			},
 		}
 	}
-	segment, err := semantic.NewSegment(2, semantic.SegmentMetadata{
+	segment, err := semantic.NewSegment(context.Background(), 2, semantic.SegmentMetadata{
 		Embedding: embedding,
 		Chunking:  semantic.ChunkingDescriptor{ID: "benchmark-chunks", Version: 1, Fingerprint: "benchmark-chunks-v1"},
-	}, index, rowsMetadata)
+	}, source, index, rowsMetadata)
 	if err != nil {
 		tb.Fatal(err)
 	}

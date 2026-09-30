@@ -7,7 +7,8 @@ import (
 )
 
 // PreparedVectorStore provides immutable prepared vector rows by ordinal.
-// Implementations must fill the destination completely and must not retain it.
+// Implementations must support concurrent reads, fill the destination
+// completely, and not retain it.
 type PreparedVectorStore interface {
 	Len() int
 	Dimensions() int

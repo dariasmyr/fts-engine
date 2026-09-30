@@ -295,7 +295,7 @@ func TestQualityGateSmokeRunner(t *testing.T) {
 	}
 }
 
-func TestShuffledBuildPreservesOriginalOrdinals(t *testing.T) {
+func TestBuildReaderRejectsUnsupportedOrder(t *testing.T) {
 	dataset, err := GenerateDataset(DatasetConfig{Kind: DatasetUniform, Dimensions: 3, Vectors: 24, Queries: 2, Seed: 8, ChunksPerDocument: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -309,18 +309,12 @@ func TestShuffledBuildPreservesOriginalOrdinals(t *testing.T) {
 		MaxNeighbors: 2, EfConstruction: 8, Seed: 4,
 	}
 	searchConfig := hnsw.SearchConfig{DefaultEfSearch: 3, MaxEfSearch: 8, DefaultVisitLimit: 24, MaxVisitLimit: 24, MaxK: 3}
-	reader, path, _, err := buildReader(context.Background(), flatIndex, dataset.Vectors, BuildOrder{Name: "shuffled", Seed: 12}, buildConfig, searchConfig, Progress{}, nil)
-	if err != nil {
-		t.Fatal(err)
+	_, path, _, err := buildReader(context.Background(), flatIndex, BuildOrder{Name: "shuffled"}, buildConfig, searchConfig, Progress{}, nil)
+	if err == nil {
+		t.Fatal("unsupported build order succeeded")
 	}
-	if path != BuildPathBuilder {
-		t.Fatalf("build path = %q, want %q", path, BuildPathBuilder)
-	}
-	for ordinal, want := range dataset.Vectors {
-		got, ok := readPreparedVector(reader.Vectors(), vector.Ordinal(ordinal))
-		if !ok || !slices.Equal(got, want) {
-			t.Fatalf("ordinal %d changed identity: got %v want %v", ordinal, got, want)
-		}
+	if path != BuildPathProduction {
+		t.Fatalf("build path = %q, want %q", path, BuildPathProduction)
 	}
 }
 
@@ -338,7 +332,7 @@ func TestBuildTimingSeparatesProgressCallback(t *testing.T) {
 		MaxNeighbors: 2, EfConstruction: 4, Seed: 1,
 	}
 	searchConfig := hnsw.SearchConfig{DefaultEfSearch: 1, MaxEfSearch: 1, DefaultVisitLimit: 8, MaxVisitLimit: 8, MaxK: 1}
-	_, path, timing, err := buildReader(context.Background(), flatIndex, dataset.Vectors, BuildOrder{Name: "ascending"}, buildConfig, searchConfig, Progress{}, func(Progress) {
+	_, path, timing, err := buildReader(context.Background(), flatIndex, BuildOrder{Name: "ascending"}, buildConfig, searchConfig, Progress{}, func(Progress) {
 		time.Sleep(100 * time.Microsecond)
 	})
 	if err != nil {

@@ -204,9 +204,10 @@ func validateSealedSegment(sealed SealedSegment, limits Limits) error {
 		if index == nil {
 			return ErrLimitExceeded
 		}
-		search := index.SearchConfig()
+		search := sealed.Segment.SearchLimits()
+		report := index.Report()
 		if search.MaxK > limits.MaxK || search.MaxEfSearch > limits.MaxEfSearch || search.MaxVisitLimit > limits.MaxVisitLimit ||
-			uint64(index.StorageStats().DirectedLinks) > limits.MaxGraphLinks ||
+			uint64(report.Storage.DirectedLinks) > limits.MaxGraphLinks ||
 			graphFileSize(index) > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
 			return ErrLimitExceeded
 		}

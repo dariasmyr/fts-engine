@@ -96,7 +96,7 @@ func FuzzCandidateHeapOrdering(f *testing.F) {
 		var heap candidateHeap
 		for i, value := range data {
 			candidate := searchCandidate{
-				node:     NodeOrdinal((uint16(value) + uint16(i)*17) % 31),
+				node:     nodeOrdinal((uint16(value) + uint16(i)*17) % 31),
 				distance: float64(value % 11),
 			}
 			want[i] = candidate

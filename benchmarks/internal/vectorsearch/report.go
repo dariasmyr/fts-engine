@@ -59,7 +59,6 @@ type DatasetReport struct {
 
 type BuildOrder struct {
 	Name string `json:"name"`
-	Seed uint64 `json:"seed,omitempty"`
 }
 
 type BuildParameters struct {

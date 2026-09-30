@@ -55,7 +55,7 @@ func New(config Config) (*Service, error) {
 	}
 	config.HNSWBuild = normalizeBuildConfig(config.HNSWBuild, config.Embedding, config.MaxVectors)
 	config.HNSWSearch = normalizeSearchConfig(config.HNSWSearch, config.MaxK, config.MaxChunkCandidates, config.MaxVectors)
-	if _, err := hnsw.NewBuilder(config.HNSWBuild, config.HNSWSearch, 0); err != nil {
+	if err := (hnsw.BuildOptions{Build: config.HNSWBuild, Search: config.HNSWSearch}).Validate(0); err != nil {
 		return nil, ErrInvalidConfig
 	}
 	return &Service{
@@ -291,8 +291,8 @@ func buildPendingSegment(ctx context.Context, componentID ComponentID, pending [
 		return nil, err
 	}
 	return BuildSegment(ctx, componentID, SegmentMetadata{Embedding: config.Embedding, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
-		BuildConfig:  withBuildCapacity(config.HNSWBuild, len(rows)),
-		SearchConfig: config.HNSWSearch,
+		Build:  withBuildCapacity(config.HNSWBuild, len(rows)),
+		Search: config.HNSWSearch,
 	})
 }
 

@@ -27,7 +27,9 @@ type Segment struct {
 	component ComponentID
 	metadata  SegmentMetadata
 	rows      []VectorRow
-	index     *hnsw.HNSWIndex
+	vectors   vectorstore.PreparedVectorStore
+	search    hnsw.SearchConfig
+	index     *hnsw.Index
 }
 
 func (s *Segment) Kind() SegmentKind {
@@ -41,23 +43,31 @@ func (s *Segment) Kind() SegmentKind {
 // navigates source rows by local ordinal; rows resolve those ordinals to stable
 // semantic identities.
 func BuildSegment(ctx context.Context, component ComponentID, metadata SegmentMetadata, source vectorstore.PreparedVectorStore, rows []VectorRow, options hnsw.BuildOptions) (*Segment, error) {
-	index, err := hnsw.BuildIndex(ctx, source, options)
+	index, err := hnsw.Build(ctx, source, options)
 	if err != nil {
 		return nil, err
 	}
-	return NewSegment(component, metadata, index, rows)
+	return NewSegment(ctx, component, metadata, source, index, rows)
 }
 
 // NewSegment creates an immutable semantic segment from an HNSW index and
 // rows that resolve its local ordinals to stable semantic identities.
-func NewSegment(component ComponentID, metadata SegmentMetadata, index *hnsw.HNSWIndex, rows []VectorRow) (*Segment, error) {
-	if component == 0 || index == nil || len(rows) != index.Len() {
+func NewSegment(ctx context.Context, component ComponentID, metadata SegmentMetadata, vectors vectorstore.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*Segment, error) {
+	if component == 0 || vectors == nil || index == nil || len(rows) != index.Len() {
+		return nil, ErrInvalidSegment
+	}
+	if err := index.ValidateSource(ctx, vectors); err != nil {
+		if ctx == nil || ctx.Err() != nil {
+			return nil, err
+		}
 		return nil, ErrInvalidSegment
 	}
 	segment := &Segment{
 		component: component,
 		metadata:  metadata,
 		rows:      append([]VectorRow(nil), rows...),
+		vectors:   vectors,
+		search:    index.Report().Search,
 		index:     index,
 	}
 	if err := segment.validateContents(); err != nil {
@@ -99,11 +109,11 @@ func (s *Segment) Vectors() vectorstore.PreparedVectorStore {
 	if s == nil {
 		return nil
 	}
-	return s.index.Vectors()
+	return s.vectors
 }
 
 // Index returns the immutable HNSW index used by this segment.
-func (s *Segment) Index() *hnsw.HNSWIndex {
+func (s *Segment) Index() *hnsw.Index {
 	if s == nil {
 		return nil
 	}
@@ -139,20 +149,25 @@ func (s *Segment) Metric() vector.Metric {
 }
 
 func (s *Segment) Normalization() vector.Normalization {
-	if s == nil || s.index == nil {
+	if s == nil || s.vectors == nil {
 		return 0
 	}
-	return s.index.Normalization()
+	return s.vectors.Normalization()
 }
 
 func (s *Segment) MaxK() int {
 	if s == nil || s.index == nil {
 		return 0
 	}
-	if s.index != nil {
-		return s.index.MaxK()
+	return s.search.MaxK
+}
+
+// SearchLimits returns the immutable HNSW work limits owned by this segment.
+func (s *Segment) SearchLimits() hnsw.SearchConfig {
+	if s == nil {
+		return hnsw.SearchConfig{}
 	}
-	return 0
+	return s.search
 }
 
 func (s *Segment) Close() error {
@@ -205,17 +220,18 @@ func (s *Segment) Validate() error {
 }
 
 func (s *Segment) validateContents() error {
-	if s == nil || s.index == nil || s.index.Vectors() == nil {
+	if s == nil || s.index == nil || s.vectors == nil {
 		return ErrInvalidSegment
 	}
-	vectors := s.index.Vectors()
+	vectors := s.vectors
 	if !s.metadata.Embedding.IsValid() || !s.metadata.Chunking.IsValid() {
 		return ErrInvalidSegment
 	}
 	calculator, err := s.metadata.Embedding.Calculator()
 	if err != nil || s.component == 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
 		vectors.Dimensions() != calculator.Dimensions() || vectors.Metric() != calculator.Metric() ||
-		vectors.Normalization() != calculator.Normalization() {
+		vectors.Normalization() != calculator.Normalization() || s.index.Dimensions() != vectors.Dimensions() ||
+		s.index.Metric() != vectors.Metric() || s.index.Report().Search != s.search {
 		return ErrInvalidSegment
 	}
 	return nil

@@ -42,9 +42,17 @@ type BuildProgress struct {
 // BuildOptions configures a complete synchronous build. Progress, when set, is
 // invoked synchronously by Build and must return before the build continues.
 type BuildOptions struct {
-	BuildConfig  BuildConfig
-	SearchConfig SearchConfig
-	Progress     func(BuildProgress)
+	Build    BuildConfig
+	Search   SearchConfig
+	Progress func(BuildProgress)
+}
+
+// Validate checks a complete build configuration for vectorCount source rows.
+func (o BuildOptions) Validate(vectorCount int) error {
+	if _, _, err := o.Build.validate(vectorCount); err != nil {
+		return err
+	}
+	return o.Search.validate()
 }
 
 func (c BuildConfig) validate(vectorCount int) (vector.Calculator, int, error) {

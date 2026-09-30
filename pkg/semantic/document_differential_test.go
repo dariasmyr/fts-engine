@@ -33,6 +33,86 @@ type exactDocumentReference struct {
 	documents  map[fts.DocID][]semantic.ChunkVector
 }
 
+func TestPublicDocumentMutationsPublishOnlyOnFlush(t *testing.T) {
+	ctx := context.Background()
+	embedding, err := semantic.NewEmbeddingDescriptor("test", "model", "v1", "pipeline-v1", 2, vector.MetricL2Squared, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := semantic.Config{
+		Embedding: embedding, Chunking: semantic.ChunkingDescriptor{ID: "chunks", Version: 1, Fingerprint: "chunks-v1"},
+		MaxVectors: 8, MaxChunksPerDocument: 2, MaxK: 2, MaxChunkCandidates: 8, MaxChunksPerDocumentHit: 1,
+	}
+	service, err := semantic.New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder := &deterministicEncoder{
+		descriptor: semantic.PipelineDescriptor{Embedding: embedding, Chunking: config.Chunking},
+		documents: map[fts.DocID][]semantic.ChunkVector{
+			"doc": {testSemanticChunk("doc", "old", 0, []float32{0, 0})},
+		},
+		queries: map[fts.DocID][]semantic.ChunkVector{
+			"query": {testSemanticChunk("query", "query", 0, []float32{0, 0})},
+		},
+	}
+	query := semantic.Document{ID: "query"}
+	search := func(searcher interface {
+		SearchDocuments(context.Context, semantic.Encoder, semantic.Document, int) (semantic.DocumentSearchResult, error)
+	}) semantic.DocumentSearchResult {
+		t.Helper()
+		result, err := searcher.SearchDocuments(ctx, encoder, query, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	assertChunk := func(result semantic.DocumentSearchResult, want chunk.ID) {
+		t.Helper()
+		if len(result.Hits) != 1 || len(result.Hits[0].Chunks) != 1 || result.Hits[0].Chunks[0].Ref.ID != want {
+			t.Fatalf("search result = %+v, want chunk %q", result, want)
+		}
+	}
+
+	if err := service.AddDocument(ctx, encoder, semantic.Document{ID: "doc"}); err != nil {
+		t.Fatal(err)
+	}
+	if result := search(service); len(result.Hits) != 0 {
+		t.Fatalf("unflushed add is visible: %+v", result)
+	}
+	if err := service.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertChunk(search(service), "old")
+	oldView, err := service.ReadView(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encoder.documents["doc"] = []semantic.ChunkVector{testSemanticChunk("doc", "new", 0, []float32{10, 0})}
+	if err := service.ReplaceDocument(ctx, encoder, semantic.Document{ID: "doc"}); err != nil {
+		t.Fatal(err)
+	}
+	assertChunk(search(service), "old")
+	if err := service.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertChunk(search(service), "new")
+	assertChunk(search(oldView), "old")
+
+	if !service.DeleteDocument("doc") {
+		t.Fatal("DeleteDocument returned false")
+	}
+	assertChunk(search(service), "new")
+	if err := service.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if result := search(service); len(result.Hits) != 0 {
+		t.Fatalf("flushed delete is visible: %+v", result)
+	}
+	assertChunk(search(oldView), "old")
+}
+
 func TestDocumentSearchDifferentialThroughLifecycle(t *testing.T) {
 	ctx := context.Background()
 	embedding, err := semantic.NewEmbeddingDescriptor("test", "model", "v1", "pipeline-v1", 2, vector.MetricL2Squared, 1)

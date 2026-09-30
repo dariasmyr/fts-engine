@@ -4,21 +4,21 @@ import (
 	"slices"
 )
 
-func (b *Builder) distanceNodes(a, c NodeOrdinal) float64 {
+func (b *builder) distanceNodes(a, c nodeOrdinal) float64 {
 	aVector := b.vectorByNode(a)
 	cVector := b.vectorByNode(c)
 	return b.calculator.DistancePrepared(aVector, cVector)
 }
 
-func (b *Builder) vectorByNode(node NodeOrdinal) []float32 {
+func (b *builder) vectorByNode(node nodeOrdinal) []float32 {
 	ordinal := b.graph.nodes[node].vectorOrdinal
 	start := int(ordinal) * b.calculator.Dimensions()
 	return b.graph.values[start : start+b.calculator.Dimensions()]
 }
 
-func (b *Builder) selectNeighbors(owner NodeOrdinal, candidates []NodeOrdinal, limit int) []NodeOrdinal {
+func (b *builder) selectNeighbors(owner nodeOrdinal, candidates []nodeOrdinal, limit int) []nodeOrdinal {
 	ordered := b.orderNeighbors(owner, candidates)
-	selected := make([]NodeOrdinal, 0, min(limit, len(ordered)))
+	selected := make([]nodeOrdinal, 0, min(limit, len(ordered)))
 	// Reject candidates already represented by a selected, closer neighbor. This
 	// preserves links into different regions instead of only the nearest cluster.
 	for _, candidate := range ordered {
@@ -40,9 +40,9 @@ func (b *Builder) selectNeighbors(owner NodeOrdinal, candidates []NodeOrdinal, l
 	return selected
 }
 
-func (b *Builder) orderNeighbors(owner NodeOrdinal, candidates []NodeOrdinal) []NodeOrdinal {
-	seen := make(map[NodeOrdinal]struct{}, len(candidates))
-	ordered := make([]NodeOrdinal, 0, len(candidates))
+func (b *builder) orderNeighbors(owner nodeOrdinal, candidates []nodeOrdinal) []nodeOrdinal {
+	seen := make(map[nodeOrdinal]struct{}, len(candidates))
+	ordered := make([]nodeOrdinal, 0, len(candidates))
 	for _, candidate := range candidates {
 		if candidate == owner {
 			continue
@@ -53,7 +53,7 @@ func (b *Builder) orderNeighbors(owner NodeOrdinal, candidates []NodeOrdinal) []
 		seen[candidate] = struct{}{}
 		ordered = append(ordered, candidate)
 	}
-	slices.SortFunc(ordered, func(a, c NodeOrdinal) int {
+	slices.SortFunc(ordered, func(a, c nodeOrdinal) int {
 		aDistance := b.distanceNodes(owner, a)
 		cDistance := b.distanceNodes(owner, c)
 		if aDistance < cDistance {
@@ -73,8 +73,8 @@ func (b *Builder) orderNeighbors(owner NodeOrdinal, candidates []NodeOrdinal) []
 	return ordered
 }
 
-func (b *Builder) addReverseLink(owner, neighbor NodeOrdinal, level int) {
-	links := append(append([]NodeOrdinal(nil), b.graph.nodes[owner].links[level]...), neighbor)
+func (b *builder) addReverseLink(owner, neighbor nodeOrdinal, level int) {
+	links := append(append([]nodeOrdinal(nil), b.graph.nodes[owner].links[level]...), neighbor)
 	limit := b.buildInfo.neighborLimit(level)
 	// Reverse insertion can overflow an existing node even though the new node
 	// selected only MaxNeighbors links, so prune relative to the existing owner.

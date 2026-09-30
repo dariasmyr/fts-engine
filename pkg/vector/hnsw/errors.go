@@ -6,10 +6,10 @@ var (
 	ErrInvalidSearchConfig = errors.New("vector/hnsw: invalid search configuration")
 	ErrInvalidBuildConfig  = errors.New("vector/hnsw: invalid build configuration")
 	ErrBuildSourceMismatch = errors.New("vector/hnsw: build source metadata mismatch")
-	ErrInvalidGraph        = errors.New("vector/hnsw: invalid graph")
-	ErrCapacityExceeded    = errors.New("vector/hnsw: builder capacity exceeded")
-	ErrDuplicateOrdinal    = errors.New("vector/hnsw: vector ordinal already added")
-	ErrBuilderIncomplete   = errors.New("vector/hnsw: builder does not contain every vector ordinal")
+	errInvalidGraph        = errors.New("vector/hnsw: invalid graph")
+	errCapacityExceeded    = errors.New("vector/hnsw: builder capacity exceeded")
+	errDuplicateOrdinal    = errors.New("vector/hnsw: vector ordinal already added")
+	errBuilderIncomplete   = errors.New("vector/hnsw: builder does not contain every vector ordinal")
 )
 
 // MaxLevel is the largest level accepted by the search primitives.

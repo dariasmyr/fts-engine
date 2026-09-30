@@ -25,16 +25,16 @@ func builderTestConfig(seed uint64, maxVectors int) BuildConfig {
 	}
 }
 
-func newTestBuilder(t *testing.T, seed uint64, count int) *Builder {
+func newTestBuilder(t *testing.T, seed uint64, count int) *builder {
 	t.Helper()
-	builder, err := NewBuilder(builderTestConfig(seed, max(1, count)), readerTestSearchConfig(), count)
+	builder, err := newBuilder(builderTestConfig(seed, max(1, count)), readerTestSearchConfig(), count)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return builder
 }
 
-func addTestVector(t *testing.T, builder *Builder, ordinal vector.Ordinal, value []float32) NodeOrdinal {
+func addTestVector(t *testing.T, builder *builder, ordinal vector.Ordinal, value []float32) nodeOrdinal {
 	t.Helper()
 	node, err := builder.Add(context.Background(), ordinal, value)
 	if err != nil {
@@ -43,17 +43,17 @@ func addTestVector(t *testing.T, builder *Builder, ordinal vector.Ordinal, value
 	return node
 }
 
-func readerTopology(t *testing.T, reader *HNSWIndex) [][][]NodeOrdinal {
+func readerTopology(t *testing.T, reader *Index) [][][]nodeOrdinal {
 	t.Helper()
-	topology := make([][][]NodeOrdinal, reader.NodeCount())
-	for node := range reader.NodeCount() {
-		level, ok := reader.NodeLevel(NodeOrdinal(node))
+	topology := make([][][]nodeOrdinal, reader.Len())
+	for node := range reader.Len() {
+		level, ok := reader.nodeLevel(nodeOrdinal(node))
 		if !ok {
 			t.Fatalf("missing node %d", node)
 		}
-		topology[node] = make([][]NodeOrdinal, int(level)+1)
+		topology[node] = make([][]nodeOrdinal, int(level)+1)
 		for currentLevel := 0; currentLevel <= int(level); currentLevel++ {
-			neighbors, ok := reader.Neighbors(NodeOrdinal(node), currentLevel)
+			neighbors, ok := reader.neighbors(nodeOrdinal(node), currentLevel)
 			if !ok {
 				t.Fatalf("missing node %d level %d", node, currentLevel)
 			}
@@ -73,7 +73,7 @@ func TestBuildConfigValidation(t *testing.T) {
 		{BuildConfig{Dimensions: 1, Metric: vector.MetricCosine, MaxVectors: 1, MaxVectorBytes: 4, MaxNeighbors: MaxSupportedNeighbors, EfConstruction: MaxEfConstruction}, 1},
 	}
 	for i, test := range valid {
-		if _, err := NewBuilder(test.config, readerTestSearchConfig(), test.count); err != nil {
+		if _, err := newBuilder(test.config, readerTestSearchConfig(), test.count); err != nil {
 			t.Errorf("valid config %d: %v", i, err)
 		}
 	}
@@ -108,14 +108,14 @@ func TestBuildConfigValidation(t *testing.T) {
 	}
 	for _, test := range invalid {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := NewBuilder(test.config, readerTestSearchConfig(), test.count)
+			_, err := newBuilder(test.config, readerTestSearchConfig(), test.count)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("error = %v, want %v", err, test.want)
 			}
 		})
 	}
 
-	if _, err := NewBuilder(builderTestConfig(0, 1), SearchConfig{}, 1); !errors.Is(err, ErrInvalidSearchConfig) {
+	if _, err := newBuilder(builderTestConfig(0, 1), SearchConfig{}, 1); !errors.Is(err, ErrInvalidSearchConfig) {
 		t.Fatalf("invalid search config error = %v", err)
 	}
 }
@@ -124,11 +124,11 @@ func TestBuilderCheckAfterEveryInsertionAndEntryTransitions(t *testing.T) {
 	builder := newTestBuilder(t, 0, 6)
 	values := [][]float32{{0, 0}, {1, 0}, {2, 0}, {3, 0}, {4, 0}, {5, 0}}
 	wantLevels := []uint8{0, 1, 5, 0, 3, 1}
-	wantEntries := []NodeOrdinal{0, 1, 2, 2, 2, 2}
+	wantEntries := []nodeOrdinal{0, 1, 2, 2, 2, 2}
 
 	for i, value := range values {
 		node := addTestVector(t, builder, vector.Ordinal(i), value)
-		if node != NodeOrdinal(i) {
+		if node != nodeOrdinal(i) {
 			t.Fatalf("insertion %d node = %d, want %d", i, node, i)
 		}
 		if builder.graph.nodes[node].level != wantLevels[i] || builder.graph.entry != wantEntries[i] {
@@ -147,7 +147,7 @@ func TestBuilderCheckAfterEveryInsertionAndEntryTransitions(t *testing.T) {
 func TestBuilderCompleteAndIncompleteFreeze(t *testing.T) {
 	incomplete := newTestBuilder(t, 11, 2)
 	addTestVector(t, incomplete, 0, []float32{1, 2})
-	if reader, err := incomplete.Freeze(); reader != nil || !errors.Is(err, ErrBuilderIncomplete) {
+	if reader, err := incomplete.Freeze(); reader != nil || !errors.Is(err, errBuilderIncomplete) {
 		t.Fatalf("incomplete Freeze = (%v, %v), want (nil, ErrBuilderIncomplete)", reader, err)
 	}
 	if stats, err := incomplete.Check(); err != nil || stats.NodeCount != 1 {
@@ -162,20 +162,20 @@ func TestBuilderCompleteAndIncompleteFreeze(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reader.Len() != 3 || reader.BuildInfo() != builder.buildInfo || reader.Dimensions() != 2 || reader.Metric() != vector.MetricL2Squared {
-		t.Fatalf("complete reader metadata = len:%d info:%+v dimensions:%d metric:%v", reader.Len(), reader.BuildInfo(), reader.Dimensions(), reader.Metric())
+	if reader.Len() != 3 || reader.Report().Build != builder.buildInfo || reader.Dimensions() != 2 || reader.Metric() != vector.MetricL2Squared {
+		t.Fatalf("complete reader metadata = len:%d info:%+v dimensions:%d metric:%v", reader.Len(), reader.Report().Build, reader.Dimensions(), reader.Metric())
 	}
 	wantInfo := BuildInfo{BuildVersion: 1, LevelGeneratorVersion: 1, MaxNeighbors: 2, LevelZeroMaxNeighbors: 4, EfConstruction: 8, Seed: 11}
-	if got := reader.BuildInfo(); got != wantInfo {
+	if got := reader.Report().Build; got != wantInfo {
 		t.Fatalf("BuildInfo = %+v, want %+v", got, wantInfo)
 	}
 	for ordinal, want := range [][]float32{{0, 10}, {1, 15}, {2, 20}} {
-		got, ok := readPreparedVector(reader.Vectors(), vector.Ordinal(ordinal))
+		got, ok := readPreparedVector(reader.vectors, vector.Ordinal(ordinal))
 		if !ok || !slices.Equal(got, want) {
 			t.Errorf("Vector(%d) = (%v, %v), want (%v, true)", ordinal, got, ok, want)
 		}
 	}
-	if stats := reader.GraphStats(); stats.NodeCount != 3 || stats.ReachableNodes != 3 || stats.UnreachableNodes != 0 {
+	if stats := reader.Report().Graph; stats.NodeCount != 3 || stats.ReachableNodes != 3 || stats.UnreachableNodes != 0 {
 		t.Fatalf("frozen stats = %+v", stats)
 	}
 }
@@ -197,7 +197,7 @@ func TestBuilderInvalidAddIsAtomic(t *testing.T) {
 	}{
 		{"nil context", nil, 1, []float32{1, 0}, vector.ErrNilContext},
 		{"cancelled context", cancelled, 1, []float32{1, 0}, context.Canceled},
-		{"duplicate ordinal", context.Background(), 0, []float32{9, 9}, ErrDuplicateOrdinal},
+		{"duplicate ordinal", context.Background(), 0, []float32{9, 9}, errDuplicateOrdinal},
 		{"ordinal out of range", context.Background(), 3, []float32{1, 0}, vector.ErrOrdinalOutOfRange},
 		{"dimension mismatch", context.Background(), 1, []float32{1}, vector.ErrDimensionMismatch},
 		{"nan vector", context.Background(), 1, []float32{float32(math.NaN()), 0}, vector.ErrNonFiniteVector},
@@ -236,7 +236,7 @@ func TestBuilderInvalidAddIsAtomic(t *testing.T) {
 
 	beforeGraph := cloneGraphData(builder.graph)
 	beforeRNG := builder.rng
-	if _, err := builder.Add(context.Background(), 0, []float32{0, 0}); !errors.Is(err, ErrCapacityExceeded) {
+	if _, err := builder.Add(context.Background(), 0, []float32{0, 0}); !errors.Is(err, errCapacityExceeded) {
 		t.Fatalf("full Add error = %v, want ErrCapacityExceeded", err)
 	}
 	if !reflect.DeepEqual(builder.graph, beforeGraph) || builder.rng != beforeRNG {
@@ -259,14 +259,14 @@ func TestBuilderMaxDegreesDuplicatesAndClusteredVectors(t *testing.T) {
 	}
 	sawFullLevel0 := false
 	sawFullUpper := false
-	for node := 0; node < reader.NodeCount(); node++ {
-		level, _ := reader.NodeLevel(NodeOrdinal(node))
+	for node := 0; node < reader.Len(); node++ {
+		level, _ := reader.nodeLevel(nodeOrdinal(node))
 		for currentLevel := 0; currentLevel <= int(level); currentLevel++ {
-			neighbors, ok := reader.Neighbors(NodeOrdinal(node), currentLevel)
+			neighbors, ok := reader.neighbors(nodeOrdinal(node), currentLevel)
 			if !ok {
 				t.Fatalf("missing node %d level %d", node, currentLevel)
 			}
-			limit := reader.BuildInfo().neighborLimit(currentLevel)
+			limit := reader.Report().Build.neighborLimit(currentLevel)
 			if len(neighbors) > limit {
 				t.Errorf("node %d level %d degree = %d, max %d", node, currentLevel, len(neighbors), limit)
 			}
@@ -276,9 +276,9 @@ func TestBuilderMaxDegreesDuplicatesAndClusteredVectors(t *testing.T) {
 			if len(neighbors) == limit && currentLevel > 0 {
 				sawFullUpper = true
 			}
-			seen := make(map[NodeOrdinal]bool, len(neighbors))
+			seen := make(map[nodeOrdinal]bool, len(neighbors))
 			for _, neighbor := range neighbors {
-				if neighbor == NodeOrdinal(node) || seen[neighbor] {
+				if neighbor == nodeOrdinal(node) || seen[neighbor] {
 					t.Errorf("node %d level %d invalid neighbors %v", node, currentLevel, neighbors)
 				}
 				seen[neighbor] = true
@@ -292,7 +292,7 @@ func TestBuilderMaxDegreesDuplicatesAndClusteredVectors(t *testing.T) {
 
 func TestBuilderFixedSeedTopologyDeterminism(t *testing.T) {
 	values := [][]float32{{0, 0}, {1, 0}, {0, 1}, {1, 1}, {2, 0}, {0, 2}, {2, 2}, {1, 2}, {2, 1}}
-	build := func() *HNSWIndex {
+	build := func() *Index {
 		builder := newTestBuilder(t, 0x12345678, len(values))
 		for ordinal, value := range values {
 			addTestVector(t, builder, vector.Ordinal(ordinal), value)
@@ -332,11 +332,11 @@ func TestBuilderSeedAndOrderPermutationsRemainValid(t *testing.T) {
 			if err != nil {
 				t.Fatalf("seed %d order %d Freeze: %v", seed, orderIndex, err)
 			}
-			if stats := reader.GraphStats(); stats.NodeCount != len(values) || stats.UnreachableNodes != 0 {
+			if stats := reader.Report().Graph; stats.NodeCount != len(values) || stats.UnreachableNodes != 0 {
 				t.Fatalf("seed %d order %d stats = %+v", seed, orderIndex, stats)
 			}
 			for ordinal, want := range values {
-				got, ok := readPreparedVector(reader.Vectors(), vector.Ordinal(ordinal))
+				got, ok := readPreparedVector(reader.vectors, vector.Ordinal(ordinal))
 				if !ok || !slices.Equal(got, want) {
 					t.Fatalf("seed %d order %d Vector(%d) = (%v, %v), want %v", seed, orderIndex, ordinal, got, ok, want)
 				}
@@ -362,17 +362,17 @@ func TestBuilderFreezeIndependenceAndIdempotence(t *testing.T) {
 		t.Fatal("repeated Freeze was not independent and idempotent")
 	}
 
-	firstValue, _ := readPreparedVector(first.Vectors(), 0)
+	firstValue, _ := readPreparedVector(first.vectors, 0)
 	firstValue[0] = 99
-	first.topology.level0Neighbors[0] = NodeOrdinal(first.NodeCount() - 1)
-	if got, _ := readPreparedVector(second.Vectors(), 0); !slices.Equal(got, []float32{0, 0}) {
+	first.topology.level0Neighbors[0] = nodeOrdinal(first.Len() - 1)
+	if got, _ := readPreparedVector(second.vectors, 0); !slices.Equal(got, []float32{0, 0}) {
 		t.Fatalf("frozen readers share values: %v", got)
 	}
 	third, err := builder.Freeze()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := readPreparedVector(third.Vectors(), 0); !slices.Equal(got, []float32{0, 0}) || !reflect.DeepEqual(readerTopology(t, third), readerTopology(t, second)) {
+	if got, _ := readPreparedVector(third.vectors, 0); !slices.Equal(got, []float32{0, 0}) || !reflect.DeepEqual(readerTopology(t, third), readerTopology(t, second)) {
 		t.Fatal("frozen reader mutation affected builder or later Freeze")
 	}
 }
@@ -383,8 +383,8 @@ func TestBuilderDiversifiedSelection(t *testing.T) {
 		addTestVector(t, builder, vector.Ordinal(ordinal), value)
 	}
 
-	got := builder.selectNeighbors(0, []NodeOrdinal{3, 2, 1, 2, 0}, 3)
-	want := []NodeOrdinal{1, 3}
+	got := builder.selectNeighbors(0, []nodeOrdinal{3, 2, 1, 2, 0}, 3)
+	want := []nodeOrdinal{1, 3}
 	if !slices.Equal(got, want) {
 		t.Fatalf("diversified selection = %v, want %v", got, want)
 	}
@@ -397,20 +397,20 @@ func TestBuilderOwnerRelativePruningCanBeAsymmetric(t *testing.T) {
 	}
 	for node := range builder.graph.nodes {
 		builder.graph.nodes[node].level = 1
-		builder.graph.nodes[node].links = [][]NodeOrdinal{{}, {}}
+		builder.graph.nodes[node].links = [][]nodeOrdinal{{}, {}}
 	}
-	builder.graph.nodes[0].links[1] = []NodeOrdinal{2, 3}
-	builder.graph.nodes[1].links[1] = []NodeOrdinal{3}
+	builder.graph.nodes[0].links[1] = []nodeOrdinal{2, 3}
+	builder.graph.nodes[1].links[1] = []nodeOrdinal{3}
 
 	builder.addReverseLink(0, 1, 1)
 	builder.addReverseLink(1, 0, 1)
-	if got, want := builder.graph.nodes[0].links[1], []NodeOrdinal{2, 3}; !slices.Equal(got, want) {
+	if got, want := builder.graph.nodes[0].links[1], []nodeOrdinal{2, 3}; !slices.Equal(got, want) {
 		t.Fatalf("owner 0 pruned links = %v, want %v", got, want)
 	}
-	if got, want := builder.graph.nodes[1].links[1], []NodeOrdinal{0, 3}; !slices.Equal(got, want) {
+	if got, want := builder.graph.nodes[1].links[1], []nodeOrdinal{0, 3}; !slices.Equal(got, want) {
 		t.Fatalf("owner 1 links = %v, want %v", got, want)
 	}
-	if slices.Contains(builder.graph.nodes[0].links[1], NodeOrdinal(1)) || !slices.Contains(builder.graph.nodes[1].links[1], NodeOrdinal(0)) {
+	if slices.Contains(builder.graph.nodes[0].links[1], nodeOrdinal(1)) || !slices.Contains(builder.graph.nodes[1].links[1], nodeOrdinal(0)) {
 		t.Fatalf("expected asymmetric owner-relative links: 0=%v 1=%v", builder.graph.nodes[0].links[1], builder.graph.nodes[1].links[1])
 	}
 	if _, err := builder.Check(); err != nil {
@@ -423,7 +423,7 @@ func TestBuilderDiversificationAcceptsEqualBoundary(t *testing.T) {
 	for ordinal, value := range [][]float32{{0, 0}, {2, 0}, {1, 2}} {
 		addTestVector(t, builder, vector.Ordinal(ordinal), value)
 	}
-	if got, want := builder.selectNeighbors(0, []NodeOrdinal{1, 2}, 2), []NodeOrdinal{1, 2}; !slices.Equal(got, want) {
+	if got, want := builder.selectNeighbors(0, []nodeOrdinal{1, 2}, 2), []nodeOrdinal{1, 2}; !slices.Equal(got, want) {
 		t.Fatalf("equal-boundary diversified selection = %v, want %v", got, want)
 	}
 }
@@ -454,7 +454,7 @@ func TestBuilderFreezeProducesSearchableReader(t *testing.T) {
 func TestBuilderFreezeReaderSearchEdgeCases(t *testing.T) {
 	searchConfig := readerTestSearchConfig()
 	emptyConfig := builderTestConfig(1, 1)
-	empty, err := NewBuilder(emptyConfig, searchConfig, 0)
+	empty, err := newBuilder(emptyConfig, searchConfig, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +469,7 @@ func TestBuilderFreezeReaderSearchEdgeCases(t *testing.T) {
 
 	cosineConfig := builderTestConfig(2, 1)
 	cosineConfig.Metric = vector.MetricCosine
-	cosine, err := NewBuilder(cosineConfig, searchConfig, 1)
+	cosine, err := newBuilder(cosineConfig, searchConfig, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +517,7 @@ func FuzzBuilderInsertFreeze(f *testing.F) {
 		if count == 0 {
 			return
 		}
-		builder, err := NewBuilder(builderTestConfig(uint64(data[0]), count), readerTestSearchConfig(), count)
+		builder, err := newBuilder(builderTestConfig(uint64(data[0]), count), readerTestSearchConfig(), count)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -547,7 +547,7 @@ func FuzzBuilderFloatInputs(f *testing.F) {
 	f.Add(math.Float32bits(float32(math.NaN())))
 	f.Fuzz(func(t *testing.T, bits uint32) {
 		config := builderTestConfig(1, 1)
-		builder, err := NewBuilder(config, readerTestSearchConfig(), 1)
+		builder, err := newBuilder(config, readerTestSearchConfig(), 1)
 		if err != nil {
 			t.Fatal(err)
 		}

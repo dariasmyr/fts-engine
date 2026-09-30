@@ -11,10 +11,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
-const (
-	BuildPathProduction = "hnsw.BuildIndex"
-	BuildPathBuilder    = "hnsw.Builder"
-)
+const BuildPathProduction = "hnsw.Build"
 
 type Config struct {
 	DatasetKinds        []DatasetKind
@@ -77,7 +74,7 @@ func DefaultConfig() Config {
 		EfConstruction:      []int{32, 64},
 		EfSearch:            []int{16, 32, 64},
 		BuildSeeds:          []uint64{1, 2},
-		BuildOrders:         []BuildOrder{{Name: "ascending"}, {Name: "shuffled", Seed: 1}},
+		BuildOrders:         []BuildOrder{{Name: "ascending"}},
 		FilterSelectivities: []float64{1, 0.5, 0.1, 0.01, 0.001},
 		FilterSeed:          1,
 		VisitLimit:          1_000,
@@ -146,7 +143,7 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 		Dataset: dataset.Config.Kind, Metric: metric.String(), Build: buildNumber, Builds: builds,
 		MaxNeighbors: maxNeighbors, EfConstruction: efConstruction, Seed: seed, Order: order,
 	}
-	reader, buildPath, timing, err := buildReader(ctx, flatIndex, dataset.Vectors, order, buildConfig, searchConfig, progress, config.Progress)
+	reader, buildPath, timing, err := buildReader(ctx, flatIndex, order, buildConfig, searchConfig, progress, config.Progress)
 	if err != nil {
 		return nil, err
 	}
@@ -164,11 +161,8 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 	return runs, nil
 }
 
-func buildReader(ctx context.Context, flatIndex *flat.FlatIndex, rawVectors [][]float32, order BuildOrder, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress Progress, callback func(Progress)) (*hnsw.HNSWIndex, string, buildTiming, error) {
+func buildReader(ctx context.Context, flatIndex *flat.FlatIndex, order BuildOrder, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress Progress, callback func(Progress)) (*hnsw.Index, string, buildTiming, error) {
 	buildPath := BuildPathProduction
-	if order.Name == "shuffled" {
-		buildPath = BuildPathBuilder
-	}
 	progress.BuildPath = buildPath
 	var callbackDuration time.Duration
 	reportProgress := func(value hnsw.BuildProgress) {
@@ -182,17 +176,14 @@ func buildReader(ctx context.Context, flatIndex *flat.FlatIndex, rawVectors [][]
 	}
 
 	started := time.Now()
-	var reader *hnsw.HNSWIndex
+	var reader *hnsw.Index
 	var err error
-	switch order.Name {
-	case "ascending":
-		reader, err = hnsw.BuildIndex(ctx, flatIndex.Vectors(), hnsw.BuildOptions{
-			BuildConfig: buildConfig, SearchConfig: searchConfig, Progress: reportProgress,
-		})
-	case "shuffled":
-		reader, err = buildShuffled(ctx, rawVectors, order.Seed, buildConfig, searchConfig, reportProgress)
-	default:
+	if order.Name != "ascending" {
 		err = fmt.Errorf("vectorsearch: unknown build order %q", order.Name)
+	} else {
+		reader, err = hnsw.Build(ctx, flatIndex.Vectors(), hnsw.BuildOptions{
+			Build: buildConfig, Search: searchConfig, Progress: reportProgress,
+		})
 	}
 	wallDuration := time.Since(started)
 	timing := buildTiming{
@@ -207,30 +198,6 @@ func buildReader(ctx context.Context, flatIndex *flat.FlatIndex, rawVectors [][]
 	return reader, buildPath, timing, nil
 }
 
-func buildShuffled(ctx context.Context, vectors [][]float32, seed uint64, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress func(hnsw.BuildProgress)) (*hnsw.HNSWIndex, error) {
-	total := len(vectors)
-	progress(hnsw.BuildProgress{Phase: hnsw.BuildPhasePreflight, Total: total})
-	builder, err := hnsw.NewBuilder(buildConfig, searchConfig, total)
-	if err != nil {
-		return nil, err
-	}
-	order := ordinalOrder(total, seed)
-	progress(hnsw.BuildProgress{Phase: hnsw.BuildPhaseVectors, Total: total})
-	for completed, ordinal := range order {
-		if _, err := builder.Add(ctx, vector.Ordinal(ordinal), vectors[ordinal]); err != nil {
-			return nil, fmt.Errorf("add original ordinal %d: %w", ordinal, err)
-		}
-		progress(hnsw.BuildProgress{Phase: hnsw.BuildPhaseVectors, Completed: completed + 1, Total: total})
-	}
-	progress(hnsw.BuildProgress{Phase: hnsw.BuildPhaseFreeze, Completed: total, Total: total})
-	reader, err := builder.Freeze()
-	if err != nil {
-		return nil, err
-	}
-	progress(hnsw.BuildProgress{Phase: hnsw.BuildPhaseComplete, Completed: total, Total: total})
-	return reader, nil
-}
-
 func ordinalOrder(count int, seed uint64) []int {
 	order := make([]int, count)
 	for i := range order {
@@ -241,7 +208,7 @@ func ordinalOrder(count int, seed uint64) []int {
 	return order
 }
 
-func runQueries(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, buildPath string, reader *hnsw.HNSWIndex, truth truthSweep, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, timing buildTiming, requestedEfSearch int) (RunReport, error) {
+func runQueries(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, buildPath string, reader *hnsw.Index, truth truthSweep, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, timing buildTiming, requestedEfSearch int) (RunReport, error) {
 	effectiveEfSearch := max(config.K, requestedEfSearch)
 	latencies := make([]time.Duration, len(dataset.Queries))
 	var recall, documentRecall, exactDocuments, annDocuments float64
@@ -270,9 +237,10 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 		}
 	}
 	count := float64(len(dataset.Queries))
-	graph := reader.GraphStats()
-	storage := reader.StorageStats()
-	buildInfo := reader.BuildInfo()
+	report := reader.Report()
+	graph := report.Graph
+	storage := report.Storage
+	buildInfo := report.Build
 	run := RunReport{
 		Dataset: DatasetReport{
 			Kind: dataset.Config.Kind, Hash: dataset.Hash, Metric: metric.String(), Dimensions: dataset.Config.Dimensions,
@@ -442,7 +410,7 @@ func validateConfig(config Config) error {
 		}
 	}
 	for _, order := range config.BuildOrders {
-		if order.Name != "ascending" && order.Name != "shuffled" {
+		if order.Name != "ascending" {
 			return fmt.Errorf("vectorsearch: unknown build order %q", order.Name)
 		}
 	}

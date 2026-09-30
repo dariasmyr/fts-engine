@@ -10,9 +10,9 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
-// BuildIndex constructs and freezes one HNSW index from prepared source rows in
+// Build constructs and freezes one HNSW index from prepared source rows in
 // stable ordinal order 0..source.Len()-1.
-func BuildIndex(ctx context.Context, source vectorstore.PreparedVectorStore, options BuildOptions) (*HNSWIndex, error) {
+func Build(ctx context.Context, source vectorstore.PreparedVectorStore, options BuildOptions) (*Index, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -24,7 +24,7 @@ func BuildIndex(ctx context.Context, source vectorstore.PreparedVectorStore, opt
 	}
 	total := source.Len()
 	reportBuildProgress(options.Progress, BuildPhasePreflight, 0, total)
-	builder, err := NewBuilder(options.BuildConfig, options.SearchConfig, total)
+	builder, err := newBuilder(options.Build, options.Search, total)
 	if err != nil {
 		return nil, err
 	}

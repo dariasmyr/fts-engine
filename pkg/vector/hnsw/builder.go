@@ -8,8 +8,8 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
-// Builder constructs one HNSW graph. It is single-writer and is not searchable.
-type Builder struct {
+// builder constructs one HNSW graph. It is single-writer and is not searchable.
+type builder struct {
 	buildConfig  BuildConfig
 	searchConfig SearchConfig
 	buildInfo    BuildInfo
@@ -21,7 +21,7 @@ type Builder struct {
 	source       vectorstore.PreparedVectorStore
 }
 
-func NewBuilder(buildConfig BuildConfig, searchConfig SearchConfig, vectorCount int) (*Builder, error) {
+func newBuilder(buildConfig BuildConfig, searchConfig SearchConfig, vectorCount int) (*builder, error) {
 	calculator, components, err := buildConfig.validate(vectorCount)
 	if err != nil {
 		return nil, err
@@ -29,7 +29,7 @@ func NewBuilder(buildConfig BuildConfig, searchConfig SearchConfig, vectorCount 
 	if err := searchConfig.validate(); err != nil {
 		return nil, err
 	}
-	return &Builder{
+	return &builder{
 		buildConfig: buildConfig, searchConfig: searchConfig, buildInfo: buildConfig.info(),
 		calculator: calculator, expected: vectorCount, present: make([]bool, vectorCount),
 		graph: graphData{values: make([]float32, components), nodes: make([]mutableNode, 0, vectorCount)},
@@ -38,7 +38,7 @@ func NewBuilder(buildConfig BuildConfig, searchConfig SearchConfig, vectorCount 
 }
 
 // Add prepares value and inserts one graph node mapped to ordinal.
-func (b *Builder) Add(ctx context.Context, ordinal vector.Ordinal, value []float32) (NodeOrdinal, error) {
+func (b *builder) Add(ctx context.Context, ordinal vector.Ordinal, value []float32) (nodeOrdinal, error) {
 	if ctx == nil {
 		return 0, vector.ErrNilContext
 	}
@@ -46,13 +46,13 @@ func (b *Builder) Add(ctx context.Context, ordinal vector.Ordinal, value []float
 		return 0, err
 	}
 	if len(b.graph.nodes) >= b.expected {
-		return 0, ErrCapacityExceeded
+		return 0, errCapacityExceeded
 	}
 	if uint64(ordinal) >= uint64(b.expected) {
 		return 0, fmt.Errorf("%w: %d", vector.ErrOrdinalOutOfRange, ordinal)
 	}
 	if b.present[ordinal] {
-		return 0, fmt.Errorf("%w: %d", ErrDuplicateOrdinal, ordinal)
+		return 0, fmt.Errorf("%w: %d", errDuplicateOrdinal, ordinal)
 	}
 	prepared, err := b.calculator.Prepare(value)
 	if err != nil {
@@ -63,15 +63,15 @@ func (b *Builder) Add(ctx context.Context, ordinal vector.Ordinal, value []float
 
 // addPrepared validates and copies an already prepared row without normalizing
 // it again. This preserves source float32 bits exactly.
-func (b *Builder) addPrepared(ordinal vector.Ordinal, prepared []float32) (NodeOrdinal, error) {
+func (b *builder) addPrepared(ordinal vector.Ordinal, prepared []float32) (nodeOrdinal, error) {
 	if len(b.graph.nodes) >= b.expected {
-		return 0, ErrCapacityExceeded
+		return 0, errCapacityExceeded
 	}
 	if uint64(ordinal) >= uint64(b.expected) {
 		return 0, fmt.Errorf("%w: %d", vector.ErrOrdinalOutOfRange, ordinal)
 	}
 	if b.present[ordinal] {
-		return 0, fmt.Errorf("%w: %d", ErrDuplicateOrdinal, ordinal)
+		return 0, fmt.Errorf("%w: %d", errDuplicateOrdinal, ordinal)
 	}
 	if err := validatePreparedVector(b.calculator, prepared); err != nil {
 		return 0, err
@@ -79,65 +79,65 @@ func (b *Builder) addPrepared(ordinal vector.Ordinal, prepared []float32) (NodeO
 
 	nextRNG := b.rng
 	level := nextRNG.level(b.buildConfig.MaxNeighbors)
-	nodeOrdinal := NodeOrdinal(len(b.graph.nodes))
+	nodeID := nodeOrdinal(len(b.graph.nodes))
 	rowStart := int(ordinal) * b.calculator.Dimensions()
 	copy(b.graph.values[rowStart:rowStart+b.calculator.Dimensions()], prepared)
 	b.graph.nodes = append(b.graph.nodes, mutableNode{
-		vectorOrdinal: ordinal, level: level, links: make([][]NodeOrdinal, int(level)+1),
+		vectorOrdinal: ordinal, level: level, links: make([][]nodeOrdinal, int(level)+1),
 	})
 	b.present[ordinal] = true
 	b.rng = nextRNG
 
 	if !b.graph.hasEntry {
-		b.graph.entry = nodeOrdinal
+		b.graph.entry = nodeID
 		b.graph.hasEntry = true
-		return nodeOrdinal, nil
+		return nodeID, nil
 	}
-	b.insert(nodeOrdinal)
-	return nodeOrdinal, nil
+	b.insert(nodeID)
+	return nodeID, nil
 }
 
-func (b *Builder) Len() int { return len(b.graph.nodes) }
+func (b *builder) Len() int { return len(b.graph.nodes) }
 
 // Check validates the current partial graph and reports directed reachability.
-func (b *Builder) Check() (GraphStats, error) {
+func (b *builder) Check() (GraphStats, error) {
 	// The backing matrix includes rows for ordinals not added yet. Compact only
 	// present rows so the common validator can also check an incomplete build.
 	compact := graphData{nodes: make([]mutableNode, len(b.graph.nodes)), hasEntry: b.graph.hasEntry, entry: b.graph.entry}
 	compact.values = make([]float32, len(b.graph.nodes)*b.calculator.Dimensions())
 	seen := make([]bool, b.expected)
-	for nodeOrdinal, node := range b.graph.nodes {
+	for nodeIndex, node := range b.graph.nodes {
 		if uint64(node.vectorOrdinal) >= uint64(b.expected) || seen[node.vectorOrdinal] || !b.present[node.vectorOrdinal] {
-			return GraphStats{}, ErrInvalidGraph
+			return GraphStats{}, errInvalidGraph
 		}
 		seen[node.vectorOrdinal] = true
 		sourceStart := int(node.vectorOrdinal) * b.calculator.Dimensions()
-		targetStart := nodeOrdinal * b.calculator.Dimensions()
+		targetStart := nodeIndex * b.calculator.Dimensions()
 		copy(compact.values[targetStart:targetStart+b.calculator.Dimensions()], b.graph.values[sourceStart:sourceStart+b.calculator.Dimensions()])
-		compact.nodes[nodeOrdinal] = mutableNode{vectorOrdinal: vector.Ordinal(nodeOrdinal), level: node.level, links: make([][]NodeOrdinal, len(node.links))}
+		compact.nodes[nodeIndex] = mutableNode{vectorOrdinal: vector.Ordinal(nodeIndex), level: node.level, links: make([][]nodeOrdinal, len(node.links))}
 		for level := range node.links {
-			compact.nodes[nodeOrdinal].links[level] = append([]NodeOrdinal(nil), node.links[level]...)
+			compact.nodes[nodeIndex].links[level] = append([]nodeOrdinal(nil), node.links[level]...)
 		}
 	}
 	return validateGraphData(b.calculator, b.buildInfo, compact)
 }
 
 // Freeze validates and copies a complete graph into an immutable packed HNSW index.
-func (b *Builder) Freeze() (*HNSWIndex, error) {
+func (b *builder) Freeze() (*Index, error) {
 	if len(b.graph.nodes) != b.expected {
-		return nil, ErrBuilderIncomplete
+		return nil, errBuilderIncomplete
 	}
 	for _, present := range b.present {
 		if !present {
-			return nil, ErrBuilderIncomplete
+			return nil, errBuilderIncomplete
 		}
 	}
 	// newHNSWIndexFromGraph validates and copies every retained section, so passing
 	// the mutable graph directly avoids a redundant full graph clone.
-	return newHNSWIndexFromGraph(b.calculator, b.searchConfig, b.buildInfo, b.graph, b.source)
+	return newIndexFromGraph(b.calculator, b.searchConfig, b.buildInfo, b.graph, b.source)
 }
 
-func (b *Builder) insert(node NodeOrdinal) {
+func (b *builder) insert(node nodeOrdinal) {
 	newLevel := int(b.graph.nodes[node].level)
 	oldEntry := b.graph.entry
 	oldMaxLevel := int(b.graph.nodes[oldEntry].level)
@@ -146,12 +146,12 @@ func (b *Builder) insert(node NodeOrdinal) {
 	for level := oldMaxLevel; level > newLevel; level-- {
 		current = b.greedyBuild(node, current, level)
 	}
-	entryPoints := []NodeOrdinal{current}
+	entryPoints := []nodeOrdinal{current}
 	// Every shared level gets an independent beam search over links[level]. Its
 	// candidates seed the next lower level, but links from different levels never mix.
 	for level := min(newLevel, oldMaxLevel); level >= 0; level-- {
 		candidates := b.searchLayer(node, entryPoints, b.buildConfig.EfConstruction, level)
-		candidateNodes := make([]NodeOrdinal, len(candidates))
+		candidateNodes := make([]nodeOrdinal, len(candidates))
 		for i, candidate := range candidates {
 			candidateNodes[i] = candidate.node
 		}
@@ -169,7 +169,7 @@ func (b *Builder) insert(node NodeOrdinal) {
 	}
 }
 
-func (b *Builder) greedyBuild(queryNode, current NodeOrdinal, level int) NodeOrdinal {
+func (b *builder) greedyBuild(queryNode, current nodeOrdinal, level int) nodeOrdinal {
 	currentDistance := b.distanceNodes(queryNode, current)
 	for {
 		best := current
@@ -189,15 +189,15 @@ func (b *Builder) greedyBuild(queryNode, current NodeOrdinal, level int) NodeOrd
 	}
 }
 
-func (b *Builder) searchLayer(queryNode NodeOrdinal, entryPoints []NodeOrdinal, ef, level int) []searchCandidate {
+func (b *builder) searchLayer(queryNode nodeOrdinal, entryPoints []nodeOrdinal, ef, level int) []searchCandidate {
 	// ef bounds the retained multi-hop candidate set on this one level. Direct
 	// adjacency is bounded separately by MaxNeighbors above level 0 and by the
 	// derived LevelZeroMaxNeighbors on level 0.
 	capacity := min(ef, len(b.graph.nodes)-1)
 	results := newResultHeap(capacity)
 	frontier := candidateHeap{items: make([]searchCandidate, 0, min(capacity, len(entryPoints)))}
-	seen := make(map[NodeOrdinal]struct{}, min(capacity, len(b.graph.nodes)))
-	offer := func(node NodeOrdinal) {
+	seen := make(map[nodeOrdinal]struct{}, min(capacity, len(b.graph.nodes)))
+	offer := func(node nodeOrdinal) {
 		if node == queryNode {
 			return
 		}

@@ -24,13 +24,13 @@ func main() {
 	source, err := vectorstore.NewMemoryVectorStore(calculator, values)
 	must(err)
 
-	index, err := hnsw.BuildIndex(ctx, source, hnsw.BuildOptions{
-		BuildConfig: hnsw.BuildConfig{
+	index, err := hnsw.Build(ctx, source, hnsw.BuildOptions{
+		Build: hnsw.BuildConfig{
 			Dimensions: 2, Metric: vector.MetricL2Squared,
 			MaxVectors: len(values), MaxVectorBytes: uint64(len(values) * 2 * 4),
 			MaxNeighbors: 2, EfConstruction: 8, Seed: 42,
 		},
-		SearchConfig: hnsw.SearchConfig{
+		Search: hnsw.SearchConfig{
 			DefaultEfSearch: 8, MaxEfSearch: 32,
 			DefaultVisitLimit: len(values), MaxVisitLimit: len(values), MaxK: 10,
 		},
@@ -40,19 +40,9 @@ func main() {
 	})
 	must(err)
 
-	entry, maxLevel, _ := index.EntryPoint()
-	fmt.Printf("\nentry=node-%d max-level=%d\n", entry, maxLevel)
-	for node := 0; node < index.NodeCount(); node++ {
-		level, _ := index.NodeLevel(hnsw.NodeOrdinal(node))
-		fmt.Printf("node-%d vector-row=%d max-level=%d\n", node, node, level)
-		for currentLevel := int(level); currentLevel >= 0; currentLevel-- {
-			neighbors, _ := index.Neighbors(hnsw.NodeOrdinal(node), currentLevel)
-			fmt.Printf("  level=%d neighbors=%v\n", currentLevel, neighbors)
-		}
-	}
-
-	stats := index.GraphStats()
-	storageStats := index.StorageStats()
+	report := index.Report()
+	stats := report.Graph
+	storageStats := report.Storage
 	fmt.Printf("\ngraph nodes=%d links=%d reachable=%d unreachable=%d bytes=%d\n",
 		stats.NodeCount, storageStats.DirectedLinks, stats.ReachableNodes, stats.UnreachableNodes, storageStats.TotalBytes)
 
@@ -65,19 +55,20 @@ func main() {
 	vectorData, vectorMetadata, err := semanticpersist.MarshalSource(source, 10)
 	must(err)
 	vectorReference := hnsw.VectorFileReference{Size: vectorMetadata.Size, SHA256: vectorMetadata.SHA256}
-	graphData, graphMetadata, err := hnsw.MarshalGraph(index, vectorReference)
+	var graphData bytes.Buffer
+	graphMetadata, err := hnsw.WriteGraph(ctx, &graphData, index, vectorReference)
 	must(err)
 	fmt.Printf("\npersist vectors.bin=%d bytes graph.bin=%d bytes\n", vectorMetadata.Size, graphMetadata.Size)
 
 	openedVectors, openedVectorMetadata, err := semanticpersist.OpenVectorFile(bytes.NewReader(vectorData), semanticpersist.DefaultCodecLimits())
 	must(err)
 	openedReference := hnsw.VectorFileReference{Size: openedVectorMetadata.Size, SHA256: openedVectorMetadata.SHA256}
-	openedIndex, _, err := hnsw.OpenGraphFileContext(ctx, bytes.NewReader(graphData), openedVectors, openedReference, hnsw.DefaultGraphLimits())
+	openedIndex, _, err := hnsw.OpenGraph(ctx, bytes.NewReader(graphData.Bytes()), openedVectors, openedReference, hnsw.DefaultGraphLimits())
 	must(err)
 
 	reopened, err := openedIndex.Search(ctx, query, 3, vector.SearchOptions{EfSearch: 8})
 	must(err)
-	fmt.Printf("reopened hits=%v build=%+v\n", reopened.Hits, openedIndex.BuildInfo())
+	fmt.Printf("reopened hits=%v build=%+v\n", reopened.Hits, openedIndex.Report().Build)
 }
 
 func must(err error) {

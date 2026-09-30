@@ -13,11 +13,8 @@ import (
 // the format subpackage.
 func aligned4(value uint64) uint64 { return (value + 3) &^ 3 }
 
-func validateHNSWIndexVectors(reader *HNSWIndex) error {
-	return validateHNSWIndexVectorsContext(context.Background(), reader)
-}
-func validateHNSWIndexVectorsContext(ctx context.Context, reader *HNSWIndex) error {
-	if reader == nil || reader.vectors == nil || reader.vectors.Len() != reader.Len() || reader.vectors.Dimensions() != reader.Dimensions() || reader.vectors.Metric() != reader.Metric() || reader.vectors.Normalization() != reader.Normalization() {
+func validateIndexVectorsContext(ctx context.Context, reader *Index) error {
+	if reader == nil || reader.vectors == nil || reader.vectors.Len() != reader.Len() || reader.vectors.Dimensions() != reader.Dimensions() || reader.vectors.Metric() != reader.Metric() || reader.vectors.Normalization() != reader.topology.calculator.Normalization() {
 		return ErrCorruptGraphData
 	}
 	components, ok := checkedMultiply(uint64(reader.Len()), uint64(reader.Dimensions()))
@@ -33,7 +30,13 @@ func validateHNSWIndexVectorsContext(ctx context.Context, reader *HNSWIndex) err
 			scratch[i] = float32(math.NaN())
 		}
 		if err := reader.vectors.ReadVectorInto(ctx, vector.Ordinal(row), scratch); err != nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return contextErr
+			}
 			return fmt.Errorf("%w: read vector row %d: %v", ErrGraphVectorStore, row, err)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if err := validatePreparedVector(reader.topology.calculator, scratch); err != nil {
 			return fmt.Errorf("%w: vector row %d: %v", ErrGraphVectorStore, row, err)
@@ -42,31 +45,28 @@ func validateHNSWIndexVectorsContext(ctx context.Context, reader *HNSWIndex) err
 	return nil
 }
 
-func validatePackedTopology(reader *HNSWIndex) (GraphStats, error) {
-	return validatePackedTopologyContext(context.Background(), reader)
-}
-func validatePackedTopologyContext(ctx context.Context, reader *HNSWIndex) (GraphStats, error) {
+func validatePackedTopologyContext(ctx context.Context, reader *Index) (GraphStats, error) {
 	if err := ctx.Err(); err != nil {
 		return GraphStats{}, err
 	}
 	if reader == nil || reader.Dimensions() <= 0 || !reader.Metric().Valid() {
-		return GraphStats{}, ErrInvalidGraph
+		return GraphStats{}, errInvalidGraph
 	}
 	nodes := len(reader.topology.nodeToVector)
 	if uint64(nodes) >= math.MaxUint32 || len(reader.topology.levels) != nodes || len(reader.topology.level0Offsets) != nodes+1 || len(reader.topology.upperNodeOffsets) != nodes+1 || len(reader.topology.upperLinkOffsets) == 0 || uint64(len(reader.topology.level0Neighbors)) >= math.MaxUint32 || uint64(len(reader.topology.upperLinkOffsets)-1) >= math.MaxUint32 || uint64(len(reader.topology.upperNeighbors)) >= math.MaxUint32 {
-		return GraphStats{}, ErrInvalidGraph
+		return GraphStats{}, errInvalidGraph
 	}
 	if links, ok := checkedAdd(uint64(len(reader.topology.level0Neighbors)), uint64(len(reader.topology.upperNeighbors))); !ok || links > uint64(math.MaxInt) {
-		return GraphStats{}, ErrInvalidGraph
+		return GraphStats{}, errInvalidGraph
 	}
 	if nodes == 0 {
 		if reader.topology.hasEntry || reader.topology.entry != 0 || len(reader.topology.level0Neighbors) != 0 || len(reader.topology.upperLinkOffsets) != 1 || len(reader.topology.upperNeighbors) != 0 || reader.topology.level0Offsets[0] != 0 || reader.topology.upperNodeOffsets[0] != 0 || reader.topology.upperLinkOffsets[0] != 0 {
-			return GraphStats{}, ErrInvalidGraph
+			return GraphStats{}, errInvalidGraph
 		}
 		return GraphStats{MaxLevel: -1}, nil
 	}
 	if !reader.topology.hasEntry || uint64(reader.topology.entry) >= uint64(nodes) {
-		return GraphStats{}, ErrInvalidGraph
+		return GraphStats{}, errInvalidGraph
 	}
 	seenVectors := make([]bool, nodes)
 	maxLevel, placements := 0, uint64(0)
@@ -76,23 +76,23 @@ func validatePackedTopologyContext(ctx context.Context, reader *HNSWIndex) (Grap
 		}
 		ordinal, level := reader.topology.nodeToVector[node], int(reader.topology.levels[node])
 		if uint64(ordinal) >= uint64(nodes) || seenVectors[ordinal] || level > MaxLevel || uint64(reader.topology.upperNodeOffsets[node]) != placements {
-			return GraphStats{}, ErrInvalidGraph
+			return GraphStats{}, errInvalidGraph
 		}
 		seenVectors[ordinal] = true
 		placements += uint64(level)
 		if placements >= math.MaxUint32 {
-			return GraphStats{}, ErrInvalidGraph
+			return GraphStats{}, errInvalidGraph
 		}
 		maxLevel = max(maxLevel, level)
 	}
 	if uint64(reader.topology.upperNodeOffsets[nodes]) != placements || placements != uint64(len(reader.topology.upperLinkOffsets)-1) || int(reader.topology.levels[reader.topology.entry]) != maxLevel {
-		return GraphStats{}, ErrInvalidGraph
+		return GraphStats{}, errInvalidGraph
 	}
 	if !validOffsetsContext(ctx, reader.topology.level0Offsets, len(reader.topology.level0Neighbors)) || !validOffsetsContext(ctx, reader.topology.upperLinkOffsets, len(reader.topology.upperNeighbors)) {
 		if err := ctx.Err(); err != nil {
 			return GraphStats{}, err
 		}
-		return GraphStats{}, ErrInvalidGraph
+		return GraphStats{}, errInvalidGraph
 	}
 	stats := GraphStats{NodeCount: nodes, VectorCount: nodes, MaxLevel: maxLevel, LevelNodeCounts: make([]int, maxLevel+1), LevelLinkCounts: make([]int, maxLevel+1)}
 	marks := make([]uint64, nodes)
@@ -102,16 +102,16 @@ func validatePackedTopologyContext(ctx context.Context, reader *HNSWIndex) (Grap
 			return GraphStats{}, err
 		}
 		for level := 0; level <= int(reader.topology.levels[node]); level++ {
-			neighbors, ok := reader.neighborView(NodeOrdinal(node), level)
+			neighbors, ok := reader.neighborView(nodeOrdinal(node), level)
 			if !ok || len(neighbors) > reader.topology.buildInfo.neighborLimit(level) {
-				return GraphStats{}, ErrInvalidGraph
+				return GraphStats{}, errInvalidGraph
 			}
 			stats.LevelNodeCounts[level]++
 			stats.LevelLinkCounts[level] += len(neighbors)
 			epoch++
 			for _, neighbor := range neighbors {
 				if uint64(neighbor) >= uint64(nodes) || int(neighbor) == node || int(reader.topology.levels[neighbor]) < level || marks[neighbor] == epoch {
-					return GraphStats{}, ErrInvalidGraph
+					return GraphStats{}, errInvalidGraph
 				}
 				marks[neighbor] = epoch
 			}
@@ -121,7 +121,7 @@ func validatePackedTopologyContext(ctx context.Context, reader *HNSWIndex) (Grap
 		}
 	}
 	visited := make([]bool, nodes)
-	queue := make([]NodeOrdinal, 1, nodes)
+	queue := make([]nodeOrdinal, 1, nodes)
 	queue[0] = reader.topology.entry
 	visited[reader.topology.entry] = true
 	processed := 0
@@ -168,7 +168,7 @@ func contextProgressCheck(ctx context.Context, index int) error {
 	}
 	return ctx.Err()
 }
-func indexConfigEncodable(index *HNSWIndex) bool {
+func indexConfigEncodable(index *Index) bool {
 	values := [...]int{index.Dimensions(), index.topology.searchConfig.DefaultEfSearch, index.topology.searchConfig.MaxEfSearch, index.topology.searchConfig.DefaultVisitLimit, index.topology.searchConfig.MaxVisitLimit, index.topology.searchConfig.MaxK, index.topology.buildInfo.MaxNeighbors, index.topology.buildInfo.LevelZeroMaxNeighbors, index.topology.buildInfo.EfConstruction}
 	for _, value := range values {
 		if value < 0 || uint64(value) > math.MaxUint32 {

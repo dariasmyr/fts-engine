@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
@@ -43,7 +42,7 @@ func Search(ctx context.Context, calculator vector.Calculator, matrix []float32,
 			incomplete = true
 			break
 		}
-		if err := contextcheck.PeriodicError(ctx, row); err != nil {
+		if err := periodicContextError(ctx, row); err != nil {
 			return vector.SearchResult{}, err
 		}
 		stats.VisitedNodes++
@@ -103,7 +102,7 @@ func SearchSource(ctx context.Context, source vectorstore.PreparedVectorStore, m
 			incomplete = true
 			break
 		}
-		if err := contextcheck.PeriodicError(ctx, row); err != nil {
+		if err := periodicContextError(ctx, row); err != nil {
 			return vector.SearchResult{}, err
 		}
 		stats.VisitedNodes++

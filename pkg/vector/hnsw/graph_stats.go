@@ -36,6 +36,14 @@ type StorageStats struct {
 	TotalBytes        uint64
 }
 
+// Report is one immutable snapshot of index configuration and diagnostics.
+type Report struct {
+	Build   BuildInfo
+	Search  SearchConfig
+	Graph   GraphStats
+	Storage StorageStats
+}
+
 func (i BuildInfo) neighborLimit(level int) int {
 	if level == 0 {
 		return i.LevelZeroMaxNeighbors

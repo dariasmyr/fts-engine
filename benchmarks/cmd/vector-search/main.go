@@ -101,8 +101,7 @@ func parseFlags(args []string, stderr io.Writer) (vectorann.Config, string, stri
 	efConstruction := flags.String("ef-construction", joinInts(defaults.EfConstruction), "comma-separated EfConstruction sweep")
 	efSearch := flags.String("ef-search", joinInts(defaults.EfSearch), "comma-separated EfSearch sweep")
 	seeds := flags.String("build-seeds", joinUint64s(defaults.BuildSeeds), "comma-separated HNSW build seeds")
-	orders := flags.String("build-orders", "ascending,shuffled", "comma-separated ascending,shuffled build orders")
-	shuffleSeed := flags.Uint64("shuffle-seed", 1, "shuffled build-order seed")
+	orders := flags.String("build-orders", "ascending", "build order (ascending)")
 	filterSelectivities := flags.String("filter-selectivities", joinFloat64s(defaults.FilterSelectivities), "comma-separated result-filter selectivities")
 	filterSeed := flags.Uint64("filter-seed", defaults.FilterSeed, "deterministic result-filter seed")
 	visitLimit := flags.Int("visit-limit", 0, "request visit limit (0 = vector count)")
@@ -141,7 +140,7 @@ func parseFlags(args []string, stderr io.Writer) (vectorann.Config, string, stri
 	if err != nil {
 		return vectorann.Config{}, "", "", fmt.Errorf("vector-search: build-seeds: %w", err)
 	}
-	config.BuildOrders, err = parseOrders(*orders, *shuffleSeed)
+	config.BuildOrders, err = parseOrders(*orders)
 	if err != nil {
 		return vectorann.Config{}, "", "", err
 	}
@@ -198,15 +197,13 @@ func parseMetrics(value string) ([]vector.Metric, error) {
 	return metrics, nil
 }
 
-func parseOrders(value string, shuffleSeed uint64) ([]vectorann.BuildOrder, error) {
+func parseOrders(value string) ([]vectorann.BuildOrder, error) {
 	parts := splitCSV(value)
 	orders := make([]vectorann.BuildOrder, 0, len(parts))
 	for _, part := range parts {
 		switch part {
 		case "ascending":
 			orders = append(orders, vectorann.BuildOrder{Name: part})
-		case "shuffled":
-			orders = append(orders, vectorann.BuildOrder{Name: part, Seed: shuffleSeed})
 		default:
 			return nil, fmt.Errorf("vector-search: unknown build order %q", part)
 		}

@@ -1,6 +1,7 @@
 package semanticpersist
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -569,7 +570,7 @@ func TestPublishRejectsUnusableSearchPolicy(t *testing.T) {
 				checkpoint.MaxChunkCandidates = 0
 				checkpoint.MaxChunksPerDocumentHit = 0
 			} else {
-				checkpoint.MaxChunkCandidates = checkpoint.Segment.Index().MaxK() + 1
+				checkpoint.MaxChunkCandidates = checkpoint.Segment.MaxK() + 1
 			}
 			if _, err := Publish(context.Background(), t.TempDir(), 1, checkpoint, Options{}); !errors.Is(err, ErrLimitExceeded) {
 				t.Fatalf("Publish() error = %v, want %v", err, ErrLimitExceeded)
@@ -584,10 +585,10 @@ func TestHNSWSearchWorkLimits(t *testing.T) {
 
 	for name, limit := range map[string]func(*Limits){
 		"ef search": func(limits *Limits) {
-			limits.MaxEfSearch = checkpoint.Segment.Index().SearchConfig().MaxEfSearch - 1
+			limits.MaxEfSearch = checkpoint.Segment.SearchLimits().MaxEfSearch - 1
 		},
 		"visit limit": func(limits *Limits) {
-			limits.MaxVisitLimit = checkpoint.Segment.Index().SearchConfig().MaxVisitLimit - 1
+			limits.MaxVisitLimit = checkpoint.Segment.SearchLimits().MaxVisitLimit - 1
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -808,13 +809,13 @@ func persistenceFixture(t testing.TB, extra bool) (SealedSegment, chunkExpectati
 func withHNSW(t testing.TB, checkpoint SealedSegment, seed uint64) SealedSegment {
 	t.Helper()
 	maxK := max(checkpoint.MaxK, checkpoint.MaxChunkCandidates)
-	graph, err := hnsw.BuildIndex(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
-		BuildConfig: hnsw.BuildConfig{
+	graph, err := hnsw.Build(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
+		Build: hnsw.BuildConfig{
 			Dimensions: checkpoint.Segment.Metadata().Embedding.Dimensions, Metric: checkpoint.Segment.Metadata().Embedding.Metric,
 			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Segment.Metadata().Embedding.Dimensions * 4),
 			MaxNeighbors: 2, EfConstruction: 8, Seed: seed,
 		},
-		SearchConfig: hnsw.SearchConfig{
+		Search: hnsw.SearchConfig{
 			DefaultEfSearch: maxK, MaxEfSearch: maxK, DefaultVisitLimit: checkpoint.Segment.Len(),
 			MaxVisitLimit: checkpoint.Segment.Len(), MaxK: maxK,
 		},
@@ -822,7 +823,7 @@ func withHNSW(t testing.TB, checkpoint SealedSegment, seed uint64) SealedSegment
 	if err != nil {
 		t.Fatal(err)
 	}
-	segment, err := semantic.NewSegment(semantic.MutableHeadID, checkpoint.Segment.Metadata(), graph, checkpoint.Segment.Rows())
+	segment, err := semantic.NewSegment(context.Background(), semantic.MutableHeadID, checkpoint.Segment.Metadata(), checkpoint.Segment.Vectors(), graph, checkpoint.Segment.Rows())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -843,15 +844,16 @@ func substituteGraphAndReferences(t *testing.T, root string, generation Generati
 		t.Fatal(err)
 	}
 	replacement := withHNSW(t, checkpoint, 99)
-	graphData, _, err := hnsw.MarshalGraph(replacement.Segment.Index(), hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256})
+	var graphData bytes.Buffer
+	_, err = hnsw.WriteGraph(context.Background(), &graphData, replacement.Segment.Index(), hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256})
 	if err != nil {
 		t.Fatal(err)
 	}
 	graphPath := filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, graphFileName)
-	if err := os.WriteFile(graphPath, graphData, 0o600); err != nil {
+	if err := os.WriteFile(graphPath, graphData.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	value.Graph = fileRef(graphData)
+	value.Graph = fileRef(graphData.Bytes())
 	updatedManifest, updatedRef, err := encodeManifest(value, DefaultLimits())
 	if err != nil {
 		t.Fatal(err)

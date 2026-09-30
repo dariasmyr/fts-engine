@@ -63,19 +63,19 @@ func readerTestGraph() graphData {
 			3, 0,
 		},
 		nodes: []mutableNode{
-			{vectorOrdinal: 2, level: 2, links: [][]NodeOrdinal{{1, 2}, {2}, {}}},
-			{vectorOrdinal: 0, level: 0, links: [][]NodeOrdinal{{0}}},
-			{vectorOrdinal: 3, level: 1, links: [][]NodeOrdinal{{0, 3}, {0}}},
-			{vectorOrdinal: 1, level: 0, links: [][]NodeOrdinal{{}}},
+			{vectorOrdinal: 2, level: 2, links: [][]nodeOrdinal{{1, 2}, {2}, {}}},
+			{vectorOrdinal: 0, level: 0, links: [][]nodeOrdinal{{0}}},
+			{vectorOrdinal: 3, level: 1, links: [][]nodeOrdinal{{0, 3}, {0}}},
+			{vectorOrdinal: 1, level: 0, links: [][]nodeOrdinal{{}}},
 		},
 		entry:    0,
 		hasEntry: true,
 	}
 }
 
-func newReaderForTest(t *testing.T, calculator vector.Calculator, graph graphData) *HNSWIndex {
+func newReaderForTest(t *testing.T, calculator vector.Calculator, graph graphData) *Index {
 	t.Helper()
-	reader, err := newHNSWIndexFromGraph(calculator, readerTestSearchConfig(), readerTestBuildInfo(), graph)
+	reader, err := newIndexFromGraph(calculator, readerTestSearchConfig(), readerTestBuildInfo(), graph)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestSearchConfigValidation(t *testing.T) {
 	}
 
 	space := readerTestSpace(t, 1, vector.MetricL2Squared)
-	_, err := newHNSWIndexFromGraph(space, SearchConfig{}, readerTestBuildInfo(), graphData{})
+	_, err := newIndexFromGraph(space, SearchConfig{}, readerTestBuildInfo(), graphData{})
 	if !errors.Is(err, ErrInvalidSearchConfig) {
 		t.Fatalf("newHNSWIndexFromGraph invalid search config error = %v", err)
 	}
@@ -118,22 +118,22 @@ func TestSearchConfigValidation(t *testing.T) {
 func TestReaderEmptyAndSingleton(t *testing.T) {
 	space := readerTestSpace(t, 2, vector.MetricL2Squared)
 	empty := newReaderForTest(t, space, graphData{})
-	if empty.Len() != 0 || empty.NodeCount() != 0 || empty.Dimensions() != 2 || empty.Metric() != vector.MetricL2Squared || empty.Normalization() != vector.NormalizationNone || empty.MaxK() != 16 {
-		t.Fatalf("empty reader metadata = len:%d nodes:%d dimensions:%d metric:%v normalization:%v maxK:%d", empty.Len(), empty.NodeCount(), empty.Dimensions(), empty.Metric(), empty.Normalization(), empty.MaxK())
+	if empty.Len() != 0 || empty.Dimensions() != 2 || empty.Metric() != vector.MetricL2Squared || empty.vectors.Normalization() != vector.NormalizationNone || empty.Report().Search.MaxK != 16 {
+		t.Fatalf("empty reader metadata = len:%d dimensions:%d metric:%v normalization:%v maxK:%d", empty.Len(), empty.Dimensions(), empty.Metric(), empty.vectors.Normalization(), empty.Report().Search.MaxK)
 	}
-	if _, _, ok := empty.EntryPoint(); ok {
+	if _, _, ok := empty.entryPoint(); ok {
 		t.Fatal("empty reader has an entry point")
 	}
-	if _, ok := empty.NodeLevel(0); ok {
+	if _, ok := empty.nodeLevel(0); ok {
 		t.Fatal("empty reader has node 0")
 	}
-	if _, ok := empty.Neighbors(0, 0); ok {
+	if _, ok := empty.neighbors(0, 0); ok {
 		t.Fatal("empty reader has adjacency for node 0")
 	}
-	if _, ok := readPreparedVector(empty.Vectors(), 0); ok {
+	if _, ok := readPreparedVector(empty.vectors, 0); ok {
 		t.Fatal("empty reader has vector 0")
 	}
-	if got := empty.GraphStats(); !reflect.DeepEqual(got, GraphStats{MaxLevel: -1}) {
+	if got := empty.Report().Graph; !reflect.DeepEqual(got, GraphStats{MaxLevel: -1}) {
 		t.Fatalf("empty stats = %+v, want MaxLevel -1", got)
 	}
 	result, err := empty.Search(context.Background(), []float32{0, 0}, 1, vector.SearchOptions{})
@@ -147,17 +147,17 @@ func TestReaderEmptyAndSingleton(t *testing.T) {
 	cosine := readerTestSpace(t, 2, vector.MetricCosine)
 	singleton := newReaderForTest(t, cosine, graphData{
 		values:   []float32{0.6, 0.8},
-		nodes:    []mutableNode{{vectorOrdinal: 0, links: [][]NodeOrdinal{{}}}},
+		nodes:    []mutableNode{{vectorOrdinal: 0, links: [][]nodeOrdinal{{}}}},
 		entry:    0,
 		hasEntry: true,
 	})
-	if singleton.Len() != 1 || singleton.Normalization() != vector.NormalizationUnitLength {
-		t.Fatalf("singleton metadata = len:%d normalization:%v", singleton.Len(), singleton.Normalization())
+	if singleton.Len() != 1 || singleton.vectors.Normalization() != vector.NormalizationUnitLength {
+		t.Fatalf("singleton metadata = len:%d normalization:%v", singleton.Len(), singleton.vectors.Normalization())
 	}
-	if node, level, ok := singleton.EntryPoint(); !ok || node != 0 || level != 0 {
+	if node, level, ok := singleton.entryPoint(); !ok || node != 0 || level != 0 {
 		t.Fatalf("singleton entry = (%d, %d, %v)", node, level, ok)
 	}
-	if neighbors, ok := singleton.Neighbors(0, 0); !ok || len(neighbors) != 0 {
+	if neighbors, ok := singleton.neighbors(0, 0); !ok || len(neighbors) != 0 {
 		t.Fatalf("singleton neighbors = %v, %v", neighbors, ok)
 	}
 	result, err = singleton.Search(context.Background(), []float32{3, 4}, 1, vector.SearchOptions{})
@@ -175,7 +175,7 @@ func TestReaderExplicitLevelsMembershipPackingAndMapping(t *testing.T) {
 	if got, want := reader.topology.level0Offsets, []uint32{0, 2, 3, 5, 5}; !slices.Equal(got, want) {
 		t.Fatalf("level0 offsets = %v, want %v", got, want)
 	}
-	if got, want := reader.topology.level0Neighbors, []NodeOrdinal{1, 2, 0, 0, 3}; !slices.Equal(got, want) {
+	if got, want := reader.topology.level0Neighbors, []nodeOrdinal{1, 2, 0, 0, 3}; !slices.Equal(got, want) {
 		t.Fatalf("level0 neighbors = %v, want %v", got, want)
 	}
 	if got, want := reader.topology.upperNodeOffsets, []uint32{0, 2, 2, 3, 3}; !slices.Equal(got, want) {
@@ -184,38 +184,38 @@ func TestReaderExplicitLevelsMembershipPackingAndMapping(t *testing.T) {
 	if got, want := reader.topology.upperLinkOffsets, []uint32{0, 1, 1, 2}; !slices.Equal(got, want) {
 		t.Fatalf("upper link offsets = %v, want %v", got, want)
 	}
-	if got, want := reader.topology.upperNeighbors, []NodeOrdinal{2, 0}; !slices.Equal(got, want) {
+	if got, want := reader.topology.upperNeighbors, []nodeOrdinal{2, 0}; !slices.Equal(got, want) {
 		t.Fatalf("upper neighbors = %v, want %v", got, want)
 	}
 
 	levels := []uint8{2, 0, 1, 0}
 	for node, want := range levels {
-		if got, ok := reader.NodeLevel(NodeOrdinal(node)); !ok || got != want {
+		if got, ok := reader.nodeLevel(nodeOrdinal(node)); !ok || got != want {
 			t.Errorf("NodeLevel(%d) = (%d, %v), want (%d, true)", node, got, ok, want)
 		}
 	}
-	if _, ok := reader.NodeLevel(4); ok {
+	if _, ok := reader.nodeLevel(4); ok {
 		t.Fatal("out-of-range node has a level")
 	}
 	for _, test := range []struct {
-		node  NodeOrdinal
+		node  nodeOrdinal
 		level int
-		want  []NodeOrdinal
+		want  []nodeOrdinal
 		ok    bool
 	}{
-		{0, 0, []NodeOrdinal{1, 2}, true},
-		{0, 1, []NodeOrdinal{2}, true},
-		{0, 2, []NodeOrdinal{}, true},
-		{1, 0, []NodeOrdinal{0}, true},
-		{2, 0, []NodeOrdinal{0, 3}, true},
-		{2, 1, []NodeOrdinal{0}, true},
-		{3, 0, []NodeOrdinal{}, true},
+		{0, 0, []nodeOrdinal{1, 2}, true},
+		{0, 1, []nodeOrdinal{2}, true},
+		{0, 2, []nodeOrdinal{}, true},
+		{1, 0, []nodeOrdinal{0}, true},
+		{2, 0, []nodeOrdinal{0, 3}, true},
+		{2, 1, []nodeOrdinal{0}, true},
+		{3, 0, []nodeOrdinal{}, true},
 		{0, 3, nil, false},
 		{1, 1, nil, false},
 		{4, 0, nil, false},
 		{0, -1, nil, false},
 	} {
-		got, ok := reader.Neighbors(test.node, test.level)
+		got, ok := reader.neighbors(test.node, test.level)
 		if ok != test.ok || !slices.Equal(got, test.want) {
 			t.Errorf("Neighbors(%d, %d) = (%v, %v), want (%v, %v)", test.node, test.level, got, ok, test.want, test.ok)
 		}
@@ -225,13 +225,13 @@ func TestReaderExplicitLevelsMembershipPackingAndMapping(t *testing.T) {
 		t.Fatalf("node mapping = %v, want %v", got, want)
 	}
 	for ordinal, want := range [][]float32{{0, 0}, {1, 0}, {2, 0}, {3, 0}} {
-		got, ok := readPreparedVector(reader.Vectors(), vector.Ordinal(ordinal))
+		got, ok := readPreparedVector(reader.vectors, vector.Ordinal(ordinal))
 		if !ok || !slices.Equal(got, want) {
 			t.Errorf("Vector(%d) = (%v, %v), want (%v, true)", ordinal, got, ok, want)
 		}
 	}
 	for node, wantOrdinal := range []vector.Ordinal{2, 0, 3, 1} {
-		_, gotOrdinal, ok := reader.vectorByNode(NodeOrdinal(node))
+		_, gotOrdinal, ok := reader.vectorByNode(nodeOrdinal(node))
 		if !ok || gotOrdinal != wantOrdinal {
 			t.Errorf("vectorByNode(%d) ordinal = (%d, %v), want (%d, true)", node, gotOrdinal, ok, wantOrdinal)
 		}
@@ -242,7 +242,7 @@ func TestReaderExplicitLevelsMembershipPackingAndMapping(t *testing.T) {
 		LevelNodeCounts: []int{4, 2, 1}, LevelLinkCounts: []int{5, 2, 0},
 		ReachableNodes: 4, ZeroDegreeNodes: 1,
 	}
-	if got := reader.GraphStats(); !reflect.DeepEqual(got, wantStats) {
+	if got := reader.Report().Graph; !reflect.DeepEqual(got, wantStats) {
 		t.Fatalf("stats = %+v, want %+v", got, wantStats)
 	}
 	result, err := reader.Search(context.Background(), []float32{0, 0}, 4, vector.SearchOptions{})
@@ -273,32 +273,32 @@ func TestReaderRejectsInvalidGraphData(t *testing.T) {
 		{"invalid max neighbors", l2, BuildInfo{BuildVersion: BuildVersion, LevelGeneratorVersion: LevelGeneratorVersion, MaxNeighbors: 1, LevelZeroMaxNeighbors: 2, EfConstruction: 2}, graphData{}, ErrInvalidBuildConfig},
 		{"invalid level-zero max neighbors", l2, BuildInfo{BuildVersion: BuildVersion, LevelGeneratorVersion: LevelGeneratorVersion, MaxNeighbors: 2, LevelZeroMaxNeighbors: 3, EfConstruction: 2}, graphData{}, ErrInvalidBuildConfig},
 		{"invalid ef", l2, BuildInfo{BuildVersion: BuildVersion, LevelGeneratorVersion: LevelGeneratorVersion, MaxNeighbors: 2, LevelZeroMaxNeighbors: 4, EfConstruction: 1}, graphData{}, ErrInvalidBuildConfig},
-		{"empty with entry", l2, validInfo, graphData{hasEntry: true}, ErrInvalidGraph},
-		{"value dimensions", l2, validInfo, graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"missing entry", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}}, ErrInvalidGraph},
-		{"entry out of range", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}, entry: 1, hasEntry: true}, ErrInvalidGraph},
-		{"entry below max level", l2, validInfo, graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}, {level: 1, vectorOrdinal: 1, links: [][]NodeOrdinal{{}, {}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"level above maximum", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{level: MaxLevel + 1, links: make([][]NodeOrdinal, MaxLevel+2)}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"level link count short", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{level: 1, links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"level link count long", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}, {}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"vector ordinal out of range", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{vectorOrdinal: 1, links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"duplicate vector ordinal", l2, validInfo, graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}, {links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"link out of range", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{links: [][]NodeOrdinal{{1}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"self link", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{links: [][]NodeOrdinal{{0}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"duplicate link", l2, validInfo, graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]NodeOrdinal{{1, 1}}}, {vectorOrdinal: 1, links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"upper link to absent level", l2, validInfo, graphData{values: []float32{1, 2}, nodes: []mutableNode{{level: 1, links: [][]NodeOrdinal{{}, {1}}}, {vectorOrdinal: 1, links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"level0 degree", l2, validInfo, graphData{values: []float32{0, 1, 2, 3, 4, 5}, nodes: []mutableNode{{links: [][]NodeOrdinal{{1, 2, 3, 4, 5}}}, {vectorOrdinal: 1, links: [][]NodeOrdinal{{}}}, {vectorOrdinal: 2, links: [][]NodeOrdinal{{}}}, {vectorOrdinal: 3, links: [][]NodeOrdinal{{}}}, {vectorOrdinal: 4, links: [][]NodeOrdinal{{}}}, {vectorOrdinal: 5, links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"upper degree", l2, validInfo, graphData{values: []float32{0, 1, 2, 3}, nodes: []mutableNode{{level: 1, links: [][]NodeOrdinal{{}, {1, 2, 3}}}, {vectorOrdinal: 1, level: 1, links: [][]NodeOrdinal{{}, {}}}, {vectorOrdinal: 2, level: 1, links: [][]NodeOrdinal{{}, {}}}, {vectorOrdinal: 3, level: 1, links: [][]NodeOrdinal{{}, {}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"nan prepared vector", l2, validInfo, graphData{values: []float32{float32(math.NaN())}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"infinite prepared vector", l2, validInfo, graphData{values: []float32{float32(math.Inf(1))}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"negative zero prepared vector", l2, validInfo, graphData{values: []float32{math.Float32frombits(1 << 31)}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"unnormalized cosine vector", cosine, validInfo, graphData{values: []float32{3, 4}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
-		{"zero cosine vector", cosine, validInfo, graphData{values: []float32{0, 0}, nodes: []mutableNode{{links: [][]NodeOrdinal{{}}}}, entry: 0, hasEntry: true}, ErrInvalidGraph},
+		{"empty with entry", l2, validInfo, graphData{hasEntry: true}, errInvalidGraph},
+		{"value dimensions", l2, validInfo, graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"missing entry", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}}}, errInvalidGraph},
+		{"entry out of range", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}}, entry: 1, hasEntry: true}, errInvalidGraph},
+		{"entry below max level", l2, validInfo, graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}, {level: 1, vectorOrdinal: 1, links: [][]nodeOrdinal{{}, {}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"level above maximum", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{level: MaxLevel + 1, links: make([][]nodeOrdinal, MaxLevel+2)}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"level link count short", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{level: 1, links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"level link count long", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}, {}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"vector ordinal out of range", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{vectorOrdinal: 1, links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"duplicate vector ordinal", l2, validInfo, graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}, {links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"link out of range", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{links: [][]nodeOrdinal{{1}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"self link", l2, validInfo, graphData{values: []float32{1}, nodes: []mutableNode{{links: [][]nodeOrdinal{{0}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"duplicate link", l2, validInfo, graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]nodeOrdinal{{1, 1}}}, {vectorOrdinal: 1, links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"upper link to absent level", l2, validInfo, graphData{values: []float32{1, 2}, nodes: []mutableNode{{level: 1, links: [][]nodeOrdinal{{}, {1}}}, {vectorOrdinal: 1, links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"level0 degree", l2, validInfo, graphData{values: []float32{0, 1, 2, 3, 4, 5}, nodes: []mutableNode{{links: [][]nodeOrdinal{{1, 2, 3, 4, 5}}}, {vectorOrdinal: 1, links: [][]nodeOrdinal{{}}}, {vectorOrdinal: 2, links: [][]nodeOrdinal{{}}}, {vectorOrdinal: 3, links: [][]nodeOrdinal{{}}}, {vectorOrdinal: 4, links: [][]nodeOrdinal{{}}}, {vectorOrdinal: 5, links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"upper degree", l2, validInfo, graphData{values: []float32{0, 1, 2, 3}, nodes: []mutableNode{{level: 1, links: [][]nodeOrdinal{{}, {1, 2, 3}}}, {vectorOrdinal: 1, level: 1, links: [][]nodeOrdinal{{}, {}}}, {vectorOrdinal: 2, level: 1, links: [][]nodeOrdinal{{}, {}}}, {vectorOrdinal: 3, level: 1, links: [][]nodeOrdinal{{}, {}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"nan prepared vector", l2, validInfo, graphData{values: []float32{float32(math.NaN())}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"infinite prepared vector", l2, validInfo, graphData{values: []float32{float32(math.Inf(1))}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"negative zero prepared vector", l2, validInfo, graphData{values: []float32{math.Float32frombits(1 << 31)}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"unnormalized cosine vector", cosine, validInfo, graphData{values: []float32{3, 4}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
+		{"zero cosine vector", cosine, validInfo, graphData{values: []float32{0, 0}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}}, entry: 0, hasEntry: true}, errInvalidGraph},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := newHNSWIndexFromGraph(test.calculator, validSearch, test.info, test.graph)
+			_, err := newIndexFromGraph(test.calculator, validSearch, test.info, test.graph)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("error = %v, want %v", err, test.want)
 			}
@@ -312,29 +312,29 @@ func TestReaderReturnsImmutableCopies(t *testing.T) {
 
 	graph.values[0] = 99
 	graph.nodes[0].links[0][0] = 3
-	if got, _ := readPreparedVector(reader.Vectors(), 0); !slices.Equal(got, []float32{0, 0}) {
+	if got, _ := readPreparedVector(reader.vectors, 0); !slices.Equal(got, []float32{0, 0}) {
 		t.Fatalf("reader retained input values: %v", got)
 	}
-	if got, _ := reader.Neighbors(0, 0); !slices.Equal(got, []NodeOrdinal{1, 2}) {
+	if got, _ := reader.neighbors(0, 0); !slices.Equal(got, []nodeOrdinal{1, 2}) {
 		t.Fatalf("reader retained input links: %v", got)
 	}
 
-	value, _ := readPreparedVector(reader.Vectors(), 0)
+	value, _ := readPreparedVector(reader.vectors, 0)
 	value[0] = 77
-	valueAgain, _ := readPreparedVector(reader.Vectors(), 0)
+	valueAgain, _ := readPreparedVector(reader.vectors, 0)
 	if !slices.Equal(valueAgain, []float32{0, 0}) {
 		t.Fatalf("Vector returned mutable storage: %v", valueAgain)
 	}
-	neighbors, _ := reader.Neighbors(0, 0)
+	neighbors, _ := reader.neighbors(0, 0)
 	neighbors[0] = 3
-	neighborsAgain, _ := reader.Neighbors(0, 0)
-	if !slices.Equal(neighborsAgain, []NodeOrdinal{1, 2}) {
+	neighborsAgain, _ := reader.neighbors(0, 0)
+	if !slices.Equal(neighborsAgain, []nodeOrdinal{1, 2}) {
 		t.Fatalf("Neighbors returned mutable storage: %v", neighborsAgain)
 	}
-	stats := reader.GraphStats()
+	stats := reader.Report().Graph
 	stats.LevelNodeCounts[0] = 99
 	stats.LevelLinkCounts[0] = 99
-	statsAgain := reader.GraphStats()
+	statsAgain := reader.Report().Graph
 	if !slices.Equal(statsAgain.LevelNodeCounts, []int{4, 2, 1}) || !slices.Equal(statsAgain.LevelLinkCounts, []int{5, 2, 0}) {
 		t.Fatalf("GraphStats returned mutable storage: %+v", statsAgain)
 	}
@@ -347,13 +347,13 @@ func TestNewReaderFromGraphRetainsPreparedSource(t *testing.T) {
 		metric:        vector.MetricL2Squared,
 		normalization: vector.NormalizationNone,
 	}
-	reader, err := newHNSWIndexFromGraph(readerTestSpace(t, 2, vector.MetricL2Squared), readerTestSearchConfig(), readerTestBuildInfo(), readerTestGraph(), source)
+	reader, err := newIndexFromGraph(readerTestSpace(t, 2, vector.MetricL2Squared), readerTestSearchConfig(), readerTestBuildInfo(), readerTestGraph(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	source.reads = 0
 
-	if _, ok := readPreparedVector(reader.Vectors(), 1); !ok {
+	if _, ok := readPreparedVector(reader.vectors, 1); !ok {
 		t.Fatal("reader.Vectors row 1 failed")
 	}
 	if source.reads != 1 {

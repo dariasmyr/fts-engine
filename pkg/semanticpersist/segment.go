@@ -66,7 +66,7 @@ func SaveSealedSegment(ctx context.Context, paths SegmentPaths, sealed SealedSeg
 	if err != nil {
 		return err
 	}
-	graphRef, err := writeGraphFile(filepath.Join(temp, segmentGraphFile), sealed.Segment.Index(), vectorsRef, options.Durability)
+	graphRef, err := writeGraphFile(ctx, filepath.Join(temp, segmentGraphFile), sealed.Segment.Index(), vectorsRef, options.Durability)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func OpenSealedSegment(paths SegmentPaths, options OpenOptions) (*LoadedSealedSe
 	if err != nil {
 		return nil, err
 	}
-	index, graphMetadata, err := hnsw.OpenGraphFile(bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256}, hnsw.GraphLimits{
+	index, graphMetadata, err := hnsw.OpenGraph(context.Background(), bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256}, hnsw.GraphLimits{
 		MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes,
 		MaxGraphBytes: min(limits.MaxFileBytes, limits.MaxGraphBytes), MaxLinks: limits.MaxGraphLinks,
 		MaxK: limits.MaxK, MaxEfSearch: limits.MaxEfSearch, MaxVisitLimit: limits.MaxVisitLimit,
@@ -176,7 +176,7 @@ func OpenSealedSegment(paths SegmentPaths, options OpenOptions) (*LoadedSealedSe
 	if graphMetadata.Size != value.Graph.Size || graphMetadata.SHA256 != value.Graph.SHA256 {
 		return nil, ErrCorrupt
 	}
-	segment, err := semantic.NewSegment(state.ComponentID, semantic.SegmentMetadata{Embedding: state.Embedding, Chunking: state.Chunking}, index, state.Rows)
+	segment, err := semantic.NewSegment(context.Background(), state.ComponentID, semantic.SegmentMetadata{Embedding: state.Embedding, Chunking: state.Chunking}, vectorReader, index, state.Rows)
 	if err != nil {
 		return nil, err
 	}

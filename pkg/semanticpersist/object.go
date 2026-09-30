@@ -49,7 +49,7 @@ func writeSegmentObject(ctx context.Context, paths storePaths, sealed SealedSegm
 		if err := beforeStep(ctx, options, StepWriteGraph); err != nil {
 			return segmentObject{}, err
 		}
-		graphRef, err = writeGraphFile(filepath.Join(segmentTemp, graphFileName), sealed.Segment.Index(), vectorsRef, options.Durability)
+		graphRef, err = writeGraphFile(ctx, filepath.Join(segmentTemp, graphFileName), sealed.Segment.Index(), vectorsRef, options.Durability)
 		if err != nil {
 			return segmentObject{}, err
 		}
@@ -128,12 +128,12 @@ func writeVectorsFile(ctx context.Context, path string, source vectorstore.Prepa
 	return fileReference{Size: metadata.Size, SHA256: metadata.SHA256}, nil
 }
 
-func writeGraphFile(path string, reader *hnsw.HNSWIndex, vectors fileReference, durability DurabilityMode) (fileReference, error) {
+func writeGraphFile(ctx context.Context, path string, reader *hnsw.Index, vectors fileReference, durability DurabilityMode) (fileReference, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fileReference{}, err
 	}
-	metadata, writeErr := hnsw.WriteGraphFile(file, reader, hnsw.VectorFileReference{Size: vectors.Size, SHA256: vectors.SHA256})
+	metadata, writeErr := hnsw.WriteGraph(ctx, file, reader, hnsw.VectorFileReference{Size: vectors.Size, SHA256: vectors.SHA256})
 	if writeErr == nil && durability == DurabilitySynchronous {
 		writeErr = file.Sync()
 	}
@@ -176,11 +176,11 @@ func verifyExistingObject(path string, kind semantic.SegmentKind, vectors, graph
 	return nil
 }
 
-func graphFileSize(index *hnsw.HNSWIndex) uint64 {
+func graphFileSize(index *hnsw.Index) uint64 {
 	if index == nil {
 		return 0
 	}
-	stats := index.StorageStats()
+	stats := index.Report().Storage
 	padding := uint64((4 - stats.VectorRows%4) % 4)
 	size, ok := checkedAdd64(164, stats.NodeMetadataBytes)
 	if !ok {

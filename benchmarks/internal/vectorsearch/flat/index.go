@@ -8,7 +8,6 @@ import (
 	"math"
 	"sync"
 
-	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
@@ -195,7 +194,7 @@ func compactPrepared(ctx context.Context, dimensions int, matrix []float32, filt
 
 	compacted := make([]float32, 0, allowedCount*dimensions)
 	for row := range rowCount {
-		if err := contextcheck.PeriodicError(ctx, row); err != nil {
+		if err := periodicContextError(ctx, row); err != nil {
 			return nil, err
 		}
 		if filter != nil && !filter.Allows(vector.Ordinal(row)) {

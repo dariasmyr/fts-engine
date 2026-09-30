@@ -2,6 +2,7 @@ package semanticpersist
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"os"
@@ -134,7 +135,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		if readErr != nil {
 			return nil, readErr
 		}
-		index, graphMetadata, openErr := hnsw.OpenGraphFile(bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{
+		index, graphMetadata, openErr := hnsw.OpenGraph(context.Background(), bytes.NewReader(graphData), vectorReader, hnsw.VectorFileReference{
 			Size: manifestValue.Vectors.Size, SHA256: manifestValue.Vectors.SHA256,
 		}, hnsw.GraphLimits{
 			MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes,
@@ -147,7 +148,7 @@ func openGeneration(paths storePaths, generationID uint64, expectedManifestHash 
 		if graphMetadata.Size != manifestValue.Graph.Size || graphMetadata.SHA256 != manifestValue.Graph.SHA256 {
 			return nil, ErrCorrupt
 		}
-		segment, err = semantic.NewSegment(state.ComponentID, semantic.SegmentMetadata{Embedding: state.Embedding, Chunking: state.Chunking}, index, state.Rows)
+		segment, err = semantic.NewSegment(context.Background(), state.ComponentID, semantic.SegmentMetadata{Embedding: state.Embedding, Chunking: state.Chunking}, vectorReader, index, state.Rows)
 	default:
 		return nil, ErrCorrupt
 	}

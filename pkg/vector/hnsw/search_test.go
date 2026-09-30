@@ -38,9 +38,9 @@ func testBuildInfo() BuildInfo {
 	}
 }
 
-func newTestReader(t *testing.T, calculator vector.Calculator, config SearchConfig, graph graphData) *HNSWIndex {
+func newTestReader(t *testing.T, calculator vector.Calculator, config SearchConfig, graph graphData) *Index {
 	t.Helper()
-	reader, err := newHNSWIndexFromGraph(calculator, config, testBuildInfo(), graph)
+	reader, err := newIndexFromGraph(calculator, config, testBuildInfo(), graph)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,9 +66,9 @@ func TestSearchGreedyUpperLevelStopsAtLocalMinimum(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{10, 4, 6},
 		nodes: []mutableNode{
-			{level: 1, links: [][]NodeOrdinal{{}, {1}}},
-			{vectorOrdinal: 1, level: 1, links: [][]NodeOrdinal{{}, {2}}},
-			{vectorOrdinal: 2, level: 1, links: [][]NodeOrdinal{{}, {}}},
+			{level: 1, links: [][]nodeOrdinal{{}, {1}}},
+			{vectorOrdinal: 1, level: 1, links: [][]nodeOrdinal{{}, {2}}},
+			{vectorOrdinal: 2, level: 1, links: [][]nodeOrdinal{{}, {}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -92,9 +92,9 @@ func TestSearchLevelZeroBeamEscapesLocalMinimumOverDirectedLinks(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{2, 3, 1},
 		nodes: []mutableNode{
-			{links: [][]NodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -125,9 +125,9 @@ func TestSearchExpandsEqualDistanceRouteToCloserNode(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{1, -1, 0},
 		nodes: []mutableNode{
-			{links: [][]NodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -144,9 +144,9 @@ func TestSearchGreedyDoesNotMoveAcrossEqualDistancePlateau(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{-1, 1, 0},
 		nodes: []mutableNode{
-			{level: 1, links: [][]NodeOrdinal{{}, {}}},
-			{vectorOrdinal: 1, level: 1, links: [][]NodeOrdinal{{2}, {0}}},
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{}}},
+			{level: 1, links: [][]nodeOrdinal{{}, {}}},
+			{vectorOrdinal: 1, level: 1, links: [][]nodeOrdinal{{2}, {0}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 1, hasEntry: true,
 	})
@@ -165,10 +165,10 @@ func TestSearchScoresMultiplyReachableNodeOnce(t *testing.T) {
 	reader := newTestReader(t, space, config, graphData{
 		values: []float32{4, 3, 2, 1},
 		nodes: []mutableNode{
-			{links: [][]NodeOrdinal{{1, 2}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{3}}},
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{3}}},
-			{vectorOrdinal: 3, links: [][]NodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{1, 2}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{3}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{3}}},
+			{vectorOrdinal: 3, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -189,14 +189,53 @@ func TestSearchScoresMultiplyReachableNodeOnce(t *testing.T) {
 	})
 }
 
+func TestSearchAllocationBudget(t *testing.T) {
+	const nodeCount = 1_024
+	space := testSpace(t, 1, vector.MetricL2Squared)
+	config := SearchConfig{
+		DefaultEfSearch: 64, MaxEfSearch: 64,
+		DefaultVisitLimit: nodeCount, MaxVisitLimit: nodeCount,
+		MaxK: 10,
+	}
+	values := make([]float32, nodeCount)
+	nodes := make([]mutableNode, nodeCount)
+	for node := range nodeCount {
+		values[node] = float32(nodeCount - node)
+		nodes[node] = mutableNode{vectorOrdinal: vector.Ordinal(node), links: [][]nodeOrdinal{{}}}
+		if node+1 < nodeCount {
+			nodes[node].links[0] = []nodeOrdinal{nodeOrdinal(node + 1)}
+		}
+	}
+	reader := newTestReader(t, space, config, graphData{values: values, nodes: nodes, entry: 0, hasEntry: true})
+
+	result, err := reader.Search(context.Background(), []float32{0}, 10, vector.SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Hits) != 10 || result.Hits[0].Ordinal != nodeCount-1 || result.Stats.VisitedNodes != nodeCount {
+		t.Fatalf("full-chain result = %+v", result)
+	}
+
+	var searchErr error
+	allocations := testing.AllocsPerRun(20, func() {
+		_, searchErr = reader.Search(context.Background(), []float32{0}, 10, vector.SearchOptions{})
+	})
+	if searchErr != nil {
+		t.Fatal(searchErr)
+	}
+	if allocations > 10 {
+		t.Fatalf("allocations/search = %.0f, want <= 10", allocations)
+	}
+}
+
 func TestSearchUsesRejectedNodesAsRoutesButNeverReturnsThem(t *testing.T) {
 	space := testSpace(t, 1, vector.MetricL2Squared)
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
-			{links: [][]NodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -221,9 +260,9 @@ func TestSearchSelectiveFilterCompletesBeforeVisitLimit(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
-			{links: [][]NodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -254,9 +293,9 @@ func TestSearchIgnoresResultFilterDuringUpperLevelNavigation(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{10, 5, 1},
 		nodes: []mutableNode{
-			{level: 1, links: [][]NodeOrdinal{{}, {1}}},
-			{vectorOrdinal: 1, level: 1, links: [][]NodeOrdinal{{2}, {}}},
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{}}},
+			{level: 1, links: [][]nodeOrdinal{{}, {1}}},
+			{vectorOrdinal: 1, level: 1, links: [][]nodeOrdinal{{2}, {}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -280,9 +319,9 @@ func TestSearchDeterministicEqualDistanceTies(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{-1, 1, 2},
 		nodes: []mutableNode{
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{2, 1}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{}}},
-			{links: [][]NodeOrdinal{{}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{2, 1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -307,9 +346,9 @@ func TestSearchVisitLimitReturnsPartialResultAndCounters(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
-			{links: [][]NodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -333,9 +372,9 @@ func TestSearchUpperLevelVisitLimitReturnsAcceptedPartialHits(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
-			{level: 1, links: [][]NodeOrdinal{{}, {1, 2}}},
-			{vectorOrdinal: 1, level: 1, links: [][]NodeOrdinal{{}, {}}},
-			{vectorOrdinal: 2, level: 1, links: [][]NodeOrdinal{{}, {}}},
+			{level: 1, links: [][]nodeOrdinal{{}, {1, 2}}},
+			{vectorOrdinal: 1, level: 1, links: [][]nodeOrdinal{{}, {}}},
+			{vectorOrdinal: 2, level: 1, links: [][]nodeOrdinal{{}, {}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -364,9 +403,9 @@ func TestSearchDefaultsAndRequestedLimits(t *testing.T) {
 	reader := newTestReader(t, space, config, graphData{
 		values: []float32{2, 3, 1},
 		nodes: []mutableNode{
-			{links: [][]NodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -432,9 +471,9 @@ func TestSearchNilPreCancelledAndMidSearchCancellation(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
-			{links: [][]NodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -460,19 +499,19 @@ func TestSearchNilPreCancelledAndMidSearchCancellation(t *testing.T) {
 	const neighborCount = 256
 	values := make([]float32, neighborCount+1)
 	nodes := make([]mutableNode, neighborCount+1)
-	neighbors := make([]NodeOrdinal, neighborCount)
+	neighbors := make([]nodeOrdinal, neighborCount)
 	for i := range nodes {
 		values[i] = float32(i + 1)
-		nodes[i] = mutableNode{vectorOrdinal: vector.Ordinal(i), links: [][]NodeOrdinal{{}}}
+		nodes[i] = mutableNode{vectorOrdinal: vector.Ordinal(i), links: [][]nodeOrdinal{{}}}
 		if i > 0 {
-			neighbors[i-1] = NodeOrdinal(i)
+			neighbors[i-1] = nodeOrdinal(i)
 		}
 	}
 	nodes[0].links[0] = neighbors
 	config := testSearchConfig()
 	config.DefaultVisitLimit = neighborCount + 1
 	config.MaxVisitLimit = neighborCount + 1
-	largeReader, err := newHNSWIndexFromGraph(space, config, BuildInfo{
+	largeReader, err := newIndexFromGraph(space, config, BuildInfo{
 		BuildVersion:          BuildVersion,
 		LevelGeneratorVersion: LevelGeneratorVersion,
 		MaxNeighbors:          128,
@@ -502,7 +541,7 @@ func TestSearchRejectsInvalidKOptionsConfigFilterAndReader(t *testing.T) {
 	config := testSearchConfig()
 	reader := newTestReader(t, space, config, graphData{
 		values: []float32{1},
-		nodes:  []mutableNode{{links: [][]NodeOrdinal{{}}}},
+		nodes:  []mutableNode{{links: [][]nodeOrdinal{{}}}},
 		entry:  0, hasEntry: true,
 	})
 
@@ -553,27 +592,27 @@ func TestSearchRejectsInvalidKOptionsConfigFilterAndReader(t *testing.T) {
 
 	unvalidated := *reader
 	unvalidated.topology.validated = false
-	if _, err := unvalidated.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, ErrInvalidGraph) {
+	if _, err := unvalidated.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, errInvalidGraph) {
 		t.Fatalf("unvalidated reader error = %v", err)
 	}
 	badLevel := *reader
 	badLevel.topology.levels = append([]uint8(nil), reader.topology.levels...)
 	badLevel.topology.levels[0] = MaxLevel + 1
-	if _, err := badLevel.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, ErrInvalidGraph) {
+	if _, err := badLevel.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, errInvalidGraph) {
 		t.Fatalf("excessive graph level error = %v", err)
 	}
 	defensiveReader := newTestReader(t, space, config, graphData{
 		values: []float32{2, 1},
 		nodes: []mutableNode{
-			{links: [][]NodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
 	badNeighbor := *defensiveReader
-	badNeighbor.topology.level0Neighbors = append([]NodeOrdinal(nil), defensiveReader.topology.level0Neighbors...)
+	badNeighbor.topology.level0Neighbors = append([]nodeOrdinal(nil), defensiveReader.topology.level0Neighbors...)
 	badNeighbor.topology.level0Neighbors[0] = 2
-	if _, err := badNeighbor.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, ErrInvalidGraph) {
+	if _, err := badNeighbor.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, errInvalidGraph) {
 		t.Fatalf("out-of-range neighbor error = %v", err)
 	}
 }
@@ -582,7 +621,7 @@ func TestSearchRejectsInvalidQueries(t *testing.T) {
 	l2 := testSpace(t, 2, vector.MetricL2Squared)
 	l2Reader := newTestReader(t, l2, testSearchConfig(), graphData{
 		values: []float32{1, 1},
-		nodes:  []mutableNode{{links: [][]NodeOrdinal{{}}}},
+		nodes:  []mutableNode{{links: [][]nodeOrdinal{{}}}},
 		entry:  0, hasEntry: true,
 	})
 	for name, test := range map[string]struct {
@@ -600,11 +639,16 @@ func TestSearchRejectsInvalidQueries(t *testing.T) {
 			}
 		})
 	}
+	workspace := l2Reader.workspaces.acquire()
+	if cap(workspace.frontier) != 0 || cap(workspace.results) != 0 || cap(workspace.scoredNodes) != 0 {
+		t.Fatalf("invalid queries grew search workspace: frontier=%d results=%d scored=%d", cap(workspace.frontier), cap(workspace.results), cap(workspace.scoredNodes))
+	}
+	l2Reader.workspaces.release(workspace)
 
 	cosine := testSpace(t, 2, vector.MetricCosine)
 	cosineReader := newTestReader(t, cosine, testSearchConfig(), graphData{
 		values: []float32{1, 0},
-		nodes:  []mutableNode{{links: [][]NodeOrdinal{{}}}},
+		nodes:  []mutableNode{{links: [][]nodeOrdinal{{}}}},
 		entry:  0, hasEntry: true,
 	})
 	if _, err := cosineReader.Search(context.Background(), []float32{0, 0}, 1, vector.SearchOptions{}); !errors.Is(err, vector.ErrZeroNorm) {
@@ -625,6 +669,9 @@ func TestSearchEmptyReaderCancellationAndZeroAllowedFilter(t *testing.T) {
 	if result.Incomplete {
 		t.Fatal("empty reader result marked incomplete")
 	}
+	if _, err := empty.Search(context.Background(), nil, 1, vector.SearchOptions{}); !errors.Is(err, vector.ErrDimensionMismatch) {
+		t.Fatalf("empty reader invalid query error = %v", err)
+	}
 
 	ctx := newCancelOnErrContext(2)
 	result, err = empty.Search(ctx, []float32{0}, 1, vector.SearchOptions{})
@@ -638,8 +685,8 @@ func TestSearchEmptyReaderCancellationAndZeroAllowedFilter(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{1, 2},
 		nodes: []mutableNode{
-			{links: [][]NodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -660,9 +707,9 @@ func TestSearchConcurrentReaderUseHasRequestLocalState(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
-			{links: [][]NodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]NodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]NodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
+			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
