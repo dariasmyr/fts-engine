@@ -49,7 +49,8 @@ func BenchmarkOpenGraph(b *testing.B) {
 	}
 	flatIndex := benchmarkFlatIndex(b, values, vector.MetricL2Squared)
 	reader := benchmarkBuild(b, flatIndex.Vectors(), dimensions, rows, vector.MetricL2Squared)
-	_, vectorMetadata, err := semanticpersist.MarshalSource(flatIndex.Vectors(), flatIndex.MaxK())
+	var vectorData bytes.Buffer
+	vectorMetadata, err := semanticpersist.WriteVectorFile(context.Background(), &vectorData, flatIndex.Vectors(), flatIndex.MaxK())
 	if err != nil {
 		b.Fatal(err)
 	}

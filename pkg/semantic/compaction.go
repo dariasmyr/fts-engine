@@ -5,21 +5,26 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 // buildCompactedSegment materializes live rows from an immutable read view and
 // builds the replacement HNSW segment without touching mutable service state.
 func buildCompactedSegment(ctx context.Context, view *ReadView, componentID ComponentID, config Config) (*Segment, []VectorRow, error) {
-	values, rows, err := materializeLiveRows(ctx, view)
+	prepared, rows, err := materializeLiveRows(ctx, view)
 	if err != nil {
 		return nil, nil, err
 	}
-	source, err := newInMemoryVectorStoreFromConfig(config, values)
+	calculator, err := config.Embedding.Calculator()
+	if err != nil {
+		return nil, nil, err
+	}
+	source, err := vectorstore.NewPreparedMemoryVectorStore(calculator, prepared)
 	if err != nil {
 		return nil, nil, err
 	}
 	segment, err := BuildSegment(ctx, componentID, SegmentMetadata{Embedding: config.Embedding, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
-		Build:  withBuildCapacity(config.HNSWBuild, len(rows)),
+		Build:  config.HNSWBuild,
 		Search: config.HNSWSearch,
 	})
 	if err != nil {
@@ -28,11 +33,16 @@ func buildCompactedSegment(ctx context.Context, view *ReadView, componentID Comp
 	return segment, rows, nil
 }
 
-func materializeLiveRows(ctx context.Context, published *ReadView) ([][]float32, []VectorRow, error) {
-	var values [][]float32
+func materializeLiveRows(ctx context.Context, published *ReadView) ([]float32, []VectorRow, error) {
+	var prepared []float32
 	var rows []VectorRow
 	for _, item := range published.segments {
-		for ordinal, row := range item.segment.Rows() {
+		for ordinal, row := range item.segment.rows {
+			if ordinal%64 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, nil, err
+				}
+			}
 			if !item.filter.Allows(vector.Ordinal(ordinal)) {
 				continue
 			}
@@ -40,9 +50,9 @@ func materializeLiveRows(ctx context.Context, published *ReadView) ([][]float32,
 			if err := item.segment.Vectors().ReadVectorInto(ctx, vector.Ordinal(ordinal), value); err != nil {
 				return nil, nil, err
 			}
-			values = append(values, value)
+			prepared = append(prepared, value...)
 			rows = append(rows, row)
 		}
 	}
-	return values, rows, nil
+	return prepared, rows, nil
 }

@@ -31,6 +31,9 @@ type Limits struct {
 	MaxStringBytes       int
 	MaxChunksPerDocument int
 	MaxK                 int
+	MaxVectorBytes       uint64
+	MaxEfSearch          int
+	MaxVisitLimit        int
 }
 
 // FileReference identifies an immutable file by size and SHA-256.

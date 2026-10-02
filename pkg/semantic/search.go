@@ -17,26 +17,6 @@ type visibleSegment struct {
 	filter  vector.BitSet
 }
 
-func searchSegmentChunks(ctx context.Context, view visibleSegment, query []float32, k, maxResults int) (chunkSearchResult, error) {
-	if k <= 0 || k > maxResults {
-		return chunkSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxResults)
-	}
-	result, err := view.segment.Search(ctx, query, k, vector.SearchOptions{ResultFilter: view.filter})
-	if err != nil {
-		return chunkSearchResult{}, err
-	}
-	hits := make([]ChunkHit, 0, len(result.Hits))
-	for _, hit := range result.Hits {
-		index := int(hit.Ordinal)
-		row, ok := view.segment.rowAt(index)
-		if !ok {
-			return chunkSearchResult{}, ErrInternalState
-		}
-		hits = append(hits, ChunkHit{Ref: row.Chunk, Distance: hit.Distance})
-	}
-	return chunkSearchResult{Hits: hits, Stats: result.Stats, Incomplete: result.Incomplete}, nil
-}
-
 // SearchDocuments encodes every query chunk, searches each embedding, and
 // merges the results by document using the best query-to-document distance.
 func (s *Service) SearchDocuments(ctx context.Context, encoder Encoder, query Document, k int) (DocumentSearchResult, error) {
@@ -44,60 +24,14 @@ func (s *Service) SearchDocuments(ctx context.Context, encoder Encoder, query Do
 }
 
 func (s *Service) SearchDocumentsWithOptions(ctx context.Context, encoder Encoder, query Document, k int, options SearchOptions) (DocumentSearchResult, error) {
-	if err := s.validateEncoder(encoder); err != nil {
-		return DocumentSearchResult{}, err
+	if ctx == nil {
+		return DocumentSearchResult{}, vector.ErrNilContext
 	}
-	queries, err := encoder.Encode(ctx, query)
+	published, err := s.readView(ctx)
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
-	s.mu.RLock()
-	published := s.published
-	maxResults := s.config.MaxK
-	maxCandidates := s.config.MaxChunkCandidates
-	maxChunksPerDocumentHit := s.config.MaxChunksPerDocumentHit
-	s.mu.RUnlock()
-	merged := make(map[fts.DocID]DocumentHit)
-	var result DocumentSearchResult
-	for _, item := range queries {
-		partial, err := s.searchEncodedDocumentsInPublished(ctx, published, maxResults, maxCandidates, maxChunksPerDocumentHit, item.Vector, k, options)
-		if err != nil {
-			return DocumentSearchResult{}, err
-		}
-		result.CandidateChunks += partial.CandidateChunks
-		mergeSearchStats(&result.Stats, partial.Stats)
-		result.GroupingIncomplete = result.GroupingIncomplete || partial.GroupingIncomplete
-		for _, hit := range partial.Hits {
-			current, exists := merged[hit.DocID]
-			if !exists || hit.Distance < current.Distance {
-				merged[hit.DocID] = hit
-			}
-		}
-	}
-	result.Hits = make([]DocumentHit, 0, len(merged))
-	for _, hit := range merged {
-		result.Hits = append(result.Hits, hit)
-	}
-	slices.SortFunc(result.Hits, func(a, b DocumentHit) int {
-		if a.Distance < b.Distance {
-			return -1
-		}
-		if a.Distance > b.Distance {
-			return 1
-		}
-		if a.DocID < b.DocID {
-			return -1
-		}
-		if a.DocID > b.DocID {
-			return 1
-		}
-		return 0
-	})
-	result.DistinctDocuments = len(result.Hits)
-	if len(result.Hits) > k {
-		result.Hits = result.Hits[:k]
-	}
-	return result, nil
+	return published.SearchDocumentsWithOptions(ctx, encoder, query, k, options)
 }
 
 func mergeSearchStats(total *vector.SearchStats, partial vector.SearchStats) {
@@ -117,47 +51,35 @@ func (s *Service) searchEncodedDocuments(ctx context.Context, query []float32, k
 }
 
 func (s *Service) searchEncodedDocumentsWithOptions(ctx context.Context, query []float32, k int, options SearchOptions) (DocumentSearchResult, error) {
-	s.mu.RLock()
-	published := s.published
-	maxResults := s.config.MaxK
-	maxCandidates := s.config.MaxChunkCandidates
-	maxChunksPerDocumentHit := s.config.MaxChunksPerDocumentHit
-	s.mu.RUnlock()
-	return s.searchEncodedDocumentsInPublished(ctx, published, maxResults, maxCandidates, maxChunksPerDocumentHit, query, k, options)
-}
-
-func (s *Service) searchEncodedDocumentsInPublished(ctx context.Context, published *ReadView, maxResults, maxCandidates, maxChunksPerDocumentHit int, query []float32, k int, options SearchOptions) (DocumentSearchResult, error) {
-	return searchReadViewDocuments(ctx, published, s.calculator, maxResults, maxCandidates, maxChunksPerDocumentHit, query, k, options)
-}
-
-func searchReadViewDocuments(ctx context.Context, published *ReadView, calculator vector.Calculator, maxResults, maxCandidates, maxChunksPerDocumentHit int, query []float32, k int, options SearchOptions) (DocumentSearchResult, error) {
-	candidateBudget, err := resolveCandidateBudget(options.CandidateChunks, maxCandidates)
+	if ctx == nil {
+		return DocumentSearchResult{}, vector.ErrNilContext
+	}
+	published, err := s.readView(ctx)
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
-	if k <= 0 || k > maxResults {
-		return DocumentSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxResults)
+	if err := published.validateEncodedQuery(ctx, query, k, options); err != nil {
+		return DocumentSearchResult{}, err
 	}
+	return published.searchEncodedQueries(ctx, []ChunkVector{{Vector: query}}, k, options)
+}
+
+func searchReadViewDocuments(ctx context.Context, published *ReadView, query []float32, options SearchOptions) (DocumentSearchResult, error) {
+	candidateBudget, _ := resolveCandidateBudget(options.CandidateChunks, published.maxCandidates)
 	liveCount := published.liveCount
 	if liveCount == 0 {
-		if ctx == nil {
-			return DocumentSearchResult{}, vector.ErrNilContext
-		}
-		if err := ctx.Err(); err != nil {
-			return DocumentSearchResult{}, err
-		}
 		return DocumentSearchResult{Hits: []DocumentHit{}}, nil
 	}
 	budget := min(liveCount, candidateBudget)
-	chunks, err := searchSegmentsChunks(ctx, calculator, published.segments, query, budget, candidateBudget, vector.SearchOptions{EfSearch: options.EfSearch, VisitLimit: options.VisitLimit})
+	chunks, err := searchSegmentsChunks(ctx, published.calculator, published.segments, query, budget, candidateBudget, vector.SearchOptions{EfSearch: options.EfSearch, VisitLimit: options.VisitLimit})
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
-	documents := groupDocuments(chunks.Hits, maxChunksPerDocumentHit)
-	distinctDocuments := len(documents)
-	if len(documents) > k {
-		documents = documents[:k]
+	documents, err := groupDocuments(ctx, chunks.Hits, published.maxChunksPerDocumentHit)
+	if err != nil {
+		return DocumentSearchResult{}, err
 	}
+	distinctDocuments := len(documents)
 	return DocumentSearchResult{
 		Hits: documents, CandidateChunks: len(chunks.Hits), DistinctDocuments: distinctDocuments,
 		GroupingIncomplete: budget < liveCount || chunks.Incomplete, Stats: chunks.Stats,
@@ -261,51 +183,19 @@ func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, vie
 	return chunkSearchResult{Hits: hits, Stats: stats, Incomplete: incomplete}, nil
 }
 
-func searchDocuments(ctx context.Context, view visibleSegment, calculator vector.Calculator, query []float32, k, maxResults, maxChunkCandidates, maxChunksPerDocumentHit int) (DocumentSearchResult, error) {
-	if k <= 0 || k > maxResults {
-		return DocumentSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxResults)
-	}
-	liveCount := view.segment.rowCount()
-	liveCount = view.filter.AllowedOrdinalCount()
-	if liveCount == 0 {
-		if ctx == nil {
-			return DocumentSearchResult{}, vector.ErrNilContext
-		}
-		if err := ctx.Err(); err != nil {
-			return DocumentSearchResult{}, err
-		}
-		if _, err := calculator.Prepare(query); err != nil {
-			return DocumentSearchResult{}, err
-		}
-		return DocumentSearchResult{Hits: []DocumentHit{}}, nil
-	}
-	budget := min(liveCount, maxChunkCandidates)
-	chunks, err := searchSegmentChunks(ctx, view, query, budget, maxChunkCandidates)
-	if err != nil {
-		return DocumentSearchResult{}, err
-	}
-	documents := groupDocuments(chunks.Hits, maxChunksPerDocumentHit)
-	distinctDocuments := len(documents)
-	if len(documents) > k {
-		documents = documents[:k]
-	}
-	return DocumentSearchResult{
-		Hits:               documents,
-		CandidateChunks:    len(chunks.Hits),
-		DistinctDocuments:  distinctDocuments,
-		GroupingIncomplete: budget < liveCount || chunks.Incomplete,
-		Stats:              chunks.Stats,
-	}, nil
-}
-
-func groupDocuments(hits []ChunkHit, maxChunksPerDocumentHit int) []DocumentHit {
+func groupDocuments(ctx context.Context, hits []ChunkHit, maxChunksPerDocumentHit int) ([]DocumentHit, error) {
 	type accumulator struct {
 		distance float64
 		chunks   []ChunkHit
 		seen     map[chunk.ID]struct{}
 	}
 	byDoc := make(map[fts.DocID]*accumulator)
-	for _, hit := range hits {
+	for i, hit := range hits {
+		if i%256 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		group := byDoc[hit.Ref.DocID]
 		if group == nil {
 			group = &accumulator{distance: hit.Distance, seen: make(map[chunk.ID]struct{})}
@@ -338,5 +228,8 @@ func groupDocuments(hits []ChunkHit, maxChunksPerDocumentHit int) []DocumentHit 
 		}
 		return 0
 	})
-	return documents
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return documents, nil
 }

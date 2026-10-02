@@ -7,58 +7,62 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
-const stateVersion = uint16(6)
-
+const stateVersion = uint16(7)
 const minimumRowBytes = 32
 
-// State is the decoded SSTA payload.
+type StateSegment struct {
+	ComponentID   semantic.ComponentID
+	Rows          []semantic.VectorRow
+	LivenessWords []uint64
+}
+
+// State is the decoded SSTA payload required to resume semantic writes.
 type State struct {
-	Embedding               semantic.EmbeddingDescriptor
-	Chunking                semantic.ChunkingDescriptor
-	MaxAllocatedVectorID    semantic.VectorID
-	ComponentID             semantic.ComponentID
-	Rows                    []semantic.VectorRow
-	MaxK                    int
-	MaxChunkCandidates      int
-	MaxChunksPerDocumentHit int
+	Config               semantic.Config
+	Revision             uint64
+	MaxAllocatedVectorID semantic.VectorID
+	NextComponentID      semantic.ComponentID
+	Segments             []StateSegment
 }
 
 func EncodeState(value State, limits Limits) ([]byte, FileReference, error) {
-	if len(value.Rows) > limits.MaxVectors || value.MaxK <= 0 || value.MaxK > limits.MaxK || value.MaxChunkCandidates < value.MaxK || value.MaxChunkCandidates > limits.MaxVectors || value.MaxChunksPerDocumentHit <= 0 ||
-		uint64(value.MaxK) > math.MaxUint32 || uint64(value.MaxChunkCandidates) > math.MaxUint32 || uint64(value.MaxChunksPerDocumentHit) > math.MaxUint32 {
-		return nil, FileReference{}, ErrLimitExceeded
-	}
-	if len(value.Rows) > 0 && value.MaxAllocatedVectorID < value.Rows[len(value.Rows)-1].VectorID {
-		return nil, FileReference{}, ErrCorrupt
-	}
-	calculator, err := value.Embedding.Calculator()
-	if err != nil {
+	if err := validateState(value, limits); err != nil {
 		return nil, FileReference{}, err
 	}
+	c := value.Config
+	calculator, _ := c.Embedding.Calculator()
 	e := newEncoder("SSTA", stateVersion, limits)
-	e.u32(uint32(value.Embedding.Dimensions))
-	e.u8(uint8(value.Embedding.Metric))
+	e.u32(uint32(c.Embedding.Dimensions))
+	e.u8(uint8(c.Embedding.Metric))
 	e.u8(uint8(calculator.Normalization()))
 	e.u16(0)
-	e.u32(value.Embedding.VectorFormatVersion)
-	e.string(value.Embedding.ProviderID, limits.MaxStringBytes)
-	e.string(value.Embedding.ModelID, limits.MaxStringBytes)
-	e.string(value.Embedding.ModelVersion, limits.MaxStringBytes)
-	e.string(value.Embedding.PipelineFingerprint, limits.MaxStringBytes)
-	e.string(value.Chunking.ID, limits.MaxStringBytes)
-	e.u32(value.Chunking.Version)
-	e.string(value.Chunking.Fingerprint, limits.MaxStringBytes)
+	e.u32(c.Embedding.VectorFormatVersion)
+	e.string(c.Embedding.ProviderID, limits.MaxStringBytes)
+	e.string(c.Embedding.ModelID, limits.MaxStringBytes)
+	e.string(c.Embedding.ModelVersion, limits.MaxStringBytes)
+	e.string(c.Embedding.PipelineFingerprint, limits.MaxStringBytes)
+	e.string(c.Chunking.ID, limits.MaxStringBytes)
+	e.u32(c.Chunking.Version)
+	e.string(c.Chunking.Fingerprint, limits.MaxStringBytes)
+	encodeConfig(e, c)
+	e.u64(value.Revision)
 	e.u64(uint64(value.MaxAllocatedVectorID))
-	e.u32(uint32(value.MaxK))
-	e.u32(uint32(value.MaxChunkCandidates))
-	e.u32(uint32(value.MaxChunksPerDocumentHit))
-	e.u64(uint64(value.ComponentID))
-	e.u32(uint32(len(value.Rows)))
-	for _, row := range value.Rows {
-		e.u64(uint64(row.VectorID))
-		encodeRef(e, row.Chunk, limits.MaxStringBytes)
+	e.u64(uint64(value.NextComponentID))
+	e.u32(uint32(len(value.Segments)))
+	for _, segment := range value.Segments {
+		e.u64(uint64(segment.ComponentID))
+		e.u32(uint32(len(segment.Rows)))
+		e.u32(uint32(len(segment.LivenessWords)))
+		for _, word := range segment.LivenessWords {
+			e.u64(word)
+		}
+		for _, row := range segment.Rows {
+			e.u64(uint64(row.VectorID))
+			encodeRef(e, row.Chunk, limits.MaxStringBytes)
+		}
 	}
 	return e.finish()
 }
@@ -75,48 +79,128 @@ func DecodeState(data []byte, limits Limits) (State, error) {
 		return State{}, ErrCorrupt
 	}
 	formatVersion := d.u32()
-	providerID, modelID, modelVersion, pipelineFingerprint := d.string(), d.string(), d.string(), d.string()
-	chunkingID, chunkingVersion, chunkingFingerprint := d.string(), d.u32(), d.string()
-	value := State{MaxAllocatedVectorID: semantic.VectorID(d.u64()), MaxK: int(d.u32()), MaxChunkCandidates: int(d.u32()), MaxChunksPerDocumentHit: int(d.u32()), ComponentID: semantic.ComponentID(d.u64())}
-	if dimensions <= 0 || dimensions > limits.MaxDimensions || value.MaxK <= 0 || value.MaxK > limits.MaxK || value.MaxChunkCandidates < value.MaxK || value.MaxChunksPerDocumentHit <= 0 || formatVersion == 0 || providerID == "" || modelID == "" || modelVersion == "" || pipelineFingerprint == "" || chunkingID == "" || value.ComponentID == 0 {
-		return State{}, ErrCorrupt
+	embedding := semantic.EmbeddingDescriptor{Dimensions: dimensions, Metric: metric, VectorFormatVersion: formatVersion}
+	embedding.ProviderID, embedding.ModelID, embedding.ModelVersion, embedding.PipelineFingerprint = d.string(), d.string(), d.string(), d.string()
+	chunking := semantic.ChunkingDescriptor{ID: d.string(), Version: d.u32(), Fingerprint: d.string()}
+	config := decodeConfig(d, embedding, chunking)
+	value := State{Config: config, Revision: d.u64(), MaxAllocatedVectorID: semantic.VectorID(d.u64()), NextComponentID: semantic.ComponentID(d.u64())}
+	countValue := uint64(d.u32())
+	if countValue > uint64(limits.MaxVectors) || countValue > uint64(d.remaining()/16) {
+		return State{}, ErrLimitExceeded
+	}
+	count := int(countValue)
+	value.Segments = make([]StateSegment, count)
+	totalRows := 0
+	for i := range value.Segments {
+		segment := StateSegment{ComponentID: semantic.ComponentID(d.u64())}
+		rowCountValue, wordCountValue := uint64(d.u32()), uint64(d.u32())
+		if rowCountValue > uint64(limits.MaxVectors-totalRows) || wordCountValue != (rowCountValue+63)/64 || wordCountValue > uint64(d.remaining()/8) {
+			return State{}, ErrLimitExceeded
+		}
+		rowCount, wordCount := int(rowCountValue), int(wordCountValue)
+		segment.LivenessWords = make([]uint64, wordCount)
+		for j := range segment.LivenessWords {
+			segment.LivenessWords[j] = d.u64()
+		}
+		if rowCount > d.remaining()/minimumRowBytes {
+			return State{}, ErrLimitExceeded
+		}
+		segment.Rows = make([]semantic.VectorRow, rowCount)
+		for j := range segment.Rows {
+			segment.Rows[j] = semantic.VectorRow{VectorID: semantic.VectorID(d.u64()), Chunk: decodeRef(d)}
+			if err := d.err(); err != nil {
+				return State{}, err
+			}
+		}
+		totalRows += rowCount
+		value.Segments[i] = segment
+	}
+	if err := d.done(); err != nil {
+		return State{}, err
 	}
 	calculator, err := vector.NewCalculator(dimensions, metric)
 	if err != nil || calculator.Normalization() != normalization {
 		return State{}, ErrCorrupt
 	}
-	refCount := int(d.u32())
-	if refCount > limits.MaxVectors || refCount > d.remaining()/minimumRowBytes {
-		return State{}, ErrLimitExceeded
-	}
-	value.Rows = make([]semantic.VectorRow, refCount)
-	documentChunks := make(map[fts.DocID]int)
-	for i := range value.Rows {
-		value.Rows[i] = semantic.VectorRow{VectorID: semantic.VectorID(d.u64()), Chunk: decodeRef(d)}
-		if err := d.err(); err != nil {
-			return State{}, err
-		}
-		if i > 0 && value.Rows[i-1].VectorID >= value.Rows[i].VectorID {
-			return State{}, ErrCorrupt
-		}
-		docID := value.Rows[i].Chunk.DocID
-		if _, exists := documentChunks[docID]; !exists && len(documentChunks) >= limits.MaxDocuments {
-			return State{}, ErrLimitExceeded
-		}
-		documentChunks[docID]++
-		if documentChunks[docID] > limits.MaxChunksPerDocument {
-			return State{}, ErrLimitExceeded
-		}
-	}
-	if len(value.Rows) > 0 && value.MaxAllocatedVectorID < value.Rows[len(value.Rows)-1].VectorID {
-		return State{}, ErrCorrupt
-	}
-	if err := d.done(); err != nil {
+	if err := validateState(value, limits); err != nil {
 		return State{}, err
 	}
-	value.Embedding = semantic.EmbeddingDescriptor{ProviderID: providerID, ModelID: modelID, ModelVersion: modelVersion, PipelineFingerprint: pipelineFingerprint, Dimensions: dimensions, Metric: metric, VectorFormatVersion: formatVersion}
-	value.Chunking = semantic.ChunkingDescriptor{ID: chunkingID, Version: chunkingVersion, Fingerprint: chunkingFingerprint}
 	return value, nil
+}
+
+func encodeConfig(e *encoder, c semantic.Config) {
+	values := []int{c.MaxVectors, c.MaxChunksPerDocument, c.MaxK, c.MaxChunkCandidates, c.MaxChunksPerDocumentHit, c.InitialVectorCapacity}
+	for _, value := range values {
+		e.u32(uint32(value))
+	}
+	e.u64(uint64(c.InitialMaxAllocatedVectorID))
+	e.u32(uint32(c.HNSWBuild.Dimensions))
+	e.u8(uint8(c.HNSWBuild.Metric))
+	e.raw(make([]byte, 3))
+	e.u32(uint32(c.HNSWBuild.MaxVectors))
+	e.u64(c.HNSWBuild.MaxVectorBytes)
+	e.u32(uint32(c.HNSWBuild.MaxNeighbors))
+	e.u32(uint32(c.HNSWBuild.EfConstruction))
+	e.u64(c.HNSWBuild.Seed)
+	for _, value := range []int{c.HNSWSearch.DefaultEfSearch, c.HNSWSearch.MaxEfSearch, c.HNSWSearch.DefaultVisitLimit, c.HNSWSearch.MaxVisitLimit, c.HNSWSearch.MaxK} {
+		e.u32(uint32(value))
+	}
+}
+
+func decodeConfig(d *decoder, embedding semantic.EmbeddingDescriptor, chunking semantic.ChunkingDescriptor) semantic.Config {
+	c := semantic.Config{Embedding: embedding, Chunking: chunking}
+	c.MaxVectors, c.MaxChunksPerDocument, c.MaxK = int(d.u32()), int(d.u32()), int(d.u32())
+	c.MaxChunkCandidates, c.MaxChunksPerDocumentHit, c.InitialVectorCapacity = int(d.u32()), int(d.u32()), int(d.u32())
+	c.InitialMaxAllocatedVectorID = semantic.VectorID(d.u64())
+	c.HNSWBuild = hnsw.BuildConfig{Dimensions: int(d.u32()), Metric: vector.Metric(d.u8())}
+	for _, b := range d.take(3) {
+		if b != 0 {
+			d.decodeErr = ErrCorrupt
+		}
+	}
+	c.HNSWBuild.MaxVectors, c.HNSWBuild.MaxVectorBytes = int(d.u32()), d.u64()
+	c.HNSWBuild.MaxNeighbors, c.HNSWBuild.EfConstruction, c.HNSWBuild.Seed = int(d.u32()), int(d.u32()), d.u64()
+	c.HNSWSearch = hnsw.SearchConfig{DefaultEfSearch: int(d.u32()), MaxEfSearch: int(d.u32()), DefaultVisitLimit: int(d.u32()), MaxVisitLimit: int(d.u32()), MaxK: int(d.u32())}
+	return c
+}
+
+func validateState(value State, limits Limits) error {
+	if value.Config.Validate() != nil || value.NextComponentID <= semantic.MutableHeadID || len(value.Segments) > limits.MaxVectors {
+		return ErrCorrupt
+	}
+	c := value.Config
+	ints := []int{c.MaxVectors, c.MaxChunksPerDocument, c.MaxK, c.MaxChunkCandidates, c.MaxChunksPerDocumentHit, c.InitialVectorCapacity, c.HNSWBuild.Dimensions, c.HNSWBuild.MaxVectors, c.HNSWBuild.MaxNeighbors, c.HNSWBuild.EfConstruction, c.HNSWSearch.DefaultEfSearch, c.HNSWSearch.MaxEfSearch, c.HNSWSearch.DefaultVisitLimit, c.HNSWSearch.MaxVisitLimit, c.HNSWSearch.MaxK}
+	for _, v := range ints {
+		if v < 0 || uint64(v) > math.MaxUint32 {
+			return ErrLimitExceeded
+		}
+	}
+	if c.Embedding.Dimensions > limits.MaxDimensions || c.MaxVectors > limits.MaxVectors || c.MaxChunksPerDocument > limits.MaxChunksPerDocument || c.MaxK > limits.MaxK || c.HNSWSearch.MaxK > limits.MaxK || c.HNSWBuild.MaxVectorBytes > limits.MaxVectorBytes || c.HNSWSearch.MaxEfSearch > limits.MaxEfSearch || c.HNSWSearch.MaxVisitLimit > limits.MaxVisitLimit {
+		return ErrLimitExceeded
+	}
+	totalRows := 0
+	documents := make(map[fts.DocID]struct{})
+	for _, segment := range value.Segments {
+		if segment.ComponentID == 0 || len(segment.LivenessWords) != (len(segment.Rows)+63)/64 || len(segment.Rows) > limits.MaxVectors-totalRows {
+			return ErrLimitExceeded
+		}
+		if len(segment.LivenessWords) > 0 && len(segment.Rows)%64 != 0 && segment.LivenessWords[len(segment.LivenessWords)-1]>>uint(len(segment.Rows)%64) != 0 {
+			return ErrCorrupt
+		}
+		for i, row := range segment.Rows {
+			if row.VectorID == 0 || i > 0 && segment.Rows[i-1].VectorID >= row.VectorID || row.Chunk.ID == "" || row.Chunk.DocID == "" || row.Chunk.Field == "" || row.Chunk.StartByte > row.Chunk.EndByte || value.MaxAllocatedVectorID < row.VectorID {
+				return ErrCorrupt
+			}
+			if _, exists := documents[row.Chunk.DocID]; !exists {
+				if len(documents) >= limits.MaxDocuments {
+					return ErrLimitExceeded
+				}
+				documents[row.Chunk.DocID] = struct{}{}
+			}
+		}
+		totalRows += len(segment.Rows)
+	}
+	return nil
 }
 
 func encodeRef(e *encoder, ref chunk.Ref, maxString int) {

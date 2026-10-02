@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-func commitCurrent(ctx context.Context, paths storePaths, generationID uint64, objectID string, manifestRef fileReference, options Options) (Generation, error) {
+func commitCurrent(ctx context.Context, paths storePaths, generationID uint64, objectIDs []string, manifestRef fileReference, options Options) (Generation, error) {
 	if err := beforeStep(ctx, options, StepWriteCurrent); err != nil {
 		return Generation{}, err
 	}
@@ -58,12 +58,12 @@ func commitCurrent(ctx context.Context, paths storePaths, generationID uint64, o
 			return Generation{}, err
 		}
 	}
-	return Generation{ID: generationID, ObjectID: objectID}, nil
+	return Generation{ID: generationID, ObjectIDs: append([]string(nil), objectIDs...)}, nil
 }
 
-func repairCurrent(paths storePaths, generationID uint64, objectID string, hasGraph bool, manifestHash [sha256.Size]byte, options Options) error {
+func repairCurrent(paths storePaths, generationID uint64, segments []manifestSegment, manifestHash [sha256.Size]byte, options Options) error {
 	if options.Durability == DurabilitySynchronous {
-		if err := syncPublishedGeneration(paths, generationID, objectID, hasGraph); err != nil {
+		if err := syncPublishedGeneration(paths, generationID, segments); err != nil {
 			return err
 		}
 	}

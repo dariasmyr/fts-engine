@@ -27,20 +27,6 @@ func TestSegmentAccessorsAndSearch(t *testing.T) {
 	}
 }
 
-func TestReadViewPublishesImmutableSegments(t *testing.T) {
-	segment := testImmutableSegment(t)
-	view, err := NewReadView(7, []*Segment{segment}, SearchPolicy{MaxK: 10, MaxChunkCandidates: 20, MaxChunksPerDocumentHit: 3})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if view.Generation() != 7 || view.SegmentCount() != 1 || view.LiveVectorCount() != segment.Len() {
-		t.Fatalf("view metadata = generation %d, segments %d, live %d", view.Generation(), view.SegmentCount(), view.LiveVectorCount())
-	}
-	if err := view.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestSegmentValidationRejectsDuplicateRows(t *testing.T) {
 	segment := testImmutableSegment(t)
 	rows := segment.Rows()
@@ -58,6 +44,15 @@ func TestSegmentValidationRejectsDuplicateRows(t *testing.T) {
 	}
 }
 
+func TestNewSegmentRejectsDuplicateRows(t *testing.T) {
+	segment := testImmutableSegment(t)
+	rows := segment.Rows()
+	rows[1].VectorID = rows[0].VectorID
+	if _, err := NewSegment(context.Background(), segment.ComponentID(), segment.Metadata(), segment.Vectors(), segment.Index(), rows); !errors.Is(err, ErrInvalidSegment) {
+		t.Fatalf("NewSegment error = %v", err)
+	}
+}
+
 func TestNewSegmentRejectsDifferentVectorSource(t *testing.T) {
 	segment := testImmutableSegment(t)
 	calculator, err := segment.Metadata().Embedding.Calculator()
@@ -70,19 +65,6 @@ func TestNewSegmentRejectsDifferentVectorSource(t *testing.T) {
 	}
 	if _, err := NewSegment(context.Background(), segment.ComponentID(), segment.Metadata(), vectors, segment.index, segment.Rows()); !errors.Is(err, ErrInvalidSegment) {
 		t.Fatalf("different source error = %v, want ErrInvalidSegment", err)
-	}
-}
-
-func TestNewReadViewRejectsIncompatibleSegments(t *testing.T) {
-	first := testImmutableSegment(t)
-	second := testImmutableSegment(t)
-	metadata := second.Metadata()
-	metadata.Embedding.ModelID = "different-model"
-	second.metadata = metadata
-
-	_, err := NewReadView(1, []*Segment{first, second}, SearchPolicy{MaxK: 2, MaxChunkCandidates: 4, MaxChunksPerDocumentHit: 1})
-	if !errors.Is(err, ErrEmbeddingMismatch) {
-		t.Fatalf("NewReadView error = %v, want ErrEmbeddingMismatch", err)
 	}
 }
 

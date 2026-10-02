@@ -1,176 +1,385 @@
 package semanticpersist
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 type staticEncoder struct {
-	vectors    map[fts.DocID][]semantic.ChunkVector
 	descriptor semantic.PipelineDescriptor
+	vectors    map[fts.DocID][]semantic.ChunkVector
 }
 
-func testEmbeddingDescriptor(model, fingerprint string) semantic.EmbeddingDescriptor {
-	descriptor, err := semantic.NewEmbeddingDescriptor("test-provider", model, "v1", fingerprint, 2, vector.MetricL2Squared, 1)
-	if err != nil {
-		panic(err)
-	}
-	return descriptor
-}
-
+func (e staticEncoder) Descriptor() semantic.PipelineDescriptor { return e.descriptor }
 func (e staticEncoder) Encode(_ context.Context, document semantic.Document) ([]semantic.ChunkVector, error) {
 	return e.vectors[document.ID], nil
 }
 
-func (e staticEncoder) Descriptor() semantic.PipelineDescriptor {
-	if e.descriptor != (semantic.PipelineDescriptor{}) {
-		return e.descriptor
+func TestPublishRejectsPendingMutationsWithoutCURRENT(t *testing.T) {
+	service, encoder := persistenceService(t)
+	if err := service.AddDocument(context.Background(), encoder, semantic.Document{ID: "doc-a"}); err != nil {
+		t.Fatal(err)
 	}
-	return semantic.PipelineDescriptor{
-		Embedding: testEmbeddingDescriptor("test-model", "test-embedding"),
-		Chunking:  semantic.ChunkingDescriptor{ID: "test-chunks", Version: 1, Fingerprint: "test-chunks-fp"},
+	root := t.TempDir()
+	if _, err := Publish(context.Background(), root, service, Options{}); !errors.Is(err, semantic.ErrPendingMutations) {
+		t.Fatalf("Publish error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, currentFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("CURRENT stat error = %v", err)
 	}
 }
 
-func zeroQueryEncoder() staticEncoder {
-	return staticEncoder{vectors: map[fts.DocID][]semantic.ChunkVector{
-		"query": {{Ref: chunk.Ref{ID: "query", DocID: "query", Field: fts.DefaultField, EndByte: 5}, Vector: []float32{0, 0}}},
-	}}
+func TestPublishOpenEmptyService(t *testing.T) {
+	service, _ := persistenceService(t)
+	root := t.TempDir()
+	generation, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generation.ID != 1 || len(generation.ObjectIDs) != 0 {
+		t.Fatalf("empty generation = %+v", generation)
+	}
+	store, err := Open(t.Context(), root, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if got := store.Service().Statistics(); got.Documents != 0 || got.LiveVectors != 0 {
+		t.Fatalf("empty statistics = %+v", got)
+	}
 }
 
-func TestPublishOpenRoundTripBothDurabilityModes(t *testing.T) {
-	for _, durability := range []DurabilityMode{DurabilitySynchronous, DurabilityAsynchronous} {
-		t.Run(durabilityName(durability), func(t *testing.T) {
-			checkpoint, _, wantDocuments := persistenceFixture(t, false)
+func TestOperationsRespectCanceledContext(t *testing.T) {
+	service, _ := persistenceService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	root := filepath.Join(t.TempDir(), "store")
+	if _, err := Publish(ctx, root, service, Options{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Publish error = %v", err)
+	}
+	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("canceled Publish created store: %v", err)
+	}
+}
+
+func TestOpenHoldsLifetimeWriterLock(t *testing.T) {
+	ctx := context.Background()
+	service, encoder := persistenceService(t)
+	addAndFlush(t, service, encoder, "doc-a")
+	root := t.TempDir()
+	if _, err := Publish(ctx, root, service, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(ctx, root, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(ctx, root, OpenOptions{}); !errors.Is(err, ErrStoreLocked) {
+		t.Fatalf("second Open error = %v", err)
+	}
+	if _, err := Publish(ctx, root, service, Options{ExpectedGeneration: 1}); !errors.Is(err, ErrStoreLocked) {
+		t.Fatalf("detached Publish error = %v", err)
+	}
+	if err := RepairCurrent(ctx, root, 1, Options{}); !errors.Is(err, ErrStoreLocked) {
+		t.Fatalf("RepairCurrent error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(ctx, root, OpenOptions{}); err != nil {
+		t.Fatalf("Open after Close = %v", err)
+	}
+}
+
+func TestStorePublishCloseAndCancellationAreSynchronized(t *testing.T) {
+	service, encoder := persistenceService(t)
+	addAndFlush(t, service, encoder, "doc-a")
+	root := t.TempDir()
+	if _, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous}); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(t.Context(), root, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Publish(nil, Options{}); !errors.Is(err, vector.ErrNilContext) {
+		t.Fatalf("nil-context Publish error = %v", err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	published := make(chan error, 1)
+	go func() {
+		_, err := store.Publish(context.Background(), Options{Durability: DurabilityAsynchronous, BeforeStep: func(step PublicationStep) error {
+			if step == StepWriteState {
+				close(entered)
+				<-release
+			}
+			return nil
+		}})
+		published <- err
+	}()
+	<-entered
+	waitCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := store.Publish(waitCtx, Options{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("waiting Publish error = %v", err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- store.Close() }()
+	close(release)
+	if err := <-published; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Publish(t.Context(), Options{}); !errors.Is(err, ErrStoreClosed) {
+		t.Fatalf("Publish after Close error = %v", err)
+	}
+}
+
+func TestPublicationFailurePreservesCURRENTAndExplicitRepairSelectsOrphan(t *testing.T) {
+	ctx := context.Background()
+	service, encoder := persistenceService(t)
+	addAndFlush(t, service, encoder, "doc-a")
+	root := t.TempDir()
+	if _, err := Publish(ctx, root, service, Options{Durability: DurabilityAsynchronous}); err != nil {
+		t.Fatal(err)
+	}
+	addAndFlush(t, service, encoder, "doc-b")
+	injected := errors.New("stop before CURRENT")
+	_, err := Publish(ctx, root, service, Options{Durability: DurabilityAsynchronous, ExpectedGeneration: 1, AfterStep: func(step PublicationStep) error {
+		if step == StepRenameGeneration {
+			return injected
+		}
+		return nil
+	}})
+	if !errors.Is(err, injected) {
+		t.Fatalf("Publish error = %v", err)
+	}
+	store, err := Open(ctx, root, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.Generation().ID != 1 || store.Service().Statistics().Documents != 1 {
+		t.Fatalf("active generation after failure = %+v", store.Generation())
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := RepairCurrent(ctx, root, 2, Options{Durability: DurabilityAsynchronous}); err != nil {
+		t.Fatal(err)
+	}
+	repaired, err := Open(ctx, root, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repaired.Close()
+	if repaired.Generation().ID != 2 || repaired.Service().Statistics().Documents != 2 {
+		t.Fatalf("repaired generation = %+v, stats = %+v", repaired.Generation(), repaired.Service().Statistics())
+	}
+	encoder.vectors["doc-c"] = []semantic.ChunkVector{testVector("doc-c", "c-1", []float32{0.5, 0.5})}
+	addAndFlush(t, repaired.Service(), encoder, "doc-c")
+	if generation, err := repaired.Publish(ctx, Options{Durability: DurabilityAsynchronous}); err != nil || generation.ID != 3 {
+		t.Fatalf("Publish after repair = %+v, %v", generation, err)
+	}
+}
+
+func TestFailureAfterCURRENTIsIndeterminateAndVisible(t *testing.T) {
+	ctx := context.Background()
+	service, encoder := persistenceService(t)
+	addAndFlush(t, service, encoder, "doc-a")
+	root := t.TempDir()
+	injected := errors.New("after CURRENT")
+	_, err := Publish(ctx, root, service, Options{Durability: DurabilityAsynchronous, AfterStep: func(step PublicationStep) error {
+		if step == StepReplaceCurrent {
+			return injected
+		}
+		return nil
+	}})
+	if !errors.Is(err, ErrIndeterminate) {
+		t.Fatalf("Publish error = %v", err)
+	}
+	store, err := Open(ctx, root, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if store.Generation().ID != 1 {
+		t.Fatalf("generation = %+v", store.Generation())
+	}
+}
+
+func TestPublicationCrashMatrix(t *testing.T) {
+	preCommit := []PublicationStep{
+		StepWriteVectors, StepWriteGraph, StepSyncSegment, StepRenameSegment,
+		StepWriteState, StepWriteManifest, StepSyncGeneration,
+		StepRenameGeneration, StepWriteCurrent, StepReplaceCurrent,
+	}
+	for _, step := range preCommit {
+		t.Run("before_"+string(step), func(t *testing.T) {
+			service, encoder := persistenceService(t)
+			addAndFlush(t, service, encoder, "doc-a")
+			injected := errors.New("injected")
 			root := t.TempDir()
-			generation, err := Publish(context.Background(), root, 42, checkpoint, Options{Durability: durability})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if generation.ID != 42 || !validObjectID(generation.ObjectID) {
-				t.Fatalf("generation = %+v", generation)
-			}
-			for _, path := range []string{
-				filepath.Join(root, currentFileName),
-				filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, vectorsFileName),
-				filepath.Join(root, generationsDirectory, generationName(42), manifestFileName),
-				filepath.Join(root, generationsDirectory, generationName(42), stateFileName),
-			} {
-				if _, err := os.Stat(path); err != nil {
-					t.Fatalf("missing %s: %v", path, err)
+			_, err := Publish(t.Context(), root, service, Options{BeforeStep: func(got PublicationStep) error {
+				if got == step {
+					return injected
 				}
+				return nil
+			}})
+			if !errors.Is(err, injected) {
+				t.Fatalf("Publish error = %v", err)
 			}
-			loaded, err := Open(root, OpenOptions{Limits: Limits{}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer loaded.Close()
-			view, err := semantic.NewReadView(loaded.Generation.ID, []*semantic.Segment{loaded.Sealed.Segment}, semantic.SearchPolicy{MaxK: 10, MaxChunkCandidates: 20, MaxChunksPerDocumentHit: 3})
-			if err != nil {
-				t.Fatal(err)
-			}
-			gotDocuments, err := view.SearchDocuments(context.Background(), zeroQueryEncoder(), semantic.Document{ID: "query"}, 2)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !equalDocumentHits(gotDocuments.Hits, wantDocuments.Hits) {
-				t.Fatalf("round-trip document search mismatch\ndocuments=%+v", gotDocuments)
-			}
-			if loaded.Sealed.Segment.Metadata() != checkpoint.Segment.Metadata() || loaded.Sealed.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID {
-				t.Fatal("checkpoint metadata changed during round trip")
-			}
-			if !slices.Equal(loaded.Sealed.Segment.Rows(), checkpoint.Segment.Rows()) {
-				t.Fatal("checkpoint mappings changed during round trip")
+			if _, err := Open(t.Context(), root, OpenOptions{}); !errors.Is(err, ErrCurrentMissing) {
+				t.Fatalf("Open error = %v, want missing CURRENT", err)
 			}
 		})
 	}
-}
-
-func TestPublishReusesSegmentObjectAndUpgradesDurability(t *testing.T) {
-	checkpoint, _, _ := persistenceFixture(t, false)
-	root := t.TempDir()
-	first, err := Publish(context.Background(), root, 1, checkpoint, Options{Durability: DurabilityAsynchronous})
-	if err != nil {
-		t.Fatal(err)
+	for _, step := range preCommit[:len(preCommit)-1] {
+		t.Run("after_"+string(step), func(t *testing.T) {
+			service, encoder := persistenceService(t)
+			addAndFlush(t, service, encoder, "doc-a")
+			injected := errors.New("injected")
+			root := t.TempDir()
+			_, err := Publish(t.Context(), root, service, Options{AfterStep: func(got PublicationStep) error {
+				if got == step {
+					return injected
+				}
+				return nil
+			}})
+			if !errors.Is(err, injected) {
+				t.Fatalf("Publish error = %v", err)
+			}
+			if _, err := Open(t.Context(), root, OpenOptions{}); !errors.Is(err, ErrCurrentMissing) {
+				t.Fatalf("Open error = %v, want missing CURRENT", err)
+			}
+		})
 	}
-	checkpoint.MaxAllocatedVectorID++
-	second, err := Publish(context.Background(), root, 2, checkpoint, Options{
-		Durability: DurabilitySynchronous, ExpectedGeneration: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.ObjectID != first.ObjectID {
-		t.Fatalf("segment object was not reused: first %q, second %q", first.ObjectID, second.ObjectID)
-	}
-	loaded, err := Open(root, OpenOptions{Limits: Limits{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer loaded.Close()
-	if loaded.Generation.ID != 2 || loaded.Sealed.MaxAllocatedVectorID != checkpoint.MaxAllocatedVectorID {
-		t.Fatalf("opened generation/sealed = %d/%d", loaded.Generation.ID, loaded.Sealed.MaxAllocatedVectorID)
-	}
-}
-
-func TestPublishOpenChunkHNSWRoundTrip(t *testing.T) {
-	checkpoint, _, _ := persistenceFixture(t, true)
-	checkpoint = withHNSW(t, checkpoint, 7)
-	root := t.TempDir()
-	generation, err := Publish(context.Background(), root, 1, checkpoint, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, graphFileName)); err != nil {
-		t.Fatalf("graph was not published: %v", err)
-	}
-	loaded, err := Open(root, OpenOptions{Limits: Limits{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer loaded.Close()
-	if loaded.Sealed.Segment.Kind() != semantic.SegmentKindChunkHNSW || loaded.Sealed.Segment.Index() == nil {
-		t.Fatalf("opened segment = kind %d, index %p", loaded.Sealed.Segment.Kind(), loaded.Sealed.Segment.Index())
-	}
-	view, err := semantic.NewReadView(loaded.Generation.ID, []*semantic.Segment{loaded.Sealed.Segment}, semantic.SearchPolicy{MaxK: 10, MaxChunkCandidates: 20, MaxChunksPerDocumentHit: 3})
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := view.SearchDocuments(context.Background(), zeroQueryEncoder(), semantic.Document{ID: "query"}, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Hits) != 2 || result.Hits[0].DocID != "doc-a" {
-		t.Fatalf("round-trip HNSW result = %+v", result)
-	}
-}
-
-func TestOpenRejectsMissingCorruptAndSubstitutedGraph(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mutate func(*testing.T, string, Generation, SealedSegment)
-	}{
-		{name: "missing", mutate: func(t *testing.T, root string, generation Generation, _ SealedSegment) {
-			t.Helper()
-			if err := os.Remove(filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, graphFileName)); err != nil {
+	for _, step := range preCommit {
+		t.Run("update_before_"+string(step), func(t *testing.T) {
+			service, encoder := persistenceService(t)
+			addAndFlush(t, service, encoder, "doc-a")
+			root := t.TempDir()
+			if _, err := Publish(t.Context(), root, service, Options{}); err != nil {
 				t.Fatal(err)
 			}
-		}},
-		{name: "corrupt", mutate: func(t *testing.T, root string, generation Generation, _ SealedSegment) {
-			t.Helper()
-			path := filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, graphFileName)
+			addAndFlush(t, service, encoder, "doc-b")
+			injected := errors.New("injected")
+			_, err := Publish(t.Context(), root, service, Options{ExpectedGeneration: 1, BeforeStep: func(got PublicationStep) error {
+				if got == step {
+					return injected
+				}
+				return nil
+			}})
+			if !errors.Is(err, injected) {
+				t.Fatalf("Publish error = %v", err)
+			}
+			store, err := Open(t.Context(), root, OpenOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			if store.Generation().ID != 1 || store.Service().Statistics().Documents != 1 {
+				t.Fatalf("active generation/state = %+v/%+v", store.Generation(), store.Service().Statistics())
+			}
+		})
+	}
+
+	postCommit := []PublicationStep{StepReplaceCurrent, StepSyncStore}
+	for _, step := range postCommit {
+		t.Run("after_"+string(step), func(t *testing.T) {
+			service, encoder := persistenceService(t)
+			addAndFlush(t, service, encoder, "doc-a")
+			injected := errors.New("injected")
+			root := t.TempDir()
+			_, err := Publish(t.Context(), root, service, Options{AfterStep: func(got PublicationStep) error {
+				if got == step {
+					return injected
+				}
+				return nil
+			}})
+			if !errors.Is(err, ErrIndeterminate) {
+				t.Fatalf("Publish error = %v", err)
+			}
+			store, err := Open(t.Context(), root, OpenOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			if store.Generation().ID != 1 {
+				t.Fatalf("generation = %+v", store.Generation())
+			}
+		})
+	}
+	t.Run("before_"+string(StepSyncStore), func(t *testing.T) {
+		service, encoder := persistenceService(t)
+		addAndFlush(t, service, encoder, "doc-a")
+		root := t.TempDir()
+		_, err := Publish(t.Context(), root, service, Options{BeforeStep: func(step PublicationStep) error {
+			if step == StepSyncStore {
+				return errors.New("injected")
+			}
+			return nil
+		}})
+		if !errors.Is(err, ErrIndeterminate) {
+			t.Fatalf("Publish error = %v", err)
+		}
+		store, err := Open(t.Context(), root, OpenOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		if store.Generation().ID != 1 {
+			t.Fatalf("generation = %+v", store.Generation())
+		}
+	})
+}
+
+func TestPublishRejectsStaleGeneration(t *testing.T) {
+	service, encoder := persistenceService(t)
+	addAndFlush(t, service, encoder, "doc-a")
+	root := t.TempDir()
+	if _, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous}); !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("Publish error = %v", err)
+	}
+}
+
+func TestOpenRejectsCorruptGenerationFiles(t *testing.T) {
+	for _, relative := range []string{
+		filepath.Join(generationsDirectory, generationName(1), stateFileName),
+		filepath.Join(generationsDirectory, generationName(1), manifestFileName),
+		currentFileName,
+		"vectors",
+		"graph",
+	} {
+		t.Run(relative, func(t *testing.T) {
+			service, encoder := persistenceService(t)
+			addAndFlush(t, service, encoder, "doc-a")
+			root := t.TempDir()
+			generation, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, relative)
+			if relative == "vectors" {
+				path = filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectIDs[0], vectorsFileName)
+			}
+			if relative == "graph" {
+				path = filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectIDs[0], graphFileName)
+			}
 			data, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -179,304 +388,60 @@ func TestOpenRejectsMissingCorruptAndSubstitutedGraph(t *testing.T) {
 			if err := os.WriteFile(path, data, 0o600); err != nil {
 				t.Fatal(err)
 			}
-		}},
-		{name: "substituted_identity", mutate: substituteGraphAndReferences},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			checkpoint, _, _ := persistenceFixture(t, true)
-			checkpoint = withHNSW(t, checkpoint, 7)
-			root := t.TempDir()
-			generation, err := Publish(context.Background(), root, 1, checkpoint, Options{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			test.mutate(t, root, generation, checkpoint)
-			if _, err := Open(root, OpenOptions{Limits: Limits{}}); err == nil {
-				t.Fatal("Open accepted invalid graph publication")
+			if store, err := Open(t.Context(), root, OpenOptions{}); err == nil {
+				_ = store.Close()
+				t.Fatal("Open accepted corrupt generation")
 			}
 		})
 	}
 }
 
-func TestGraphPublicationFailureKeepsPreviousGeneration(t *testing.T) {
-	for _, after := range []bool{false, true} {
-		t.Run(map[bool]string{false: "before", true: "after"}[after], func(t *testing.T) {
-			root := t.TempDir()
-			first, _, _ := persistenceFixture(t, false)
-			if _, err := Publish(context.Background(), root, 1, first, Options{}); err != nil {
-				t.Fatal(err)
-			}
-			second, _, _ := persistenceFixture(t, true)
-			second = withHNSW(t, second, 9)
-			injected := errors.New("graph publication failure")
-			options := Options{ExpectedGeneration: 1}
-			if after {
-				options.AfterStep = func(step PublicationStep) error {
-					if step == StepWriteGraph {
-						return injected
-					}
-					return nil
-				}
-			} else {
-				options.BeforeStep = func(step PublicationStep) error {
-					if step == StepWriteGraph {
-						return injected
-					}
-					return nil
-				}
-			}
-			if _, err := Publish(context.Background(), root, 2, second, options); !errors.Is(err, injected) {
-				t.Fatalf("Publish error = %v", err)
-			}
-			loaded, err := Open(root, OpenOptions{Limits: Limits{}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer loaded.Close()
-			if loaded.Generation.ID != 1 {
-				t.Fatalf("opened generation %d", loaded.Generation.ID)
-			}
-		})
+func TestOpenRejectsDescriptorMismatchLimitsAndLockSymlink(t *testing.T) {
+	service, encoder := persistenceService(t)
+	addAndFlush(t, service, encoder, "doc-a")
+	root := t.TempDir()
+	if _, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous}); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestPublishPreflightsGraphLimit(t *testing.T) {
-	checkpoint, _, _ := persistenceFixture(t, true)
-	checkpoint = withHNSW(t, checkpoint, 7)
+	otherEmbedding, err := semantic.NewEmbeddingDescriptor("other", "model", "v1", "fingerprint", 2, vector.MetricL2Squared, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(t.Context(), root, OpenOptions{ExpectedDescriptors: semantic.PipelineDescriptor{Embedding: otherEmbedding, Chunking: encoder.descriptor.Chunking}}); !errors.Is(err, ErrEmbeddingMismatch) {
+		t.Fatalf("descriptor mismatch error = %v", err)
+	}
 	limits := DefaultLimits()
-	limits.MaxGraphBytes = 100
-	called := false
-	_, err := Publish(context.Background(), t.TempDir(), 1, checkpoint, Options{Limits: limits, BeforeStep: func(PublicationStep) error {
-		called = true
-		return nil
-	}})
-	if !errors.Is(err, ErrLimitExceeded) || called {
-		t.Fatalf("Publish error/callback = %v/%v", err, called)
+	limits.MaxFileBytes = 4096
+	limits.MaxVectorBytes = 4096
+	limits.MaxGraphBytes = 4096
+	limits.MaxOpenBytes = 4096
+	if _, err := Open(t.Context(), root, OpenOptions{Limits: limits}); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("open allocation limit error = %v", err)
+	}
+	lockPath := filepath.Join(root, "LOCK")
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "target"), lockPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(t.Context(), root, OpenOptions{}); !errors.Is(err, ErrSymlink) {
+		t.Fatalf("lock symlink error = %v", err)
 	}
 }
 
-func TestFailuresBeforeCurrentKeepPreviousGeneration(t *testing.T) {
-	steps := []PublicationStep{
-		StepWriteVectors, StepSyncSegment, StepRenameSegment,
-		StepWriteState, StepWriteManifest, StepSyncGeneration, StepRenameGeneration,
-		StepWriteCurrent, StepReplaceCurrent,
+func TestOpenRejectsSymlinkedSegmentObject(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" && runtime.GOOS != "freebsd" {
+		t.Skip("writable store locking is unsupported")
 	}
-	for _, failedStep := range steps {
-		t.Run(string(failedStep), func(t *testing.T) {
-			root := t.TempDir()
-			first, _, _ := persistenceFixture(t, false)
-			second, _, _ := persistenceFixture(t, true)
-			if _, err := Publish(context.Background(), root, 1, first, Options{Durability: DurabilitySynchronous}); err != nil {
-				t.Fatal(err)
-			}
-			injected := errors.New("injected failure")
-			_, err := Publish(context.Background(), root, 2, second, Options{
-				Durability: DurabilitySynchronous, ExpectedGeneration: 1,
-				BeforeStep: func(step PublicationStep) error {
-					if step == failedStep {
-						return injected
-					}
-					return nil
-				},
-			})
-			if !errors.Is(err, injected) || errors.Is(err, ErrIndeterminate) {
-				t.Fatalf("Publish() error = %v", err)
-			}
-			loaded, err := Open(root, OpenOptions{Limits: Limits{}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer loaded.Close()
-			if loaded.Generation.ID != 1 {
-				t.Fatalf("opened generation %d, want 1", loaded.Generation.ID)
-			}
-		})
-	}
-}
-
-func TestFailureAfterCurrentIsIndeterminateAndPublished(t *testing.T) {
+	service, encoder := persistenceService(t)
+	addAndFlush(t, service, encoder, "doc-a")
 	root := t.TempDir()
-	first, _, _ := persistenceFixture(t, false)
-	second, _, _ := persistenceFixture(t, true)
-	if _, err := Publish(context.Background(), root, 1, first, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	injected := errors.New("final sync failed")
-	_, err := Publish(context.Background(), root, 2, second, Options{
-		Durability: DurabilitySynchronous, ExpectedGeneration: 1,
-		BeforeStep: func(step PublicationStep) error {
-			if step == StepSyncStore {
-				return injected
-			}
-			return nil
-		},
-	})
-	if !errors.Is(err, ErrIndeterminate) {
-		t.Fatalf("Publish() error = %v, want ErrIndeterminate", err)
-	}
-	loaded, err := Open(root, OpenOptions{Limits: Limits{}})
+	generation, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer loaded.Close()
-	if loaded.Generation.ID != 2 {
-		t.Fatalf("opened generation %d, want published generation 2", loaded.Generation.ID)
-	}
-}
-
-func TestFailuresAfterPreCommitStepsKeepPreviousGeneration(t *testing.T) {
-	steps := []PublicationStep{
-		StepWriteVectors, StepSyncSegment, StepRenameSegment,
-		StepWriteState, StepWriteManifest, StepSyncGeneration, StepRenameGeneration, StepWriteCurrent,
-	}
-	for _, failedStep := range steps {
-		t.Run(string(failedStep), func(t *testing.T) {
-			root := t.TempDir()
-			first, _, _ := persistenceFixture(t, false)
-			second, _, _ := persistenceFixture(t, true)
-			if _, err := Publish(context.Background(), root, 1, first, Options{}); err != nil {
-				t.Fatal(err)
-			}
-			injected := errors.New("injected after step")
-			_, err := Publish(context.Background(), root, 2, second, Options{ExpectedGeneration: 1, AfterStep: func(step PublicationStep) error {
-				if step == failedStep {
-					return injected
-				}
-				return nil
-			}})
-			if !errors.Is(err, injected) || errors.Is(err, ErrIndeterminate) {
-				t.Fatalf("Publish() error = %v", err)
-			}
-			loaded, err := Open(root, OpenOptions{Limits: Limits{}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer loaded.Close()
-			if loaded.Generation.ID != 1 {
-				t.Fatalf("opened generation %d, want 1", loaded.Generation.ID)
-			}
-		})
-	}
-}
-
-func TestFailureAfterCommittedStepsIsIndeterminate(t *testing.T) {
-	for _, failedStep := range []PublicationStep{StepReplaceCurrent, StepSyncStore} {
-		t.Run(string(failedStep), func(t *testing.T) {
-			root := t.TempDir()
-			first, _, _ := persistenceFixture(t, false)
-			second, _, _ := persistenceFixture(t, true)
-			if _, err := Publish(context.Background(), root, 1, first, Options{}); err != nil {
-				t.Fatal(err)
-			}
-			injected := errors.New("after committed step")
-			_, err := Publish(context.Background(), root, 2, second, Options{ExpectedGeneration: 1, AfterStep: func(step PublicationStep) error {
-				if step == failedStep {
-					return injected
-				}
-				return nil
-			}})
-			if !errors.Is(err, ErrIndeterminate) {
-				t.Fatalf("Publish() error = %v", err)
-			}
-			loaded, err := Open(root, OpenOptions{Limits: Limits{}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer loaded.Close()
-			if loaded.Generation.ID != 2 {
-				t.Fatalf("opened generation %d, want 2", loaded.Generation.ID)
-			}
-		})
-	}
-}
-
-func TestCancellationAfterStepStopsBeforeNextPublicationStage(t *testing.T) {
-	root := t.TempDir()
-	checkpoint, _, _ := persistenceFixture(t, false)
-	ctx, cancel := context.WithCancel(context.Background())
-	_, err := Publish(ctx, root, 1, checkpoint, Options{AfterStep: func(step PublicationStep) error {
-		if step == StepWriteVectors {
-			cancel()
-		}
-		return nil
-	}})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Publish() error = %v, want context cancellation", err)
-	}
-	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrCurrentMissing) {
-		t.Fatalf("Open() error = %v, want missing CURRENT", err)
-	}
-}
-
-func TestCurrentRecoveryOrphanAndExplicitRepair(t *testing.T) {
-	root := t.TempDir()
-	first, _, _ := persistenceFixture(t, false)
-	second, _, _ := persistenceFixture(t, true)
-	if _, err := Publish(context.Background(), root, 1, first, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	injected := errors.New("before current")
-	if _, err := Publish(context.Background(), root, 2, second, Options{ExpectedGeneration: 1, BeforeStep: func(step PublicationStep) error {
-		if step == StepReplaceCurrent {
-			return injected
-		}
-		return nil
-	}}); !errors.Is(err, injected) {
-		t.Fatalf("orphan publication error = %v", err)
-	}
-	loaded, err := Open(root, OpenOptions{Limits: Limits{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.Generation.ID != 1 {
-		t.Fatalf("orphan generation was promoted: %d", loaded.Generation.ID)
-	}
-	_ = loaded.Close()
-	if err := os.Remove(filepath.Join(root, currentFileName)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrCurrentMissing) {
-		t.Fatalf("missing CURRENT error = %v", err)
-	}
-	if err := RepairCurrent(root, 2, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err = Open(root, OpenOptions{Limits: Limits{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer loaded.Close()
-	if loaded.Generation.ID != 2 {
-		t.Fatalf("repaired generation = %d, want 2", loaded.Generation.ID)
-	}
-}
-
-func TestOpenRejectsCorruptCurrentAndSymlinkedObject(t *testing.T) {
-	root := t.TempDir()
-	checkpoint, _, _ := persistenceFixture(t, false)
-	generation, err := Publish(context.Background(), root, 1, checkpoint, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	currentPath := filepath.Join(root, currentFileName)
-	current, err := os.ReadFile(currentPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	current[len(current)/2] ^= 0xff
-	if err := os.WriteFile(currentPath, current, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrCorrupt) {
-		t.Fatalf("corrupt CURRENT error = %v", err)
-	}
-	if runtime.GOOS == "windows" {
-		return
-	}
-	if err := RepairCurrent(root, 1, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	objectPath := filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID)
+	objectPath := filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectIDs[0])
 	realPath := objectPath + "-real"
 	if err := os.Rename(objectPath, realPath); err != nil {
 		t.Fatal(err)
@@ -484,401 +449,43 @@ func TestOpenRejectsCorruptCurrentAndSymlinkedObject(t *testing.T) {
 	if err := os.Symlink(realPath, objectPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrSymlink) {
+	if _, err := Open(t.Context(), root, OpenOptions{}); !errors.Is(err, ErrSymlink) {
 		t.Fatalf("symlinked object error = %v", err)
 	}
 }
 
-func TestOpenRejectsCorruptReferencedFiles(t *testing.T) {
-	files := []func(root string, generation Generation) string{
-		func(root string, generation Generation) string {
-			return filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, vectorsFileName)
-		},
-		func(root string, _ Generation) string {
-			return filepath.Join(root, generationsDirectory, generationName(1), stateFileName)
-		},
-		func(root string, _ Generation) string {
-			return filepath.Join(root, generationsDirectory, generationName(1), manifestFileName)
-		},
-	}
-	for index, filePath := range files {
-		t.Run(string(rune('a'+index)), func(t *testing.T) {
-			root := t.TempDir()
-			checkpoint, _, _ := persistenceFixture(t, false)
-			generation, err := Publish(context.Background(), root, 1, checkpoint, Options{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			path := filePath(root, generation)
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			data[len(data)/2] ^= 0xff
-			if err := os.WriteFile(path, data, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := Open(root, OpenOptions{Limits: Limits{}}); err == nil {
-				t.Fatalf("Open() accepted corruption in %s", path)
-			}
-		})
-	}
-}
-
-func TestOpenEnforcesAllocationLimits(t *testing.T) {
-	root := t.TempDir()
-	checkpoint, _, _ := persistenceFixture(t, true)
-	if _, err := Publish(context.Background(), root, 1, checkpoint, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	limits := DefaultLimits()
-	limits.MaxVectors = 1
-	if _, err := Open(root, OpenOptions{Limits: limits}); !errors.Is(err, ErrLimitExceeded) && !errors.Is(err, ErrSegmentLimit) {
-		t.Fatalf("Open() limit error = %v", err)
-	}
-	limits = DefaultLimits()
-	limits.MaxFileBytes = 512
-	limits.MaxVectorBytes = 512
-	limits.MaxOpenBytes = 512
-	if _, err := Open(root, OpenOptions{Limits: limits}); !errors.Is(err, ErrLimitExceeded) {
-		t.Fatalf("Open() aggregate allocation limit error = %v", err)
-	}
-}
-
-func TestPublishPreflightsLimitsBeforeWriting(t *testing.T) {
-	root := t.TempDir()
-	checkpoint, _, _ := persistenceFixture(t, true)
-	limits := DefaultLimits()
-	limits.MaxVectors = 1
-	called := false
-	_, err := Publish(context.Background(), root, 1, checkpoint, Options{Limits: limits, BeforeStep: func(PublicationStep) error {
-		called = true
-		return nil
-	}})
-	if !errors.Is(err, ErrLimitExceeded) || called {
-		t.Fatalf("Publish() error = %v, callback called = %v", err, called)
-	}
-}
-
-func TestPublishRejectsUnusableSearchPolicy(t *testing.T) {
-	for _, name := range []string{"zero policy", "candidate budget exceeds index"} {
-		t.Run(name, func(t *testing.T) {
-			checkpoint, _, _ := persistenceFixture(t, false)
-			checkpoint = withHNSW(t, checkpoint, 7)
-			if name == "zero policy" {
-				checkpoint.MaxK = 0
-				checkpoint.MaxChunkCandidates = 0
-				checkpoint.MaxChunksPerDocumentHit = 0
-			} else {
-				checkpoint.MaxChunkCandidates = checkpoint.Segment.MaxK() + 1
-			}
-			if _, err := Publish(context.Background(), t.TempDir(), 1, checkpoint, Options{}); !errors.Is(err, ErrLimitExceeded) {
-				t.Fatalf("Publish() error = %v, want %v", err, ErrLimitExceeded)
-			}
-		})
-	}
-}
-
-func TestHNSWSearchWorkLimits(t *testing.T) {
-	checkpoint, _, _ := persistenceFixture(t, false)
-	checkpoint = withHNSW(t, checkpoint, 7)
-
-	for name, limit := range map[string]func(*Limits){
-		"ef search": func(limits *Limits) {
-			limits.MaxEfSearch = checkpoint.Segment.SearchLimits().MaxEfSearch - 1
-		},
-		"visit limit": func(limits *Limits) {
-			limits.MaxVisitLimit = checkpoint.Segment.SearchLimits().MaxVisitLimit - 1
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			limits := DefaultLimits()
-			limit(&limits)
-			if _, err := Publish(context.Background(), t.TempDir(), 1, checkpoint, Options{Limits: limits}); !errors.Is(err, ErrLimitExceeded) {
-				t.Fatalf("Publish() work limit error = %v", err)
-			}
-		})
-	}
-}
-
-func TestPublishDoesNotCommitGenerationThatExceedsOpenBudget(t *testing.T) {
-	root := t.TempDir()
-	checkpoint, _, _ := persistenceFixture(t, false)
-	limits := DefaultLimits()
-	limits.MaxFileBytes = 512
-	limits.MaxVectorBytes = 512
-	limits.MaxOpenBytes = 512
-	if _, err := Publish(context.Background(), root, 1, checkpoint, Options{Limits: limits}); !errors.Is(err, ErrLimitExceeded) {
-		t.Fatalf("Publish() aggregate allocation limit error = %v", err)
-	}
-	if _, err := Open(root, OpenOptions{Limits: limits}); !errors.Is(err, ErrCurrentMissing) {
-		t.Fatalf("Open() after rejected publication error = %v", err)
-	}
-}
-
-func TestOpenRejectsReferencedFileLargerThanDeclaredSize(t *testing.T) {
-	root := t.TempDir()
-	checkpoint, _, _ := persistenceFixture(t, false)
-	if _, err := Publish(context.Background(), root, 1, checkpoint, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	statePath := filepath.Join(root, generationsDirectory, generationName(1), stateFileName)
-	file, err := os.OpenFile(statePath, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.Write([]byte("unexpected trailing bytes")); err != nil {
-		_ = file.Close()
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrCorrupt) {
-		t.Fatalf("Open() mismatched referenced size error = %v", err)
-	}
-}
-
-func TestPublishRejectsLockedAndStaleWriters(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" && runtime.GOOS != "freebsd" {
-		t.Skip("OS-backed writable locking is not implemented on this platform")
-	}
-	root := t.TempDir()
-	checkpoint, _, _ := persistenceFixture(t, false)
-	if _, err := Publish(context.Background(), root, 1, checkpoint, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Publish(context.Background(), root, 2, checkpoint, Options{}); !errors.Is(err, ErrStaleGeneration) {
-		t.Fatalf("stale publication error = %v", err)
-	}
-	firstReader, err := Open(root, OpenOptions{Limits: Limits{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondReader, err := Open(root, OpenOptions{Limits: Limits{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Publish(context.Background(), root, 2, checkpoint, Options{ExpectedGeneration: 1}); !errors.Is(err, ErrStoreLocked) {
-		t.Fatalf("publication with active readers error = %v", err)
-	}
-	if err := firstReader.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := secondReader.Close(); err != nil {
-		t.Fatal(err)
-	}
-	lock, err := acquireStoreLock(filepath.Join(root, "LOCK"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lock.Close()
-	if _, err := Publish(context.Background(), root, 2, checkpoint, Options{ExpectedGeneration: 1}); !errors.Is(err, ErrStoreLocked) {
-		t.Fatalf("locked publication error = %v", err)
-	}
-	if _, err := Open(root, OpenOptions{Limits: Limits{}}); !errors.Is(err, ErrStoreLocked) {
-		t.Fatalf("read during publication error = %v", err)
-	}
-}
-
-func TestObjectIDValidation(t *testing.T) {
-	invalid := []string{"", ".", "..", "seg-../x", "seg-foo/bar", `seg-foo\bar`, "/absolute", "SEG-" + string(make([]byte, 64))}
-	for _, id := range invalid {
-		if validObjectID(id) {
-			t.Fatalf("validObjectID(%q) = true", id)
-		}
-	}
-}
-
-func TestPublicationContainsOnlyLiveRows(t *testing.T) {
-	service, err := semantic.New(semantic.Config{
-		Embedding: testEmbeddingDescriptor("compact-model", "compact-embedding"),
-		Chunking:  semantic.ChunkingDescriptor{ID: "compact-chunks-v1", Version: 1, Fingerprint: "compact-chunks-fp"}, MaxVectors: 10,
-		MaxChunksPerDocument: 2, MaxK: 2, MaxChunkCandidates: 10, MaxChunksPerDocumentHit: 2,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	encoder := staticEncoder{vectors: map[fts.DocID][]semantic.ChunkVector{
-		"doc": {{Ref: chunk.Ref{ID: "old", DocID: "doc", Field: fts.DefaultField, EndByte: 3}, Vector: []float32{0, 0}}},
-	}, descriptor: semantic.PipelineDescriptor{Embedding: testEmbeddingDescriptor("compact-model", "compact-embedding"), Chunking: semantic.ChunkingDescriptor{ID: "compact-chunks-v1", Version: 1, Fingerprint: "compact-chunks-fp"}}}
-	if err := service.AddDocument(ctx, encoder, semantic.Document{ID: "doc"}); err != nil {
-		t.Fatal(err)
-	}
-	encoder.vectors["doc"] = []semantic.ChunkVector{{Ref: chunk.Ref{ID: "new", DocID: "doc", Field: fts.DefaultField, EndByte: 3}, Vector: []float32{1, 0}}}
-	if err := service.ReplaceDocument(ctx, encoder, semantic.Document{ID: "doc"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := service.Compact(ctx); err != nil {
-		t.Fatal(err)
-	}
-	view, err := service.ReadView(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	segment := view.Segments()[0]
-	sealed := SealedSegment{Segment: segment, MaxAllocatedVectorID: service.Statistics().MaxAllocatedVectorID, MaxK: 2, MaxChunkCandidates: 10, MaxChunksPerDocumentHit: 2}
-	if segment.Len() != 1 || len(segment.Rows()) != 1 || segment.Rows()[0].Chunk.ID != "new" {
-		t.Fatalf("sealed segment retained stale rows: %+v", sealed)
-	}
-	root := t.TempDir()
-	_, err = Publish(ctx, root, 1, sealed, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := Open(root, OpenOptions{Limits: Limits{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer loaded.Close()
-	if loaded.Generation.ID != 1 || loaded.Sealed.Segment.Len() != 1 || len(loaded.Sealed.Segment.Rows()) != 1 {
-		t.Fatalf("opened dense generation = %+v", loaded.Sealed)
-	}
-	openedView, err := semantic.NewReadView(1, []*semantic.Segment{loaded.Sealed.Segment}, semantic.SearchPolicy{MaxK: 2, MaxChunkCandidates: 10, MaxChunksPerDocumentHit: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := openedView.SearchDocuments(ctx, zeroQueryEncoder(), semantic.Document{ID: "query"}, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Hits) != 1 || result.Hits[0].Chunks[0].Ref.ID != "new" || result.Stats.RejectedNodes != 0 {
-		t.Fatalf("compacted result = %+v", result)
-	}
-}
-
-type chunkExpectation struct {
-	Hits []semantic.ChunkHit
-}
-
-func persistenceFixture(t testing.TB, extra bool) (SealedSegment, chunkExpectation, semantic.DocumentSearchResult) {
+func persistenceService(t testing.TB) (*semantic.Service, staticEncoder) {
 	t.Helper()
+	embedding, err := semantic.NewEmbeddingDescriptor("test", "model", "v1", "fingerprint", 2, vector.MetricL2Squared, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	config := semantic.Config{
-		Embedding: testEmbeddingDescriptor("persist-model", "persist-embedding"),
-		Chunking:  semantic.ChunkingDescriptor{ID: "persist-chunks-v1", Version: 1, Fingerprint: "persist-chunks-fp"}, MaxVectors: 100,
-		MaxChunksPerDocument: 10, MaxK: 10, MaxChunkCandidates: 100, MaxChunksPerDocumentHit: 3,
+		Embedding: embedding, Chunking: semantic.ChunkingDescriptor{ID: "chunks", Version: 1, Fingerprint: "chunks-v1"},
+		MaxVectors: 100, MaxChunksPerDocument: 4, MaxK: 4, MaxChunkCandidates: 8,
+		MaxChunksPerDocumentHit: 2, InitialVectorCapacity: 4,
 	}
 	service, err := semantic.New(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
-	encoder := staticEncoder{vectors: make(map[fts.DocID][]semantic.ChunkVector), descriptor: semantic.PipelineDescriptor{Embedding: testEmbeddingDescriptor("persist-model", "persist-embedding"), Chunking: semantic.ChunkingDescriptor{ID: "persist-chunks-v1", Version: 1, Fingerprint: "persist-chunks-fp"}}}
-	add := func(docID fts.DocID, id chunk.ID, value []float32) {
-		t.Helper()
-		encoder.vectors[docID] = []semantic.ChunkVector{{
-			Ref: chunk.Ref{ID: id, DocID: docID, Field: fts.DefaultField, EndByte: 10}, Vector: value,
-		}}
-		err := service.AddDocument(ctx, encoder, semantic.Document{ID: docID})
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	add("doc-a", "a", []float32{0, 0})
-	add("doc-b", "b", []float32{1, 0})
-	if extra {
-		add("doc-c", "c", []float32{2, 0})
-	}
-	if err := service.Compact(ctx); err != nil {
-		t.Fatal(err)
-	}
-	view, err := service.ReadView(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	segment := view.Segments()[0]
-	stats := service.Statistics()
-	checkpoint := SealedSegment{Segment: segment, MaxAllocatedVectorID: stats.MaxAllocatedVectorID, MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}
-	encoder.vectors["query"] = []semantic.ChunkVector{{Ref: chunk.Ref{ID: "query", DocID: "query", Field: fts.DefaultField, EndByte: 5}, Vector: []float32{0, 0}}}
-	allDocuments, err := service.SearchDocuments(ctx, encoder, semantic.Document{ID: "query"}, min(3, len(checkpoint.Segment.Rows())))
-	if err != nil {
-		t.Fatal(err)
-	}
-	chunks := chunkExpectation{}
-	for _, document := range allDocuments.Hits {
-		chunks.Hits = append(chunks.Hits, document.Chunks...)
-	}
-	documents, err := service.SearchDocuments(ctx, encoder, semantic.Document{ID: "query"}, min(2, len(checkpoint.Segment.Rows())))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return checkpoint, chunks, documents
+	encoder := staticEncoder{descriptor: semantic.PipelineDescriptor{Embedding: config.Embedding, Chunking: config.Chunking}, vectors: map[fts.DocID][]semantic.ChunkVector{
+		"doc-a": {testVector("doc-a", "a-1", []float32{1, 0})},
+		"doc-b": {testVector("doc-b", "b-1", []float32{0, 1})},
+	}}
+	return service, encoder
 }
 
-func withHNSW(t testing.TB, checkpoint SealedSegment, seed uint64) SealedSegment {
+func addAndFlush(t testing.TB, service *semantic.Service, encoder staticEncoder, id fts.DocID) {
 	t.Helper()
-	maxK := max(checkpoint.MaxK, checkpoint.MaxChunkCandidates)
-	graph, err := hnsw.Build(context.Background(), checkpoint.Segment.Vectors(), hnsw.BuildOptions{
-		Build: hnsw.BuildConfig{
-			Dimensions: checkpoint.Segment.Metadata().Embedding.Dimensions, Metric: checkpoint.Segment.Metadata().Embedding.Metric,
-			MaxVectors: checkpoint.Segment.Len(), MaxVectorBytes: uint64(checkpoint.Segment.Len() * checkpoint.Segment.Metadata().Embedding.Dimensions * 4),
-			MaxNeighbors: 2, EfConstruction: 8, Seed: seed,
-		},
-		Search: hnsw.SearchConfig{
-			DefaultEfSearch: maxK, MaxEfSearch: maxK, DefaultVisitLimit: checkpoint.Segment.Len(),
-			MaxVisitLimit: checkpoint.Segment.Len(), MaxK: maxK,
-		},
-	})
-	if err != nil {
+	if err := service.AddDocument(context.Background(), encoder, semantic.Document{ID: id}); err != nil {
 		t.Fatal(err)
 	}
-	segment, err := semantic.NewSegment(context.Background(), semantic.MutableHeadID, checkpoint.Segment.Metadata(), checkpoint.Segment.Vectors(), graph, checkpoint.Segment.Rows())
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkpoint.Segment = segment
-	return checkpoint
-}
-
-func substituteGraphAndReferences(t *testing.T, root string, generation Generation, checkpoint SealedSegment) {
-	t.Helper()
-	generationPath := filepath.Join(root, generationsDirectory, generationName(generation.ID))
-	manifestPath := filepath.Join(generationPath, manifestFileName)
-	manifestData, err := os.ReadFile(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	value, err := decodeManifest(manifestData, DefaultLimits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	replacement := withHNSW(t, checkpoint, 99)
-	var graphData bytes.Buffer
-	_, err = hnsw.WriteGraph(context.Background(), &graphData, replacement.Segment.Index(), hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256})
-	if err != nil {
-		t.Fatal(err)
-	}
-	graphPath := filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectID, graphFileName)
-	if err := os.WriteFile(graphPath, graphData.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	value.Graph = fileRef(graphData.Bytes())
-	updatedManifest, updatedRef, err := encodeManifest(value, DefaultLimits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(manifestPath, updatedManifest, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	current, _, err := encodeCurrent(currentRecord{GenerationID: generation.ID, ManifestHash: updatedRef.SHA256}, DefaultLimits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, currentFileName), current, 0o600); err != nil {
+	if err := service.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func equalDocumentHits(a, b []semantic.DocumentHit) bool {
-	return slices.EqualFunc(a, b, func(a, b semantic.DocumentHit) bool {
-		return a.DocID == b.DocID && a.Distance == b.Distance && slices.Equal(a.Chunks, b.Chunks)
-	})
-}
-
-func durabilityName(mode DurabilityMode) string {
-	if mode == DurabilitySynchronous {
-		return "sync"
-	}
-	return "async"
+func testVector(docID fts.DocID, id chunk.ID, value []float32) semantic.ChunkVector {
+	return semantic.ChunkVector{Ref: chunk.Ref{ID: id, DocID: docID, Field: fts.DefaultField, EndByte: 1}, Vector: value}
 }

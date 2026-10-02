@@ -92,7 +92,7 @@ func DefaultLimits() Limits {
 
 // Encode writes one canonical VHNG file and returns its metadata.
 func Encode(writer io.Writer, graph Graph) (Metadata, error) {
-	if writer == nil || !validReference(graph.Vectors) || graph.Dimensions == 0 || len(graph.NodeToVector) >= math.MaxUint32 ||
+	if writer == nil || !validReference(graph.Vectors) || graph.Dimensions == 0 || uint64(len(graph.NodeToVector)) >= math.MaxUint32 ||
 		len(graph.Levels) != len(graph.NodeToVector) || len(graph.Level0Offsets) != len(graph.NodeToVector)+1 ||
 		len(graph.UpperNodeOffsets) != len(graph.NodeToVector)+1 || len(graph.UpperLinkOffsets) == 0 ||
 		uint64(len(graph.Level0Links)) >= math.MaxUint32 || uint64(len(graph.UpperLinkOffsets)-1) >= math.MaxUint32 || uint64(len(graph.UpperLinks)) >= math.MaxUint32 {

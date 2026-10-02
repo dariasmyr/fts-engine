@@ -1,56 +1,117 @@
 package semanticpersist
 
 import (
+	"context"
 	"sync"
 
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
 type Generation struct {
-	ID       uint64
-	ObjectID string
+	ID        uint64
+	ObjectIDs []string
 }
 
-// SealedSegment is the persistence payload for one immutable semantic ANN
-// component. Segment.Metadata is the single source of truth for embedding and
-// chunking compatibility. It deliberately contains no mutable service state or
-// generation publication metadata.
-type SealedSegment struct {
-	Segment                 *semantic.Segment
-	MaxAllocatedVectorID    semantic.VectorID
-	MaxK                    int
-	MaxChunkCandidates      int
-	MaxChunksPerDocumentHit int
+// Store owns one writable semantic service and the exclusive store lock.
+type Store struct {
+	service     *semantic.Service
+	paths       storePaths
+	limits      Limits
+	generation  Generation
+	storeLock   *storeLock
+	publishGate chan struct{}
+	closeOnce   sync.Once
+	closeErr    error
 }
 
-// LoadedSealedSegment is a standalone sealed segment opened without CURRENT.
-type LoadedSealedSegment struct {
-	Sealed SealedSegment
-}
-
-type Loaded struct {
-	Generation Generation
-	Sealed     SealedSegment
-	storeLock  *storeLock
-	closeOnce  sync.Once
-	closeErr   error
-}
-
-// Close closes the immutable segment and releases the shared store lock. It is
-// safe to call more than once.
-func (l *Loaded) Close() error {
-	if l == nil {
+func (s *Store) Service() *semantic.Service {
+	if s == nil || s.publishGate == nil {
 		return nil
 	}
-	l.closeOnce.Do(func() {
-		if l.Sealed.Segment != nil {
-			l.closeErr = l.Sealed.Segment.Close()
-		}
-		if l.storeLock != nil {
-			if err := l.storeLock.Close(); l.closeErr == nil {
-				l.closeErr = err
-			}
+	return s.service
+}
+
+func (s *Store) Generation() Generation {
+	if s == nil || s.publishGate == nil {
+		return Generation{}
+	}
+	s.lockUninterruptible()
+	defer s.unlock()
+	return cloneGeneration(s.generation)
+}
+
+// Publish writes the service's next committed generation through the lifetime
+// writer lock held by the store.
+func (s *Store) Publish(ctx context.Context, options Options) (Generation, error) {
+	if ctx == nil {
+		return Generation{}, vector.ErrNilContext
+	}
+	if s == nil || s.service == nil || s.publishGate == nil {
+		return Generation{}, ErrStoreClosed
+	}
+	if err := s.lock(ctx); err != nil {
+		return Generation{}, err
+	}
+	defer s.unlock()
+	if s.storeLock == nil {
+		return Generation{}, ErrStoreClosed
+	}
+	options.ExpectedGeneration = s.generation.ID
+	options.Limits = mergeLimits(options.Limits, s.limits)
+	if err := normalizeOptions(&options); err != nil {
+		return Generation{}, err
+	}
+	generation, err := publishLocked(ctx, s.paths, s.service, options)
+	if err == nil {
+		s.generation = generation
+	}
+	return cloneGeneration(generation), err
+}
+
+// Close releases the lifetime writer lock. The detached semantic service must
+// not be used to publish through this handle afterward.
+func (s *Store) Close() error {
+	if s == nil || s.publishGate == nil {
+		return nil
+	}
+	s.closeOnce.Do(func() {
+		s.lockUninterruptible()
+		defer s.unlock()
+		if s.storeLock != nil {
+			s.closeErr = s.storeLock.Close()
+			s.storeLock = nil
 		}
 	})
-	return l.closeErr
+	return s.closeErr
+}
+
+func (s *Store) lock(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case s.publishGate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			s.unlock()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Store) lockUninterruptible() { s.publishGate <- struct{}{} }
+func (s *Store) unlock()              { <-s.publishGate }
+
+func cloneGeneration(value Generation) Generation {
+	return Generation{ID: value.ID, ObjectIDs: append([]string(nil), value.ObjectIDs...)}
+}
+
+func mergeLimits(requested, opened Limits) Limits {
+	if requested == (Limits{}) {
+		return opened
+	}
+	return requested
 }

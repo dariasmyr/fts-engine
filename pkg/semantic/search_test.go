@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
@@ -12,6 +13,27 @@ import (
 type searchEncoder struct {
 	descriptor PipelineDescriptor
 	values     map[fts.DocID][]ChunkVector
+}
+
+type countingSearchEncoder struct {
+	searchEncoder
+	calls int
+}
+
+type cancelingSearchEncoder struct {
+	searchEncoder
+	cancel context.CancelFunc
+}
+
+func (e cancelingSearchEncoder) Encode(ctx context.Context, document Document) ([]ChunkVector, error) {
+	queries, err := e.searchEncoder.Encode(ctx, document)
+	e.cancel()
+	return queries, err
+}
+
+func (e *countingSearchEncoder) Encode(ctx context.Context, document Document) ([]ChunkVector, error) {
+	e.calls++
+	return e.searchEncoder.Encode(ctx, document)
 }
 
 func (e searchEncoder) Descriptor() PipelineDescriptor {
@@ -34,20 +56,14 @@ func newSearchEncoder(config Config, queryValues ...ChunkVector) searchEncoder {
 // searchChunks exposes the internal ANN candidate stage to semantic package
 // tests without restoring a public chunk-search API.
 func (s *Service) searchChunks(ctx context.Context, query []float32, k int) (chunkSearchResult, error) {
-	s.mu.RLock()
-	published := s.published
-	maxK := s.config.MaxK
-	s.mu.RUnlock()
-	return searchSegmentsChunks(ctx, s.calculator, published.segments, query, k, maxK, vector.SearchOptions{})
+	published := s.ReadView()
+	return searchSegmentsChunks(ctx, published.calculator, published.segments, query, k, published.maxK, vector.SearchOptions{})
 }
 
 func TestReadViewSearchDocumentsWithOptionsEmptyView(t *testing.T) {
-	config := testConfig(3, 3)
-	view := newEmptyReadView(SearchPolicy{
-		MaxK:                    config.MaxK,
-		MaxChunkCandidates:      config.MaxChunkCandidates,
-		MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit,
-	})
+	service := newTestService(t)
+	config := service.config
+	view := service.ReadView()
 	encoder := newSearchEncoder(config, testChunk("query", "query", 0, []float32{0, 0}))
 
 	result, err := view.SearchDocumentsWithOptions(context.Background(), encoder, Document{ID: "query"}, 1, SearchOptions{})
@@ -127,6 +143,45 @@ func TestServiceSearchDocumentsWithOptionsReportsCandidateBudgetIncomplete(t *te
 	}
 	if result.CandidateChunks != 2 || result.DistinctDocuments != 2 || len(result.Hits) != 2 || !result.GroupingIncomplete {
 		t.Fatalf("budget-limited result = %+v", result)
+	}
+}
+
+func TestPublicSearchReportsDistinctDocumentsBeforeResultTruncation(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	for i := range 4 {
+		docID := fts.DocID("doc-" + string(rune('a'+i)))
+		if err := addDocument(t, service, ctx, []ChunkVector{testChunk(docID, searchChunkID(docID), 0, []float32{float32(i), 0})}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	encoder := newSearchEncoder(service.config, testChunk("query", "query", 0, []float32{0, 0}))
+	result, err := service.SearchDocuments(ctx, encoder, Document{ID: "query"}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Hits) != 2 || result.DistinctDocuments != 4 || result.CandidateChunks != 4 {
+		t.Fatalf("public result = %+v", result)
+	}
+}
+
+func TestServiceAndReadViewUseIdenticalDocumentSearch(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc", "chunk", 0, []float32{0, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	encoder := newSearchEncoder(service.config, testChunk("query", "query", 0, []float32{0, 0}))
+	fromService, err := service.SearchDocumentsWithOptions(ctx, encoder, Document{ID: "query"}, 1, SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromView, err := service.ReadView().SearchDocumentsWithOptions(ctx, encoder, Document{ID: "query"}, 1, SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fromService, fromView) {
+		t.Fatalf("service/view mismatch\nservice=%+v\nview=%+v", fromService, fromView)
 	}
 }
 

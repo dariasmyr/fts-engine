@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/dariasmyr/fts-engine/pkg/semantic"
 )
 
-func writeGeneration(ctx context.Context, paths storePaths, generationID uint64, object segmentObject, sealed SealedSegment, options Options) (fileReference, error) {
+func writeGeneration(ctx context.Context, paths storePaths, generationID uint64, objects []segmentObject, snapshot *semantic.CommittedSnapshot, options Options) (fileReference, error) {
 	generationTemp, err := os.MkdirTemp(paths.generations, ".tmp-gen-")
 	if err != nil {
 		return fileReference{}, fmt.Errorf("semanticpersist: create generation temp: %w", err)
@@ -23,7 +25,7 @@ func writeGeneration(ctx context.Context, paths storePaths, generationID uint64,
 	if err := beforeStep(ctx, options, StepWriteState); err != nil {
 		return fileReference{}, err
 	}
-	stateData, stateRef, err := encodeState(sealed, options.Limits)
+	stateData, stateRef, err := encodeState(snapshot, options.Limits)
 	if err != nil {
 		return fileReference{}, err
 	}
@@ -34,9 +36,10 @@ func writeGeneration(ctx context.Context, paths storePaths, generationID uint64,
 		return fileReference{}, err
 	}
 
-	manifestValue := manifest{
-		Version: manifestVersion, GenerationID: generationID, ObjectID: object.ID, SegmentKind: sealed.Segment.Kind(),
-		Vectors: object.Vectors, Graph: object.Graph, State: stateRef,
+	manifestValue := manifest{Version: manifestVersion, GenerationID: generationID, State: stateRef, Segments: make([]manifestSegment, len(objects))}
+	segments := snapshot.Segments()
+	for i, object := range objects {
+		manifestValue.Segments[i] = manifestSegment{ObjectID: object.ID, SegmentKind: segments[i].Segment().Kind(), Vectors: object.Vectors, Graph: object.Graph}
 	}
 	if err := beforeStep(ctx, options, StepWriteManifest); err != nil {
 		return fileReference{}, err
@@ -106,22 +109,22 @@ func writeDataFile(path string, data []byte, durability DurabilityMode) error {
 	return closeErr
 }
 
-func syncPublishedGeneration(paths storePaths, generationID uint64, objectID string, hasGraph bool) error {
-	objectPath := filepath.Join(paths.segments, objectID)
+func syncPublishedGeneration(paths storePaths, generationID uint64, segments []manifestSegment) error {
 	generationPath := filepath.Join(paths.generations, generationName(generationID))
-	files := []string{
-		filepath.Join(objectPath, vectorsFileName),
-		filepath.Join(generationPath, stateFileName), filepath.Join(generationPath, manifestFileName),
-	}
-	if hasGraph {
-		files = append(files, filepath.Join(objectPath, graphFileName))
+	files := []string{filepath.Join(generationPath, stateFileName), filepath.Join(generationPath, manifestFileName)}
+	directories := []string{generationPath}
+	for _, segment := range segments {
+		objectPath := filepath.Join(paths.segments, segment.ObjectID)
+		files = append(files, filepath.Join(objectPath, vectorsFileName), filepath.Join(objectPath, graphFileName))
+		directories = append(directories, objectPath)
 	}
 	for _, file := range files {
 		if err := syncRegularFile(file); err != nil {
 			return err
 		}
 	}
-	for _, directory := range []string{objectPath, generationPath, paths.segments, paths.objects, paths.generations, paths.root} {
+	directories = append(directories, paths.segments, paths.objects, paths.generations, paths.root)
+	for _, directory := range directories {
 		if err := syncDirectory(directory); err != nil {
 			return err
 		}

@@ -25,24 +25,19 @@ const (
 	stateFileName        = "semantic-state.bin"
 )
 
-// PublishSealedSegment writes one complete generation and atomically switches CURRENT.
-// Synchronous mode fsyncs files and affected directories; asynchronous mode
-// only provides atomic process-visible publication, not power-loss durability.
-func PublishSealedSegment(ctx context.Context, root string, generationID uint64, sealed SealedSegment, options Options) (Generation, error) {
+// Publish writes a detached service's clean committed state and atomically
+// switches CURRENT. Opened stores publish subsequent generations through Store.
+func Publish(ctx context.Context, root string, service *semantic.Service, options Options) (Generation, error) {
 	if ctx == nil {
 		return Generation{}, vector.ErrNilContext
 	}
-	if generationID == 0 || root == "" || (options.Durability != 0 && options.Durability != DurabilitySynchronous && options.Durability != DurabilityAsynchronous) {
-		return Generation{}, ErrCorrupt
-	}
-	if options.Durability == 0 {
-		options.Durability = DurabilitySynchronous
-	}
-	options.Limits = normalizeLimits(options.Limits)
-	if err := validateLimits(options.Limits); err != nil {
+	if err := ctx.Err(); err != nil {
 		return Generation{}, err
 	}
-	if err := validateSealedSegment(sealed, options.Limits); err != nil {
+	if service == nil || root == "" || (options.Durability != 0 && options.Durability != DurabilitySynchronous && options.Durability != DurabilityAsynchronous) {
+		return Generation{}, ErrCorrupt
+	}
+	if err := normalizeOptions(&options); err != nil {
 		return Generation{}, err
 	}
 	paths, rootCreated, err := prepareStoreDirectories(root)
@@ -56,13 +51,6 @@ func PublishSealedSegment(ctx context.Context, root string, generationID uint64,
 		return Generation{}, err
 	}
 	defer storeLock.Close()
-	currentGeneration, err := validatedCurrentGeneration(paths, options.Limits)
-	if err != nil {
-		return Generation{}, err
-	}
-	if currentGeneration != options.ExpectedGeneration || generationID <= currentGeneration {
-		return Generation{}, ErrStaleGeneration
-	}
 	if options.Durability == DurabilitySynchronous {
 		for _, path := range []string{paths.segments, paths.objects, paths.generations, paths.root} {
 			if err := syncDirectory(path); err != nil {
@@ -75,24 +63,27 @@ func PublishSealedSegment(ctx context.Context, root string, generationID uint64,
 			}
 		}
 	}
-
-	object, err := writeSegmentObject(ctx, paths, sealed, options)
-	if err != nil {
-		return Generation{}, err
-	}
-	manifestRef, err := writeGeneration(ctx, paths, generationID, object, sealed, options)
-	if err != nil {
-		return Generation{}, err
-	}
-	return commitCurrent(ctx, paths, generationID, object.ID, manifestRef, options)
+	return publishLocked(ctx, paths, service, options)
 }
 
-// Publish is the short name for publishing one sealed segment generation.
-func Publish(ctx context.Context, root string, generationID uint64, sealed SealedSegment, options Options) (Generation, error) {
-	return PublishSealedSegment(ctx, root, generationID, sealed, options)
+func normalizeOptions(options *Options) error {
+	if options.Durability == 0 {
+		options.Durability = DurabilitySynchronous
+	}
+	if options.Durability != DurabilitySynchronous && options.Durability != DurabilityAsynchronous {
+		return ErrCorrupt
+	}
+	options.Limits = normalizeLimits(options.Limits)
+	return validateLimits(options.Limits)
 }
 
-func Open(root string, options OpenOptions) (*Loaded, error) {
+func Open(ctx context.Context, root string, options OpenOptions) (*Store, error) {
+	if ctx == nil {
+		return nil, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	limits := normalizeLimits(options.Limits)
 	if err := validateLimits(limits); err != nil {
 		return nil, err
@@ -101,19 +92,52 @@ func Open(root string, options OpenOptions) (*Loaded, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Retain the shared lock in Loaded until Close so no writer can publish or
-	// repair the store while this reader is being opened or used.
-	storeLock, err := acquireStoreReadLock(filepath.Join(paths.root, "LOCK"))
+	storeLock, err := acquireStoreLock(filepath.Join(paths.root, "LOCK"))
 	if err != nil {
 		return nil, err
 	}
-	loaded, err := openCurrent(paths, limits, options.ExpectedDescriptors)
+	service, generation, err := openCurrent(ctx, paths, limits, options.ExpectedDescriptors)
 	if err != nil {
 		_ = storeLock.Close()
 		return nil, err
 	}
-	loaded.storeLock = storeLock
-	return loaded, nil
+	return &Store{service: service, paths: paths, limits: limits, generation: generation, storeLock: storeLock, publishGate: make(chan struct{}, 1)}, nil
+}
+
+func publishLocked(ctx context.Context, paths storePaths, service *semantic.Service, options Options) (Generation, error) {
+	if err := ctx.Err(); err != nil {
+		return Generation{}, err
+	}
+	currentGeneration, err := validatedCurrentGeneration(ctx, paths, options.Limits)
+	if err != nil {
+		return Generation{}, err
+	}
+	if currentGeneration != options.ExpectedGeneration || currentGeneration == math.MaxUint64 {
+		return Generation{}, ErrStaleGeneration
+	}
+	snapshot, err := service.CommittedSnapshot(ctx)
+	if err != nil {
+		return Generation{}, err
+	}
+	segments := snapshot.Segments()
+	objects := make([]segmentObject, len(segments))
+	objectIDs := make([]string, len(segments))
+	for i, persisted := range segments {
+		if err := validateSegment(persisted.Segment(), snapshot.Config(), options.Limits); err != nil {
+			return Generation{}, err
+		}
+		objects[i], err = writeSegmentObject(ctx, paths, persisted.Segment(), options)
+		if err != nil {
+			return Generation{}, err
+		}
+		objectIDs[i] = objects[i].ID
+	}
+	generationID := currentGeneration + 1
+	manifestRef, err := writeGeneration(ctx, paths, generationID, objects, snapshot, options)
+	if err != nil {
+		return Generation{}, err
+	}
+	return commitCurrent(ctx, paths, generationID, objectIDs, manifestRef, options)
 }
 
 type storePaths struct {
@@ -179,19 +203,18 @@ func validateDirectory(path string) error {
 	return nil
 }
 
-func validateSealedSegment(sealed SealedSegment, limits Limits) error {
-	if sealed.Segment == nil || sealed.Segment.Vectors() == nil ||
-		sealed.Segment.Dimensions() > limits.MaxDimensions || sealed.Segment.Len() > limits.MaxVectors ||
-		sealed.Segment.MaxK() > limits.MaxK || sealed.Segment.Len() > limits.MaxVectors ||
-		sealed.MaxK <= 0 || sealed.MaxK > limits.MaxK || sealed.MaxK > sealed.Segment.MaxK() ||
-		sealed.MaxChunkCandidates < sealed.MaxK || sealed.MaxChunkCandidates > limits.MaxK || sealed.MaxChunkCandidates > sealed.Segment.MaxK() ||
-		sealed.MaxChunksPerDocumentHit <= 0 || sealed.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
+func validateSegment(segment *semantic.Segment, config semantic.Config, limits Limits) error {
+	if segment == nil || segment.Vectors() == nil ||
+		segment.Dimensions() > limits.MaxDimensions || segment.Len() > limits.MaxVectors ||
+		segment.MaxK() > limits.MaxK || config.MaxK <= 0 || config.MaxK > limits.MaxK || config.MaxK > segment.MaxK() ||
+		config.MaxChunkCandidates < config.MaxK || config.MaxChunkCandidates > limits.MaxK || config.MaxChunkCandidates > segment.MaxK() ||
+		config.MaxChunksPerDocumentHit <= 0 || config.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
 		return ErrLimitExceeded
 	}
-	if err := sealed.Segment.Validate(); err != nil {
+	if err := segment.Validate(); err != nil {
 		return err
 	}
-	components, ok := checkedMultiply64(uint64(sealed.Segment.Len()), uint64(sealed.Segment.Dimensions()))
+	components, ok := checkedMultiply64(uint64(segment.Len()), uint64(segment.Dimensions()))
 	if !ok {
 		return ErrLimitExceeded
 	}
@@ -199,12 +222,12 @@ func validateSealedSegment(sealed SealedSegment, limits Limits) error {
 	if !ok || vectorBytes > limits.MaxVectorBytes || limits.MaxFileBytes < 44 || vectorBytes > limits.MaxFileBytes-44 {
 		return ErrLimitExceeded
 	}
-	if sealed.Segment.Kind() == semantic.SegmentKindChunkHNSW {
-		index := sealed.Segment.Index()
+	if segment.Kind() == semantic.SegmentKindChunkHNSW {
+		index := segment.Index()
 		if index == nil {
 			return ErrLimitExceeded
 		}
-		search := sealed.Segment.SearchLimits()
+		search := segment.SearchLimits()
 		report := index.Report()
 		if search.MaxK > limits.MaxK || search.MaxEfSearch > limits.MaxEfSearch || search.MaxVisitLimit > limits.MaxVisitLimit ||
 			uint64(report.Storage.DirectedLinks) > limits.MaxGraphLinks ||
@@ -213,13 +236,13 @@ func validateSealedSegment(sealed SealedSegment, limits Limits) error {
 		}
 	}
 	validString := func(value string) bool { return len(value) <= limits.MaxStringBytes }
-	metadata := sealed.Segment.Metadata()
+	metadata := segment.Metadata()
 	if !validString(metadata.Embedding.ProviderID) || !validString(metadata.Embedding.ModelID) || !validString(metadata.Embedding.ModelVersion) || !validString(metadata.Embedding.PipelineFingerprint) ||
 		!validString(metadata.Chunking.ID) || !validString(metadata.Chunking.Fingerprint) {
 		return ErrLimitExceeded
 	}
 	documentChunks := make(map[string]int)
-	for _, record := range sealed.Segment.Rows() {
+	for _, record := range segment.Rows() {
 		if !validString(string(record.Chunk.ID)) || !validString(string(record.Chunk.DocID)) || !validString(record.Chunk.Field) {
 			return ErrLimitExceeded
 		}
@@ -236,22 +259,23 @@ func validateSealedSegment(sealed SealedSegment, limits Limits) error {
 }
 
 func validateOpenReferences(manifestData []byte, value manifest, limits Limits) error {
-	vectorFileLimit := min(limits.MaxFileBytes, limits.MaxVectorBytes+128)
-	graphFileLimit := min(limits.MaxFileBytes, limits.MaxGraphBytes)
-	if value.Vectors.Size > vectorFileLimit || value.Graph.Size > graphFileLimit || value.State.Size > limits.MaxFileBytes {
+	if value.State.Size > limits.MaxFileBytes {
 		return ErrLimitExceeded
 	}
 	// Account conservatively for decoded slices, strings, validation maps, and
 	// the immutable reader copies before allocating referenced file buffers.
 	estimate := uint64(len(manifestData))
-	for _, component := range []struct {
+	components := []struct {
 		size       uint64
 		multiplier uint64
-	}{
-		{value.Vectors.Size, 4},
-		{value.Graph.Size, 8},
-		{value.State.Size, 16},
-	} {
+	}{{value.State.Size, 16}}
+	for _, segment := range value.Segments {
+		if segment.Vectors.Size > min(limits.MaxFileBytes, limits.MaxVectorBytes+128) || segment.Graph.Size > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
+			return ErrLimitExceeded
+		}
+		components = append(components, struct{ size, multiplier uint64 }{segment.Vectors.Size, 4}, struct{ size, multiplier uint64 }{segment.Graph.Size, 8})
+	}
+	for _, component := range components {
 		weighted, ok := checkedMultiply64(component.size, component.multiplier)
 		if !ok {
 			return ErrLimitExceeded
@@ -414,17 +438,13 @@ func ensureContained(root, path string) error {
 
 func generationName(id uint64) string { return fmt.Sprintf("%020d", id) }
 
-func validatedCurrentGeneration(paths storePaths, limits Limits) (uint64, error) {
-	loaded, err := openCurrent(paths, limits, semantic.PipelineDescriptor{})
+func validatedCurrentGeneration(ctx context.Context, paths storePaths, limits Limits) (uint64, error) {
+	_, generation, err := openCurrent(ctx, paths, limits, semantic.PipelineDescriptor{})
 	if errors.Is(err, ErrCurrentMissing) {
 		return 0, nil
 	}
 	if err != nil {
 		return 0, err
 	}
-	id := loaded.Generation.ID
-	if err := loaded.Close(); err != nil {
-		return 0, err
-	}
-	return id, nil
+	return generation.ID, nil
 }

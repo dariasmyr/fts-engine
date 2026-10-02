@@ -42,7 +42,9 @@ func main() {
 	// Expected: doc-a. Flush publishes a new searchable index.
 	search(ctx, encoder, service, "after Flush")
 
-	service.DeleteDocument("doc-a")
+	if err := service.DeleteDocument(ctx, "doc-a"); err != nil {
+		panic(err)
+	}
 	// Expected: doc-a. The deletion is queued until Flush.
 	search(ctx, encoder, service, "after DeleteDocument, before Flush")
 

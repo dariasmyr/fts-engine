@@ -18,7 +18,7 @@ type segmentObject struct {
 	Graph   fileReference
 }
 
-func writeSegmentObject(ctx context.Context, paths storePaths, sealed SealedSegment, options Options) (segmentObject, error) {
+func writeSegmentObject(ctx context.Context, paths storePaths, segment *semantic.Segment, options Options) (segmentObject, error) {
 	segmentTemp, err := os.MkdirTemp(paths.segments, ".tmp-seg-")
 	if err != nil {
 		return segmentObject{}, fmt.Errorf("semanticpersist: create segment temp: %w", err)
@@ -33,7 +33,7 @@ func writeSegmentObject(ctx context.Context, paths storePaths, sealed SealedSegm
 	if err := beforeStep(ctx, options, StepWriteVectors); err != nil {
 		return segmentObject{}, err
 	}
-	vectorsRef, err := writeVectorsFile(ctx, filepath.Join(segmentTemp, vectorsFileName), sealed.Segment.Vectors(), sealed.Segment.MaxK(), options.Durability)
+	vectorsRef, err := writeVectorsFile(ctx, filepath.Join(segmentTemp, vectorsFileName), segment.Vectors(), segment.MaxK(), options.Durability)
 	if err != nil {
 		return segmentObject{}, err
 	}
@@ -45,11 +45,11 @@ func writeSegmentObject(ctx context.Context, paths storePaths, sealed SealedSegm
 	}
 
 	var graphRef fileReference
-	if sealed.Segment.Kind() == semantic.SegmentKindChunkHNSW {
+	if segment.Kind() == semantic.SegmentKindChunkHNSW {
 		if err := beforeStep(ctx, options, StepWriteGraph); err != nil {
 			return segmentObject{}, err
 		}
-		graphRef, err = writeGraphFile(ctx, filepath.Join(segmentTemp, graphFileName), sealed.Segment.Index(), vectorsRef, options.Durability)
+		graphRef, err = writeGraphFile(ctx, filepath.Join(segmentTemp, graphFileName), segment.Index(), vectorsRef, options.Durability)
 		if err != nil {
 			return segmentObject{}, err
 		}
@@ -72,13 +72,13 @@ func writeSegmentObject(ctx context.Context, paths storePaths, sealed SealedSegm
 		}
 	}
 
-	objectID := segmentObjectID(sealed.Segment.Kind(), vectorsRef, graphRef)
+	objectID := segmentObjectID(segment.Kind(), vectorsRef, graphRef)
 	objectPath := filepath.Join(paths.segments, objectID)
 	if err := beforeStep(ctx, options, StepRenameSegment); err != nil {
 		return segmentObject{}, err
 	}
 	if _, err := os.Lstat(objectPath); err == nil {
-		if err := verifyExistingObject(objectPath, sealed.Segment.Kind(), vectorsRef, graphRef, options.Limits, options.Durability); err != nil {
+		if err := verifyExistingObject(objectPath, segment.Kind(), vectorsRef, graphRef, options.Limits, options.Durability); err != nil {
 			return segmentObject{}, err
 		}
 		if options.Durability == DurabilitySynchronous {
@@ -114,7 +114,7 @@ func writeVectorsFile(ctx context.Context, path string, source vectorstore.Prepa
 	if err != nil {
 		return fileReference{}, err
 	}
-	metadata, writeErr := WriteVectorFileContext(ctx, file, source, maxK)
+	metadata, writeErr := WriteVectorFile(ctx, file, source, maxK)
 	if writeErr == nil && durability == DurabilitySynchronous {
 		writeErr = file.Sync()
 	}

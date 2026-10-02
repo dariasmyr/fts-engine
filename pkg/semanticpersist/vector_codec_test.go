@@ -19,10 +19,12 @@ func TestCodecRoundTripPreparedSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, metadata, err := MarshalSource(source, 5)
+	var buffer bytes.Buffer
+	metadata, err := WriteVectorFile(context.Background(), &buffer, source, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
+	data := buffer.Bytes()
 	opened, openedMetadata, err := OpenVectorFile(bytes.NewReader(data), DefaultCodecLimits())
 	if err != nil {
 		t.Fatal(err)
@@ -56,10 +58,12 @@ func TestCodecRejectsTruncatedAndCorruptData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, _, err := MarshalSource(source, 2)
+	var buffer bytes.Buffer
+	_, err = WriteVectorFile(context.Background(), &buffer, source, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
+	data := buffer.Bytes()
 	if _, _, err := OpenVectorFile(bytes.NewReader(data[:len(data)-1]), DefaultCodecLimits()); err == nil {
 		t.Fatal("truncated codec accepted")
 	}
@@ -70,7 +74,7 @@ func TestCodecRejectsTruncatedAndCorruptData(t *testing.T) {
 	}
 }
 
-func TestWriteVectorFileContextStopsBeforeReading(t *testing.T) {
+func TestWriteVectorFileStopsBeforeReading(t *testing.T) {
 	calculator, err := vector.NewCalculator(1, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
@@ -81,8 +85,27 @@ func TestWriteVectorFileContextStopsBeforeReading(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = WriteVectorFileContext(ctx, &bytes.Buffer{}, source, 1)
+	_, err = WriteVectorFile(ctx, &bytes.Buffer{}, source, 1)
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("WriteVectorFileContext() = %v, want context.Canceled", err)
+		t.Fatalf("WriteVectorFile() = %v, want context.Canceled", err)
 	}
+}
+
+func FuzzOpenVectorFile(f *testing.F) {
+	calculator, err := vector.NewCalculator(2, vector.MetricL2Squared)
+	if err != nil {
+		f.Fatal(err)
+	}
+	source, err := vectorstore.NewMemoryVectorStore(calculator, [][]float32{{1, 2}})
+	if err != nil {
+		f.Fatal(err)
+	}
+	var buffer bytes.Buffer
+	if _, err := WriteVectorFile(context.Background(), &buffer, source, 2); err != nil {
+		f.Fatal(err)
+	}
+	f.Add(buffer.Bytes())
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _, _ = OpenVectorFile(bytes.NewReader(data), CodecLimits{MaxDimensions: 16, MaxVectors: 32, MaxVectorBytes: 4096, MaxK: 32})
+	})
 }

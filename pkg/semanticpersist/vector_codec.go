@@ -1,7 +1,6 @@
 package semanticpersist
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -69,32 +68,9 @@ type FileMetadata struct {
 	SHA256 [sha256.Size]byte
 }
 
-func Marshal(source vectorstore.PreparedVectorStore, maxK int) ([]byte, FileMetadata, error) {
-	var buffer bytes.Buffer
-	metadata, err := Write(&buffer, source, maxK)
-	return buffer.Bytes(), metadata, err
-}
-
-// MarshalSource encodes any immutable prepared vector source as VFLT data.
-func MarshalSource(source vectorstore.PreparedVectorStore, maxK int) ([]byte, FileMetadata, error) {
-	var buffer bytes.Buffer
-	metadata, err := WriteVectorFile(&buffer, source, maxK)
-	return buffer.Bytes(), metadata, err
-}
-
-// Write streams one immutable fixed-width matrix and its checksum.
-func Write(writer io.Writer, source vectorstore.PreparedVectorStore, maxK int) (FileMetadata, error) {
-	return WriteVectorFile(writer, source, maxK)
-}
-
 // WriteVectorFile streams an immutable prepared vector source as fixed-width VFLT
 // data. The source remains the caller's responsibility and is not retained.
-func WriteVectorFile(writer io.Writer, source vectorstore.PreparedVectorStore, maxK int) (FileMetadata, error) {
-	return WriteVectorFileContext(context.Background(), writer, source, maxK)
-}
-
-// WriteVectorFileContext is the context-aware form of WriteVectorFile.
-func WriteVectorFileContext(ctx context.Context, writer io.Writer, source vectorstore.PreparedVectorStore, maxK int) (FileMetadata, error) {
+func WriteVectorFile(ctx context.Context, writer io.Writer, source vectorstore.PreparedVectorStore, maxK int) (FileMetadata, error) {
 	if ctx == nil {
 		return FileMetadata{}, vector.ErrNilContext
 	}

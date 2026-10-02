@@ -1,20 +1,17 @@
 package semanticpersist
 
 import (
+	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	semanticformat "github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/format"
 )
 
-const (
-	stateMagic   = "SSTA"
-	stateVersion = uint16(6)
-)
-
-func encodeState(sealed SealedSegment, limits Limits) ([]byte, fileReference, error) {
-	if err := validateSealedSegment(sealed, limits); err != nil {
-		return nil, fileReference{}, err
+func encodeState(snapshot *semantic.CommittedSnapshot, limits Limits) ([]byte, fileReference, error) {
+	segments := snapshot.Segments()
+	stateSegments := make([]semanticformat.StateSegment, len(segments))
+	for i, persisted := range segments {
+		stateSegments[i] = semanticformat.StateSegment{ComponentID: persisted.Segment().ComponentID(), Rows: persisted.Segment().Rows(), LivenessWords: persisted.LivenessWords()}
 	}
-	metadata := sealed.Segment.Metadata()
-	value := semanticformat.State{Embedding: metadata.Embedding, Chunking: metadata.Chunking, MaxAllocatedVectorID: sealed.MaxAllocatedVectorID, Rows: sealed.Segment.Rows(), ComponentID: sealed.Segment.ComponentID(), MaxK: sealed.MaxK, MaxChunkCandidates: sealed.MaxChunkCandidates, MaxChunksPerDocumentHit: sealed.MaxChunksPerDocumentHit}
+	value := semanticformat.State{Config: snapshot.Config(), Revision: snapshot.Revision(), MaxAllocatedVectorID: snapshot.MaxAllocatedVectorID(), NextComponentID: snapshot.NextComponentID(), Segments: stateSegments}
 	data, ref, err := semanticformat.EncodeState(value, codecLimits(limits))
 	return data, persistReference(ref), mapCodecError(err)
 }
@@ -24,5 +21,9 @@ func decodeState(data []byte, limits Limits) (decodedState, error) {
 	if err != nil {
 		return decodedState{}, mapCodecError(err)
 	}
-	return decodedState{Embedding: value.Embedding, Chunking: value.Chunking, MaxAllocatedVectorID: value.MaxAllocatedVectorID, ComponentID: value.ComponentID, Rows: value.Rows, MaxK: value.MaxK, MaxChunkCandidates: value.MaxChunkCandidates, MaxChunksPerDocumentHit: value.MaxChunksPerDocumentHit}, nil
+	segments := make([]decodedStateSegment, len(value.Segments))
+	for i, segment := range value.Segments {
+		segments[i] = decodedStateSegment{ComponentID: segment.ComponentID, Rows: segment.Rows, LivenessWords: segment.LivenessWords}
+	}
+	return decodedState{Config: value.Config, Revision: value.Revision, MaxAllocatedVectorID: value.MaxAllocatedVectorID, NextComponentID: value.NextComponentID, Segments: segments}, nil
 }

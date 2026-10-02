@@ -43,16 +43,38 @@ func (s *Segment) Kind() SegmentKind {
 // navigates source rows by local ordinal; rows resolve those ordinals to stable
 // semantic identities.
 func BuildSegment(ctx context.Context, component ComponentID, metadata SegmentMetadata, source vectorstore.PreparedVectorStore, rows []VectorRow, options hnsw.BuildOptions) (*Segment, error) {
+	if ctx == nil {
+		return nil, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if component == 0 || !metadata.Embedding.IsValid() || !metadata.Chunking.IsValid() {
+		return nil, ErrInvalidSegment
+	}
+	if err := validateSegmentRowsContext(ctx, rows); err != nil {
+		return nil, err
+	}
 	index, err := hnsw.Build(ctx, source, options)
 	if err != nil {
 		return nil, err
 	}
-	return NewSegment(ctx, component, metadata, source, index, rows)
+	return newSegment(ctx, component, metadata, source, index, rows, false)
 }
 
 // NewSegment creates an immutable semantic segment from an HNSW index and
 // rows that resolve its local ordinals to stable semantic identities.
 func NewSegment(ctx context.Context, component ComponentID, metadata SegmentMetadata, vectors vectorstore.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*Segment, error) {
+	return newSegment(ctx, component, metadata, vectors, index, rows, true)
+}
+
+func newSegment(ctx context.Context, component ComponentID, metadata SegmentMetadata, vectors vectorstore.PreparedVectorStore, index *hnsw.Index, rows []VectorRow, validateRows bool) (*Segment, error) {
+	if ctx == nil {
+		return nil, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if component == 0 || vectors == nil || index == nil || len(rows) != index.Len() {
 		return nil, ErrInvalidSegment
 	}
@@ -72,6 +94,11 @@ func NewSegment(ctx context.Context, component ComponentID, metadata SegmentMeta
 	}
 	if err := segment.validateContents(); err != nil {
 		return nil, err
+	}
+	if validateRows {
+		if err := validateSegmentRowsContext(ctx, segment.rows); err != nil {
+			return nil, err
+		}
 	}
 	return segment, nil
 }
@@ -193,17 +220,33 @@ func (s *Segment) Validate() error {
 	if err := s.validateContents(); err != nil {
 		return err
 	}
-	seenIDs := make(map[VectorID]struct{}, len(s.rows))
+	return validateSegmentRows(s.rows)
+}
+
+func validateSegmentRows(rows []VectorRow) error {
+	return validateSegmentRowsContext(context.Background(), rows)
+}
+
+func validateSegmentRowsContext(ctx context.Context, rows []VectorRow) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	seenIDs := make(map[VectorID]struct{}, len(rows))
 	type chunkKey struct {
 		documentID fts.DocID
 		chunkID    chunk.ID
 	}
-	seenChunks := make(map[chunkKey]struct{}, len(s.rows))
-	for i, row := range s.rows {
+	seenChunks := make(map[chunkKey]struct{}, len(rows))
+	for i, row := range rows {
+		if i%64 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		if row.VectorID == 0 || row.Chunk.ID == "" || row.Chunk.DocID == "" || row.Chunk.Field == "" || row.Chunk.StartByte > row.Chunk.EndByte {
 			return ErrInvalidSegment
 		}
-		if i > 0 && s.rows[i-1].VectorID >= row.VectorID {
+		if i > 0 && rows[i-1].VectorID >= row.VectorID {
 			return ErrInvalidSegment
 		}
 		if _, exists := seenIDs[row.VectorID]; exists {

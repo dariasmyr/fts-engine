@@ -52,7 +52,8 @@ func main() {
 	fmt.Printf("ANN query=%v hits=%v visited=%d distances=%d\n",
 		query, result.Hits, result.Stats.VisitedNodes, result.Stats.DistanceComputations)
 
-	vectorData, vectorMetadata, err := semanticpersist.MarshalSource(source, 10)
+	var vectorData bytes.Buffer
+	vectorMetadata, err := semanticpersist.WriteVectorFile(ctx, &vectorData, source, 10)
 	must(err)
 	vectorReference := hnsw.VectorFileReference{Size: vectorMetadata.Size, SHA256: vectorMetadata.SHA256}
 	var graphData bytes.Buffer
@@ -60,7 +61,7 @@ func main() {
 	must(err)
 	fmt.Printf("\npersist vectors.bin=%d bytes graph.bin=%d bytes\n", vectorMetadata.Size, graphMetadata.Size)
 
-	openedVectors, openedVectorMetadata, err := semanticpersist.OpenVectorFile(bytes.NewReader(vectorData), semanticpersist.DefaultCodecLimits())
+	openedVectors, openedVectorMetadata, err := semanticpersist.OpenVectorFile(bytes.NewReader(vectorData.Bytes()), semanticpersist.DefaultCodecLimits())
 	must(err)
 	openedReference := hnsw.VectorFileReference{Size: openedVectorMetadata.Size, SHA256: openedVectorMetadata.SHA256}
 	openedIndex, _, err := hnsw.OpenGraph(ctx, bytes.NewReader(graphData.Bytes()), openedVectors, openedReference, hnsw.DefaultGraphLimits())

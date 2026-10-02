@@ -12,11 +12,15 @@ type fileReference = persist.Reference
 type manifest struct {
 	Version      uint16
 	GenerationID uint64
-	ObjectID     string
-	SegmentKind  semantic.SegmentKind
-	Vectors      fileReference
-	Graph        fileReference
+	Segments     []manifestSegment
 	State        fileReference
+}
+
+type manifestSegment struct {
+	ObjectID    string
+	SegmentKind semantic.SegmentKind
+	Vectors     fileReference
+	Graph       fileReference
 }
 
 type currentRecord struct {
@@ -25,12 +29,15 @@ type currentRecord struct {
 }
 
 type decodedState struct {
-	Embedding               semantic.EmbeddingDescriptor
-	Chunking                semantic.ChunkingDescriptor
-	MaxAllocatedVectorID    semantic.VectorID
-	ComponentID             semantic.ComponentID
-	Rows                    []semantic.VectorRow
-	MaxK                    int
-	MaxChunkCandidates      int
-	MaxChunksPerDocumentHit int
+	Config               semantic.Config
+	Revision             uint64
+	MaxAllocatedVectorID semantic.VectorID
+	NextComponentID      semantic.ComponentID
+	Segments             []decodedStateSegment
+}
+
+type decodedStateSegment struct {
+	ComponentID   semantic.ComponentID
+	Rows          []semantic.VectorRow
+	LivenessWords []uint64
 }

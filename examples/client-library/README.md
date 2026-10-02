@@ -42,9 +42,9 @@ Standalone examples:
 - `segment-analyzer-compatibility/main.go` - self-contained segment save and analyzer-compatible restore
 - `segment-bundle/main.go` - save and restore one sealed segment as an `io.Writer`/`io.Reader` blob
 - `rank-profile/main.go` - multi-field ranking with weighted field scoring
-- `semantic-hnsw/main.go` - document-level semantic search through `semanticencode`
 - `hnsw-build/main.go` - observable HNSW build, graph inspection, persistence, and reopen
-- `semantic-persistence/main.go` - checkpoint, publish, and open an immutable semantic generation
+- `semantic-publication/main.go` - mutable document search and explicit `Flush` visibility
+- `semantic-persistence/main.go` - publish, writable restart, mutate, and republish
 
 Snapshot examples:
 
@@ -73,7 +73,8 @@ go run ./examples/client-library/flat-observability
 go run ./examples/client-library/segment-analyzer-compatibility
 go run ./examples/client-library/segment-bundle
 go run ./examples/client-library/rank-profile
-go run ./examples/client-library/semantic-hnsw
+go run ./examples/client-library/hnsw-build
+go run ./examples/client-library/semantic-publication
 go run ./examples/client-library/semantic-persistence
 ```
 
@@ -90,7 +91,6 @@ Segment restore examples depend on files created by the segment save example:
 ```bash
 go run ./examples/client-library/segment-save-files
 go run ./examples/client-library/segment-load-files
-go run ./examples/client-library/segment-load-files-low-level
 go run ./examples/client-library/segment-load-mmap
 ```
 

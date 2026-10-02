@@ -7,7 +7,7 @@ import (
 )
 
 func codecLimits(limits Limits) semanticformat.Limits {
-	return semanticformat.Limits{MaxFileBytes: limits.MaxFileBytes, MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxDocuments: limits.MaxDocuments, MaxStringBytes: limits.MaxStringBytes, MaxChunksPerDocument: limits.MaxChunksPerDocument, MaxK: limits.MaxK}
+	return semanticformat.Limits{MaxFileBytes: limits.MaxFileBytes, MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxDocuments: limits.MaxDocuments, MaxStringBytes: limits.MaxStringBytes, MaxChunksPerDocument: limits.MaxChunksPerDocument, MaxK: limits.MaxK, MaxVectorBytes: limits.MaxVectorBytes, MaxEfSearch: limits.MaxEfSearch, MaxVisitLimit: limits.MaxVisitLimit}
 }
 
 func mapCodecError(err error) error {
