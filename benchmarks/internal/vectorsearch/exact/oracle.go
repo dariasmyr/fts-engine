@@ -105,6 +105,12 @@ func (o *Oracle) Search(ctx context.Context, query []float32, k int, options vec
 // Len returns the number of vectors searched by the oracle.
 func (o *Oracle) Len() int { return o.store.Len() }
 
+// Dimensions returns the vector width searched by the oracle.
+func (o *Oracle) Dimensions() int { return o.store.Dimensions() }
+
+// Metric returns the distance metric used by the oracle.
+func (o *Oracle) Metric() vector.Metric { return o.store.Metric() }
+
 // Store returns the immutable prepared store used by the oracle.
 func (o *Oracle) Store() vectorstore.PreparedVectorStore { return o.store }
 

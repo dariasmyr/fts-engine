@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/exact"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
@@ -127,12 +128,12 @@ func TestDocumentRecallAndCardinality(t *testing.T) {
 }
 
 func TestExactTruthGroupsOverAllEligibleChunks(t *testing.T) {
-	flatIndex, err := newFlatIndex([][]float32{{0}, {0.1}, {0.2}, {0.3}, {0.4}}, 1, vector.MetricL2Squared, 5)
+	oracle, err := exact.New([][]float32{{0}, {0.1}, {0.2}, {0.3}, {0.4}}, 1, vector.MetricL2Squared, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	config := Config{K: 3, ChunksPerDocument: 2, FilterSelectivities: []float64{1}, FilterSeed: 1}
-	truth, err := exactTruthSweeps(context.Background(), flatIndex, [][]float32{{0}}, config)
+	truth, err := exactTruthSweeps(context.Background(), oracle, [][]float32{{0}}, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +301,7 @@ func TestBuildReaderRejectsUnsupportedOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	flatIndex, err := newFlatIndex(dataset.Vectors, 3, vector.MetricL2Squared, 3)
+	oracle, err := exact.New(dataset.Vectors, 3, vector.MetricL2Squared, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +310,7 @@ func TestBuildReaderRejectsUnsupportedOrder(t *testing.T) {
 		MaxNeighbors: 2, EfConstruction: 8, Seed: 4,
 	}
 	searchConfig := hnsw.SearchConfig{DefaultEfSearch: 3, MaxEfSearch: 8, DefaultVisitLimit: 24, MaxVisitLimit: 24, MaxK: 3}
-	_, path, _, err := buildReader(context.Background(), flatIndex, BuildOrder{Name: "shuffled"}, buildConfig, searchConfig, Progress{}, nil)
+	_, path, _, err := buildReader(context.Background(), oracle, BuildOrder{Name: "shuffled"}, buildConfig, searchConfig, Progress{}, nil)
 	if err == nil {
 		t.Fatal("unsupported build order succeeded")
 	}
@@ -323,7 +324,7 @@ func TestBuildTimingSeparatesProgressCallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	flatIndex, err := newFlatIndex(dataset.Vectors, 2, vector.MetricL2Squared, 1)
+	oracle, err := exact.New(dataset.Vectors, 2, vector.MetricL2Squared, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +333,7 @@ func TestBuildTimingSeparatesProgressCallback(t *testing.T) {
 		MaxNeighbors: 2, EfConstruction: 4, Seed: 1,
 	}
 	searchConfig := hnsw.SearchConfig{DefaultEfSearch: 1, MaxEfSearch: 1, DefaultVisitLimit: 8, MaxVisitLimit: 8, MaxK: 1}
-	_, path, timing, err := buildReader(context.Background(), flatIndex, BuildOrder{Name: "ascending"}, buildConfig, searchConfig, Progress{}, func(Progress) {
+	_, path, timing, err := buildReader(context.Background(), oracle, BuildOrder{Name: "ascending"}, buildConfig, searchConfig, Progress{}, func(Progress) {
 		time.Sleep(100 * time.Microsecond)
 	})
 	if err != nil {

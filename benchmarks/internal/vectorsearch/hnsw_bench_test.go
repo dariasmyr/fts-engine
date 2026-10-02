@@ -9,7 +9,7 @@ import (
 	"math"
 	"testing"
 
-	flat "github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/flat"
+	"github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/exact"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
@@ -26,13 +26,13 @@ func BenchmarkBuildPreparedSource(b *testing.B) {
 					values[row][dimension] = float32((row+1)*(dimension+3)%101) / 101
 				}
 			}
-			flatIndex := benchmarkFlatIndex(b, values, vector.MetricL2Squared)
+			oracle := benchmarkExactOracle(b, values, vector.MetricL2Squared)
 			options := hnsw.BuildOptions{Build: benchmarkBuildConfig(dimensions, rows, vector.MetricL2Squared), Search: benchmarkSearchConfig(rows)}
 			b.ReportAllocs()
 			b.SetBytes(int64(rows * dimensions * 4))
 			b.ResetTimer()
 			for b.Loop() {
-				if _, err := hnsw.Build(context.Background(), flatIndex.Vectors(), options); err != nil {
+				if _, err := hnsw.Build(context.Background(), oracle.Store(), options); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -49,9 +49,9 @@ func BenchmarkOpenGraph(b *testing.B) {
 			values[row][dimension] = float32((row+11)*(dimension+5)%103) / 103
 		}
 	}
-	flatIndex := benchmarkFlatIndex(b, values, vector.MetricL2Squared)
-	reader := benchmarkBuild(b, flatIndex.Vectors(), dimensions, rows, vector.MetricL2Squared)
-	reference, err := benchmarkVectorReference(context.Background(), flatIndex.Vectors())
+	oracle := benchmarkExactOracle(b, values, vector.MetricL2Squared)
+	reader := benchmarkBuild(b, oracle.Store(), dimensions, rows, vector.MetricL2Squared)
+	reference, err := benchmarkVectorReference(context.Background(), oracle.Store())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func BenchmarkOpenGraph(b *testing.B) {
 	b.SetBytes(int64(graphData.Len()))
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, err := hnsw.OpenGraph(context.Background(), bytes.NewReader(graphData.Bytes()), flatIndex.Vectors(), reference, hnsw.DefaultGraphLimits()); err != nil {
+		if _, _, err := hnsw.OpenGraph(context.Background(), bytes.NewReader(graphData.Bytes()), oracle.Store(), reference, hnsw.DefaultGraphLimits()); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -98,10 +98,10 @@ func BenchmarkANNAndExactReference(b *testing.B) {
 			values[row][dimension] = float32((row+7)*(dimension+1)%97) / 97
 		}
 	}
-	flatIndex := benchmarkFlatIndex(b, values, vector.MetricL2Squared)
-	reader := benchmarkBuild(b, flatIndex.Vectors(), dimensions, rows, vector.MetricL2Squared)
+	oracle := benchmarkExactOracle(b, values, vector.MetricL2Squared)
+	reader := benchmarkBuild(b, oracle.Store(), dimensions, rows, vector.MetricL2Squared)
 	query := make([]float32, dimensions)
-	for name, index := range map[string]vector.Index{"ann": reader, "exact_reference": flatIndex} {
+	for name, index := range map[string]vector.Index{"ann": reader, "exact_reference": oracle} {
 		b.Run(name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
@@ -128,16 +128,13 @@ func benchmarkSearchConfig(count int) hnsw.SearchConfig {
 	}
 }
 
-func benchmarkFlatIndex(t testing.TB, values [][]float32, metric vector.Metric) *flat.FlatIndex {
+func benchmarkExactOracle(t testing.TB, values [][]float32, metric vector.Metric) *exact.Oracle {
 	t.Helper()
-	index, err := flat.New(flat.Config{Dimensions: len(values[0]), Metric: metric, MaxVectors: len(values), MaxK: len(values)})
+	oracle, err := exact.New(values, len(values[0]), metric, len(values))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := index.AppendBatch(values); err != nil {
-		t.Fatal(err)
-	}
-	return index.Freeze()
+	return oracle
 }
 
 func benchmarkBuild(t testing.TB, source vectorstore.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.Index {

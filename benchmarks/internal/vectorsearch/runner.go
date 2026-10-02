@@ -6,7 +6,7 @@ import (
 	"math"
 	"time"
 
-	flat "github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/flat"
+	"github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/exact"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
@@ -101,11 +101,11 @@ func Run(ctx context.Context, config Config) (Report, error) {
 			return Report{}, err
 		}
 		for _, metric := range config.Metrics {
-			flatIndex, err := newFlatIndex(dataset.Vectors, config.Dimensions, metric, config.VectorCount)
+			oracle, err := exact.New(dataset.Vectors, config.Dimensions, metric, config.VectorCount)
 			if err != nil {
-				return Report{}, fmt.Errorf("vectorsearch: build flat ground truth: %w", err)
+				return Report{}, fmt.Errorf("vectorsearch: build exact oracle: %w", err)
 			}
-			truth, err := exactTruthSweeps(ctx, flatIndex, dataset.Queries, config)
+			truth, err := exactTruthSweeps(ctx, oracle, dataset.Queries, config)
 			if err != nil {
 				return Report{}, err
 			}
@@ -114,7 +114,7 @@ func Run(ctx context.Context, config Config) (Report, error) {
 					for _, efConstruction := range config.EfConstruction {
 						for _, seed := range config.BuildSeeds {
 							buildNumber++
-							runs, err := runBuild(ctx, config, dataset, metric, order, flatIndex, truth, maxNeighbors, efConstruction, seed, buildNumber, builds)
+							runs, err := runBuild(ctx, config, dataset, metric, order, oracle, truth, maxNeighbors, efConstruction, seed, buildNumber, builds)
 							if err != nil {
 								return Report{}, err
 							}
@@ -128,7 +128,7 @@ func Run(ctx context.Context, config Config) (Report, error) {
 	return report, nil
 }
 
-func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, flatIndex *flat.FlatIndex, truth []truthSweep, maxNeighbors, efConstruction int, seed uint64, buildNumber, builds int) ([]RunReport, error) {
+func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, oracle *exact.Oracle, truth []truthSweep, maxNeighbors, efConstruction int, seed uint64, buildNumber, builds int) ([]RunReport, error) {
 	maxEfSearch := max(config.K, maxSlice(config.EfSearch))
 	searchConfig := hnsw.SearchConfig{
 		DefaultEfSearch: max(config.K, config.EfSearch[0]), MaxEfSearch: maxEfSearch,
@@ -143,7 +143,7 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 		Dataset: dataset.Config.Kind, Metric: metric.String(), Build: buildNumber, Builds: builds,
 		MaxNeighbors: maxNeighbors, EfConstruction: efConstruction, Seed: seed, Order: order,
 	}
-	reader, buildPath, timing, err := buildReader(ctx, flatIndex, order, buildConfig, searchConfig, progress, config.Progress)
+	reader, buildPath, timing, err := buildReader(ctx, oracle, order, buildConfig, searchConfig, progress, config.Progress)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 	return runs, nil
 }
 
-func buildReader(ctx context.Context, flatIndex *flat.FlatIndex, order BuildOrder, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress Progress, callback func(Progress)) (*hnsw.Index, string, buildTiming, error) {
+func buildReader(ctx context.Context, oracle *exact.Oracle, order BuildOrder, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress Progress, callback func(Progress)) (*hnsw.Index, string, buildTiming, error) {
 	buildPath := BuildPathProduction
 	progress.BuildPath = buildPath
 	var callbackDuration time.Duration
@@ -181,7 +181,7 @@ func buildReader(ctx context.Context, flatIndex *flat.FlatIndex, order BuildOrde
 	if order.Name != "ascending" {
 		err = fmt.Errorf("vectorsearch: unknown build order %q", order.Name)
 	} else {
-		reader, err = hnsw.Build(ctx, flatIndex.Vectors(), hnsw.BuildOptions{
+		reader, err = hnsw.Build(ctx, oracle.Store(), hnsw.BuildOptions{
 			Build: buildConfig, Search: searchConfig, Progress: reportProgress,
 		})
 	}
@@ -301,29 +301,18 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 	return run, nil
 }
 
-func newFlatIndex(values [][]float32, dimensions int, metric vector.Metric, k int) (*flat.FlatIndex, error) {
-	index, err := flat.New(flat.Config{Dimensions: dimensions, Metric: metric, MaxVectors: len(values), MaxK: k})
-	if err != nil {
-		return nil, err
-	}
-	if _, err := index.AppendBatch(values); err != nil {
-		return nil, err
-	}
-	return index.Freeze(), nil
-}
-
-func exactTruthSweeps(ctx context.Context, flatIndex *flat.FlatIndex, queries [][]float32, config Config) ([]truthSweep, error) {
+func exactTruthSweeps(ctx context.Context, oracle *exact.Oracle, queries [][]float32, config Config) ([]truthSweep, error) {
 	truth := make([]truthSweep, 0, len(config.FilterSelectivities))
 	for _, selectivity := range config.FilterSelectivities {
-		filter, report, err := deterministicFilter(flatIndex.Len(), selectivity, config.FilterSeed)
+		filter, report, err := deterministicFilter(oracle.Len(), selectivity, config.FilterSeed)
 		if err != nil {
 			return nil, err
 		}
 		hits := make([][]vector.Hit, len(queries))
 		for i, query := range queries {
-			result, err := flatIndex.Search(ctx, query, flatIndex.Len(), vector.SearchOptions{ResultFilter: filter})
+			result, err := oracle.Search(ctx, query, oracle.Len(), vector.SearchOptions{ResultFilter: filter})
 			if err != nil {
-				return nil, fmt.Errorf("vectorsearch: flat query %d at selectivity %g: %w", i, selectivity, err)
+				return nil, fmt.Errorf("vectorsearch: exact query %d at selectivity %g: %w", i, selectivity, err)
 			}
 			hits[i] = result.Hits
 		}
