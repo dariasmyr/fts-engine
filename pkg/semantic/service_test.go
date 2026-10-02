@@ -520,7 +520,7 @@ func TestVectorIDsAreMonotonicAndExhaustionIsAtomic(t *testing.T) {
 	}
 
 	config := testConfig(2, 2)
-	config.InitialMaxAllocatedVectorID = VectorID(math.MaxUint64 - 1)
+	config.InitialMaxAllocatedVectorID = uint64(math.MaxUint64 - 1)
 	exhausted, err := New(config)
 	if err != nil {
 		t.Fatal(err)
@@ -532,7 +532,7 @@ func TestVectorIDsAreMonotonicAndExhaustionIsAtomic(t *testing.T) {
 	if !errors.Is(err, ErrVectorIDExhausted) {
 		t.Fatalf("exhaustion error = %v", err)
 	}
-	if stats := exhausted.Statistics(); stats.PhysicalVectors != 0 || stats.MaxAllocatedVectorID != VectorID(math.MaxUint64-1) {
+	if stats := exhausted.Statistics(); stats.PhysicalVectors != 0 || stats.MaxAllocatedVectorID != uint64(math.MaxUint64-1) {
 		t.Fatalf("exhausted state changed: %+v", stats)
 	}
 }
@@ -816,16 +816,16 @@ func TestCosineCompactionPreservesPreparedVectorBits(t *testing.T) {
 	}
 }
 
-func preparedVectorBits(t *testing.T, view *ReadView) map[VectorID][]uint32 {
+func preparedVectorBits(t *testing.T, view *ReadView) map[uint64][]uint32 {
 	t.Helper()
-	result := make(map[VectorID][]uint32)
+	result := make(map[uint64][]uint32)
 	for _, item := range view.segments {
 		for ordinal, row := range item.segment.rows {
 			if !item.filter.Allows(vector.Ordinal(ordinal)) {
 				continue
 			}
-			value := make([]float32, item.segment.Dimensions())
-			if err := item.segment.Vectors().ReadVectorInto(context.Background(), vector.Ordinal(ordinal), value); err != nil {
+			value := make([]float32, item.segment.dimensions())
+			if err := item.segment.vectorStore().ReadVectorInto(context.Background(), vector.Ordinal(ordinal), value); err != nil {
 				t.Fatal(err)
 			}
 			bits := make([]uint32, len(value))

@@ -485,11 +485,13 @@ func FuzzOpenGraph(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	empty, err := newIndexFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), graphData{})
+	emptyGraph := graphData{}
+	empty, err := newIndexFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), emptyGraph, readerTestSource(f, space, emptyGraph))
 	if err != nil {
 		f.Fatal(err)
 	}
-	singleton, err := newIndexFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}}, hasEntry: true})
+	singletonGraph := graphData{values: []float32{1, 2}, nodes: []mutableNode{{links: [][]nodeOrdinal{{}}}}, hasEntry: true}
+	singleton, err := newIndexFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), singletonGraph, readerTestSource(f, space, singletonGraph))
 	if err != nil {
 		f.Fatal(err)
 	}

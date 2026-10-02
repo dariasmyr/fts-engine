@@ -22,7 +22,7 @@ func writeGeneration(ctx context.Context, paths storePaths, generationID uint64,
 		}
 	}()
 
-	if err := beforeStep(ctx, options, StepWriteState); err != nil {
+	if err := beforeStep(ctx, options, stepWriteState); err != nil {
 		return fileReference{}, err
 	}
 	stateData, stateRef, err := encodeState(snapshot, options.Limits)
@@ -32,16 +32,15 @@ func writeGeneration(ctx context.Context, paths storePaths, generationID uint64,
 	if err := writeDataFile(filepath.Join(generationTemp, stateFileName), stateData, options.Durability); err != nil {
 		return fileReference{}, err
 	}
-	if err := afterStep(options, StepWriteState, false); err != nil {
+	if err := afterStep(options, stepWriteState, false); err != nil {
 		return fileReference{}, err
 	}
 
-	manifestValue := manifest{Version: manifestVersion, GenerationID: generationID, State: stateRef, Segments: make([]manifestSegment, len(objects))}
-	segments := snapshot.Segments()
+	manifestValue := manifest{GenerationID: generationID, State: stateRef, Segments: make([]manifestSegment, len(objects))}
 	for i, object := range objects {
-		manifestValue.Segments[i] = manifestSegment{ObjectID: object.ID, SegmentKind: segments[i].Segment().Kind(), Vectors: object.Vectors, Graph: object.Graph}
+		manifestValue.Segments[i] = manifestSegment{ObjectID: object.ID, Vectors: object.Vectors, Graph: object.Graph}
 	}
-	if err := beforeStep(ctx, options, StepWriteManifest); err != nil {
+	if err := beforeStep(ctx, options, stepWriteManifest); err != nil {
 		return fileReference{}, err
 	}
 	manifestData, manifestRef, err := encodeManifest(manifestValue, options.Limits)
@@ -54,17 +53,17 @@ func writeGeneration(ctx context.Context, paths storePaths, generationID uint64,
 	if err := writeDataFile(filepath.Join(generationTemp, manifestFileName), manifestData, options.Durability); err != nil {
 		return fileReference{}, err
 	}
-	if err := afterStep(options, StepWriteManifest, false); err != nil {
+	if err := afterStep(options, stepWriteManifest, false); err != nil {
 		return fileReference{}, err
 	}
 	if options.Durability == DurabilitySynchronous {
-		if err := beforeStep(ctx, options, StepSyncGeneration); err != nil {
+		if err := beforeStep(ctx, options, stepSyncGeneration); err != nil {
 			return fileReference{}, err
 		}
 		if err := syncDirectory(generationTemp); err != nil {
 			return fileReference{}, err
 		}
-		if err := afterStep(options, StepSyncGeneration, false); err != nil {
+		if err := afterStep(options, stepSyncGeneration, false); err != nil {
 			return fileReference{}, err
 		}
 	}
@@ -75,7 +74,7 @@ func writeGeneration(ctx context.Context, paths storePaths, generationID uint64,
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fileReference{}, err
 	}
-	if err := beforeStep(ctx, options, StepRenameGeneration); err != nil {
+	if err := beforeStep(ctx, options, stepRenameGeneration); err != nil {
 		return fileReference{}, err
 	}
 	if err := os.Rename(generationTemp, generationPath); err != nil {
@@ -87,7 +86,7 @@ func writeGeneration(ctx context.Context, paths storePaths, generationID uint64,
 			return fileReference{}, err
 		}
 	}
-	if err := afterStep(options, StepRenameGeneration, false); err != nil {
+	if err := afterStep(options, stepRenameGeneration, false); err != nil {
 		return fileReference{}, err
 	}
 	return manifestRef, nil

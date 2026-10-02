@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
+	"math"
 
-	"github.com/dariasmyr/fts-engine/pkg/semanticpersist"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
@@ -52,24 +54,39 @@ func main() {
 	fmt.Printf("ANN query=%v hits=%v visited=%d distances=%d\n",
 		query, result.Hits, result.Stats.VisitedNodes, result.Stats.DistanceComputations)
 
-	var vectorData bytes.Buffer
-	vectorMetadata, err := semanticpersist.WriteVectorFile(ctx, &vectorData, source, 10)
+	vectorReference, err := callerVectorReference(ctx, source)
 	must(err)
-	vectorReference := hnsw.VectorFileReference{Size: vectorMetadata.Size, SHA256: vectorMetadata.SHA256}
 	var graphData bytes.Buffer
 	graphMetadata, err := hnsw.WriteGraph(ctx, &graphData, index, vectorReference)
 	must(err)
-	fmt.Printf("\npersist vectors.bin=%d bytes graph.bin=%d bytes\n", vectorMetadata.Size, graphMetadata.Size)
+	fmt.Printf("\ncaller vector reference=%d bytes graph.bin=%d bytes\n", vectorReference.Size, graphMetadata.Size)
 
-	openedVectors, openedVectorMetadata, err := semanticpersist.OpenVectorFile(bytes.NewReader(vectorData.Bytes()), semanticpersist.DefaultCodecLimits())
+	openedReference, err := callerVectorReference(ctx, source)
 	must(err)
-	openedReference := hnsw.VectorFileReference{Size: openedVectorMetadata.Size, SHA256: openedVectorMetadata.SHA256}
-	openedIndex, _, err := hnsw.OpenGraph(ctx, bytes.NewReader(graphData.Bytes()), openedVectors, openedReference, hnsw.DefaultGraphLimits())
+	openedIndex, _, err := hnsw.OpenGraph(ctx, bytes.NewReader(graphData.Bytes()), source, openedReference, hnsw.DefaultGraphLimits())
 	must(err)
 
 	reopened, err := openedIndex.Search(ctx, query, 3, vector.SearchOptions{EfSearch: 8})
 	must(err)
 	fmt.Printf("reopened hits=%v build=%+v\n", reopened.Hits, openedIndex.Report().Build)
+}
+
+func callerVectorReference(ctx context.Context, source vectorstore.PreparedVectorStore) (hnsw.VectorFileReference, error) {
+	hash := sha256.New()
+	values := make([]float32, source.Dimensions())
+	var encoded [4]byte
+	for ordinal := range source.Len() {
+		if err := source.ReadVectorInto(ctx, vector.Ordinal(ordinal), values); err != nil {
+			return hnsw.VectorFileReference{}, err
+		}
+		for _, value := range values {
+			binary.LittleEndian.PutUint32(encoded[:], math.Float32bits(value))
+			_, _ = hash.Write(encoded[:])
+		}
+	}
+	result := hnsw.VectorFileReference{Size: uint64(source.Len()) * uint64(source.Dimensions()) * 4}
+	copy(result.SHA256[:], hash.Sum(nil))
+	return result, nil
 }
 
 func must(err error) {

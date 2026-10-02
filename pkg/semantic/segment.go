@@ -10,46 +10,28 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
-// SegmentMetadata describes the embedding and chunking contracts of a segment.
-type SegmentMetadata struct {
-	Embedding EmbeddingDescriptor
-	Chunking  ChunkingDescriptor
-}
-
-// SegmentKind identifies the persisted semantic segment format.
-type SegmentKind uint8
-
-const SegmentKindChunkHNSW SegmentKind = 1
-
-// Segment searches one immutable HNSW component. The vector source is
+// segment searches one immutable HNSW component. The vector source is
 // authoritative row storage and the HNSW index contains only navigation topology.
-type Segment struct {
-	component ComponentID
-	metadata  SegmentMetadata
-	rows      []VectorRow
-	vectors   vectorstore.PreparedVectorStore
-	search    hnsw.SearchConfig
-	index     *hnsw.Index
+type segment struct {
+	component  uint64
+	descriptor PipelineDescriptor
+	rows       []VectorRow
+	vectors    vectorstore.PreparedVectorStore
+	search     hnsw.SearchConfig
+	index      *hnsw.Index
 }
 
-func (s *Segment) Kind() SegmentKind {
-	if s == nil {
-		return 0
-	}
-	return SegmentKindChunkHNSW
-}
-
-// BuildSegment builds the target immutable semantic segment. The HNSW index
+// buildSegment builds the target immutable semantic segment. The HNSW index
 // navigates source rows by local ordinal; rows resolve those ordinals to stable
 // semantic identities.
-func BuildSegment(ctx context.Context, component ComponentID, metadata SegmentMetadata, source vectorstore.PreparedVectorStore, rows []VectorRow, options hnsw.BuildOptions) (*Segment, error) {
+func buildSegment(ctx context.Context, component uint64, descriptor PipelineDescriptor, source vectorstore.PreparedVectorStore, rows []VectorRow, options hnsw.BuildOptions) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if component == 0 || !metadata.Embedding.IsValid() || !metadata.Chunking.IsValid() {
+	if component == 0 || !descriptor.Embedding.IsValid() || !descriptor.Chunking.IsValid() {
 		return nil, ErrInvalidSegment
 	}
 	if err := validateSegmentRowsContext(ctx, rows); err != nil {
@@ -59,16 +41,10 @@ func BuildSegment(ctx context.Context, component ComponentID, metadata SegmentMe
 	if err != nil {
 		return nil, err
 	}
-	return newSegment(ctx, component, metadata, source, index, rows, false)
+	return newSegment(ctx, component, descriptor, source, index, rows, false)
 }
 
-// NewSegment creates an immutable semantic segment from an HNSW index and
-// rows that resolve its local ordinals to stable semantic identities.
-func NewSegment(ctx context.Context, component ComponentID, metadata SegmentMetadata, vectors vectorstore.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*Segment, error) {
-	return newSegment(ctx, component, metadata, vectors, index, rows, true)
-}
-
-func newSegment(ctx context.Context, component ComponentID, metadata SegmentMetadata, vectors vectorstore.PreparedVectorStore, index *hnsw.Index, rows []VectorRow, validateRows bool) (*Segment, error) {
+func newSegment(ctx context.Context, component uint64, descriptor PipelineDescriptor, vectors vectorstore.PreparedVectorStore, index *hnsw.Index, rows []VectorRow, validateRows bool) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -79,18 +55,18 @@ func newSegment(ctx context.Context, component ComponentID, metadata SegmentMeta
 		return nil, ErrInvalidSegment
 	}
 	if err := index.ValidateSource(ctx, vectors); err != nil {
-		if ctx == nil || ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return nil, err
 		}
 		return nil, ErrInvalidSegment
 	}
-	segment := &Segment{
-		component: component,
-		metadata:  metadata,
-		rows:      append([]VectorRow(nil), rows...),
-		vectors:   vectors,
-		search:    index.Report().Search,
-		index:     index,
+	segment := &segment{
+		component:  component,
+		descriptor: descriptor,
+		rows:       append([]VectorRow(nil), rows...),
+		vectors:    vectors,
+		search:     index.Report().Search,
+		index:      index,
 	}
 	if err := segment.validateContents(); err != nil {
 		return nil, err
@@ -103,120 +79,86 @@ func newSegment(ctx context.Context, component ComponentID, metadata SegmentMeta
 	return segment, nil
 }
 
-func (s *Segment) ComponentID() ComponentID {
+func (s *segment) componentID() uint64 {
 	if s == nil {
 		return 0
 	}
 	return s.component
 }
 
-func (s *Segment) Rows() []VectorRow {
+func (s *segment) rowsCopy() []VectorRow {
 	if s == nil {
 		return nil
 	}
 	return append([]VectorRow(nil), s.rows...)
 }
 
-func (s *Segment) rowCount() int {
-	if s == nil {
-		return 0
-	}
-	return len(s.rows)
-}
-
-func (s *Segment) rowAt(index int) (VectorRow, bool) {
+func (s *segment) rowAt(index int) (VectorRow, bool) {
 	if s == nil || index < 0 || index >= len(s.rows) {
 		return VectorRow{}, false
 	}
 	return s.rows[index], true
 }
 
-// Vectors returns the immutable authoritative source rows.
-func (s *Segment) Vectors() vectorstore.PreparedVectorStore {
+func (s *segment) vectorStore() vectorstore.PreparedVectorStore {
 	if s == nil {
 		return nil
 	}
 	return s.vectors
 }
 
-// Index returns the immutable HNSW index used by this segment.
-func (s *Segment) Index() *hnsw.Index {
+func (s *segment) hnswIndex() *hnsw.Index {
 	if s == nil {
 		return nil
 	}
 	return s.index
 }
 
-func (s *Segment) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func (s *segment) searchVectors(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	if s == nil || s.index == nil {
 		return vector.SearchResult{}, ErrInvalidSegment
 	}
 	return s.index.Search(ctx, query, k, options)
 }
 
-func (s *Segment) Len() int {
+func (s *segment) len() int {
 	if s == nil || s.index == nil {
 		return 0
 	}
 	return s.index.Len()
 }
 
-func (s *Segment) Dimensions() int {
+func (s *segment) dimensions() int {
 	if s == nil || s.index == nil {
 		return 0
 	}
 	return s.index.Dimensions()
 }
 
-func (s *Segment) Metric() vector.Metric {
-	if s == nil || s.index == nil {
-		return 0
-	}
-	return s.index.Metric()
-}
-
-func (s *Segment) Normalization() vector.Normalization {
-	if s == nil || s.vectors == nil {
-		return 0
-	}
-	return s.vectors.Normalization()
-}
-
-func (s *Segment) MaxK() int {
+func (s *segment) maxK() int {
 	if s == nil || s.index == nil {
 		return 0
 	}
 	return s.search.MaxK
 }
 
-// SearchLimits returns the immutable HNSW work limits owned by this segment.
-func (s *Segment) SearchLimits() hnsw.SearchConfig {
+func (s *segment) searchConfig() hnsw.SearchConfig {
 	if s == nil {
 		return hnsw.SearchConfig{}
 	}
 	return s.search
 }
 
-func (s *Segment) Close() error {
-	// Current sealed readers are fully loaded and Close is a no-op. Keeping the
-	// segment non-owning makes shallow immutable views safe.
-	return nil
-}
-
-func (s *Segment) Metadata() SegmentMetadata {
+func (s *segment) pipelineDescriptor() PipelineDescriptor {
 	if s == nil {
-		return SegmentMetadata{}
+		return PipelineDescriptor{}
 	}
-	return s.metadata
-}
-
-func (s *Segment) validate() error {
-	return s.validateContents()
+	return s.descriptor
 }
 
 // Validate checks the immutable segment metadata, source binding and row
 // identity mapping.
-func (s *Segment) Validate() error {
+func (s *segment) validate() error {
 	if err := s.validateContents(); err != nil {
 		return err
 	}
@@ -231,7 +173,7 @@ func validateSegmentRowsContext(ctx context.Context, rows []VectorRow) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	seenIDs := make(map[VectorID]struct{}, len(rows))
+	seenIDs := make(map[uint64]struct{}, len(rows))
 	type chunkKey struct {
 		documentID fts.DocID
 		chunkID    chunk.ID
@@ -262,15 +204,15 @@ func validateSegmentRowsContext(ctx context.Context, rows []VectorRow) error {
 	return nil
 }
 
-func (s *Segment) validateContents() error {
+func (s *segment) validateContents() error {
 	if s == nil || s.index == nil || s.vectors == nil {
 		return ErrInvalidSegment
 	}
 	vectors := s.vectors
-	if !s.metadata.Embedding.IsValid() || !s.metadata.Chunking.IsValid() {
+	if !s.descriptor.Embedding.IsValid() || !s.descriptor.Chunking.IsValid() {
 		return ErrInvalidSegment
 	}
-	calculator, err := s.metadata.Embedding.Calculator()
+	calculator, err := s.descriptor.Embedding.Calculator()
 	if err != nil || s.component == 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
 		vectors.Dimensions() != calculator.Dimensions() || vectors.Metric() != calculator.Metric() ||
 		vectors.Normalization() != calculator.Normalization() || s.index.Dimensions() != vectors.Dimensions() ||

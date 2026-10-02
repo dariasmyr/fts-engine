@@ -42,8 +42,6 @@ func NewSplitter(descriptor Descriptor) (*Splitter, error) {
 	return &Splitter{descriptor: descriptor}, nil
 }
 
-func (s *Splitter) Descriptor() Descriptor { return s.descriptor }
-
 // Split prefers paragraph boundaries near the configured target and falls back
 // to UTF-8-safe overlapping byte windows.
 func (s *Splitter) Split(docID fts.DocID, field, text string) ([]Chunk, error) {

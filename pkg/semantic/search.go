@@ -13,7 +13,7 @@ import (
 // visibleSegment binds an immutable physical segment to an immutable local
 // liveness filter. The filter is view state, not mutable segment state.
 type visibleSegment struct {
-	segment *Segment
+	segment *segment
 	filter  vector.BitSet
 }
 
@@ -114,7 +114,7 @@ func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, vie
 	}
 	type rankedHit struct {
 		hit       ChunkHit
-		component ComponentID
+		component uint64
 		ordinal   vector.Ordinal
 	}
 	all := make([]rankedHit, 0, len(views)*k)
@@ -126,7 +126,7 @@ func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, vie
 		}
 		options := searchOptions
 		options.ResultFilter = view.filter
-		result, err := view.segment.Search(ctx, query, k, options)
+		result, err := view.segment.searchVectors(ctx, query, k, options)
 		if err != nil {
 			return chunkSearchResult{}, err
 		}
@@ -144,7 +144,7 @@ func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, vie
 			}
 			all = append(all, rankedHit{
 				hit:       ChunkHit{Ref: row.Chunk, Distance: hit.Distance},
-				component: view.segment.ComponentID(), ordinal: hit.Ordinal,
+				component: view.segment.componentID(), ordinal: hit.Ordinal,
 			})
 		}
 	}

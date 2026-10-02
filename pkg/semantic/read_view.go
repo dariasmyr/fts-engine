@@ -163,14 +163,14 @@ func (v *ReadView) searchEncodedQueries(ctx context.Context, queries []ChunkVect
 	return result, nil
 }
 
-func newReadView(ctx context.Context, generation uint64, segments []visibleSegment, descriptor PipelineDescriptor, policy SearchPolicy, search hnsw.SearchConfig) (*ReadView, error) {
+func newReadView(ctx context.Context, generation uint64, segments []visibleSegment, descriptor PipelineDescriptor, policy searchPolicy, search hnsw.SearchConfig) (*ReadView, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !descriptor.Embedding.IsValid() || !descriptor.Chunking.IsValid() || policy.Validate() != nil ||
+	if !descriptor.Embedding.IsValid() || !descriptor.Chunking.IsValid() || policy.validate() != nil ||
 		search.MaxK < policy.MaxChunkCandidates || search.MaxEfSearch < policy.MaxChunkCandidates || search.MaxVisitLimit <= 0 {
 		return nil, ErrInvalidConfig
 	}
@@ -192,36 +192,36 @@ func newReadView(ctx context.Context, generation uint64, segments []visibleSegme
 	return view, nil
 }
 
-func newEmptyReadView(ctx context.Context, descriptor PipelineDescriptor, policy SearchPolicy, search hnsw.SearchConfig) (*ReadView, error) {
+func newEmptyReadView(ctx context.Context, descriptor PipelineDescriptor, policy searchPolicy, search hnsw.SearchConfig) (*ReadView, error) {
 	return newReadView(ctx, 0, nil, descriptor, policy, search)
 }
 
 func validateVisibleSegments(ctx context.Context, segments []visibleSegment, descriptor PipelineDescriptor, search hnsw.SearchConfig) error {
-	components := make(map[ComponentID]struct{}, len(segments))
-	vectorIDs := make(map[VectorID]struct{})
+	components := make(map[uint64]struct{}, len(segments))
+	vectorIDs := make(map[uint64]struct{})
 	type chunkKey struct {
 		documentID fts.DocID
 		chunkID    chunk.ID
 	}
 	liveChunks := make(map[chunkKey]struct{})
-	liveDocumentComponents := make(map[fts.DocID]ComponentID)
+	liveDocumentComponents := make(map[fts.DocID]uint64)
 	for segmentIndex, item := range segments {
 		if segmentIndex%16 == 0 {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 		}
-		if item.segment == nil || item.filter.TotalOrdinalCount() != uint32(item.segment.Len()) || item.segment.SearchLimits() != search {
+		if item.segment == nil || item.filter.TotalOrdinalCount() != uint32(item.segment.len()) || item.segment.searchConfig() != search {
 			return ErrInvalidSegment
 		}
 		if err := item.segment.validateContents(); err != nil {
 			return err
 		}
-		got := PipelineDescriptor{Embedding: item.segment.metadata.Embedding, Chunking: item.segment.metadata.Chunking}
+		got := item.segment.descriptor
 		if _, err := descriptorsEqual(got, descriptor); err != nil {
 			return err
 		}
-		component := item.segment.ComponentID()
+		component := item.segment.componentID()
 		if _, exists := components[component]; exists {
 			return ErrInvalidSegment
 		}

@@ -14,7 +14,7 @@ const stateVersion = uint16(7)
 const minimumRowBytes = 32
 
 type StateSegment struct {
-	ComponentID   semantic.ComponentID
+	ComponentID   uint64
 	Rows          []semantic.VectorRow
 	LivenessWords []uint64
 }
@@ -23,8 +23,8 @@ type StateSegment struct {
 type State struct {
 	Config               semantic.Config
 	Revision             uint64
-	MaxAllocatedVectorID semantic.VectorID
-	NextComponentID      semantic.ComponentID
+	MaxAllocatedVectorID uint64
+	NextComponentID      uint64
 	Segments             []StateSegment
 }
 
@@ -83,7 +83,7 @@ func DecodeState(data []byte, limits Limits) (State, error) {
 	embedding.ProviderID, embedding.ModelID, embedding.ModelVersion, embedding.PipelineFingerprint = d.string(), d.string(), d.string(), d.string()
 	chunking := semantic.ChunkingDescriptor{ID: d.string(), Version: d.u32(), Fingerprint: d.string()}
 	config := decodeConfig(d, embedding, chunking)
-	value := State{Config: config, Revision: d.u64(), MaxAllocatedVectorID: semantic.VectorID(d.u64()), NextComponentID: semantic.ComponentID(d.u64())}
+	value := State{Config: config, Revision: d.u64(), MaxAllocatedVectorID: d.u64(), NextComponentID: d.u64()}
 	countValue := uint64(d.u32())
 	if countValue > uint64(limits.MaxVectors) || countValue > uint64(d.remaining()/16) {
 		return State{}, ErrLimitExceeded
@@ -92,7 +92,7 @@ func DecodeState(data []byte, limits Limits) (State, error) {
 	value.Segments = make([]StateSegment, count)
 	totalRows := 0
 	for i := range value.Segments {
-		segment := StateSegment{ComponentID: semantic.ComponentID(d.u64())}
+		segment := StateSegment{ComponentID: d.u64()}
 		rowCountValue, wordCountValue := uint64(d.u32()), uint64(d.u32())
 		if rowCountValue > uint64(limits.MaxVectors-totalRows) || wordCountValue != (rowCountValue+63)/64 || wordCountValue > uint64(d.remaining()/8) {
 			return State{}, ErrLimitExceeded
@@ -107,7 +107,7 @@ func DecodeState(data []byte, limits Limits) (State, error) {
 		}
 		segment.Rows = make([]semantic.VectorRow, rowCount)
 		for j := range segment.Rows {
-			segment.Rows[j] = semantic.VectorRow{VectorID: semantic.VectorID(d.u64()), Chunk: decodeRef(d)}
+			segment.Rows[j] = semantic.VectorRow{VectorID: d.u64(), Chunk: decodeRef(d)}
 			if err := d.err(); err != nil {
 				return State{}, err
 			}
@@ -151,7 +151,7 @@ func decodeConfig(d *decoder, embedding semantic.EmbeddingDescriptor, chunking s
 	c := semantic.Config{Embedding: embedding, Chunking: chunking}
 	c.MaxVectors, c.MaxChunksPerDocument, c.MaxK = int(d.u32()), int(d.u32()), int(d.u32())
 	c.MaxChunkCandidates, c.MaxChunksPerDocumentHit, c.InitialVectorCapacity = int(d.u32()), int(d.u32()), int(d.u32())
-	c.InitialMaxAllocatedVectorID = semantic.VectorID(d.u64())
+	c.InitialMaxAllocatedVectorID = d.u64()
 	c.HNSWBuild = hnsw.BuildConfig{Dimensions: int(d.u32()), Metric: vector.Metric(d.u8())}
 	for _, b := range d.take(3) {
 		if b != 0 {
@@ -165,7 +165,7 @@ func decodeConfig(d *decoder, embedding semantic.EmbeddingDescriptor, chunking s
 }
 
 func validateState(value State, limits Limits) error {
-	if value.Config.Validate() != nil || value.NextComponentID <= semantic.MutableHeadID || len(value.Segments) > limits.MaxVectors {
+	if value.Config.Validate() != nil || value.NextComponentID <= 0 || len(value.Segments) > limits.MaxVectors {
 		return ErrCorrupt
 	}
 	c := value.Config

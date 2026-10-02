@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 )
 
-func commitCurrent(ctx context.Context, paths storePaths, generationID uint64, objectIDs []string, manifestRef fileReference, options Options) (Generation, error) {
-	if err := beforeStep(ctx, options, StepWriteCurrent); err != nil {
+func commitCurrent(ctx context.Context, paths storePaths, generationID uint64, manifestRef fileReference, options Options) (Generation, error) {
+	if err := beforeStep(ctx, options, stepWriteCurrent); err != nil {
 		return Generation{}, err
 	}
 	currentData, _, err := encodeCurrent(currentRecord{GenerationID: generationID, ManifestHash: manifestRef.SHA256}, options.Limits)
@@ -35,30 +35,30 @@ func commitCurrent(ctx context.Context, paths storePaths, generationID uint64, o
 	if err := currentTemp.Close(); err != nil {
 		return Generation{}, err
 	}
-	if err := afterStep(options, StepWriteCurrent, false); err != nil {
+	if err := afterStep(options, stepWriteCurrent, false); err != nil {
 		return Generation{}, err
 	}
-	if err := beforeStep(ctx, options, StepReplaceCurrent); err != nil {
+	if err := beforeStep(ctx, options, stepReplaceCurrent); err != nil {
 		return Generation{}, err
 	}
 	if err := atomicReplace(currentTempName, filepath.Join(paths.root, currentFileName)); err != nil {
 		return Generation{}, fmt.Errorf("semanticpersist: replace CURRENT: %w", err)
 	}
-	if err := afterStep(options, StepReplaceCurrent, true); err != nil {
+	if err := afterStep(options, stepReplaceCurrent, true); err != nil {
 		return Generation{}, err
 	}
 	if options.Durability == DurabilitySynchronous {
-		if err := beforeStep(context.Background(), options, StepSyncStore); err != nil {
+		if err := beforeStep(context.Background(), options, stepSyncStore); err != nil {
 			return Generation{}, fmt.Errorf("%w: %v", ErrIndeterminate, err)
 		}
 		if err := syncDirectory(paths.root); err != nil {
 			return Generation{}, fmt.Errorf("%w: %v", ErrIndeterminate, err)
 		}
-		if err := afterStep(options, StepSyncStore, true); err != nil {
+		if err := afterStep(options, stepSyncStore, true); err != nil {
 			return Generation{}, err
 		}
 	}
-	return Generation{ID: generationID, ObjectIDs: append([]string(nil), objectIDs...)}, nil
+	return Generation{ID: generationID}, nil
 }
 
 func repairCurrent(paths storePaths, generationID uint64, segments []manifestSegment, manifestHash [sha256.Size]byte, options Options) error {

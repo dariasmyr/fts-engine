@@ -51,7 +51,7 @@ func newIndex(vectors vectorstore.PreparedVectorStore, topology topology) (*Inde
 	return &Index{topology: topology, vectors: vectors, workspaces: newSearchWorkspacePool()}, nil
 }
 
-func newIndexFromGraph(calculator vector.Calculator, searchConfig SearchConfig, buildInfo BuildInfo, graph graphData, sourceOverride ...vectorstore.PreparedVectorStore) (*Index, error) {
+func newIndexFromGraph(calculator vector.Calculator, searchConfig SearchConfig, buildInfo BuildInfo, graph graphData, source vectorstore.PreparedVectorStore) (*Index, error) {
 	if err := searchConfig.validate(); err != nil {
 		return nil, err
 	}
@@ -104,14 +104,7 @@ func newIndexFromGraph(calculator vector.Calculator, searchConfig SearchConfig, 
 	}
 	topology.upperLinkOffsets[placement] = uint32(len(topology.upperNeighbors))
 	topology.validated = true
-	if len(sourceOverride) > 0 && sourceOverride[0] != nil && !isNilPreparedVectorStore(sourceOverride[0]) {
-		return newIndex(sourceOverride[0], *topology)
-	}
-	vectors, err := vectorstore.NewPreparedMemoryVectorStore(calculator, graph.values)
-	if err != nil {
-		return nil, err
-	}
-	return &Index{topology: *topology, vectors: vectors, workspaces: newSearchWorkspacePool()}, nil
+	return newIndex(source, *topology)
 }
 
 func (r *Index) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {

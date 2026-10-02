@@ -9,8 +9,7 @@ import (
 )
 
 type Generation struct {
-	ID        uint64
-	ObjectIDs []string
+	ID uint64
 }
 
 // Store owns one writable semantic service and the exclusive store lock.
@@ -30,15 +29,6 @@ func (s *Store) Service() *semantic.Service {
 		return nil
 	}
 	return s.service
-}
-
-func (s *Store) Generation() Generation {
-	if s == nil || s.publishGate == nil {
-		return Generation{}
-	}
-	s.lockUninterruptible()
-	defer s.unlock()
-	return cloneGeneration(s.generation)
 }
 
 // Publish writes the service's next committed generation through the lifetime
@@ -66,7 +56,7 @@ func (s *Store) Publish(ctx context.Context, options Options) (Generation, error
 	if err == nil {
 		s.generation = generation
 	}
-	return cloneGeneration(generation), err
+	return generation, err
 }
 
 // Close releases the lifetime writer lock. The detached semantic service must
@@ -104,10 +94,6 @@ func (s *Store) lock(ctx context.Context) error {
 
 func (s *Store) lockUninterruptible() { s.publishGate <- struct{}{} }
 func (s *Store) unlock()              { <-s.publishGate }
-
-func cloneGeneration(value Generation) Generation {
-	return Generation{ID: value.ID, ObjectIDs: append([]string(nil), value.ObjectIDs...)}
-}
 
 func mergeLimits(requested, opened Limits) Limits {
 	if requested == (Limits{}) {

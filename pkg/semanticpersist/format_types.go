@@ -10,17 +10,15 @@ import (
 type fileReference = persist.Reference
 
 type manifest struct {
-	Version      uint16
 	GenerationID uint64
 	Segments     []manifestSegment
 	State        fileReference
 }
 
 type manifestSegment struct {
-	ObjectID    string
-	SegmentKind semantic.SegmentKind
-	Vectors     fileReference
-	Graph       fileReference
+	ObjectID string
+	Vectors  fileReference
+	Graph    fileReference
 }
 
 type currentRecord struct {
@@ -31,13 +29,13 @@ type currentRecord struct {
 type decodedState struct {
 	Config               semantic.Config
 	Revision             uint64
-	MaxAllocatedVectorID semantic.VectorID
-	NextComponentID      semantic.ComponentID
+	MaxAllocatedVectorID uint64
+	NextComponentID      uint64
 	Segments             []decodedStateSegment
 }
 
 type decodedStateSegment struct {
-	ComponentID   semantic.ComponentID
+	ComponentID   uint64
 	Rows          []semantic.VectorRow
 	LivenessWords []uint64
 }

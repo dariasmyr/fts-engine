@@ -7,7 +7,6 @@ var (
 	ErrUnsupportedVersion = errors.New("semanticpersist: unsupported version")
 	ErrLimitExceeded      = errors.New("semanticpersist: configured limit exceeded")
 	ErrCurrentMissing     = errors.New("semanticpersist: CURRENT is missing")
-	ErrInvalidObjectID    = errors.New("semanticpersist: invalid object ID")
 	ErrPathEscape         = errors.New("semanticpersist: path escapes store root")
 	ErrSymlink            = errors.New("semanticpersist: symlink is not allowed")
 	ErrGenerationExists   = errors.New("semanticpersist: generation already exists")

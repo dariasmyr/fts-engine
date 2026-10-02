@@ -1,4 +1,4 @@
-package flat
+package exact
 
 import (
 	"math"
@@ -7,18 +7,17 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-// TopK retains the best unique-row hits from an exact matrix scan.
-type TopK struct {
+type topK struct {
 	limit int
-	hits  hitHeap
+	hits  []vector.Hit
 }
 
-func NewTopK(limit int) *TopK {
+func newTopK(limit int) *topK {
 	limit = max(0, limit)
-	return &TopK{limit: limit, hits: make(hitHeap, 0, limit)}
+	return &topK{limit: limit, hits: make([]vector.Hit, 0, limit)}
 }
 
-func (t *TopK) Add(hit vector.Hit) {
+func (t *topK) add(hit vector.Hit) {
 	if t.limit == 0 || math.IsNaN(hit.Distance) || math.IsInf(hit.Distance, 0) {
 		return
 	}
@@ -34,7 +33,7 @@ func (t *TopK) Add(hit vector.Hit) {
 	t.siftDown(0)
 }
 
-func (t *TopK) siftUp(index int) {
+func (t *topK) siftUp(index int) {
 	for index > 0 {
 		parent := (index - 1) / 2
 		if compareHits(t.hits[parent], t.hits[index]) >= 0 {
@@ -45,27 +44,27 @@ func (t *TopK) siftUp(index int) {
 	}
 }
 
-func (t *TopK) siftDown(index int) {
+func (t *topK) siftDown(index int) {
 	for {
 		left := index*2 + 1
 		if left >= len(t.hits) {
 			return
 		}
-		worseChild := left
+		worse := left
 		right := left + 1
 		if right < len(t.hits) && compareHits(t.hits[right], t.hits[left]) > 0 {
-			worseChild = right
+			worse = right
 		}
-		if compareHits(t.hits[index], t.hits[worseChild]) >= 0 {
+		if compareHits(t.hits[index], t.hits[worse]) >= 0 {
 			return
 		}
-		t.hits[index], t.hits[worseChild] = t.hits[worseChild], t.hits[index]
-		index = worseChild
+		t.hits[index], t.hits[worse] = t.hits[worse], t.hits[index]
+		index = worse
 	}
 }
 
-func (t *TopK) Results() []vector.Hit {
-	results := append([]vector.Hit(nil), t.hits...)
+func (t *topK) results() []vector.Hit {
+	results := slices.Clone(t.hits)
 	slices.SortFunc(results, compareHits)
 	return results
 }
@@ -85,5 +84,3 @@ func compareHits(a, b vector.Hit) int {
 	}
 	return 0
 }
-
-type hitHeap []vector.Hit

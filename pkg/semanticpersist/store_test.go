@@ -45,7 +45,7 @@ func TestPublishOpenEmptyService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generation.ID != 1 || len(generation.ObjectIDs) != 0 {
+	if generation.ID != 1 {
 		t.Fatalf("empty generation = %+v", generation)
 	}
 	store, err := Open(t.Context(), root, OpenOptions{})
@@ -118,8 +118,8 @@ func TestStorePublishCloseAndCancellationAreSynchronized(t *testing.T) {
 	release := make(chan struct{})
 	published := make(chan error, 1)
 	go func() {
-		_, err := store.Publish(context.Background(), Options{Durability: DurabilityAsynchronous, BeforeStep: func(step PublicationStep) error {
-			if step == StepWriteState {
+		_, err := store.Publish(context.Background(), Options{Durability: DurabilityAsynchronous, beforeStep: func(step publicationStep) error {
+			if step == stepWriteState {
 				close(entered)
 				<-release
 			}
@@ -157,8 +157,8 @@ func TestPublicationFailurePreservesCURRENTAndExplicitRepairSelectsOrphan(t *tes
 	}
 	addAndFlush(t, service, encoder, "doc-b")
 	injected := errors.New("stop before CURRENT")
-	_, err := Publish(ctx, root, service, Options{Durability: DurabilityAsynchronous, ExpectedGeneration: 1, AfterStep: func(step PublicationStep) error {
-		if step == StepRenameGeneration {
+	_, err := Publish(ctx, root, service, Options{Durability: DurabilityAsynchronous, ExpectedGeneration: 1, afterStep: func(step publicationStep) error {
+		if step == stepRenameGeneration {
 			return injected
 		}
 		return nil
@@ -170,8 +170,8 @@ func TestPublicationFailurePreservesCURRENTAndExplicitRepairSelectsOrphan(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.Generation().ID != 1 || store.Service().Statistics().Documents != 1 {
-		t.Fatalf("active generation after failure = %+v", store.Generation())
+	if store.generation.ID != 1 || store.Service().Statistics().Documents != 1 {
+		t.Fatalf("active generation after failure = %+v", store.generation)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -184,8 +184,8 @@ func TestPublicationFailurePreservesCURRENTAndExplicitRepairSelectsOrphan(t *tes
 		t.Fatal(err)
 	}
 	defer repaired.Close()
-	if repaired.Generation().ID != 2 || repaired.Service().Statistics().Documents != 2 {
-		t.Fatalf("repaired generation = %+v, stats = %+v", repaired.Generation(), repaired.Service().Statistics())
+	if repaired.generation.ID != 2 || repaired.Service().Statistics().Documents != 2 {
+		t.Fatalf("repaired generation = %+v, stats = %+v", repaired.generation, repaired.Service().Statistics())
 	}
 	encoder.vectors["doc-c"] = []semantic.ChunkVector{testVector("doc-c", "c-1", []float32{0.5, 0.5})}
 	addAndFlush(t, repaired.Service(), encoder, "doc-c")
@@ -200,8 +200,8 @@ func TestFailureAfterCURRENTIsIndeterminateAndVisible(t *testing.T) {
 	addAndFlush(t, service, encoder, "doc-a")
 	root := t.TempDir()
 	injected := errors.New("after CURRENT")
-	_, err := Publish(ctx, root, service, Options{Durability: DurabilityAsynchronous, AfterStep: func(step PublicationStep) error {
-		if step == StepReplaceCurrent {
+	_, err := Publish(ctx, root, service, Options{Durability: DurabilityAsynchronous, afterStep: func(step publicationStep) error {
+		if step == stepReplaceCurrent {
 			return injected
 		}
 		return nil
@@ -214,16 +214,16 @@ func TestFailureAfterCURRENTIsIndeterminateAndVisible(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if store.Generation().ID != 1 {
-		t.Fatalf("generation = %+v", store.Generation())
+	if store.generation.ID != 1 {
+		t.Fatalf("generation = %+v", store.generation)
 	}
 }
 
 func TestPublicationCrashMatrix(t *testing.T) {
-	preCommit := []PublicationStep{
-		StepWriteVectors, StepWriteGraph, StepSyncSegment, StepRenameSegment,
-		StepWriteState, StepWriteManifest, StepSyncGeneration,
-		StepRenameGeneration, StepWriteCurrent, StepReplaceCurrent,
+	preCommit := []publicationStep{
+		stepWriteVectors, stepWriteGraph, stepSyncSegment, stepRenameSegment,
+		stepWriteState, stepWriteManifest, stepSyncGeneration,
+		stepRenameGeneration, stepWriteCurrent, stepReplaceCurrent,
 	}
 	for _, step := range preCommit {
 		t.Run("before_"+string(step), func(t *testing.T) {
@@ -231,7 +231,7 @@ func TestPublicationCrashMatrix(t *testing.T) {
 			addAndFlush(t, service, encoder, "doc-a")
 			injected := errors.New("injected")
 			root := t.TempDir()
-			_, err := Publish(t.Context(), root, service, Options{BeforeStep: func(got PublicationStep) error {
+			_, err := Publish(t.Context(), root, service, Options{beforeStep: func(got publicationStep) error {
 				if got == step {
 					return injected
 				}
@@ -251,7 +251,7 @@ func TestPublicationCrashMatrix(t *testing.T) {
 			addAndFlush(t, service, encoder, "doc-a")
 			injected := errors.New("injected")
 			root := t.TempDir()
-			_, err := Publish(t.Context(), root, service, Options{AfterStep: func(got PublicationStep) error {
+			_, err := Publish(t.Context(), root, service, Options{afterStep: func(got publicationStep) error {
 				if got == step {
 					return injected
 				}
@@ -275,7 +275,7 @@ func TestPublicationCrashMatrix(t *testing.T) {
 			}
 			addAndFlush(t, service, encoder, "doc-b")
 			injected := errors.New("injected")
-			_, err := Publish(t.Context(), root, service, Options{ExpectedGeneration: 1, BeforeStep: func(got PublicationStep) error {
+			_, err := Publish(t.Context(), root, service, Options{ExpectedGeneration: 1, beforeStep: func(got publicationStep) error {
 				if got == step {
 					return injected
 				}
@@ -289,20 +289,20 @@ func TestPublicationCrashMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			if store.Generation().ID != 1 || store.Service().Statistics().Documents != 1 {
-				t.Fatalf("active generation/state = %+v/%+v", store.Generation(), store.Service().Statistics())
+			if store.generation.ID != 1 || store.Service().Statistics().Documents != 1 {
+				t.Fatalf("active generation/state = %+v/%+v", store.generation, store.Service().Statistics())
 			}
 		})
 	}
 
-	postCommit := []PublicationStep{StepReplaceCurrent, StepSyncStore}
+	postCommit := []publicationStep{stepReplaceCurrent, stepSyncStore}
 	for _, step := range postCommit {
 		t.Run("after_"+string(step), func(t *testing.T) {
 			service, encoder := persistenceService(t)
 			addAndFlush(t, service, encoder, "doc-a")
 			injected := errors.New("injected")
 			root := t.TempDir()
-			_, err := Publish(t.Context(), root, service, Options{AfterStep: func(got PublicationStep) error {
+			_, err := Publish(t.Context(), root, service, Options{afterStep: func(got publicationStep) error {
 				if got == step {
 					return injected
 				}
@@ -316,17 +316,17 @@ func TestPublicationCrashMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			if store.Generation().ID != 1 {
-				t.Fatalf("generation = %+v", store.Generation())
+			if store.generation.ID != 1 {
+				t.Fatalf("generation = %+v", store.generation)
 			}
 		})
 	}
-	t.Run("before_"+string(StepSyncStore), func(t *testing.T) {
+	t.Run("before_"+string(stepSyncStore), func(t *testing.T) {
 		service, encoder := persistenceService(t)
 		addAndFlush(t, service, encoder, "doc-a")
 		root := t.TempDir()
-		_, err := Publish(t.Context(), root, service, Options{BeforeStep: func(step PublicationStep) error {
-			if step == StepSyncStore {
+		_, err := Publish(t.Context(), root, service, Options{beforeStep: func(step publicationStep) error {
+			if step == stepSyncStore {
 				return errors.New("injected")
 			}
 			return nil
@@ -339,8 +339,8 @@ func TestPublicationCrashMatrix(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer store.Close()
-		if store.Generation().ID != 1 {
-			t.Fatalf("generation = %+v", store.Generation())
+		if store.generation.ID != 1 {
+			t.Fatalf("generation = %+v", store.generation)
 		}
 	})
 }
@@ -369,16 +369,16 @@ func TestOpenRejectsCorruptGenerationFiles(t *testing.T) {
 			service, encoder := persistenceService(t)
 			addAndFlush(t, service, encoder, "doc-a")
 			root := t.TempDir()
-			generation, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous})
+			_, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous})
 			if err != nil {
 				t.Fatal(err)
 			}
 			path := filepath.Join(root, relative)
 			if relative == "vectors" {
-				path = filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectIDs[0], vectorsFileName)
+				path = filepath.Join(root, objectsDirectory, segmentsDirectory, soleSegmentObjectID(t, root), vectorsFileName)
 			}
 			if relative == "graph" {
-				path = filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectIDs[0], graphFileName)
+				path = filepath.Join(root, objectsDirectory, segmentsDirectory, soleSegmentObjectID(t, root), graphFileName)
 			}
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -437,11 +437,11 @@ func TestOpenRejectsSymlinkedSegmentObject(t *testing.T) {
 	service, encoder := persistenceService(t)
 	addAndFlush(t, service, encoder, "doc-a")
 	root := t.TempDir()
-	generation, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous})
+	_, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous})
 	if err != nil {
 		t.Fatal(err)
 	}
-	objectPath := filepath.Join(root, objectsDirectory, segmentsDirectory, generation.ObjectIDs[0])
+	objectPath := filepath.Join(root, objectsDirectory, segmentsDirectory, soleSegmentObjectID(t, root))
 	realPath := objectPath + "-real"
 	if err := os.Rename(objectPath, realPath); err != nil {
 		t.Fatal(err)
@@ -484,6 +484,18 @@ func addAndFlush(t testing.TB, service *semantic.Service, encoder staticEncoder,
 	if err := service.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func soleSegmentObjectID(t testing.TB, root string) string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(root, objectsDirectory, segmentsDirectory))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || !entries[0].IsDir() || !validObjectID(entries[0].Name()) {
+		t.Fatalf("segment objects = %+v", entries)
+	}
+	return entries[0].Name()
 }
 
 func testVector(docID fts.DocID, id chunk.ID, value []float32) semantic.ChunkVector {

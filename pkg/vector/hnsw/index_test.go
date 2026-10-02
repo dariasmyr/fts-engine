@@ -73,9 +73,18 @@ func readerTestGraph() graphData {
 	}
 }
 
+func readerTestSource(t testing.TB, calculator vector.Calculator, graph graphData) vectorstore.PreparedVectorStore {
+	t.Helper()
+	source, err := vectorstore.NewPreparedMemoryVectorStore(calculator, graph.values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source
+}
+
 func newReaderForTest(t *testing.T, calculator vector.Calculator, graph graphData) *Index {
 	t.Helper()
-	reader, err := newIndexFromGraph(calculator, readerTestSearchConfig(), readerTestBuildInfo(), graph)
+	reader, err := newIndexFromGraph(calculator, readerTestSearchConfig(), readerTestBuildInfo(), graph, readerTestSource(t, calculator, graph))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +118,8 @@ func TestSearchConfigValidation(t *testing.T) {
 	}
 
 	space := readerTestSpace(t, 1, vector.MetricL2Squared)
-	_, err := newIndexFromGraph(space, SearchConfig{}, readerTestBuildInfo(), graphData{})
+	graph := graphData{}
+	_, err := newIndexFromGraph(space, SearchConfig{}, readerTestBuildInfo(), graph, readerTestSource(t, space, graph))
 	if !errors.Is(err, ErrInvalidSearchConfig) {
 		t.Fatalf("newHNSWIndexFromGraph invalid search config error = %v", err)
 	}
@@ -298,7 +308,11 @@ func TestReaderRejectsInvalidGraphData(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := newIndexFromGraph(test.calculator, validSearch, test.info, test.graph)
+			source, sourceErr := vectorstore.NewPreparedMemoryVectorStore(test.calculator, make([]float32, len(test.graph.nodes)*test.calculator.Dimensions()))
+			if sourceErr != nil {
+				t.Fatal(sourceErr)
+			}
+			_, err := newIndexFromGraph(test.calculator, validSearch, test.info, test.graph, source)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("error = %v, want %v", err, test.want)
 			}

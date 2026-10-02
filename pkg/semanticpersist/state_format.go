@@ -9,7 +9,8 @@ func encodeState(snapshot *semantic.CommittedSnapshot, limits Limits) ([]byte, f
 	segments := snapshot.Segments()
 	stateSegments := make([]semanticformat.StateSegment, len(segments))
 	for i, persisted := range segments {
-		stateSegments[i] = semanticformat.StateSegment{ComponentID: persisted.Segment().ComponentID(), Rows: persisted.Segment().Rows(), LivenessWords: persisted.LivenessWords()}
+		segment := persisted.Snapshot()
+		stateSegments[i] = semanticformat.StateSegment{ComponentID: segment.ComponentID(), Rows: segment.Rows(), LivenessWords: persisted.LivenessWords()}
 	}
 	value := semanticformat.State{Config: snapshot.Config(), Revision: snapshot.Revision(), MaxAllocatedVectorID: snapshot.MaxAllocatedVectorID(), NextComponentID: snapshot.NextComponentID(), Segments: stateSegments}
 	data, ref, err := semanticformat.EncodeState(value, codecLimits(limits))

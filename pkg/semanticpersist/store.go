@@ -121,23 +121,22 @@ func publishLocked(ctx context.Context, paths storePaths, service *semantic.Serv
 	}
 	segments := snapshot.Segments()
 	objects := make([]segmentObject, len(segments))
-	objectIDs := make([]string, len(segments))
 	for i, persisted := range segments {
-		if err := validateSegment(persisted.Segment(), snapshot.Config(), options.Limits); err != nil {
+		segment := persisted.Snapshot()
+		if err := validateSegment(segment, snapshot.Config(), options.Limits); err != nil {
 			return Generation{}, err
 		}
-		objects[i], err = writeSegmentObject(ctx, paths, persisted.Segment(), options)
+		objects[i], err = writeSegmentObject(ctx, paths, segment, options)
 		if err != nil {
 			return Generation{}, err
 		}
-		objectIDs[i] = objects[i].ID
 	}
 	generationID := currentGeneration + 1
 	manifestRef, err := writeGeneration(ctx, paths, generationID, objects, snapshot, options)
 	if err != nil {
 		return Generation{}, err
 	}
-	return commitCurrent(ctx, paths, generationID, objectIDs, manifestRef, options)
+	return commitCurrent(ctx, paths, generationID, manifestRef, options)
 }
 
 type storePaths struct {
@@ -203,16 +202,13 @@ func validateDirectory(path string) error {
 	return nil
 }
 
-func validateSegment(segment *semantic.Segment, config semantic.Config, limits Limits) error {
-	if segment == nil || segment.Vectors() == nil ||
+func validateSegment(segment semantic.SegmentSnapshot, config semantic.Config, limits Limits) error {
+	if segment.Vectors() == nil || segment.Index() == nil ||
 		segment.Dimensions() > limits.MaxDimensions || segment.Len() > limits.MaxVectors ||
 		segment.MaxK() > limits.MaxK || config.MaxK <= 0 || config.MaxK > limits.MaxK || config.MaxK > segment.MaxK() ||
 		config.MaxChunkCandidates < config.MaxK || config.MaxChunkCandidates > limits.MaxK || config.MaxChunkCandidates > segment.MaxK() ||
 		config.MaxChunksPerDocumentHit <= 0 || config.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
 		return ErrLimitExceeded
-	}
-	if err := segment.Validate(); err != nil {
-		return err
 	}
 	components, ok := checkedMultiply64(uint64(segment.Len()), uint64(segment.Dimensions()))
 	if !ok {
@@ -222,23 +218,18 @@ func validateSegment(segment *semantic.Segment, config semantic.Config, limits L
 	if !ok || vectorBytes > limits.MaxVectorBytes || limits.MaxFileBytes < 44 || vectorBytes > limits.MaxFileBytes-44 {
 		return ErrLimitExceeded
 	}
-	if segment.Kind() == semantic.SegmentKindChunkHNSW {
-		index := segment.Index()
-		if index == nil {
-			return ErrLimitExceeded
-		}
-		search := segment.SearchLimits()
-		report := index.Report()
-		if search.MaxK > limits.MaxK || search.MaxEfSearch > limits.MaxEfSearch || search.MaxVisitLimit > limits.MaxVisitLimit ||
-			uint64(report.Storage.DirectedLinks) > limits.MaxGraphLinks ||
-			graphFileSize(index) > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
-			return ErrLimitExceeded
-		}
+	index := segment.Index()
+	search := segment.SearchConfig()
+	report := index.Report()
+	if search.MaxK > limits.MaxK || search.MaxEfSearch > limits.MaxEfSearch || search.MaxVisitLimit > limits.MaxVisitLimit ||
+		uint64(report.Storage.DirectedLinks) > limits.MaxGraphLinks ||
+		graphFileSize(index) > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
+		return ErrLimitExceeded
 	}
 	validString := func(value string) bool { return len(value) <= limits.MaxStringBytes }
-	metadata := segment.Metadata()
-	if !validString(metadata.Embedding.ProviderID) || !validString(metadata.Embedding.ModelID) || !validString(metadata.Embedding.ModelVersion) || !validString(metadata.Embedding.PipelineFingerprint) ||
-		!validString(metadata.Chunking.ID) || !validString(metadata.Chunking.Fingerprint) {
+	descriptor := segment.Pipeline()
+	if !validString(descriptor.Embedding.ProviderID) || !validString(descriptor.Embedding.ModelID) || !validString(descriptor.Embedding.ModelVersion) || !validString(descriptor.Embedding.PipelineFingerprint) ||
+		!validString(descriptor.Chunking.ID) || !validString(descriptor.Chunking.Fingerprint) {
 		return ErrLimitExceeded
 	}
 	documentChunks := make(map[string]int)
@@ -380,20 +371,20 @@ func syncRegularFile(path string) error {
 	return closeErr
 }
 
-func beforeStep(ctx context.Context, options Options, step PublicationStep) error {
+func beforeStep(ctx context.Context, options Options, step publicationStep) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if options.BeforeStep != nil {
-		return options.BeforeStep(step)
+	if options.beforeStep != nil {
+		return options.beforeStep(step)
 	}
 	return nil
 }
 
-func afterStep(options Options, step PublicationStep, committed bool) error {
+func afterStep(options Options, step publicationStep, committed bool) error {
 	var err error
-	if options.AfterStep != nil {
-		err = options.AfterStep(step)
+	if options.afterStep != nil {
+		err = options.afterStep(step)
 	}
 	if err != nil && committed {
 		return fmt.Errorf("%w: %v", ErrIndeterminate, err)

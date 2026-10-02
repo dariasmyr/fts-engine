@@ -7,18 +7,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	semanticformat "github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/format"
 )
 
-const manifestVersion = uint16(5)
+const segmentObjectIdentityDomain = "semantic-segment-object-v1"
 
 func encodeManifest(value manifest, limits Limits) ([]byte, fileReference, error) {
 	segments := make([]semanticformat.SegmentObject, len(value.Segments))
 	for i, segment := range value.Segments {
-		segments[i] = semanticformat.SegmentObject{ObjectID: segment.ObjectID, SegmentKind: segment.SegmentKind, Vectors: formatReference(segment.Vectors), Graph: formatReference(segment.Graph)}
+		segments[i] = semanticformat.SegmentObject{ObjectID: segment.ObjectID, Vectors: formatReference(segment.Vectors), Graph: formatReference(segment.Graph)}
 	}
-	data, ref, err := semanticformat.EncodeManifest(semanticformat.Manifest{Version: value.Version, GenerationID: value.GenerationID, Segments: segments, State: formatReference(value.State)}, codecLimits(limits))
+	data, ref, err := semanticformat.EncodeManifest(semanticformat.Manifest{GenerationID: value.GenerationID, Segments: segments, State: formatReference(value.State)}, codecLimits(limits))
 	return data, persistReference(ref), mapCodecError(err)
 }
 
@@ -29,15 +28,14 @@ func decodeManifest(data []byte, limits Limits) (manifest, error) {
 	}
 	segments := make([]manifestSegment, len(value.Segments))
 	for i, segment := range value.Segments {
-		segments[i] = manifestSegment{ObjectID: segment.ObjectID, SegmentKind: segment.SegmentKind, Vectors: persistReference(segment.Vectors), Graph: persistReference(segment.Graph)}
+		segments[i] = manifestSegment{ObjectID: segment.ObjectID, Vectors: persistReference(segment.Vectors), Graph: persistReference(segment.Graph)}
 	}
-	return manifest{Version: value.Version, GenerationID: value.GenerationID, Segments: segments, State: persistReference(value.State)}, nil
+	return manifest{GenerationID: value.GenerationID, Segments: segments, State: persistReference(value.State)}, nil
 }
 
-func segmentObjectID(kind semantic.SegmentKind, vectors, graph fileReference) string {
+func segmentObjectID(vectors, graph fileReference) string {
 	hash := sha256.New()
-	_, _ = hash.Write([]byte("semantic-segment-v4"))
-	_, _ = hash.Write([]byte{byte(kind)})
+	_, _ = hash.Write([]byte(segmentObjectIdentityDomain))
 	var size [8]byte
 	for _, reference := range []fileReference{vectors, graph} {
 		binary.LittleEndian.PutUint64(size[:], reference.Size)
@@ -48,7 +46,7 @@ func segmentObjectID(kind semantic.SegmentKind, vectors, graph fileReference) st
 }
 
 func validManifestSegment(value manifestSegment) bool {
-	return value.SegmentKind == semantic.SegmentKindChunkHNSW && value.Vectors.Size != 0 && value.Graph.Size != 0 && value.Vectors.SHA256 != [sha256.Size]byte{} && value.Graph.SHA256 != [sha256.Size]byte{}
+	return value.Vectors.Size != 0 && value.Graph.Size != 0 && value.Vectors.SHA256 != [sha256.Size]byte{} && value.Graph.SHA256 != [sha256.Size]byte{}
 }
 func validObjectID(id string) bool {
 	if len(id) != len("seg-")+sha256.Size*2 || !strings.HasPrefix(id, "seg-") || filepath.IsAbs(id) || filepath.VolumeName(id) != "" || strings.ContainsAny(id, `/\`) || id == "." || id == ".." {

@@ -3,6 +3,7 @@ package semanticpersist
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"testing"
 
@@ -20,12 +21,15 @@ func TestCodecRoundTripPreparedSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buffer bytes.Buffer
-	metadata, err := WriteVectorFile(context.Background(), &buffer, source, 5)
+	metadata, err := writeVectorFile(context.Background(), &buffer, source, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	data := buffer.Bytes()
-	opened, openedMetadata, err := OpenVectorFile(bytes.NewReader(data), DefaultCodecLimits())
+	if string(data[:4]) != "SVEC" || binary.LittleEndian.Uint16(data[4:6]) != 2 {
+		t.Fatalf("vector identity = %q v%d", data[:4], binary.LittleEndian.Uint16(data[4:6]))
+	}
+	opened, openedMetadata, err := openVectorFile(bytes.NewReader(data), defaultCodecLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,18 +63,28 @@ func TestCodecRejectsTruncatedAndCorruptData(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buffer bytes.Buffer
-	_, err = WriteVectorFile(context.Background(), &buffer, source, 2)
+	_, err = writeVectorFile(context.Background(), &buffer, source, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	data := buffer.Bytes()
-	if _, _, err := OpenVectorFile(bytes.NewReader(data[:len(data)-1]), DefaultCodecLimits()); err == nil {
+	if _, _, err := openVectorFile(bytes.NewReader(data[:len(data)-1]), defaultCodecLimits()); err == nil {
 		t.Fatal("truncated codec accepted")
 	}
 	corrupt := append([]byte(nil), data...)
 	corrupt[codecHeaderSize] ^= 0xff
-	if _, _, err := OpenVectorFile(bytes.NewReader(corrupt), DefaultCodecLimits()); !errors.Is(err, ErrCorruptSegment) {
+	if _, _, err := openVectorFile(bytes.NewReader(corrupt), defaultCodecLimits()); !errors.Is(err, errCorruptVectorFile) {
 		t.Fatalf("corrupt codec error = %v", err)
+	}
+	oldIdentity := append([]byte(nil), data...)
+	copy(oldIdentity[:4], "VFLT")
+	if _, _, err := openVectorFile(bytes.NewReader(oldIdentity), defaultCodecLimits()); !errors.Is(err, errCorruptVectorFile) {
+		t.Fatalf("old identity error = %v", err)
+	}
+	oldVersion := append([]byte(nil), data...)
+	binary.LittleEndian.PutUint16(oldVersion[4:6], 1)
+	if _, _, err := openVectorFile(bytes.NewReader(oldVersion), defaultCodecLimits()); !errors.Is(err, errUnsupportedVectorFile) {
+		t.Fatalf("old version error = %v", err)
 	}
 }
 
@@ -85,7 +99,7 @@ func TestWriteVectorFileStopsBeforeReading(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = WriteVectorFile(ctx, &bytes.Buffer{}, source, 1)
+	_, err = writeVectorFile(ctx, &bytes.Buffer{}, source, 1)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("WriteVectorFile() = %v, want context.Canceled", err)
 	}
@@ -101,11 +115,11 @@ func FuzzOpenVectorFile(f *testing.F) {
 		f.Fatal(err)
 	}
 	var buffer bytes.Buffer
-	if _, err := WriteVectorFile(context.Background(), &buffer, source, 2); err != nil {
+	if _, err := writeVectorFile(context.Background(), &buffer, source, 2); err != nil {
 		f.Fatal(err)
 	}
 	f.Add(buffer.Bytes())
 	f.Fuzz(func(t *testing.T, data []byte) {
-		_, _, _ = OpenVectorFile(bytes.NewReader(data), CodecLimits{MaxDimensions: 16, MaxVectors: 32, MaxVectorBytes: 4096, MaxK: 32})
+		_, _, _ = openVectorFile(bytes.NewReader(data), codecLimitsConfig{MaxDimensions: 16, MaxVectors: 32, MaxVectorBytes: 4096, MaxK: 32})
 	})
 }

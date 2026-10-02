@@ -35,7 +35,7 @@ func TestHydrateRejectsInvalidWatermarksAndLiveness(t *testing.T) {
 		Revision:             snapshot.Revision(),
 		MaxAllocatedVectorID: snapshot.MaxAllocatedVectorID(),
 		NextComponentID:      snapshot.NextComponentID(),
-		Segments:             []HydratedSegment{{Segment: segment.Segment(), LivenessWords: segment.LivenessWords()}},
+		Segments:             []HydratedSegment{{Snapshot: segment.Snapshot(), LivenessWords: segment.LivenessWords()}},
 	}
 
 	invalidID := base
@@ -44,12 +44,12 @@ func TestHydrateRejectsInvalidWatermarksAndLiveness(t *testing.T) {
 		t.Fatalf("invalid vector watermark error = %v", err)
 	}
 	invalidComponent := base
-	invalidComponent.NextComponentID = segment.Segment().ComponentID()
+	invalidComponent.NextComponentID = segment.Snapshot().ComponentID()
 	if _, err := Hydrate(ctx, invalidComponent); !errors.Is(err, ErrInternalState) {
 		t.Fatalf("invalid component watermark error = %v", err)
 	}
 	invalidLiveness := base
-	invalidLiveness.Segments = []HydratedSegment{{Segment: segment.Segment(), LivenessWords: nil}}
+	invalidLiveness.Segments = []HydratedSegment{{Snapshot: segment.Snapshot(), LivenessWords: nil}}
 	if _, err := Hydrate(ctx, invalidLiveness); !errors.Is(err, ErrInvalidSegment) {
 		t.Fatalf("invalid liveness error = %v", err)
 	}

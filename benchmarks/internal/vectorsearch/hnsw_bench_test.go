@@ -3,11 +3,13 @@ package vectorsearch
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
+	"math"
 	"testing"
 
 	flat "github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/flat"
-	"github.com/dariasmyr/fts-engine/pkg/semanticpersist"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
@@ -49,12 +51,10 @@ func BenchmarkOpenGraph(b *testing.B) {
 	}
 	flatIndex := benchmarkFlatIndex(b, values, vector.MetricL2Squared)
 	reader := benchmarkBuild(b, flatIndex.Vectors(), dimensions, rows, vector.MetricL2Squared)
-	var vectorData bytes.Buffer
-	vectorMetadata, err := semanticpersist.WriteVectorFile(context.Background(), &vectorData, flatIndex.Vectors(), flatIndex.MaxK())
+	reference, err := benchmarkVectorReference(context.Background(), flatIndex.Vectors())
 	if err != nil {
 		b.Fatal(err)
 	}
-	reference := hnsw.VectorFileReference{Size: vectorMetadata.Size, SHA256: vectorMetadata.SHA256}
 	var graphData bytes.Buffer
 	_, err = hnsw.WriteGraph(context.Background(), &graphData, reader, reference)
 	if err != nil {
@@ -69,6 +69,24 @@ func BenchmarkOpenGraph(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func benchmarkVectorReference(ctx context.Context, source vectorstore.PreparedVectorStore) (hnsw.VectorFileReference, error) {
+	hash := sha256.New()
+	values := make([]float32, source.Dimensions())
+	var encoded [4]byte
+	for ordinal := range source.Len() {
+		if err := source.ReadVectorInto(ctx, vector.Ordinal(ordinal), values); err != nil {
+			return hnsw.VectorFileReference{}, err
+		}
+		for _, value := range values {
+			binary.LittleEndian.PutUint32(encoded[:], math.Float32bits(value))
+			_, _ = hash.Write(encoded[:])
+		}
+	}
+	result := hnsw.VectorFileReference{Size: uint64(source.Len()) * uint64(source.Dimensions()) * 4}
+	copy(result.SHA256[:], hash.Sum(nil))
+	return result, nil
 }
 
 func BenchmarkANNAndExactReference(b *testing.B) {

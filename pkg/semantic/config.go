@@ -21,7 +21,7 @@ type Config struct {
 	HNSWSearch              hnsw.SearchConfig
 	// InitialMaxAllocatedVectorID seeds the allocator; the first new vector gets
 	// the following ID. Use it when continuing an existing ID namespace.
-	InitialMaxAllocatedVectorID VectorID
+	InitialMaxAllocatedVectorID uint64
 }
 
 func (c Config) Validate() error {
@@ -98,15 +98,15 @@ func normalizeSearchConfig(config hnsw.SearchConfig, maxK, maxCandidates, maxVec
 	return config
 }
 
-// SearchPolicy contains the immutable limits required to search and group a
+// searchPolicy contains the immutable limits required to search and group a
 // read view. It is separate from request-local SearchOptions.
-type SearchPolicy struct {
+type searchPolicy struct {
 	MaxK                    int
 	MaxChunkCandidates      int
 	MaxChunksPerDocumentHit int
 }
 
-func (p SearchPolicy) Validate() error {
+func (p searchPolicy) validate() error {
 	if p.MaxK <= 0 || p.MaxChunkCandidates < p.MaxK || p.MaxChunksPerDocumentHit <= 0 {
 		return ErrInvalidConfig
 	}

@@ -18,7 +18,7 @@ type segmentObject struct {
 	Graph   fileReference
 }
 
-func writeSegmentObject(ctx context.Context, paths storePaths, segment *semantic.Segment, options Options) (segmentObject, error) {
+func writeSegmentObject(ctx context.Context, paths storePaths, segment semantic.SegmentSnapshot, options Options) (segmentObject, error) {
 	segmentTemp, err := os.MkdirTemp(paths.segments, ".tmp-seg-")
 	if err != nil {
 		return segmentObject{}, fmt.Errorf("semanticpersist: create segment temp: %w", err)
@@ -30,55 +30,52 @@ func writeSegmentObject(ctx context.Context, paths storePaths, segment *semantic
 		}
 	}()
 
-	if err := beforeStep(ctx, options, StepWriteVectors); err != nil {
+	if err := beforeStep(ctx, options, stepWriteVectors); err != nil {
 		return segmentObject{}, err
 	}
 	vectorsRef, err := writeVectorsFile(ctx, filepath.Join(segmentTemp, vectorsFileName), segment.Vectors(), segment.MaxK(), options.Durability)
 	if err != nil {
 		return segmentObject{}, err
 	}
-	if err := afterStep(options, StepWriteVectors, false); err != nil {
+	if err := afterStep(options, stepWriteVectors, false); err != nil {
 		return segmentObject{}, err
 	}
 	if vectorsRef.Size > options.Limits.MaxFileBytes || vectorsRef.Size > options.Limits.MaxVectorBytes+128 {
 		return segmentObject{}, ErrLimitExceeded
 	}
 
-	var graphRef fileReference
-	if segment.Kind() == semantic.SegmentKindChunkHNSW {
-		if err := beforeStep(ctx, options, StepWriteGraph); err != nil {
-			return segmentObject{}, err
-		}
-		graphRef, err = writeGraphFile(ctx, filepath.Join(segmentTemp, graphFileName), segment.Index(), vectorsRef, options.Durability)
-		if err != nil {
-			return segmentObject{}, err
-		}
-		if err := afterStep(options, StepWriteGraph, false); err != nil {
-			return segmentObject{}, err
-		}
-		if graphRef.Size > min(options.Limits.MaxFileBytes, options.Limits.MaxGraphBytes) {
-			return segmentObject{}, ErrLimitExceeded
-		}
+	if err := beforeStep(ctx, options, stepWriteGraph); err != nil {
+		return segmentObject{}, err
+	}
+	graphRef, err := writeGraphFile(ctx, filepath.Join(segmentTemp, graphFileName), segment.Index(), vectorsRef, options.Durability)
+	if err != nil {
+		return segmentObject{}, err
+	}
+	if err := afterStep(options, stepWriteGraph, false); err != nil {
+		return segmentObject{}, err
+	}
+	if graphRef.Size > min(options.Limits.MaxFileBytes, options.Limits.MaxGraphBytes) {
+		return segmentObject{}, ErrLimitExceeded
 	}
 	if options.Durability == DurabilitySynchronous {
-		if err := beforeStep(ctx, options, StepSyncSegment); err != nil {
+		if err := beforeStep(ctx, options, stepSyncSegment); err != nil {
 			return segmentObject{}, err
 		}
 		if err := syncDirectory(segmentTemp); err != nil {
 			return segmentObject{}, err
 		}
-		if err := afterStep(options, StepSyncSegment, false); err != nil {
+		if err := afterStep(options, stepSyncSegment, false); err != nil {
 			return segmentObject{}, err
 		}
 	}
 
-	objectID := segmentObjectID(segment.Kind(), vectorsRef, graphRef)
+	objectID := segmentObjectID(vectorsRef, graphRef)
 	objectPath := filepath.Join(paths.segments, objectID)
-	if err := beforeStep(ctx, options, StepRenameSegment); err != nil {
+	if err := beforeStep(ctx, options, stepRenameSegment); err != nil {
 		return segmentObject{}, err
 	}
 	if _, err := os.Lstat(objectPath); err == nil {
-		if err := verifyExistingObject(objectPath, segment.Kind(), vectorsRef, graphRef, options.Limits, options.Durability); err != nil {
+		if err := verifyExistingObject(objectPath, vectorsRef, graphRef, options.Limits, options.Durability); err != nil {
 			return segmentObject{}, err
 		}
 		if options.Durability == DurabilitySynchronous {
@@ -103,7 +100,7 @@ func writeSegmentObject(ctx context.Context, paths storePaths, segment *semantic
 			}
 		}
 	}
-	if err := afterStep(options, StepRenameSegment, false); err != nil {
+	if err := afterStep(options, stepRenameSegment, false); err != nil {
 		return segmentObject{}, err
 	}
 	return segmentObject{ID: objectID, Vectors: vectorsRef, Graph: graphRef}, nil
@@ -114,7 +111,7 @@ func writeVectorsFile(ctx context.Context, path string, source vectorstore.Prepa
 	if err != nil {
 		return fileReference{}, err
 	}
-	metadata, writeErr := WriteVectorFile(ctx, file, source, maxK)
+	metadata, writeErr := writeVectorFile(ctx, file, source, maxK)
 	if writeErr == nil && durability == DurabilitySynchronous {
 		writeErr = file.Sync()
 	}
@@ -147,7 +144,7 @@ func writeGraphFile(ctx context.Context, path string, reader *hnsw.Index, vector
 	return fileReference{Size: metadata.Size, SHA256: metadata.SHA256}, nil
 }
 
-func verifyExistingObject(path string, kind semantic.SegmentKind, vectors, graph fileReference, limits Limits, durability DurabilityMode) error {
+func verifyExistingObject(path string, vectors, graph fileReference, limits Limits, durability DurabilityMode) error {
 	if err := validateDirectory(path); err != nil {
 		return err
 	}
@@ -156,16 +153,11 @@ func verifyExistingObject(path string, kind semantic.SegmentKind, vectors, graph
 	if _, err := readReferencedFile(vectorsPath, vectors, limits.MaxVectorBytes+128); err != nil {
 		return err
 	}
-	if kind == semantic.SegmentKindChunkHNSW {
-		if _, err := readReferencedFile(graphPath, graph, min(limits.MaxFileBytes, limits.MaxGraphBytes)); err != nil {
-			return err
-		}
+	if _, err := readReferencedFile(graphPath, graph, min(limits.MaxFileBytes, limits.MaxGraphBytes)); err != nil {
+		return err
 	}
 	if durability == DurabilitySynchronous {
-		files := []string{vectorsPath}
-		if kind == semantic.SegmentKindChunkHNSW {
-			files = append(files, graphPath)
-		}
+		files := []string{vectorsPath, graphPath}
 		for _, file := range files {
 			if err := syncRegularFile(file); err != nil {
 				return err

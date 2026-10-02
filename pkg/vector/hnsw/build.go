@@ -39,8 +39,6 @@ func Build(ctx context.Context, source vectorstore.PreparedVectorStore, options 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	builder.source = source
-
 	reportBuildProgress(options.Progress, BuildPhaseVectors, 0, total)
 	var scratch []float32
 	if total > 0 {
@@ -73,7 +71,7 @@ func Build(ctx context.Context, source vectorstore.PreparedVectorStore, options 
 	}
 
 	reportBuildProgress(options.Progress, BuildPhaseFreeze, total, total)
-	index, err := builder.Freeze()
+	index, err := builder.Freeze(source)
 	if err != nil {
 		return nil, err
 	}

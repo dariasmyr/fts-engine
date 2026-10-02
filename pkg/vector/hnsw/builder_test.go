@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func builderTestConfig(seed uint64, maxVectors int) BuildConfig {
@@ -41,6 +42,15 @@ func addTestVector(t *testing.T, builder *builder, ordinal vector.Ordinal, value
 		t.Fatalf("Add(%d, %v): %v", ordinal, value, err)
 	}
 	return node
+}
+
+func freezeTestBuilder(t testing.TB, builder *builder) (*Index, error) {
+	t.Helper()
+	source, err := vectorstore.NewPreparedMemoryVectorStore(builder.calculator, builder.graph.values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return builder.Freeze(source)
 }
 
 func readerTopology(t *testing.T, reader *Index) [][][]nodeOrdinal {
@@ -147,7 +157,7 @@ func TestBuilderCheckAfterEveryInsertionAndEntryTransitions(t *testing.T) {
 func TestBuilderCompleteAndIncompleteFreeze(t *testing.T) {
 	incomplete := newTestBuilder(t, 11, 2)
 	addTestVector(t, incomplete, 0, []float32{1, 2})
-	if reader, err := incomplete.Freeze(); reader != nil || !errors.Is(err, errBuilderIncomplete) {
+	if reader, err := freezeTestBuilder(t, incomplete); reader != nil || !errors.Is(err, errBuilderIncomplete) {
 		t.Fatalf("incomplete Freeze = (%v, %v), want (nil, ErrBuilderIncomplete)", reader, err)
 	}
 	if stats, err := incomplete.Check(); err != nil || stats.NodeCount != 1 {
@@ -158,7 +168,7 @@ func TestBuilderCompleteAndIncompleteFreeze(t *testing.T) {
 	addTestVector(t, builder, 2, []float32{2, 20})
 	addTestVector(t, builder, 0, []float32{0, 10})
 	addTestVector(t, builder, 1, []float32{1, 15})
-	reader, err := builder.Freeze()
+	reader, err := freezeTestBuilder(t, builder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,11 +232,11 @@ func TestBuilderInvalidAddIsAtomic(t *testing.T) {
 		addTestVector(t, builder, vector.Ordinal(ordinal+1), value)
 		addTestVector(t, control, vector.Ordinal(ordinal+1), value)
 	}
-	got, err := builder.Freeze()
+	got, err := freezeTestBuilder(t, builder)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := control.Freeze()
+	want, err := freezeTestBuilder(t, control)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +263,7 @@ func TestBuilderMaxDegreesDuplicatesAndClusteredVectors(t *testing.T) {
 			t.Fatalf("Check after duplicate/clustered insertion %d: %v", i, err)
 		}
 	}
-	reader, err := builder.Freeze()
+	reader, err := freezeTestBuilder(t, builder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +307,7 @@ func TestBuilderFixedSeedTopologyDeterminism(t *testing.T) {
 		for ordinal, value := range values {
 			addTestVector(t, builder, vector.Ordinal(ordinal), value)
 		}
-		reader, err := builder.Freeze()
+		reader, err := freezeTestBuilder(t, builder)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -328,7 +338,7 @@ func TestBuilderSeedAndOrderPermutationsRemainValid(t *testing.T) {
 					t.Fatalf("seed %d order %d insertion %d Check = (%+v, %v)", seed, orderIndex, insertion, stats, err)
 				}
 			}
-			reader, err := builder.Freeze()
+			reader, err := freezeTestBuilder(t, builder)
 			if err != nil {
 				t.Fatalf("seed %d order %d Freeze: %v", seed, orderIndex, err)
 			}
@@ -350,11 +360,11 @@ func TestBuilderFreezeIndependenceAndIdempotence(t *testing.T) {
 	for ordinal, value := range [][]float32{{0, 0}, {1, 0}, {0, 1}, {1, 1}} {
 		addTestVector(t, builder, vector.Ordinal(ordinal), value)
 	}
-	first, err := builder.Freeze()
+	first, err := freezeTestBuilder(t, builder)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := builder.Freeze()
+	second, err := freezeTestBuilder(t, builder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +378,7 @@ func TestBuilderFreezeIndependenceAndIdempotence(t *testing.T) {
 	if got, _ := readPreparedVector(second.vectors, 0); !slices.Equal(got, []float32{0, 0}) {
 		t.Fatalf("frozen readers share values: %v", got)
 	}
-	third, err := builder.Freeze()
+	third, err := freezeTestBuilder(t, builder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +444,7 @@ func TestBuilderFreezeProducesSearchableReader(t *testing.T) {
 	for ordinal := range count {
 		addTestVector(t, builder, vector.Ordinal(ordinal), []float32{float32(ordinal), 0})
 	}
-	reader, err := builder.Freeze()
+	reader, err := freezeTestBuilder(t, builder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +468,7 @@ func TestBuilderFreezeReaderSearchEdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	emptyReader, err := empty.Freeze()
+	emptyReader, err := freezeTestBuilder(t, empty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +486,7 @@ func TestBuilderFreezeReaderSearchEdgeCases(t *testing.T) {
 	if _, err := cosine.Add(context.Background(), 0, []float32{10, 0}); err != nil {
 		t.Fatal(err)
 	}
-	cosineReader, err := cosine.Freeze()
+	cosineReader, err := freezeTestBuilder(t, cosine)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +540,7 @@ func FuzzBuilderInsertFreeze(f *testing.F) {
 				t.Fatal(err)
 			}
 		}
-		reader, err := builder.Freeze()
+		reader, err := freezeTestBuilder(t, builder)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -565,7 +575,7 @@ func FuzzBuilderFloatInputs(f *testing.F) {
 		if _, err := builder.Check(); err != nil {
 			t.Fatal(err)
 		}
-		reader, err := builder.Freeze()
+		reader, err := freezeTestBuilder(t, builder)
 		if err != nil {
 			t.Fatal(err)
 		}

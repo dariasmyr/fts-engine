@@ -18,7 +18,6 @@ type builder struct {
 	present      []bool
 	graph        graphData
 	rng          levelRNG
-	source       vectorstore.PreparedVectorStore
 }
 
 func newBuilder(buildConfig BuildConfig, searchConfig SearchConfig, vectorCount int) (*builder, error) {
@@ -123,7 +122,7 @@ func (b *builder) Check() (GraphStats, error) {
 }
 
 // Freeze validates and copies a complete graph into an immutable packed HNSW index.
-func (b *builder) Freeze() (*Index, error) {
+func (b *builder) Freeze(source vectorstore.PreparedVectorStore) (*Index, error) {
 	if len(b.graph.nodes) != b.expected {
 		return nil, errBuilderIncomplete
 	}
@@ -134,7 +133,7 @@ func (b *builder) Freeze() (*Index, error) {
 	}
 	// newHNSWIndexFromGraph validates and copies every retained section, so passing
 	// the mutable graph directly avoids a redundant full graph clone.
-	return newIndexFromGraph(b.calculator, b.searchConfig, b.buildInfo, b.graph, b.source)
+	return newIndexFromGraph(b.calculator, b.searchConfig, b.buildInfo, b.graph, source)
 }
 
 func (b *builder) insert(node nodeOrdinal) {

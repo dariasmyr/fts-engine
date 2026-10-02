@@ -4,11 +4,12 @@ package slicedradix
 import (
 	"encoding/gob"
 	"fmt"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/segment"
 	"io"
 	"sort"
 	"sync"
+
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/segment"
 )
 
 type node struct {
@@ -415,3 +416,8 @@ func (t *Index) collectSubtreeDocs(current int, merged map[fts.DocOrd]fts.Postin
 		t.collectSubtreeDocs(child, merged)
 	}
 }
+
+var _ fts.PositionalIndex = (*Index)(nil)
+var _ fts.PrefixIndex = (*Index)(nil)
+var _ fts.Index = (*Index)(nil)
+var _ segment.Source = (*Index)(nil)

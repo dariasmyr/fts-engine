@@ -5,22 +5,18 @@ import (
 	"encoding/hex"
 	"path/filepath"
 	"strings"
-
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
 )
 
-const manifestVersion = uint16(5)
+const manifestVersion = uint16(6)
 
 type SegmentObject struct {
-	ObjectID    string
-	SegmentKind semantic.SegmentKind
-	Vectors     FileReference
-	Graph       FileReference
+	ObjectID string
+	Vectors  FileReference
+	Graph    FileReference
 }
 
 // Manifest is the decoded SMAN payload.
 type Manifest struct {
-	Version      uint16
 	GenerationID uint64
 	Segments     []SegmentObject
 	State        FileReference
@@ -38,8 +34,6 @@ func EncodeManifest(value Manifest, limits Limits) ([]byte, FileReference, error
 			return nil, FileReference{}, ErrCorrupt
 		}
 		e.string(segment.ObjectID, limits.MaxStringBytes)
-		e.u8(uint8(segment.SegmentKind))
-		e.raw(make([]byte, 7))
 		encodeFileReference(e, segment.Vectors)
 		encodeFileReference(e, segment.Graph)
 	}
@@ -52,20 +46,15 @@ func DecodeManifest(data []byte, limits Limits) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	value := Manifest{Version: manifestVersion, GenerationID: d.u64()}
+	value := Manifest{GenerationID: d.u64()}
 	countValue := uint64(d.u32())
-	if countValue > uint64(limits.MaxVectors) || countValue > uint64(d.remaining()/100) {
+	if countValue > uint64(limits.MaxVectors) || countValue > uint64(d.remaining()/152) {
 		return Manifest{}, ErrLimitExceeded
 	}
 	count := int(countValue)
 	value.Segments = make([]SegmentObject, count)
 	for i := range value.Segments {
-		segment := SegmentObject{ObjectID: d.string(), SegmentKind: semantic.SegmentKind(d.u8())}
-		for _, b := range d.take(7) {
-			if b != 0 {
-				return Manifest{}, ErrCorrupt
-			}
-		}
+		segment := SegmentObject{ObjectID: d.string()}
 		segment.Vectors, segment.Graph = decodeFileReference(d), decodeFileReference(d)
 		if !validObjectID(segment.ObjectID) || !validSegment(segment) {
 			return Manifest{}, ErrCorrupt
@@ -94,7 +83,7 @@ func validReference(ref FileReference) bool {
 }
 
 func validSegment(value SegmentObject) bool {
-	return validReference(value.Vectors) && validReference(value.Graph) && value.SegmentKind == semantic.SegmentKindChunkHNSW
+	return validReference(value.Vectors) && validReference(value.Graph)
 }
 
 func validObjectID(id string) bool {

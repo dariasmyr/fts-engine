@@ -6,8 +6,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"testing"
-
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
 )
 
 func TestSemanticFormatsRoundTripAndRejectMalformedData(t *testing.T) {
@@ -32,13 +30,18 @@ func TestSemanticFormatsRoundTripAndRejectMalformedData(t *testing.T) {
 	}
 	ref := fileReference{Size: 32, SHA256: sha256.Sum256([]byte("object"))}
 	manifestData, manifestRef, err := encodeManifest(manifest{GenerationID: 1, State: stateRef, Segments: []manifestSegment{
-		{ObjectID: segmentObjectID(semantic.SegmentKindChunkHNSW, ref, ref), SegmentKind: semantic.SegmentKindChunkHNSW, Vectors: ref, Graph: ref},
+		{ObjectID: segmentObjectID(ref, ref), Vectors: ref, Graph: ref},
 	}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if decoded, err := decodeManifest(manifestData, limits); err != nil || len(decoded.Segments) != 1 {
 		t.Fatalf("decode manifest = %+v, %v", decoded, err)
+	}
+	if _, _, err := encodeManifest(manifest{GenerationID: 1, State: stateRef, Segments: []manifestSegment{
+		{ObjectID: segmentObjectID(ref, fileReference{}), Vectors: ref},
+	}}, limits); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("manifest without graph error = %v", err)
 	}
 	currentData, _, err := encodeCurrent(currentRecord{GenerationID: 1, ManifestHash: manifestRef.SHA256}, limits)
 	if err != nil {
@@ -91,7 +94,7 @@ func TestSemanticFormatsRejectPreviousVersions(t *testing.T) {
 		decode  func([]byte) error
 	}{
 		{name: "state v6", data: stateData, version: 6, decode: func(data []byte) error { _, err := decodeState(data, DefaultLimits()); return err }},
-		{name: "manifest v4", data: manifestData, version: 4, decode: func(data []byte) error { _, err := decodeManifest(data, DefaultLimits()); return err }},
+		{name: "manifest v5", data: manifestData, version: 5, decode: func(data []byte) error { _, err := decodeManifest(data, DefaultLimits()); return err }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			data := append([]byte(nil), test.data...)

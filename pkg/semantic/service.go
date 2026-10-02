@@ -18,12 +18,12 @@ type pendingVector struct {
 }
 
 type vectorLocation struct {
-	component ComponentID
+	component uint64
 	ordinal   vector.Ordinal
 }
 
 type livenessChange struct {
-	ids     []VectorID
+	ids     []uint64
 	allowed bool
 }
 
@@ -37,10 +37,10 @@ type Service struct {
 
 	pendingVectors           []pendingVector
 	pendingVisibilityChanges []livenessChange
-	currentByDoc             map[fts.DocID][]VectorID
-	locations                map[VectorID]vectorLocation
-	maxAllocatedID           VectorID
-	nextComponentID          ComponentID
+	currentByDoc             map[fts.DocID][]uint64
+	locations                map[uint64]vectorLocation
+	maxAllocatedID           uint64
+	nextComponentID          uint64
 	mutationVersion          uint64
 }
 
@@ -54,7 +54,7 @@ func New(config Config) (*Service, error) {
 		return nil, ErrInvalidConfig
 	}
 	descriptor := PipelineDescriptor{Embedding: config.Embedding, Chunking: config.Chunking}
-	policy := SearchPolicy{MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}
+	policy := searchPolicy{MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}
 	published, err := newEmptyReadView(context.Background(), descriptor, policy, config.HNSWSearch)
 	if err != nil {
 		return nil, err
@@ -66,9 +66,9 @@ func New(config Config) (*Service, error) {
 		stateGate:       make(chan struct{}, 1),
 		flushGate:       make(chan struct{}, 1),
 		maxAllocatedID:  config.InitialMaxAllocatedVectorID,
-		nextComponentID: MutableHeadID + 1,
-		currentByDoc:    make(map[fts.DocID][]VectorID),
-		locations:       make(map[VectorID]vectorLocation),
+		nextComponentID: 1,
+		currentByDoc:    make(map[fts.DocID][]uint64),
+		locations:       make(map[uint64]vectorLocation),
 		pendingVectors:  make([]pendingVector, 0, config.InitialVectorCapacity),
 	}, nil
 }
@@ -273,7 +273,7 @@ func (s *Service) flushPending(ctx context.Context) error {
 	if state.version == state.base.generation {
 		return nil
 	}
-	if len(state.pendingVectors) > 0 && state.componentID == ComponentID(math.MaxUint64) {
+	if len(state.pendingVectors) > 0 && state.componentID == uint64(math.MaxUint64) {
 		return ErrComponentIDExhausted
 	}
 	segment, err := buildPendingSegment(ctx, state.componentID, state.pendingVectors, state.config)
@@ -287,7 +287,7 @@ func (s *Service) flushPending(ctx context.Context) error {
 	return s.commitFlush(ctx, state, published, locations, segment != nil)
 }
 
-func (s *Service) commitFlush(ctx context.Context, state flushState, published *ReadView, locations map[VectorID]vectorLocation, allocatedComponent bool) error {
+func (s *Service) commitFlush(ctx context.Context, state flushState, published *ReadView, locations map[uint64]vectorLocation, allocatedComponent bool) error {
 	if err := s.lockState(ctx); err != nil {
 		return err
 	}
@@ -310,11 +310,11 @@ func (s *Service) commitFlush(ctx context.Context, state flushState, published *
 
 type flushState struct {
 	version           uint64
-	componentID       ComponentID
+	componentID       uint64
 	pendingVectors    []pendingVector
 	visibilityChanges []livenessChange
-	documents         map[fts.DocID][]VectorID
-	locations         map[VectorID]vectorLocation
+	documents         map[fts.DocID][]uint64
+	locations         map[uint64]vectorLocation
 	base              *ReadView
 	config            Config
 }
@@ -344,7 +344,7 @@ func (s *Service) captureFlushState(ctx context.Context) (flushState, error) {
 				return flushState{}, err
 			}
 		}
-		pendingVisibilityChanges[i] = livenessChange{ids: append([]VectorID(nil), change.ids...), allowed: change.allowed}
+		pendingVisibilityChanges[i] = livenessChange{ids: append([]uint64(nil), change.ids...), allowed: change.allowed}
 	}
 	locations, err := cloneLocations(ctx, s.locations)
 	if err != nil {
@@ -357,7 +357,7 @@ func (s *Service) captureFlushState(ctx context.Context) (flushState, error) {
 	}, nil
 }
 
-func buildPendingSegment(ctx context.Context, componentID ComponentID, pending []pendingVector, config Config) (*Segment, error) {
+func buildPendingSegment(ctx context.Context, componentID uint64, pending []pendingVector, config Config) (*segment, error) {
 	if len(pending) == 0 {
 		return nil, nil
 	}
@@ -376,7 +376,7 @@ func buildPendingSegment(ctx context.Context, componentID ComponentID, pending [
 	if err != nil {
 		return nil, err
 	}
-	return BuildSegment(ctx, componentID, SegmentMetadata{Embedding: config.Embedding, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
+	return buildSegment(ctx, componentID, PipelineDescriptor{Embedding: config.Embedding, Chunking: config.Chunking}, source, rows, hnsw.BuildOptions{
 		Build:  config.HNSWBuild,
 		Search: config.HNSWSearch,
 	})
@@ -390,20 +390,20 @@ func newInMemoryVectorStoreFromConfig(config Config, values [][]float32) (*vecto
 	return vectorstore.NewMemoryVectorStore(calculator, values)
 }
 
-func publishIndex(ctx context.Context, base *ReadView, locations map[VectorID]vectorLocation, changes []livenessChange, pending *Segment, pendingComponent ComponentID, documents map[fts.DocID][]VectorID, generation uint64) (*ReadView, map[VectorID]vectorLocation, error) {
+func publishIndex(ctx context.Context, base *ReadView, locations map[uint64]vectorLocation, changes []livenessChange, pending *segment, pendingComponent uint64, documents map[fts.DocID][]uint64, generation uint64) (*ReadView, map[uint64]vectorLocation, error) {
 	segments := append([]visibleSegment(nil), base.segments...)
-	componentIndexes := make(map[ComponentID]int, len(segments))
+	componentIndexes := make(map[uint64]int, len(segments))
 	for i, view := range segments {
 		if view.segment == nil {
 			return nil, nil, ErrInternalState
 		}
-		componentIndexes[view.segment.ComponentID()] = i
+		componentIndexes[view.segment.componentID()] = i
 	}
 	type componentChanges struct {
 		allowed    []vector.Ordinal
 		disallowed []vector.Ordinal
 	}
-	changesByComponent := make(map[ComponentID]*componentChanges)
+	changesByComponent := make(map[uint64]*componentChanges)
 	for changeIndex, change := range changes {
 		if changeIndex%64 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -453,25 +453,25 @@ func publishIndex(ctx context.Context, base *ReadView, locations map[VectorID]ve
 			return nil, nil, err
 		}
 		segments = append(segments, visibleSegment{segment: pending, filter: filter})
-		for ordinal, row := range pending.Rows() {
+		for ordinal, row := range pending.rows {
 			resultLocations[row.VectorID] = vectorLocation{component: pendingComponent, ordinal: vector.Ordinal(ordinal)}
 		}
 	}
-	view, err := newReadView(ctx, generation, segments, base.descriptor, SearchPolicy{MaxK: base.maxK, MaxChunkCandidates: base.maxCandidates, MaxChunksPerDocumentHit: base.maxChunksPerDocumentHit}, base.search)
+	view, err := newReadView(ctx, generation, segments, base.descriptor, searchPolicy{MaxK: base.maxK, MaxChunkCandidates: base.maxCandidates, MaxChunksPerDocumentHit: base.maxChunksPerDocumentHit}, base.search)
 	if err != nil {
 		return nil, nil, err
 	}
 	return view, resultLocations, nil
 }
 
-func filterForDocumentMapping(ctx context.Context, segment *Segment, documents map[fts.DocID][]VectorID) (vector.BitSet, error) {
-	liveIDs := make(map[VectorID]struct{})
+func filterForDocumentMapping(ctx context.Context, segment *segment, documents map[fts.DocID][]uint64) (vector.BitSet, error) {
+	liveIDs := make(map[uint64]struct{})
 	for _, ids := range documents {
 		for _, id := range ids {
 			liveIDs[id] = struct{}{}
 		}
 	}
-	allowed := make([]vector.Ordinal, 0, segment.Len())
+	allowed := make([]vector.Ordinal, 0, segment.len())
 	for ordinal, row := range segment.rows {
 		if ordinal%64 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -482,15 +482,15 @@ func filterForDocumentMapping(ctx context.Context, segment *Segment, documents m
 			allowed = append(allowed, vector.Ordinal(ordinal))
 		}
 	}
-	filter, err := vector.NewBitSet(uint32(segment.Len()), allowed...)
+	filter, err := vector.NewBitSet(uint32(segment.len()), allowed...)
 	if err != nil {
 		return vector.BitSet{}, fmt.Errorf("%w: build pending segment filter: %v", ErrInternalState, err)
 	}
 	return filter, nil
 }
 
-func cloneDocumentMapping(ctx context.Context, source map[fts.DocID][]VectorID) (map[fts.DocID][]VectorID, error) {
-	result := make(map[fts.DocID][]VectorID, len(source))
+func cloneDocumentMapping(ctx context.Context, source map[fts.DocID][]uint64) (map[fts.DocID][]uint64, error) {
+	result := make(map[fts.DocID][]uint64, len(source))
 	i := 0
 	for docID, ids := range source {
 		if i%64 == 0 {
@@ -498,14 +498,14 @@ func cloneDocumentMapping(ctx context.Context, source map[fts.DocID][]VectorID) 
 				return nil, err
 			}
 		}
-		result[docID] = append([]VectorID(nil), ids...)
+		result[docID] = append([]uint64(nil), ids...)
 		i++
 	}
 	return result, nil
 }
 
-func cloneLocations(ctx context.Context, source map[VectorID]vectorLocation) (map[VectorID]vectorLocation, error) {
-	result := make(map[VectorID]vectorLocation, len(source))
+func cloneLocations(ctx context.Context, source map[uint64]vectorLocation) (map[uint64]vectorLocation, error) {
+	result := make(map[uint64]vectorLocation, len(source))
 	i := 0
 	for id, location := range source {
 		if i%256 == 0 {
@@ -519,7 +519,7 @@ func cloneLocations(ctx context.Context, source map[VectorID]vectorLocation) (ma
 	return result, nil
 }
 
-func (s *Service) queueVersionLocked(docID fts.DocID, batch []ChunkVector, old []VectorID) error {
+func (s *Service) queueVersionLocked(docID fts.DocID, batch []ChunkVector, old []uint64) error {
 	liveCount := 0
 	for _, ids := range s.currentByDoc {
 		liveCount += len(ids)
@@ -551,11 +551,11 @@ func (s *Service) queueVersionLocked(docID fts.DocID, batch []ChunkVector, old [
 			vector: append([]float32(nil), item.Vector...),
 		})
 	}
-	s.currentByDoc[docID] = append([]VectorID(nil), ids...)
+	s.currentByDoc[docID] = append([]uint64(nil), ids...)
 	if len(old) > 0 {
-		s.pendingVisibilityChanges = append(s.pendingVisibilityChanges, livenessChange{ids: append([]VectorID(nil), old...), allowed: false})
+		s.pendingVisibilityChanges = append(s.pendingVisibilityChanges, livenessChange{ids: append([]uint64(nil), old...), allowed: false})
 	}
-	s.pendingVisibilityChanges = append(s.pendingVisibilityChanges, livenessChange{ids: append([]VectorID(nil), ids...), allowed: true})
+	s.pendingVisibilityChanges = append(s.pendingVisibilityChanges, livenessChange{ids: append([]uint64(nil), ids...), allowed: true})
 	s.maxAllocatedID = ids[len(ids)-1]
 	s.mutationVersion++
 	return nil
@@ -564,9 +564,9 @@ func (s *Service) queueVersionLocked(docID fts.DocID, batch []ChunkVector, old [
 // coalescePendingLocked removes superseded, unpublished rows and their queued
 // visibility changes. It returns only IDs that already belong to published
 // segments and still need a liveness update.
-func (s *Service) coalescePendingLocked(ids []VectorID) []VectorID {
-	pending := make(map[VectorID]struct{})
-	published := make([]VectorID, 0, len(ids))
+func (s *Service) coalescePendingLocked(ids []uint64) []uint64 {
+	pending := make(map[uint64]struct{})
+	published := make([]uint64, 0, len(ids))
 	for _, id := range ids {
 		if _, exists := s.locations[id]; exists {
 			published = append(published, id)
@@ -611,7 +611,7 @@ func (s *Service) viewSegmentsPhysical() []visibleSegment {
 func (s *Service) physicalVectorCountLocked() int {
 	count := len(s.pendingVectors)
 	for _, view := range s.viewSegmentsPhysical() {
-		count += view.segment.Len()
+		count += view.segment.len()
 	}
 	return count
 }
@@ -643,16 +643,16 @@ func (s *Service) Compact(ctx context.Context) error {
 	if len(published.segments) <= 1 {
 		stale := false
 		for _, item := range published.segments {
-			stale = stale || item.filter.AllowedOrdinalCount() != item.segment.Len()
+			stale = stale || item.filter.AllowedOrdinalCount() != item.segment.len()
 		}
 		if !stale {
 			return nil
 		}
 	}
-	var merged *Segment
+	var merged *segment
 	var rows []VectorRow
 	if published.liveCount > 0 {
-		if componentID == ComponentID(math.MaxUint64) {
+		if componentID == uint64(math.MaxUint64) {
 			return ErrComponentIDExhausted
 		}
 		var err error
@@ -661,7 +661,7 @@ func (s *Service) Compact(ctx context.Context) error {
 			return err
 		}
 	}
-	locations := make(map[VectorID]vectorLocation, len(rows))
+	locations := make(map[uint64]vectorLocation, len(rows))
 	for ordinal, row := range rows {
 		if ordinal%64 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -674,7 +674,7 @@ func (s *Service) Compact(ctx context.Context) error {
 	if merged != nil {
 		segments = []visibleSegment{{segment: merged, filter: vector.NewFullBitSet(uint32(len(rows)))}}
 	}
-	view, err := newReadView(ctx, version, segments, published.descriptor, SearchPolicy{MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}, config.HNSWSearch)
+	view, err := newReadView(ctx, version, segments, published.descriptor, searchPolicy{MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}, config.HNSWSearch)
 	if err != nil {
 		return err
 	}
@@ -730,13 +730,13 @@ func (s *Service) validateBatch(ctx context.Context, docID fts.DocID, batch []Ch
 	return nil
 }
 
-func (s *Service) allocateIDsLocked(count int) ([]VectorID, error) {
+func (s *Service) allocateIDsLocked(count int) ([]uint64, error) {
 	if count <= 0 || uint64(count) > math.MaxUint64-uint64(s.maxAllocatedID) {
 		return nil, ErrVectorIDExhausted
 	}
-	ids := make([]VectorID, count)
+	ids := make([]uint64, count)
 	for i := range ids {
-		ids[i] = s.maxAllocatedID + VectorID(i) + 1
+		ids[i] = s.maxAllocatedID + uint64(i) + 1
 		if ids[i] == 0 {
 			return nil, ErrVectorIDExhausted
 		}

@@ -5,15 +5,80 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
+
+// SegmentSnapshot is the persistence transfer representation of one immutable
+// semantic segment. Rows returns a defensive copy; vectors and index are
+// immutable readers shared with the runtime segment.
+type SegmentSnapshot struct {
+	componentID uint64
+	descriptor  PipelineDescriptor
+	rows        []VectorRow
+	vectors     vectorstore.PreparedVectorStore
+	index       *hnsw.Index
+}
+
+// NewSegmentSnapshot creates persistence transfer data for hydration. Hydrate
+// validates the data and constructs the private runtime segment.
+func NewSegmentSnapshot(componentID uint64, descriptor PipelineDescriptor, rows []VectorRow, vectors vectorstore.PreparedVectorStore, index *hnsw.Index) SegmentSnapshot {
+	return SegmentSnapshot{
+		componentID: componentID,
+		descriptor:  descriptor,
+		rows:        append([]VectorRow(nil), rows...),
+		vectors:     vectors,
+		index:       index,
+	}
+}
+
+func (s SegmentSnapshot) ComponentID() uint64 { return s.componentID }
+
+func (s SegmentSnapshot) Pipeline() PipelineDescriptor { return s.descriptor }
+
+func (s SegmentSnapshot) Rows() []VectorRow { return append([]VectorRow(nil), s.rows...) }
+
+func (s SegmentSnapshot) Vectors() vectorstore.PreparedVectorStore { return s.vectors }
+
+func (s SegmentSnapshot) Index() *hnsw.Index { return s.index }
+
+func (s SegmentSnapshot) SearchConfig() hnsw.SearchConfig {
+	if s.index == nil {
+		return hnsw.SearchConfig{}
+	}
+	return s.index.Report().Search
+}
+
+func (s SegmentSnapshot) Len() int {
+	if s.index == nil {
+		return 0
+	}
+	return s.index.Len()
+}
+
+func (s SegmentSnapshot) Dimensions() int {
+	if s.index == nil {
+		return 0
+	}
+	return s.index.Dimensions()
+}
+
+func (s SegmentSnapshot) MaxK() int { return s.SearchConfig().MaxK }
+
+func (s *segment) snapshot() SegmentSnapshot {
+	if s == nil {
+		return SegmentSnapshot{}
+	}
+	return NewSegmentSnapshot(s.component, s.descriptor, s.rows, s.vectors, s.index)
+}
 
 // CommittedSegment is one immutable component of a committed snapshot.
 type CommittedSegment struct {
-	segment       *Segment
+	segment       *segment
 	livenessWords []uint64
 }
 
-func (s CommittedSegment) Segment() *Segment { return s.segment }
+func (s CommittedSegment) Snapshot() SegmentSnapshot { return s.segment.snapshot() }
 
 // LivenessWords returns a canonical copy of the component-local liveness mask.
 func (s CommittedSegment) LivenessWords() []uint64 {
@@ -25,8 +90,8 @@ func (s CommittedSegment) LivenessWords() []uint64 {
 type CommittedSnapshot struct {
 	config               Config
 	revision             uint64
-	maxAllocatedVectorID VectorID
-	nextComponentID      ComponentID
+	maxAllocatedVectorID uint64
+	nextComponentID      uint64
 	segments             []CommittedSegment
 }
 
@@ -44,14 +109,14 @@ func (s *CommittedSnapshot) Revision() uint64 {
 	return s.revision
 }
 
-func (s *CommittedSnapshot) MaxAllocatedVectorID() VectorID {
+func (s *CommittedSnapshot) MaxAllocatedVectorID() uint64 {
 	if s == nil {
 		return 0
 	}
 	return s.maxAllocatedVectorID
 }
 
-func (s *CommittedSnapshot) NextComponentID() ComponentID {
+func (s *CommittedSnapshot) NextComponentID() uint64 {
 	if s == nil {
 		return 0
 	}
@@ -110,7 +175,7 @@ func (s *Service) CommittedSnapshot(ctx context.Context) (*CommittedSnapshot, er
 // HydratedSegment describes one persisted immutable component and its local
 // liveness mask. LivenessWords uses the same canonical layout as vector.BitSet.
 type HydratedSegment struct {
-	Segment       *Segment
+	Snapshot      SegmentSnapshot
 	LivenessWords []uint64
 }
 
@@ -118,8 +183,8 @@ type HydratedSegment struct {
 type HydrationState struct {
 	Config               Config
 	Revision             uint64
-	MaxAllocatedVectorID VectorID
-	NextComponentID      ComponentID
+	MaxAllocatedVectorID uint64
+	NextComponentID      uint64
 	Segments             []HydratedSegment
 }
 
@@ -139,32 +204,37 @@ func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
 	if config != state.Config {
 		return nil, ErrInvalidConfig
 	}
-	if state.NextComponentID <= MutableHeadID || state.MaxAllocatedVectorID < config.InitialMaxAllocatedVectorID {
+	if state.NextComponentID == 0 || state.MaxAllocatedVectorID < config.InitialMaxAllocatedVectorID {
 		return nil, ErrInternalState
 	}
 
 	visible := make([]visibleSegment, len(state.Segments))
-	locations := make(map[VectorID]vectorLocation)
-	documents := make(map[fts.DocID][]VectorID)
-	var maxVectorID VectorID
-	var maxComponentID ComponentID = MutableHeadID
+	locations := make(map[uint64]vectorLocation)
+	documents := make(map[fts.DocID][]uint64)
+	var maxVectorID uint64
+	var maxComponentID uint64
 	for segmentIndex, persisted := range state.Segments {
 		if segmentIndex%16 == 0 {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 		}
-		if persisted.Segment == nil {
+		snapshot := persisted.Snapshot
+		if snapshot.index == nil || snapshot.vectors == nil {
 			return nil, ErrInvalidSegment
 		}
-		filter, err := vector.NewBitSetFromWords(uint32(persisted.Segment.Len()), persisted.LivenessWords)
+		segment, err := newSegment(ctx, snapshot.componentID, snapshot.descriptor, snapshot.vectors, snapshot.index, snapshot.rows, true)
+		if err != nil {
+			return nil, err
+		}
+		filter, err := vector.NewBitSetFromWords(uint32(segment.len()), persisted.LivenessWords)
 		if err != nil {
 			return nil, ErrInvalidSegment
 		}
-		visible[segmentIndex] = visibleSegment{segment: persisted.Segment, filter: filter}
-		componentID := persisted.Segment.ComponentID()
+		visible[segmentIndex] = visibleSegment{segment: segment, filter: filter}
+		componentID := segment.componentID()
 		maxComponentID = max(maxComponentID, componentID)
-		for ordinal, row := range persisted.Segment.rows {
+		for ordinal, row := range segment.rows {
 			if ordinal%64 == 0 {
 				if err := ctx.Err(); err != nil {
 					return nil, err
@@ -182,7 +252,7 @@ func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
 	}
 
 	descriptor := PipelineDescriptor{Embedding: config.Embedding, Chunking: config.Chunking}
-	policy := SearchPolicy{MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}
+	policy := searchPolicy{MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}
 	published, err := newReadView(ctx, state.Revision, visible, descriptor, policy, config.HNSWSearch)
 	if err != nil {
 		return nil, err
