@@ -838,18 +838,6 @@ func preparedVectorBits(t *testing.T, view *ReadView) map[uint64][]uint32 {
 	return result
 }
 
-func equalDocumentSearchHits(left, right []DocumentHit) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i].DocID != right[i].DocID || left[i].Distance != right[i].Distance || !slices.Equal(left[i].Chunks, right[i].Chunks) {
-			return false
-		}
-	}
-	return true
-}
-
 func TestConcurrentReplaceAndDeleteAreLinearizable(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()

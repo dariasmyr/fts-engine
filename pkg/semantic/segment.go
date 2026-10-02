@@ -107,13 +107,6 @@ func (s *segment) vectorStore() vectorstore.PreparedVectorStore {
 	return s.vectors
 }
 
-func (s *segment) hnswIndex() *hnsw.Index {
-	if s == nil {
-		return nil
-	}
-	return s.index
-}
-
 func (s *segment) searchVectors(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	if s == nil || s.index == nil {
 		return vector.SearchResult{}, ErrInvalidSegment
@@ -135,38 +128,11 @@ func (s *segment) dimensions() int {
 	return s.index.Dimensions()
 }
 
-func (s *segment) maxK() int {
-	if s == nil || s.index == nil {
-		return 0
-	}
-	return s.search.MaxK
-}
-
 func (s *segment) searchConfig() hnsw.SearchConfig {
 	if s == nil {
 		return hnsw.SearchConfig{}
 	}
 	return s.search
-}
-
-func (s *segment) pipelineDescriptor() PipelineDescriptor {
-	if s == nil {
-		return PipelineDescriptor{}
-	}
-	return s.descriptor
-}
-
-// Validate checks the immutable segment metadata, source binding and row
-// identity mapping.
-func (s *segment) validate() error {
-	if err := s.validateContents(); err != nil {
-		return err
-	}
-	return validateSegmentRows(s.rows)
-}
-
-func validateSegmentRows(rows []VectorRow) error {
-	return validateSegmentRowsContext(context.Background(), rows)
 }
 
 func validateSegmentRowsContext(ctx context.Context, rows []VectorRow) error {
