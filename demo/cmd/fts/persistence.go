@@ -98,8 +98,10 @@ func savePersistenceIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.
 		filterName = ""
 	}
 	opts := ftspersist.SaveOptions{
-		SyncFile: cfg.FTS.Persistence.SyncFile,
-		Registry: registry,
+		BufferSize:     cfg.FTS.Persistence.BufferSize,
+		FlushThreshold: cfg.FTS.Persistence.FlushThreshold,
+		SyncFile:       cfg.FTS.Persistence.SyncFile,
+		Registry:       registry,
 	}
 
 	switch cfg.FTS.Persistence.Format {

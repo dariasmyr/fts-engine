@@ -48,13 +48,15 @@ type CompactionConfig struct {
 }
 
 type PersistenceConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	Format      string `yaml:"format"`
-	Access      string `yaml:"access"`
-	Path        string `yaml:"path"`
-	LoadOnStart bool   `yaml:"load_on_start"`
-	SaveOnBuild bool   `yaml:"save_on_build"`
-	SyncFile    bool   `yaml:"sync_file"`
+	Enabled        bool   `yaml:"enabled"`
+	Format         string `yaml:"format"`
+	Access         string `yaml:"access"`
+	Path           string `yaml:"path"`
+	LoadOnStart    bool   `yaml:"load_on_start"`
+	SaveOnBuild    bool   `yaml:"save_on_build"`
+	BufferSize     int    `yaml:"buffer_size"`
+	FlushThreshold int    `yaml:"flush_threshold"`
+	SyncFile       bool   `yaml:"sync_file"`
 }
 
 type BloomConfig struct {
@@ -136,13 +138,15 @@ func defaultConfig() Config {
 			Scorer: "none",
 			Filter: "ribbon",
 			Persistence: PersistenceConfig{
-				Enabled:     true,
-				Format:      "snapshot",
-				Access:      "file",
-				Path:        "./data/fts/local",
-				LoadOnStart: false,
-				SaveOnBuild: true,
-				SyncFile:    true,
+				Enabled:        true,
+				Format:         "snapshot",
+				Access:         "file",
+				Path:           "./data/fts/local",
+				LoadOnStart:    false,
+				SaveOnBuild:    true,
+				BufferSize:     1048576,
+				FlushThreshold: 262144,
+				SyncFile:       true,
 			},
 			Compaction: CompactionConfig{
 				LoadFactor: 0,
@@ -219,6 +223,14 @@ func validateConfig(cfg *Config) error {
 
 	if cfg.FTS.Persistence.Path == "" {
 		cfg.FTS.Persistence.Path = defaults.FTS.Persistence.Path
+	}
+
+	if cfg.FTS.Persistence.BufferSize <= 0 {
+		cfg.FTS.Persistence.BufferSize = defaults.FTS.Persistence.BufferSize
+	}
+
+	if cfg.FTS.Persistence.FlushThreshold <= 0 {
+		cfg.FTS.Persistence.FlushThreshold = defaults.FTS.Persistence.FlushThreshold
 	}
 
 	if cfg.FTS.Pipeline.MinLength <= 0 {

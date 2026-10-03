@@ -58,6 +58,96 @@ func TestPublishOpenEmptyService(t *testing.T) {
 	}
 }
 
+func TestWritableStoreRestartLifecycle(t *testing.T) {
+	ctx := context.Background()
+	service, encoder := persistenceService(t)
+	encoder.vectors["query"] = []semantic.ChunkVector{testVector("query", "query-1", []float32{0, 0})}
+	encoder.vectors["doc-a"] = []semantic.ChunkVector{testVector("doc-a", "a-old", []float32{1, 0})}
+	encoder.vectors["doc-delete"] = []semantic.ChunkVector{testVector("doc-delete", "delete-1", []float32{4, 0})}
+	encoder.vectors["doc-added"] = []semantic.ChunkVector{testVector("doc-added", "added-1", []float32{2, 0})}
+	encoder.vectors["doc-after-restart"] = []semantic.ChunkVector{testVector("doc-after-restart", "after-1", []float32{3, 0})}
+
+	addAndFlush(t, service, encoder, "doc-a")
+	addAndFlush(t, service, encoder, "doc-delete")
+	root := t.TempDir()
+	if generation, err := Publish(ctx, root, service, Options{Durability: DurabilityAsynchronous}); err != nil || generation.ID != 1 {
+		t.Fatalf("initial Publish = %+v, %v", generation, err)
+	}
+
+	store, err := Open(ctx, root, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSearchVisibility(t, store.Service(), encoder, map[fts.DocID]chunk.ID{
+		"doc-a":      "a-old",
+		"doc-delete": "delete-1",
+	})
+	if got := store.Service().Statistics().MaxAllocatedVectorID; got != 2 {
+		t.Fatalf("initial max allocated vector ID = %d, want 2", got)
+	}
+
+	addAndFlush(t, store.Service(), encoder, "doc-added")
+	encoder.vectors["doc-a"] = []semantic.ChunkVector{testVector("doc-a", "a-new", []float32{1, 1})}
+	if err := store.Service().ReplaceDocument(ctx, encoder, semantic.Document{ID: "doc-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Service().DeleteDocument(ctx, "doc-delete"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Service().Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Service().Compact(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Service().Statistics(); got.Documents != 2 || got.PhysicalVectors != 2 || got.LiveVectors != 2 || got.StaleVectors != 0 || got.MaxAllocatedVectorID != 4 {
+		t.Fatalf("compacted statistics = %+v", got)
+	}
+	assertSearchVisibility(t, store.Service(), encoder, map[fts.DocID]chunk.ID{
+		"doc-a":     "a-new",
+		"doc-added": "added-1",
+	})
+	if generation, err := store.Publish(ctx, Options{Durability: DurabilityAsynchronous}); err != nil || generation.ID != 2 {
+		t.Fatalf("Store.Publish = %+v, %v", generation, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = Open(ctx, root, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSearchVisibility(t, store.Service(), encoder, map[fts.DocID]chunk.ID{
+		"doc-a":     "a-new",
+		"doc-added": "added-1",
+	})
+	addAndFlush(t, store.Service(), encoder, "doc-after-restart")
+	if got := store.Service().Statistics().MaxAllocatedVectorID; got != 5 {
+		t.Fatalf("max allocated vector ID after restart = %d, want 5", got)
+	}
+	if generation, err := store.Publish(ctx, Options{Durability: DurabilityAsynchronous}); err != nil || generation.ID != 3 {
+		t.Fatalf("Store.Publish after restart = %+v, %v", generation, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = Open(ctx, root, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	assertSearchVisibility(t, store.Service(), encoder, map[fts.DocID]chunk.ID{
+		"doc-a":             "a-new",
+		"doc-added":         "added-1",
+		"doc-after-restart": "after-1",
+	})
+	if got := store.Service().Statistics().MaxAllocatedVectorID; got != 5 {
+		t.Fatalf("reopened max allocated vector ID = %d, want 5", got)
+	}
+}
+
 func TestOperationsRespectCanceledContext(t *testing.T) {
 	service, _ := persistenceService(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -396,6 +486,30 @@ func TestOpenRejectsCorruptGenerationFiles(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsReferencedFileLargerThanDeclaredSize(t *testing.T) {
+	service, encoder := persistenceService(t)
+	addAndFlush(t, service, encoder, "doc-a")
+	root := t.TempDir()
+	if _, err := Publish(t.Context(), root, service, Options{Durability: DurabilityAsynchronous}); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(root, generationsDirectory, generationName(1), stateFileName)
+	file, err := os.OpenFile(statePath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte("unexpected trailing bytes")); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(t.Context(), root, OpenOptions{}); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("Open mismatched referenced size error = %v", err)
+	}
+}
+
 func TestOpenRejectsDescriptorMismatchLimitsAndLockSymlink(t *testing.T) {
 	service, encoder := persistenceService(t)
 	addAndFlush(t, service, encoder, "doc-a")
@@ -454,6 +568,31 @@ func TestOpenRejectsSymlinkedSegmentObject(t *testing.T) {
 	}
 }
 
+func TestObjectIDAndPathContainmentValidation(t *testing.T) {
+	ref := fileReference{Size: 1, SHA256: [32]byte{1}}
+	if id := segmentObjectID(ref, ref); !validObjectID(id) {
+		t.Fatalf("generated object ID %q is invalid", id)
+	}
+	for _, id := range []string{"", ".", "..", "seg-../x", "seg-foo/bar", `seg-foo\bar`, "/absolute", "SEG-" + string(make([]byte, 64))} {
+		if validObjectID(id) {
+			t.Errorf("validObjectID(%q) = true", id)
+		}
+	}
+
+	root := t.TempDir()
+	if err := ensureContained(root, filepath.Join(root, objectsDirectory, segmentsDirectory, segmentObjectID(ref, ref))); err != nil {
+		t.Fatalf("contained path rejected: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(root, "..", "outside"),
+		root + "-sibling",
+	} {
+		if err := ensureContained(root, path); !errors.Is(err, ErrPathEscape) {
+			t.Errorf("ensureContained(%q) error = %v", path, err)
+		}
+	}
+}
+
 func persistenceService(t testing.TB) (*semantic.Service, staticEncoder) {
 	t.Helper()
 	embedding, err := semantic.NewEmbeddingDescriptor("test", "model", "v1", "fingerprint", 2, vector.MetricL2Squared, 1)
@@ -483,6 +622,23 @@ func addAndFlush(t testing.TB, service *semantic.Service, encoder staticEncoder,
 	}
 	if err := service.Flush(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertSearchVisibility(t testing.TB, service *semantic.Service, encoder staticEncoder, want map[fts.DocID]chunk.ID) {
+	t.Helper()
+	result, err := service.SearchDocuments(context.Background(), encoder, semantic.Document{ID: "query"}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Hits) != len(want) {
+		t.Fatalf("search hits = %+v, want documents = %+v", result.Hits, want)
+	}
+	for _, hit := range result.Hits {
+		wantChunk, ok := want[hit.DocID]
+		if !ok || len(hit.Chunks) != 1 || hit.Chunks[0].Ref.ID != wantChunk {
+			t.Fatalf("search hit = %+v, want documents = %+v", hit, want)
+		}
 	}
 }
 

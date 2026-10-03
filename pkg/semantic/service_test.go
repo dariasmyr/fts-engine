@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -13,6 +15,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func testConfig(maxK, maxCandidates int) Config {
@@ -352,6 +355,78 @@ func TestCanceledFlushDoesNotPublishPendingBatch(t *testing.T) {
 	}
 }
 
+type callerGateContext struct {
+	context.Context
+	function string
+	reached  chan struct{}
+	release  chan struct{}
+	once     sync.Once
+}
+
+func newCallerGateContext(parent context.Context, function string) *callerGateContext {
+	return &callerGateContext{
+		Context:  parent,
+		function: function,
+		reached:  make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+}
+
+func (c *callerGateContext) Err() error {
+	if err := c.Context.Err(); err != nil {
+		return err
+	}
+	caller, _, _, ok := runtime.Caller(1)
+	if !ok || runtime.FuncForPC(caller).Name() != c.function {
+		return nil
+	}
+	blocked := false
+	c.once.Do(func() {
+		blocked = true
+		close(c.reached)
+	})
+	if blocked {
+		<-c.release
+	}
+	return c.Context.Err()
+}
+
+func TestFlushRejectsPublicationAfterConcurrentMutation(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	if err := service.addEncodedDocument(ctx, "doc-a", []ChunkVector{testChunk("doc-a", "a", 0, []float32{0, 0})}); err != nil {
+		t.Fatal(err)
+	}
+
+	flushCtx := newCallerGateContext(ctx, "github.com/dariasmyr/fts-engine/pkg/semantic.buildPendingSegment")
+	result := make(chan error, 1)
+	go func() { result <- service.Flush(flushCtx) }()
+	<-flushCtx.reached
+
+	if err := service.addEncodedDocument(ctx, "doc-b", []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	close(flushCtx.release)
+	if err := <-result; !errors.Is(err, ErrPublicationConflict) {
+		t.Fatalf("Flush error = %v, want %v", err, ErrPublicationConflict)
+	}
+
+	beforeRetry, err := service.searchChunks(ctx, []float32{0, 0}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beforeRetry.Hits) != 0 {
+		t.Fatalf("conflicting flush published stale view: %+v", beforeRetry.Hits)
+	}
+	if err := service.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	afterRetry, err := service.searchChunks(ctx, []float32{0, 0}, 2)
+	if err != nil || len(afterRetry.Hits) != 2 {
+		t.Fatalf("retry did not publish both pending mutations: %+v, %v", afterRetry, err)
+	}
+}
+
 func TestCanceledFlushWaitDoesNotBlockOnAnotherPublication(t *testing.T) {
 	service := newTestService(t)
 	service.flushGate <- struct{}{}
@@ -462,6 +537,82 @@ func TestPreCanceledCompactAlwaysReturnsCancellation(t *testing.T) {
 				t.Fatalf("Compact error = %v", err)
 			}
 		})
+	}
+}
+
+type blockingPreparedVectorStore struct {
+	vectorstore.PreparedVectorStore
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingPreparedVectorStore) ReadVectorInto(ctx context.Context, ordinal vector.Ordinal, dst []float32) error {
+	blocked := false
+	s.once.Do(func() {
+		blocked = true
+		close(s.reached)
+	})
+	if blocked {
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.PreparedVectorStore.ReadVectorInto(ctx, ordinal, dst)
+}
+
+func blockCompactionMaterialization(t *testing.T, service *Service) *blockingPreparedVectorStore {
+	t.Helper()
+	view := service.ReadView()
+	if len(view.segments) < 2 {
+		t.Fatalf("segments = %d, want at least two", len(view.segments))
+	}
+	store := &blockingPreparedVectorStore{
+		PreparedVectorStore: view.segments[0].segment.vectorStore(),
+		reached:             make(chan struct{}),
+		release:             make(chan struct{}),
+	}
+	view.segments[0].segment.vectors = store
+	return store
+}
+
+func TestCompactRejectsPublicationAfterConcurrentMutation(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a", 0, []float32{0, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	before := service.ReadView()
+	store := blockCompactionMaterialization(t, service)
+	result := make(chan error, 1)
+	go func() { result <- service.Compact(ctx) }()
+	<-store.reached
+
+	encoder := newSearchEncoder(service.config, testChunk("query", "query", 0, []float32{0, 0}))
+	search, err := service.SearchDocuments(ctx, encoder, Document{ID: "query"}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(search.Hits) != 2 || search.Hits[0].DocID != "doc-a" || search.Hits[1].DocID != "doc-b" {
+		t.Fatalf("search during compaction = %+v", search.Hits)
+	}
+	if err := service.addEncodedDocument(ctx, "doc-c", []ChunkVector{testChunk("doc-c", "c", 0, []float32{2, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	close(store.release)
+	if err := <-result; !errors.Is(err, ErrPublicationConflict) {
+		t.Fatalf("Compact error = %v, want %v", err, ErrPublicationConflict)
+	}
+	if got := service.ReadView(); got != before {
+		t.Fatal("conflicting compaction replaced the published view")
+	}
+	if stats := service.Statistics(); stats.Documents != 3 || stats.LiveVectors != 3 {
+		t.Fatalf("concurrent mutation was lost: %+v", stats)
 	}
 }
 
@@ -784,6 +935,53 @@ func TestConcurrentSearchAcrossFlushPublications(t *testing.T) {
 	close(errCh)
 	for err := range errCh {
 		t.Fatal(err)
+	}
+}
+
+func TestOldReadViewRemainsCoherentAfterCompaction(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a-old", 0, []float32{0, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a-new", 0, []float32{2, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+
+	oldView := service.ReadView()
+	oldGeneration := oldView.generation
+	oldSegments := append([]visibleSegment(nil), oldView.segments...)
+	encoder := newSearchEncoder(service.config, testChunk("query", "query", 0, []float32{0, 0}))
+	before, err := oldView.SearchDocumentsWithOptions(ctx, encoder, Document{ID: "query"}, 2, SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Compact(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := oldView.SearchDocumentsWithOptions(ctx, encoder, Document{ID: "query"}, 2, SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldView.generation != oldGeneration || len(oldView.segments) != len(oldSegments) {
+		t.Fatalf("old view metadata changed: generation=%d segments=%d", oldView.generation, len(oldView.segments))
+	}
+	for i, segment := range oldSegments {
+		if oldView.segments[i].segment != segment.segment ||
+			!slices.Equal(oldView.segments[i].filter.SnapshotWords(), segment.filter.SnapshotWords()) {
+			t.Fatalf("old view segment %d changed", i)
+		}
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("old view search changed after compaction\nbefore=%+v\nafter=%+v", before, after)
+	}
+	current := service.ReadView()
+	if current == oldView || len(current.segments) != 1 || current.liveCount != oldView.liveCount {
+		t.Fatalf("compacted view is incoherent: old=%p current=%p segments=%d live=%d", oldView, current, len(current.segments), current.liveCount)
 	}
 }
 

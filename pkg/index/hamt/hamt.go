@@ -11,10 +11,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dariasmyr/fts-engine/internal/fnv"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/segment"
-
-	"github.com/dariasmyr/fts-engine/internal/fnv"
 )
 
 const (

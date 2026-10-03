@@ -45,6 +45,8 @@ func TestValidateConfigAppliesFallbacksFromDefaultConfig(t *testing.T) {
 	cfg.FTS.Persistence.Format = ""
 	cfg.FTS.Persistence.Access = ""
 	cfg.FTS.Persistence.Path = ""
+	cfg.FTS.Persistence.BufferSize = 0
+	cfg.FTS.Persistence.FlushThreshold = 0
 	cfg.FTS.Pipeline.Preset = ""
 	cfg.FTS.Pipeline.MinLength = 0
 	cfg.Mode.Type = ""

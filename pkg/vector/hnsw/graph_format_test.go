@@ -205,7 +205,7 @@ func TestGraphFormatRejectsReferenceSizeAndIntegrityFailures(t *testing.T) {
 		t.Fatalf("CRC corruption error = %v", err)
 	}
 	unsupported := append([]byte(nil), data...)
-	binary.LittleEndian.PutUint16(unsupported[4:6], GraphFormatVersion+1)
+	binary.LittleEndian.PutUint16(unsupported[4:6], graphFormatVersion+1)
 	if _, _, err := openGraph(bytes.NewReader(unsupported), original.vectors, reference, DefaultGraphLimits()); !errors.Is(err, ErrUnsupportedGraphVersion) {
 		t.Fatalf("graph format version error = %v", err)
 	}

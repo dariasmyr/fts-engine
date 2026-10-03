@@ -12,9 +12,8 @@ import (
 )
 
 const (
-	graphFormatMagic = vhng.Magic
-	// GraphFormatVersion identifies the persisted graph.bin layout.
-	GraphFormatVersion    = vhng.Version
+	graphFormatMagic      = vhng.Magic
+	graphFormatVersion    = vhng.Version
 	graphFormatHeaderSize = vhng.HeaderSize
 	graphFormatFooterSize = vhng.FooterSize
 )

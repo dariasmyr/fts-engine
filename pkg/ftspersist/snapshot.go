@@ -7,13 +7,14 @@ import (
 	"io"
 	"os"
 
-	"github.com/dariasmyr/fts-engine/internal/persist"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 )
 
 type SaveOptions struct {
-	SyncFile bool
-	Registry *fts.SnapshotRegistry
+	BufferSize     int
+	FlushThreshold int
+	SyncFile       bool
+	Registry       *fts.SnapshotRegistry
 }
 
 type SnapshotPaths struct {
@@ -75,7 +76,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 		for fieldName := range fields {
 			fieldCodecs[fieldName] = indexName
 		}
-		if err := persist.WriteAtomic(paths.IndexPath, opts.SyncFile, func(w io.Writer) error {
+		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
 			return opts.Registry.SaveMultiIndexSnapshotWithState(w, fieldCodecs, fields, stats, registry, tombstones, &keyGenerator)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot: %w", err)
@@ -91,7 +92,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 		if index == nil {
 			return fmt.Errorf("ftspersist: save snapshot: nil index")
 		}
-		if err := persist.WriteAtomic(paths.IndexPath, opts.SyncFile, func(w io.Writer) error {
+		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
 			return opts.Registry.SaveIndexSnapshotWithState(w, indexName, index, stats, registry, tombstones, &keyGenerator)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot: %w", err)
@@ -102,7 +103,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 		if paths.FilterPath == "" {
 			return fmt.Errorf("ftspersist: save snapshot: empty filter path")
 		}
-		if err := persist.WriteAtomic(paths.FilterPath, opts.SyncFile, func(w io.Writer) error {
+		if err := saveAtomicWithOptions(paths.FilterPath, opts, func(w io.Writer) error {
 			return opts.Registry.SaveFilterSnapshot(w, filterName, searchFilter)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot filter: %w", err)

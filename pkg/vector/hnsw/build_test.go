@@ -27,7 +27,7 @@ func testSearchConfig(count int) hnsw.SearchConfig {
 	}
 }
 
-func testFlatReader(t testing.TB, values [][]float32, metric vector.Metric) *vectorstore.MemoryVectorStore {
+func testMemoryStore(t testing.TB, values [][]float32, metric vector.Metric) *vectorstore.MemoryVectorStore {
 	t.Helper()
 	calculator, err := vector.NewCalculator(len(values[0]), metric)
 	if err != nil {
@@ -63,7 +63,7 @@ func readPreparedVector(source vectorstore.PreparedVectorStore, ordinal vector.O
 }
 
 func TestBuildProgressStableOrderAndPreparedCosineBits(t *testing.T) {
-	source := testFlatReader(t, [][]float32{{3, 4}, {-5, 12}, {8, 15}}, vector.MetricCosine)
+	source := testMemoryStore(t, [][]float32{{3, 4}, {-5, 12}, {8, 15}}, vector.MetricCosine)
 	var progress []hnsw.BuildProgress
 	reader, err := hnsw.Build(context.Background(), source, hnsw.BuildOptions{
 		Build:  testBuildConfig(2, source.Len(), vector.MetricCosine),
@@ -98,7 +98,7 @@ func TestBuildProgressStableOrderAndPreparedCosineBits(t *testing.T) {
 
 func TestBuildTopologyUsesTheBoundSourceValues(t *testing.T) {
 	values := [][]float32{{0, 0}, {10, 0}, {0, 10}, {10, 10}, {5, 5}}
-	source := testFlatReader(t, values, vector.MetricL2Squared)
+	source := testMemoryStore(t, values, vector.MetricL2Squared)
 	reader := testBuild(t, source, 2, len(values), vector.MetricL2Squared)
 	for ordinal, query := range values {
 		result, err := reader.Search(context.Background(), query, 1, vector.SearchOptions{EfSearch: len(values), VisitLimit: len(values)})

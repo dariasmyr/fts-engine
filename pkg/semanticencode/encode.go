@@ -20,11 +20,6 @@ var (
 	ErrEmbeddingCountMismatch = errors.New("semanticencode: embedding count does not match chunks")
 )
 
-// Document is the complete source document submitted for semantic encoding.
-// Fields are processed in lexicographic field-name order for deterministic
-// chunk and embedding ordering.
-type Document = semantic.Document
-
 // Chunker splits one document field into deterministic source chunks. A nil
 // Chunker makes the encoder create one whole-field chunk.
 type Chunker interface {
@@ -57,7 +52,7 @@ func (e *DocumentEncoder) Descriptor() semantic.PipelineDescriptor { return e.de
 
 // Encode chunks and embeds a complete document and returns prepared vectors
 // for the semantic service's internal encoded stage.
-func (e *DocumentEncoder) Encode(ctx context.Context, document Document) ([]semantic.ChunkVector, error) {
+func (e *DocumentEncoder) Encode(ctx context.Context, document semantic.Document) ([]semantic.ChunkVector, error) {
 	chunks, err := e.prepare(ctx, document)
 	if err != nil {
 		return nil, err
@@ -69,7 +64,7 @@ func (e *DocumentEncoder) Encode(ctx context.Context, document Document) ([]sema
 	return makeChunkVectors(chunks, vectors)
 }
 
-func (e *DocumentEncoder) prepare(ctx context.Context, document Document) ([]chunk.Chunk, error) {
+func (e *DocumentEncoder) prepare(ctx context.Context, document semantic.Document) ([]chunk.Chunk, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}

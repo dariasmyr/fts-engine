@@ -56,7 +56,7 @@ func TestDocumentEncoderWithoutChunkerUsesWholeFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	document := Document{ID: "doc", Fields: map[string]string{
+	document := semantic.Document{ID: "doc", Fields: map[string]string{
 		"z-field": "second",
 		"a-field": "first",
 	}}
@@ -73,7 +73,7 @@ func TestDocumentEncoderWithoutChunkerUsesWholeFields(t *testing.T) {
 	if err := service.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.SearchDocuments(context.Background(), encoder, Document{ID: "query", Fields: map[string]string{
+	result, err := service.SearchDocuments(context.Background(), encoder, semantic.Document{ID: "query", Fields: map[string]string{
 		"a-field": "first",
 		"z-field": "second",
 	}}, 1)
@@ -88,7 +88,7 @@ func TestDocumentEncoderRejectsEmbeddingCountMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = encoder.Encode(context.Background(), Document{ID: "doc", Fields: map[string]string{"field": "text"}})
+	_, err = encoder.Encode(context.Background(), semantic.Document{ID: "doc", Fields: map[string]string{"field": "text"}})
 	if !errors.Is(err, ErrEmbeddingCountMismatch) {
 		t.Fatalf("embedding count error = %v", err)
 	}

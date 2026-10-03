@@ -86,13 +86,6 @@ func (s *segment) componentID() uint64 {
 	return s.component
 }
 
-func (s *segment) rowsCopy() []VectorRow {
-	if s == nil {
-		return nil
-	}
-	return append([]VectorRow(nil), s.rows...)
-}
-
 func (s *segment) rowAt(index int) (VectorRow, bool) {
 	if s == nil || index < 0 || index >= len(s.rows) {
 		return VectorRow{}, false
