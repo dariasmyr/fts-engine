@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
@@ -19,17 +20,18 @@ type ReadView struct {
 	generation              uint64
 	liveCount               int
 	descriptor              PipelineDescriptor
-	maxK                    int
+	maxDocumentsPerSearch   int
 	maxCandidates           int
 	maxChunksPerDocumentHit int
+	maxQueryChunks          int
 	search                  hnsw.SearchConfig
 	calculator              vector.Calculator
 }
 
 // SearchDocumentsWithOptions is the single document-search implementation used
 // by both snapshots and Service.
-func (v *ReadView) SearchDocumentsWithOptions(ctx context.Context, encoder Encoder, query Document, k int, options SearchOptions) (DocumentSearchResult, error) {
-	if err := v.validateSearchRequest(ctx, encoder, k, options); err != nil {
+func (v *ReadView) SearchDocumentsWithOptions(ctx context.Context, encoder Encoder, query fts.Document, maxResultCount int, options SearchOptions) (DocumentSearchResult, error) {
+	if err := v.validateSearchRequest(ctx, encoder, maxResultCount, options); err != nil {
 		return DocumentSearchResult{}, err
 	}
 	queries, err := encoder.Encode(ctx, query)
@@ -39,23 +41,22 @@ func (v *ReadView) SearchDocumentsWithOptions(ctx context.Context, encoder Encod
 	if err := ctx.Err(); err != nil {
 		return DocumentSearchResult{}, err
 	}
-	if len(queries) == 0 {
+	if len(queries) == 0 || len(queries) > v.maxQueryChunks {
 		return DocumentSearchResult{}, ErrInvalidQuery
 	}
 	for i, item := range queries {
-		if i%64 == 0 {
-			if err := ctx.Err(); err != nil {
-				return DocumentSearchResult{}, err
-			}
+		if err := contextcheck.PeriodicError(ctx, i); err != nil {
+			return DocumentSearchResult{}, err
 		}
+
 		if err := v.calculator.Validate(item.Vector); err != nil {
 			return DocumentSearchResult{}, err
 		}
 	}
-	return v.searchEncodedQueries(ctx, queries, k, options)
+	return v.searchEncodedQueries(ctx, queries, maxResultCount, options)
 }
 
-func (v *ReadView) validateSearchRequest(ctx context.Context, encoder Encoder, k int, options SearchOptions) error {
+func (v *ReadView) validateSearchRequest(ctx context.Context, encoder Encoder, maxResultCount int, options SearchOptions) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
@@ -68,21 +69,21 @@ func (v *ReadView) validateSearchRequest(ctx context.Context, encoder Encoder, k
 	if encoder == nil {
 		return ErrInvalidConfig
 	}
-	if _, err := descriptorsEqual(encoder.Descriptor(), v.descriptor); err != nil {
+	if err := validatePipelineCompatibility(encoder.Descriptor(), v.descriptor); err != nil {
 		return err
 	}
-	return v.validateSearchLimits(ctx, k, options)
+	return v.validateSearchLimits(ctx, maxResultCount, options)
 }
 
-func (v *ReadView) validateSearchLimits(ctx context.Context, k int, options SearchOptions) error {
+func (v *ReadView) validateSearchLimits(ctx context.Context, maxResultCount int, options SearchOptions) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if k <= 0 || k > v.maxK {
-		return fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, v.maxK)
+	if maxResultCount <= 0 || maxResultCount > v.maxDocumentsPerSearch {
+		return fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, maxResultCount, v.maxDocumentsPerSearch)
 	}
 	if _, err := resolveCandidateBudget(options.CandidateChunks, v.maxCandidates); err != nil {
 		return err
@@ -104,14 +105,29 @@ func (v *ReadView) validateEncodedQuery(ctx context.Context, query []float32, k 
 	return v.calculator.Validate(query)
 }
 
-func (v *ReadView) searchEncodedQueries(ctx context.Context, queries []ChunkVector, k int, options SearchOptions) (DocumentSearchResult, error) {
-	merged := make(map[fts.DocID]DocumentHit)
+func (v *ReadView) searchEncodedQueries(ctx context.Context, queries []EncodedChunk, k int, options SearchOptions) (DocumentSearchResult, error) {
+	type documentAccumulator struct {
+		distance float64
+		chunks   map[chunk.ID]ChunkHit
+	}
+	merged := make(map[fts.DocID]*documentAccumulator)
 	var result DocumentSearchResult
+	candidateBudget, _ := resolveCandidateBudget(options.CandidateChunks, v.maxCandidates)
+	visitBudget := options.VisitLimit
+	if visitBudget == 0 {
+		visitBudget = v.search.DefaultVisitLimit
+	}
 	for _, item := range queries {
 		if err := ctx.Err(); err != nil {
 			return DocumentSearchResult{}, err
 		}
-		partial, err := searchReadViewDocuments(ctx, v, item.Vector, options)
+		remainingCandidates := candidateBudget - result.CandidateChunks
+		remainingVisits := visitBudget - result.Stats.VisitedNodes
+		if remainingCandidates <= 0 || remainingVisits <= 0 {
+			result.GroupingIncomplete = true
+			break
+		}
+		partial, err := searchReadViewDocuments(ctx, v, item.Vector, options, remainingCandidates, remainingVisits)
 		if err != nil {
 			return DocumentSearchResult{}, err
 		}
@@ -124,41 +140,46 @@ func (v *ReadView) searchEncodedQueries(ctx context.Context, queries []ChunkVect
 					return DocumentSearchResult{}, err
 				}
 			}
-			current, exists := merged[hit.DocID]
-			if !exists || hit.Distance < current.Distance {
-				merged[hit.DocID] = hit
+			current := merged[hit.DocID]
+			if current == nil {
+				current = &documentAccumulator{distance: hit.Distance, chunks: make(map[chunk.ID]ChunkHit)}
+				merged[hit.DocID] = current
+			}
+			current.distance = min(current.distance, hit.Distance)
+			for _, candidate := range hit.Chunks {
+				previous, exists := current.chunks[candidate.Ref.ID]
+				if !exists || candidate.Distance < previous.Distance {
+					current.chunks[candidate.Ref.ID] = candidate
+				}
 			}
 		}
 	}
 	result.Hits = make([]DocumentHit, 0, len(merged))
 	i := 0
-	for _, hit := range merged {
+	for docID, accumulated := range merged {
 		if i%256 == 0 {
 			if err := ctx.Err(); err != nil {
 				return DocumentSearchResult{}, err
 			}
 		}
-		result.Hits = append(result.Hits, hit)
+		chunks := make([]ChunkHit, 0, len(accumulated.chunks))
+		for _, hit := range accumulated.chunks {
+			chunks = append(chunks, hit)
+		}
+		slices.SortFunc(chunks, compareChunkHits)
+		if len(chunks) > v.maxChunksPerDocumentHit {
+			chunks = chunks[:v.maxChunksPerDocumentHit]
+		}
+		result.Hits = append(result.Hits, DocumentHit{DocID: docID, Distance: accumulated.distance, Chunks: chunks})
 		i++
 	}
-	slices.SortFunc(result.Hits, func(a, b DocumentHit) int {
-		if a.Distance < b.Distance {
-			return -1
-		}
-		if a.Distance > b.Distance {
-			return 1
-		}
-		if a.DocID < b.DocID {
-			return -1
-		}
-		if a.DocID > b.DocID {
-			return 1
-		}
-		return 0
-	})
+	slices.SortFunc(result.Hits, compareDocumentHits)
 	result.DistinctDocuments = len(result.Hits)
 	if len(result.Hits) > k {
 		result.Hits = result.Hits[:k]
+	}
+	if err := ctx.Err(); err != nil {
+		return DocumentSearchResult{}, err
 	}
 	return result, nil
 }
@@ -183,17 +204,17 @@ func newReadView(ctx context.Context, generation uint64, segments []visibleSegme
 	}
 	view := &ReadView{
 		segments: append([]visibleSegment(nil), segments...), generation: generation,
-		descriptor: descriptor, maxK: policy.MaxK, maxCandidates: policy.MaxChunkCandidates,
-		maxChunksPerDocumentHit: policy.MaxChunksPerDocumentHit, search: search, calculator: calculator,
+		descriptor: descriptor, maxDocumentsPerSearch: policy.MaxDocumentsPerSearch, maxCandidates: policy.MaxChunkCandidates,
+		maxChunksPerDocumentHit: policy.MaxChunksPerDocumentHit, maxQueryChunks: policy.MaxQueryChunks,
+		search: search, calculator: calculator,
 	}
 	for _, segment := range view.segments {
 		view.liveCount += segment.filter.AllowedOrdinalCount()
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return view, nil
-}
-
-func newEmptyReadView(ctx context.Context, descriptor PipelineDescriptor, policy searchPolicy, search hnsw.SearchConfig) (*ReadView, error) {
-	return newReadView(ctx, 0, nil, descriptor, policy, search)
 }
 
 func validateVisibleSegments(ctx context.Context, segments []visibleSegment, descriptor PipelineDescriptor, search hnsw.SearchConfig) error {
@@ -205,6 +226,7 @@ func validateVisibleSegments(ctx context.Context, segments []visibleSegment, des
 	}
 	liveChunks := make(map[chunkKey]struct{})
 	liveDocumentComponents := make(map[fts.DocID]uint64)
+	var previousVectorID uint64
 	for segmentIndex, item := range segments {
 		if segmentIndex%16 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -214,11 +236,8 @@ func validateVisibleSegments(ctx context.Context, segments []visibleSegment, des
 		if item.segment == nil || item.filter.TotalOrdinalCount() != uint32(item.segment.len()) || item.segment.searchConfig() != search {
 			return ErrInvalidSegment
 		}
-		if err := item.segment.validateContents(); err != nil {
-			return err
-		}
 		got := item.segment.descriptor
-		if _, err := descriptorsEqual(got, descriptor); err != nil {
+		if err := validatePipelineCompatibility(got, descriptor); err != nil {
 			return err
 		}
 		component := item.segment.componentID()
@@ -227,15 +246,14 @@ func validateVisibleSegments(ctx context.Context, segments []visibleSegment, des
 		}
 		components[component] = struct{}{}
 		for ordinal, row := range item.segment.rows {
-			if ordinal%64 == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
+			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
+				return err
 			}
-			if row.VectorID == 0 || row.Chunk.ID == "" || row.Chunk.DocID == "" || row.Chunk.Field == "" || row.Chunk.StartByte > row.Chunk.EndByte ||
-				ordinal > 0 && item.segment.rows[ordinal-1].VectorID >= row.VectorID {
+
+			if previousVectorID >= row.VectorID {
 				return ErrInvalidSegment
 			}
+			previousVectorID = row.VectorID
 			if _, exists := vectorIDs[row.VectorID]; exists {
 				return ErrInvalidSegment
 			}

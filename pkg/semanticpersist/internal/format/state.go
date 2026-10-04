@@ -7,10 +7,9 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
-const stateVersion = uint16(7)
+const stateVersion = uint16(8)
 const minimumRowBytes = 32
 
 type StateSegment struct {
@@ -129,38 +128,43 @@ func DecodeState(data []byte, limits Limits) (State, error) {
 }
 
 func encodeConfig(e *encoder, c semantic.Config) {
-	values := []int{c.MaxVectors, c.MaxChunksPerDocument, c.MaxK, c.MaxChunkCandidates, c.MaxChunksPerDocumentHit, c.InitialVectorCapacity}
+	values := []int{
+		c.Limits.MaxLiveVectors,
+		c.Limits.MaxChunksPerDocument,
+		c.Limits.MaxDocumentsPerSearch,
+		c.Limits.MaxChunkCandidates,
+		c.Limits.MaxChunksPerDocumentHit,
+		c.HNSW.MaxNeighbors,
+		c.HNSW.EfConstruction,
+		c.HNSW.DefaultEfSearch,
+		c.HNSW.MaxEfSearch,
+		c.HNSW.DefaultVisitLimit,
+		c.HNSW.MaxVisitLimit,
+	}
 	for _, value := range values {
 		e.u32(uint32(value))
 	}
-	e.u64(uint64(c.InitialMaxAllocatedVectorID))
-	e.u32(uint32(c.HNSWBuild.Dimensions))
-	e.u8(uint8(c.HNSWBuild.Metric))
-	e.raw(make([]byte, 3))
-	e.u32(uint32(c.HNSWBuild.MaxVectors))
-	e.u64(c.HNSWBuild.MaxVectorBytes)
-	e.u32(uint32(c.HNSWBuild.MaxNeighbors))
-	e.u32(uint32(c.HNSWBuild.EfConstruction))
-	e.u64(c.HNSWBuild.Seed)
-	for _, value := range []int{c.HNSWSearch.DefaultEfSearch, c.HNSWSearch.MaxEfSearch, c.HNSWSearch.DefaultVisitLimit, c.HNSWSearch.MaxVisitLimit, c.HNSWSearch.MaxK} {
-		e.u32(uint32(value))
-	}
+	e.u64(c.HNSW.Seed)
 }
 
 func decodeConfig(d *decoder, embedding semantic.EmbeddingDescriptor, chunking semantic.ChunkingDescriptor) semantic.Config {
 	c := semantic.Config{Embedding: embedding, Chunking: chunking}
-	c.MaxVectors, c.MaxChunksPerDocument, c.MaxK = int(d.u32()), int(d.u32()), int(d.u32())
-	c.MaxChunkCandidates, c.MaxChunksPerDocumentHit, c.InitialVectorCapacity = int(d.u32()), int(d.u32()), int(d.u32())
-	c.InitialMaxAllocatedVectorID = d.u64()
-	c.HNSWBuild = hnsw.BuildConfig{Dimensions: int(d.u32()), Metric: vector.Metric(d.u8())}
-	for _, b := range d.take(3) {
-		if b != 0 {
-			d.decodeErr = ErrCorrupt
-		}
+	c.Limits = semantic.Limits{
+		MaxLiveVectors:          int(d.u32()),
+		MaxChunksPerDocument:    int(d.u32()),
+		MaxDocumentsPerSearch:   int(d.u32()),
+		MaxChunkCandidates:      int(d.u32()),
+		MaxChunksPerDocumentHit: int(d.u32()),
 	}
-	c.HNSWBuild.MaxVectors, c.HNSWBuild.MaxVectorBytes = int(d.u32()), d.u64()
-	c.HNSWBuild.MaxNeighbors, c.HNSWBuild.EfConstruction, c.HNSWBuild.Seed = int(d.u32()), int(d.u32()), d.u64()
-	c.HNSWSearch = hnsw.SearchConfig{DefaultEfSearch: int(d.u32()), MaxEfSearch: int(d.u32()), DefaultVisitLimit: int(d.u32()), MaxVisitLimit: int(d.u32()), MaxK: int(d.u32())}
+	c.HNSW = semantic.HNSWTuning{
+		MaxNeighbors:      int(d.u32()),
+		EfConstruction:    int(d.u32()),
+		DefaultEfSearch:   int(d.u32()),
+		MaxEfSearch:       int(d.u32()),
+		DefaultVisitLimit: int(d.u32()),
+		MaxVisitLimit:     int(d.u32()),
+		Seed:              d.u64(),
+	}
 	return c
 }
 
@@ -169,13 +173,32 @@ func validateState(value State, limits Limits) error {
 		return ErrCorrupt
 	}
 	c := value.Config
-	ints := []int{c.MaxVectors, c.MaxChunksPerDocument, c.MaxK, c.MaxChunkCandidates, c.MaxChunksPerDocumentHit, c.InitialVectorCapacity, c.HNSWBuild.Dimensions, c.HNSWBuild.MaxVectors, c.HNSWBuild.MaxNeighbors, c.HNSWBuild.EfConstruction, c.HNSWSearch.DefaultEfSearch, c.HNSWSearch.MaxEfSearch, c.HNSWSearch.DefaultVisitLimit, c.HNSWSearch.MaxVisitLimit, c.HNSWSearch.MaxK}
+	ints := []int{
+		c.Limits.MaxLiveVectors,
+		c.Limits.MaxChunksPerDocument,
+		c.Limits.MaxDocumentsPerSearch,
+		c.Limits.MaxChunkCandidates,
+		c.Limits.MaxChunksPerDocumentHit,
+		c.HNSW.MaxNeighbors,
+		c.HNSW.EfConstruction,
+		c.HNSW.DefaultEfSearch,
+		c.HNSW.MaxEfSearch,
+		c.HNSW.DefaultVisitLimit,
+		c.HNSW.MaxVisitLimit,
+	}
 	for _, v := range ints {
-		if v < 0 || uint64(v) > math.MaxUint32 {
+		if v <= 0 {
+			return ErrCorrupt
+		}
+		if uint64(v) > math.MaxUint32 {
 			return ErrLimitExceeded
 		}
 	}
-	if c.Embedding.Dimensions > limits.MaxDimensions || c.MaxVectors > limits.MaxVectors || c.MaxChunksPerDocument > limits.MaxChunksPerDocument || c.MaxK > limits.MaxK || c.HNSWSearch.MaxK > limits.MaxK || c.HNSWBuild.MaxVectorBytes > limits.MaxVectorBytes || c.HNSWSearch.MaxEfSearch > limits.MaxEfSearch || c.HNSWSearch.MaxVisitLimit > limits.MaxVisitLimit {
+	vectorBytes := uint64(c.Limits.MaxLiveVectors) * uint64(c.Embedding.Dimensions) * 4
+	if c.Embedding.Dimensions > limits.MaxDimensions || c.Limits.MaxLiveVectors > limits.MaxVectors ||
+		c.Limits.MaxChunksPerDocument > limits.MaxChunksPerDocument ||
+		c.Limits.MaxDocumentsPerSearch > limits.MaxK || c.Limits.MaxChunkCandidates > limits.MaxK ||
+		vectorBytes > limits.MaxVectorBytes || c.HNSW.MaxEfSearch > limits.MaxEfSearch || c.HNSW.MaxVisitLimit > limits.MaxVisitLimit {
 		return ErrLimitExceeded
 	}
 	totalRows := 0

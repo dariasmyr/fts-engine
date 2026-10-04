@@ -192,7 +192,7 @@ func TestPhraseSearchWithHAMT(t *testing.T) {
 		"doc-c": "hotel barge said hotel barge again",
 	}
 	for id, content := range docs {
-		if err := svc.Index(ctx, fts.Document{ID: fts.DocID(id), Fields: map[string]fts.Field{fts.DefaultField: {Value: content}}}); err != nil {
+		if err := svc.Index(ctx, fts.Document{ID: fts.DocID(id), Fields: map[string]fts.FieldData{fts.DefaultField: {Text: content}}}); err != nil {
 			t.Fatalf("index %s: %v", id, err)
 		}
 	}

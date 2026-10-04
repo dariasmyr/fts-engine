@@ -203,14 +203,21 @@ func validateDirectory(path string) error {
 }
 
 func validateSegment(segment semantic.SegmentSnapshot, config semantic.Config, limits Limits) error {
-	if segment.Vectors() == nil || segment.Index() == nil ||
-		segment.Dimensions() > limits.MaxDimensions || segment.Len() > limits.MaxVectors ||
-		segment.MaxK() > limits.MaxK || config.MaxK <= 0 || config.MaxK > limits.MaxK || config.MaxK > segment.MaxK() ||
-		config.MaxChunkCandidates < config.MaxK || config.MaxChunkCandidates > limits.MaxK || config.MaxChunkCandidates > segment.MaxK() ||
-		config.MaxChunksPerDocumentHit <= 0 || config.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
+	data := segment.Data()
+	semanticLimits := config.Limits
+	if data.Vectors == nil || data.Index == nil {
 		return ErrLimitExceeded
 	}
-	components, ok := checkedMultiply64(uint64(segment.Len()), uint64(segment.Dimensions()))
+	dimensions := data.Index.Dimensions()
+	length := data.Index.Len()
+	search := data.Index.Report().Search
+	if dimensions > limits.MaxDimensions || length > limits.MaxVectors ||
+		search.MaxK > limits.MaxK || semanticLimits.MaxDocumentsPerSearch <= 0 || semanticLimits.MaxDocumentsPerSearch > limits.MaxK || semanticLimits.MaxDocumentsPerSearch > search.MaxK ||
+		semanticLimits.MaxChunkCandidates < semanticLimits.MaxDocumentsPerSearch || semanticLimits.MaxChunkCandidates > limits.MaxK || semanticLimits.MaxChunkCandidates > search.MaxK ||
+		semanticLimits.MaxChunksPerDocumentHit <= 0 || semanticLimits.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
+		return ErrLimitExceeded
+	}
+	components, ok := checkedMultiply64(uint64(length), uint64(dimensions))
 	if !ok {
 		return ErrLimitExceeded
 	}
@@ -218,22 +225,23 @@ func validateSegment(segment semantic.SegmentSnapshot, config semantic.Config, l
 	if !ok || vectorBytes > limits.MaxVectorBytes || limits.MaxFileBytes < 44 || vectorBytes > limits.MaxFileBytes-44 {
 		return ErrLimitExceeded
 	}
-	index := segment.Index()
-	search := segment.SearchConfig()
+	index := data.Index
 	report := index.Report()
 	if search.MaxK > limits.MaxK || search.MaxEfSearch > limits.MaxEfSearch || search.MaxVisitLimit > limits.MaxVisitLimit ||
+		report.Build.MaxNeighbors != config.HNSW.MaxNeighbors || report.Build.LevelZeroMaxNeighbors != config.HNSW.MaxNeighbors*2 ||
+		report.Build.EfConstruction != config.HNSW.EfConstruction || report.Build.Seed != config.HNSW.Seed ||
 		uint64(report.Storage.DirectedLinks) > limits.MaxGraphLinks ||
 		graphFileSize(index) > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
 		return ErrLimitExceeded
 	}
 	validString := func(value string) bool { return len(value) <= limits.MaxStringBytes }
-	descriptor := segment.Pipeline()
+	descriptor := data.Pipeline
 	if !validString(descriptor.Embedding.ProviderID) || !validString(descriptor.Embedding.ModelID) || !validString(descriptor.Embedding.ModelVersion) || !validString(descriptor.Embedding.PipelineFingerprint) ||
 		!validString(descriptor.Chunking.ID) || !validString(descriptor.Chunking.Fingerprint) {
 		return ErrLimitExceeded
 	}
 	documentChunks := make(map[string]int)
-	for _, record := range segment.Rows() {
+	for _, record := range data.Rows {
 		if !validString(string(record.Chunk.ID)) || !validString(string(record.Chunk.DocID)) || !validString(record.Chunk.Field) {
 			return ErrLimitExceeded
 		}

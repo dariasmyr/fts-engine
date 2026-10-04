@@ -163,7 +163,13 @@ func openSegmentObject(ctx context.Context, paths storePaths, value manifestSegm
 	if graphMetadata.Size != value.Graph.Size || graphMetadata.SHA256 != value.Graph.SHA256 {
 		return semantic.SegmentSnapshot{}, ErrCorrupt
 	}
-	segment := semantic.NewSegmentSnapshot(state.ComponentID, semantic.PipelineDescriptor{Embedding: config.Embedding, Chunking: config.Chunking}, state.Rows, vectors, index)
+	segment := semantic.NewSegmentSnapshot(semantic.SegmentData{
+		ComponentID: state.ComponentID,
+		Pipeline:    semantic.PipelineDescriptor{Embedding: config.Embedding, Chunking: config.Chunking},
+		Rows:        state.Rows,
+		Vectors:     vectors,
+		Index:       index,
+	})
 	if err := validateSegment(segment, config, limits); err != nil {
 		return semantic.SegmentSnapshot{}, err
 	}

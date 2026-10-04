@@ -102,13 +102,15 @@ if err != nil {
 }
 
 service, err := semantic.New(semantic.Config{
-	Embedding:               embedding,
-	Chunking:                semantic.ChunkingDescriptor{ID: "chunks-v1", Version: 1, Fingerprint: "chunks-v1"},
-	MaxVectors:              1_000_000,
-	MaxChunksPerDocument:    64,
-	MaxK:                    20,
-	MaxChunkCandidates:      200,
-	MaxChunksPerDocumentHit: 3,
+	Embedding: embedding,
+	Chunking:  semantic.ChunkingDescriptor{ID: "chunks-v1", Version: 1, Fingerprint: "chunks-v1"},
+	Limits: semantic.Limits{
+		MaxLiveVectors:          1_000_000,
+		MaxChunksPerDocument:    64,
+		MaxDocumentsPerSearch:   20,
+		MaxChunkCandidates:      200,
+		MaxChunksPerDocumentHit: 3,
+	},
 })
 if err != nil {
 	return err

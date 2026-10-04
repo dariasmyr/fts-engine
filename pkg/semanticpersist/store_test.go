@@ -16,17 +16,17 @@ import (
 
 type staticEncoder struct {
 	descriptor semantic.PipelineDescriptor
-	vectors    map[fts.DocID][]semantic.ChunkVector
+	vectors    map[fts.DocID][]semantic.EncodedChunk
 }
 
 func (e staticEncoder) Descriptor() semantic.PipelineDescriptor { return e.descriptor }
-func (e staticEncoder) Encode(_ context.Context, document semantic.Document) ([]semantic.ChunkVector, error) {
+func (e staticEncoder) Encode(_ context.Context, document fts.Document) ([]semantic.EncodedChunk, error) {
 	return e.vectors[document.ID], nil
 }
 
 func TestPublishRejectsPendingMutationsWithoutCURRENT(t *testing.T) {
 	service, encoder := persistenceService(t)
-	if err := service.AddDocument(context.Background(), encoder, semantic.Document{ID: "doc-a"}); err != nil {
+	if err := service.AddDocument(context.Background(), encoder, fts.Document{ID: "doc-a"}); err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
@@ -61,11 +61,11 @@ func TestPublishOpenEmptyService(t *testing.T) {
 func TestWritableStoreRestartLifecycle(t *testing.T) {
 	ctx := context.Background()
 	service, encoder := persistenceService(t)
-	encoder.vectors["query"] = []semantic.ChunkVector{testVector("query", "query-1", []float32{0, 0})}
-	encoder.vectors["doc-a"] = []semantic.ChunkVector{testVector("doc-a", "a-old", []float32{1, 0})}
-	encoder.vectors["doc-delete"] = []semantic.ChunkVector{testVector("doc-delete", "delete-1", []float32{4, 0})}
-	encoder.vectors["doc-added"] = []semantic.ChunkVector{testVector("doc-added", "added-1", []float32{2, 0})}
-	encoder.vectors["doc-after-restart"] = []semantic.ChunkVector{testVector("doc-after-restart", "after-1", []float32{3, 0})}
+	encoder.vectors["query"] = []semantic.EncodedChunk{testVector("query", "query-1", []float32{0, 0})}
+	encoder.vectors["doc-a"] = []semantic.EncodedChunk{testVector("doc-a", "a-old", []float32{1, 0})}
+	encoder.vectors["doc-delete"] = []semantic.EncodedChunk{testVector("doc-delete", "delete-1", []float32{4, 0})}
+	encoder.vectors["doc-added"] = []semantic.EncodedChunk{testVector("doc-added", "added-1", []float32{2, 0})}
+	encoder.vectors["doc-after-restart"] = []semantic.EncodedChunk{testVector("doc-after-restart", "after-1", []float32{3, 0})}
 
 	addAndFlush(t, service, encoder, "doc-a")
 	addAndFlush(t, service, encoder, "doc-delete")
@@ -87,8 +87,8 @@ func TestWritableStoreRestartLifecycle(t *testing.T) {
 	}
 
 	addAndFlush(t, store.Service(), encoder, "doc-added")
-	encoder.vectors["doc-a"] = []semantic.ChunkVector{testVector("doc-a", "a-new", []float32{1, 1})}
-	if err := store.Service().ReplaceDocument(ctx, encoder, semantic.Document{ID: "doc-a"}); err != nil {
+	encoder.vectors["doc-a"] = []semantic.EncodedChunk{testVector("doc-a", "a-new", []float32{1, 1})}
+	if err := store.Service().ReplaceDocument(ctx, encoder, fts.Document{ID: "doc-a"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Service().DeleteDocument(ctx, "doc-delete"); err != nil {
@@ -277,7 +277,7 @@ func TestPublicationFailurePreservesCURRENTAndExplicitRepairSelectsOrphan(t *tes
 	if repaired.generation.ID != 2 || repaired.Service().Statistics().Documents != 2 {
 		t.Fatalf("repaired generation = %+v, stats = %+v", repaired.generation, repaired.Service().Statistics())
 	}
-	encoder.vectors["doc-c"] = []semantic.ChunkVector{testVector("doc-c", "c-1", []float32{0.5, 0.5})}
+	encoder.vectors["doc-c"] = []semantic.EncodedChunk{testVector("doc-c", "c-1", []float32{0.5, 0.5})}
 	addAndFlush(t, repaired.Service(), encoder, "doc-c")
 	if generation, err := repaired.Publish(ctx, Options{Durability: DurabilityAsynchronous}); err != nil || generation.ID != 3 {
 		t.Fatalf("Publish after repair = %+v, %v", generation, err)
@@ -601,14 +601,16 @@ func persistenceService(t testing.TB) (*semantic.Service, staticEncoder) {
 	}
 	config := semantic.Config{
 		Embedding: embedding, Chunking: semantic.ChunkingDescriptor{ID: "chunks", Version: 1, Fingerprint: "chunks-v1"},
-		MaxVectors: 100, MaxChunksPerDocument: 4, MaxK: 4, MaxChunkCandidates: 8,
-		MaxChunksPerDocumentHit: 2, InitialVectorCapacity: 4,
+		Limits: semantic.Limits{
+			MaxLiveVectors: 100, MaxChunksPerDocument: 4, MaxDocumentsPerSearch: 4,
+			MaxChunkCandidates: 8, MaxChunksPerDocumentHit: 2,
+		},
 	}
 	service, err := semantic.New(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoder := staticEncoder{descriptor: semantic.PipelineDescriptor{Embedding: config.Embedding, Chunking: config.Chunking}, vectors: map[fts.DocID][]semantic.ChunkVector{
+	encoder := staticEncoder{descriptor: semantic.PipelineDescriptor{Embedding: config.Embedding, Chunking: config.Chunking}, vectors: map[fts.DocID][]semantic.EncodedChunk{
 		"doc-a": {testVector("doc-a", "a-1", []float32{1, 0})},
 		"doc-b": {testVector("doc-b", "b-1", []float32{0, 1})},
 	}}
@@ -617,7 +619,7 @@ func persistenceService(t testing.TB) (*semantic.Service, staticEncoder) {
 
 func addAndFlush(t testing.TB, service *semantic.Service, encoder staticEncoder, id fts.DocID) {
 	t.Helper()
-	if err := service.AddDocument(context.Background(), encoder, semantic.Document{ID: id}); err != nil {
+	if err := service.AddDocument(context.Background(), encoder, fts.Document{ID: id}); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.Flush(context.Background()); err != nil {
@@ -627,7 +629,7 @@ func addAndFlush(t testing.TB, service *semantic.Service, encoder staticEncoder,
 
 func assertSearchVisibility(t testing.TB, service *semantic.Service, encoder staticEncoder, want map[fts.DocID]chunk.ID) {
 	t.Helper()
-	result, err := service.SearchDocuments(context.Background(), encoder, semantic.Document{ID: "query"}, 4)
+	result, err := service.SearchDocuments(context.Background(), encoder, fts.Document{ID: "query"}, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -654,6 +656,6 @@ func soleSegmentObjectID(t testing.TB, root string) string {
 	return entries[0].Name()
 }
 
-func testVector(docID fts.DocID, id chunk.ID, value []float32) semantic.ChunkVector {
-	return semantic.ChunkVector{Ref: chunk.Ref{ID: id, DocID: docID, Field: fts.DefaultField, EndByte: 1}, Vector: value}
+func testVector(docID fts.DocID, id chunk.ID, value []float32) semantic.EncodedChunk {
+	return semantic.EncodedChunk{Ref: chunk.Ref{ID: id, DocID: docID, Field: fts.DefaultField, EndByte: 1}, Vector: value}
 }

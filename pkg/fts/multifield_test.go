@@ -17,9 +17,9 @@ func TestIndexMultiFieldPopulatesPerFieldIndex(t *testing.T) {
 
 	doc := Document{
 		ID: "doc-1",
-		Fields: map[string]Field{
-			"title": {Value: "rosa"},
-			"body":  {Value: "barge"},
+		Fields: map[string]FieldData{
+			"title": {Text: "rosa"},
+			"body":  {Text: "barge"},
 		},
 	}
 	if err := svc.Index(context.Background(), doc); err != nil {
@@ -60,7 +60,7 @@ func TestSingleFieldServiceRejectsOtherFields(t *testing.T) {
 
 	err := svc.Index(context.Background(), Document{
 		ID:     "doc-1",
-		Fields: map[string]Field{"title": {Value: "oops"}},
+		Fields: map[string]FieldData{"title": {Text: "oops"}},
 	})
 	if err == nil {
 		t.Fatal("expected error for unknown field on single-field service")
@@ -94,8 +94,8 @@ func TestPerFieldPipelineOverridesDefault(t *testing.T) {
 
 	err := svc.Index(context.Background(), Document{
 		ID: "doc-1",
-		Fields: map[string]Field{
-			"title": {Value: "abc", Pipeline: uppercasePipeline{}},
+		Fields: map[string]FieldData{
+			"title": {Text: "abc", Pipeline: uppercasePipeline{}},
 		},
 	})
 	if err != nil {
@@ -334,15 +334,15 @@ func TestSearchFieldClausesSupportsFieldSpecificPhraseAndExclusion(t *testing.T)
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{
-		"title": {Value: "james"},
-		"body":  {Value: "french hotel"},
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]FieldData{
+		"title": {Text: "james"},
+		"body":  {Text: "french hotel"},
 	}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{
-		"title": {Value: "james"},
-		"body":  {Value: "market hotel"},
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]FieldData{
+		"title": {Text: "james"},
+		"body":  {Text: "market hotel"},
 	}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
@@ -386,10 +386,10 @@ func TestSearchDocumentsQuotedPhraseAcrossFields(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]FieldData{"title": {Text: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]FieldData{"body": {Text: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
@@ -407,10 +407,10 @@ func TestSearchPhraseNearAcrossFields(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james x doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]FieldData{"title": {Text: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james x doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]FieldData{"body": {Text: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
@@ -428,10 +428,10 @@ func TestSearchPhraseFieldRestrictsToOneField(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]FieldData{"title": {Text: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]FieldData{"body": {Text: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
@@ -449,10 +449,10 @@ func TestSearchPhraseFieldsRestrictsToSubset(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]FieldData{"title": {Text: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]FieldData{"body": {Text: "james doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
@@ -470,10 +470,10 @@ func TestSearchPhraseNearFieldRestrictsToOneField(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james x doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]FieldData{"title": {Text: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james x doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]FieldData{"body": {Text: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
@@ -491,10 +491,10 @@ func TestSearchPhraseNearFieldsRestrictsToSubset(t *testing.T) {
 	svc := NewMultiField(factory, WordKeys)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james x doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]FieldData{"title": {Text: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james x doe"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-b", Fields: map[string]FieldData{"body": {Text: "james x doe"}}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 

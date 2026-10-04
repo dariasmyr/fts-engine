@@ -19,6 +19,7 @@ type segmentObject struct {
 }
 
 func writeSegmentObject(ctx context.Context, paths storePaths, segment semantic.SegmentSnapshot, options Options) (segmentObject, error) {
+	data := segment.Data()
 	segmentTemp, err := os.MkdirTemp(paths.segments, ".tmp-seg-")
 	if err != nil {
 		return segmentObject{}, fmt.Errorf("semanticpersist: create segment temp: %w", err)
@@ -33,7 +34,7 @@ func writeSegmentObject(ctx context.Context, paths storePaths, segment semantic.
 	if err := beforeStep(ctx, options, stepWriteVectors); err != nil {
 		return segmentObject{}, err
 	}
-	vectorsRef, err := writeVectorsFile(ctx, filepath.Join(segmentTemp, vectorsFileName), segment.Vectors(), segment.MaxK(), options.Durability)
+	vectorsRef, err := writeVectorsFile(ctx, filepath.Join(segmentTemp, vectorsFileName), data.Vectors, data.Index.Report().Search.MaxK, options.Durability)
 	if err != nil {
 		return segmentObject{}, err
 	}
@@ -47,7 +48,7 @@ func writeSegmentObject(ctx context.Context, paths storePaths, segment semantic.
 	if err := beforeStep(ctx, options, stepWriteGraph); err != nil {
 		return segmentObject{}, err
 	}
-	graphRef, err := writeGraphFile(ctx, filepath.Join(segmentTemp, graphFileName), segment.Index(), vectorsRef, options.Durability)
+	graphRef, err := writeGraphFile(ctx, filepath.Join(segmentTemp, graphFileName), data.Index, vectorsRef, options.Durability)
 	if err != nil {
 		return segmentObject{}, err
 	}

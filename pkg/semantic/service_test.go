@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -18,19 +17,21 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
-func testConfig(maxK, maxCandidates int) Config {
+func testConfig(maxDocuments, maxCandidates int) Config {
 	embedding, err := NewEmbeddingDescriptor("test-provider", "test-model", "v1", "test-embedding-v1", 2, vector.MetricL2Squared, 1)
 	if err != nil {
 		panic(err)
 	}
 	return Config{
-		Embedding:               embedding,
-		Chunking:                ChunkingDescriptor{ID: "test-chunks-v1", Version: 1, Fingerprint: "test-chunks-fp-v1"},
-		MaxVectors:              200,
-		MaxChunksPerDocument:    20,
-		MaxK:                    maxK,
-		MaxChunkCandidates:      maxCandidates,
-		MaxChunksPerDocumentHit: 3,
+		Embedding: embedding,
+		Chunking:  ChunkingDescriptor{ID: "test-chunks-v1", Version: 1, Fingerprint: "test-chunks-fp-v1"},
+		Limits: Limits{
+			MaxLiveVectors:          200,
+			MaxChunksPerDocument:    20,
+			MaxDocumentsPerSearch:   maxDocuments,
+			MaxChunkCandidates:      maxCandidates,
+			MaxChunksPerDocumentHit: 3,
+		},
 	}
 }
 
@@ -43,7 +44,7 @@ func newTestService(t *testing.T) *Service {
 	return service
 }
 
-func addDocument(t *testing.T, service *Service, ctx context.Context, batch []ChunkVector) error {
+func addDocument(t *testing.T, service *Service, ctx context.Context, batch []EncodedChunk) error {
 	t.Helper()
 	if len(batch) == 0 {
 		return service.addEncodedDocument(ctx, "", batch)
@@ -54,7 +55,7 @@ func addDocument(t *testing.T, service *Service, ctx context.Context, batch []Ch
 	return service.Flush(ctx)
 }
 
-func replaceDocument(t *testing.T, service *Service, ctx context.Context, batch []ChunkVector) error {
+func replaceDocument(t *testing.T, service *Service, ctx context.Context, batch []EncodedChunk) error {
 	t.Helper()
 	if len(batch) == 0 {
 		return service.replaceEncodedDocument(ctx, "", batch)
@@ -80,8 +81,8 @@ func deleteDocument(t *testing.T, service *Service, docID fts.DocID) bool {
 	return true
 }
 
-func testChunk(docID fts.DocID, id chunk.ID, ordinal uint32, value []float32) ChunkVector {
-	return ChunkVector{
+func testChunk(docID fts.DocID, id chunk.ID, ordinal uint32, value []float32) EncodedChunk {
+	return EncodedChunk{
 		Ref:    chunk.Ref{ID: id, DocID: docID, Field: fts.DefaultField, Ordinal: ordinal, StartByte: uint64(ordinal * 10), EndByte: uint64(ordinal*10 + 10)},
 		Vector: value,
 	}
@@ -90,13 +91,13 @@ func testChunk(docID fts.DocID, id chunk.ID, ordinal uint32, value []float32) Ch
 func TestLifecycleChunkSearchGroupingAndStatistics(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{
+	if err := addDocument(t, service, ctx, []EncodedChunk{
 		testChunk("doc-a", "a-1", 0, []float32{0, 0}),
 		testChunk("doc-a", "a-2", 1, []float32{10, 0}),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-b", "b-1", 0, []float32{1, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-b", "b-1", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -122,7 +123,7 @@ func TestLifecycleChunkSearchGroupingAndStatistics(t *testing.T) {
 		t.Fatalf("statistics = %+v", stats)
 	}
 
-	badReplacement := []ChunkVector{testChunk("doc-a", "bad", 0, []float32{1})}
+	badReplacement := []EncodedChunk{testChunk("doc-a", "bad", 0, []float32{1})}
 	if err := service.replaceEncodedDocument(ctx, "doc-a", badReplacement); !errors.Is(err, vector.ErrDimensionMismatch) {
 		t.Fatalf("replacement error = %v", err)
 	}
@@ -130,7 +131,7 @@ func TestLifecycleChunkSearchGroupingAndStatistics(t *testing.T) {
 	if err != nil || nearest.Hits[0].Ref.ID != "a-1" {
 		t.Fatalf("old version not preserved: %+v, %v", nearest, err)
 	}
-	if err := replaceDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a-new", 0, []float32{3, 0})}); err != nil {
+	if err := replaceDocument(t, service, ctx, []EncodedChunk{testChunk("doc-a", "a-new", 0, []float32{3, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	nearest, err = service.searchChunks(ctx, []float32{0, 0}, 2)
@@ -152,10 +153,10 @@ func TestLifecycleChunkSearchGroupingAndStatistics(t *testing.T) {
 func TestMultiSegmentSearchMergesChunksAndDocuments(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-far", "far", 0, []float32{10, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-far", "far", 0, []float32{10, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-near", "near", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-near", "near", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,10 +180,10 @@ func TestMultiSegmentSearchMergesChunksAndDocuments(t *testing.T) {
 func TestMultiSegmentSearchUsesDeterministicComponentTieOrdering(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-first", "first", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-first", "first", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-second", "second", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-second", "second", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -198,10 +199,10 @@ func TestMultiSegmentSearchUsesDeterministicComponentTieOrdering(t *testing.T) {
 func TestMultiSegmentSearchAppliesPublishedStaleFilters(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-old", "old", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-old", "old", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-live", "live", 0, []float32{1, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-live", "live", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.DeleteDocument(ctx, "doc-old"); err != nil {
@@ -232,7 +233,7 @@ func TestMultiSegmentSearchPropagatesIncompleteANNState(t *testing.T) {
 	ctx := context.Background()
 	for i := range 3 {
 		docID := fts.DocID(fmt.Sprintf("doc-%d", i))
-		if err := service.addEncodedDocument(ctx, docID, []ChunkVector{testChunk(docID, chunk.ID(fmt.Sprintf("chunk-%d", i)), 0, []float32{float32(i), 0})}); err != nil {
+		if err := service.addEncodedDocument(ctx, docID, []EncodedChunk{testChunk(docID, chunk.ID(fmt.Sprintf("chunk-%d", i)), 0, []float32{float32(i), 0})}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -255,7 +256,7 @@ func TestMultiSegmentSearchPropagatesIncompleteANNState(t *testing.T) {
 func TestMutationsBecomeVisibleAfterFlush(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	old := []ChunkVector{testChunk("doc", "old", 0, []float32{0, 0})}
+	old := []EncodedChunk{testChunk("doc", "old", 0, []float32{0, 0})}
 	if err := service.addEncodedDocument(ctx, "doc", old); err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +275,7 @@ func TestMutationsBecomeVisibleAfterFlush(t *testing.T) {
 		t.Fatalf("flushed add result = %+v, %v", result, err)
 	}
 
-	if err := service.replaceEncodedDocument(ctx, "doc", []ChunkVector{testChunk("doc", "new", 0, []float32{10, 0})}); err != nil {
+	if err := service.replaceEncodedDocument(ctx, "doc", []EncodedChunk{testChunk("doc", "new", 0, []float32{10, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	result, err = service.searchChunks(ctx, []float32{0, 0}, 1)
@@ -308,11 +309,11 @@ func TestMutationsBecomeVisibleAfterFlush(t *testing.T) {
 func TestRepeatedPendingReplacementIsCoalesced(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := service.addEncodedDocument(ctx, "doc", []ChunkVector{testChunk("doc", "stable", 0, []float32{0, 0})}); err != nil {
+	if err := service.addEncodedDocument(ctx, "doc", []EncodedChunk{testChunk("doc", "stable", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	for version := 1; version <= 20; version++ {
-		if err := service.replaceEncodedDocument(ctx, "doc", []ChunkVector{testChunk("doc", "stable", 0, []float32{float32(version), 0})}); err != nil {
+		if err := service.replaceEncodedDocument(ctx, "doc", []EncodedChunk{testChunk("doc", "stable", 0, []float32{float32(version), 0})}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -328,10 +329,64 @@ func TestRepeatedPendingReplacementIsCoalesced(t *testing.T) {
 	}
 }
 
+func TestDiscardSupersededVersionSeparatesPublishedAndPendingIDs(t *testing.T) {
+	tests := []struct {
+		name          string
+		ids           []uint64
+		published     []uint64
+		wantPublished []uint64
+		wantPending   []uint64
+		wantErr       error
+	}{
+		{name: "published", ids: []uint64{1, 2}, published: []uint64{1, 2}, wantPublished: []uint64{1, 2}, wantPending: []uint64{1, 2, 3, 4, 5, 6}},
+		{name: "pending head", ids: []uint64{1, 2}, wantPending: []uint64{3, 4, 5, 6}},
+		{name: "pending tail", ids: []uint64{5, 6}, wantPending: []uint64{1, 2, 3, 4}},
+		{name: "mixed publication state", ids: []uint64{1, 2}, published: []uint64{1}, wantPending: []uint64{1, 2, 3, 4, 5, 6}, wantErr: ErrInternalState},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := benchmarkServiceWithPendingVectors(6)
+			for _, id := range test.published {
+				service.locations[id] = vectorLocation{}
+			}
+
+			version := documentVersion{firstVectorID: test.ids[0], vectorCount: len(test.ids)}
+			gotPublished, err := service.discardSupersededVersion(version)
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("error = %v, want %v", err, test.wantErr)
+			}
+			if !slices.Equal(gotPublished, test.wantPublished) {
+				t.Fatalf("published IDs = %v, want %v", gotPublished, test.wantPublished)
+			}
+			gotPending := make([]uint64, len(service.pendingVectors))
+			for i, item := range service.pendingVectors {
+				gotPending[i] = item.row.VectorID
+			}
+			if !slices.Equal(gotPending, test.wantPending) {
+				t.Fatalf("pending IDs = %v, want %v", gotPending, test.wantPending)
+			}
+		})
+	}
+}
+
+func TestDiscardSupersededVersionRejectsMissingPendingRange(t *testing.T) {
+	service := benchmarkServiceWithPendingVectors(6)
+	service.pendingVectors[2].row.VectorID = 4
+	before := append([]pendingVector(nil), service.pendingVectors...)
+
+	_, err := service.discardSupersededVersion(documentVersion{firstVectorID: 2, vectorCount: 2})
+	if !errors.Is(err, ErrInternalState) {
+		t.Fatalf("error = %v, want %v", err, ErrInternalState)
+	}
+	if !reflect.DeepEqual(service.pendingVectors, before) {
+		t.Fatalf("pending vectors changed after rejected range: %+v", service.pendingVectors)
+	}
+}
+
 func TestCanceledFlushDoesNotPublishPendingBatch(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := service.addEncodedDocument(ctx, "doc", []ChunkVector{testChunk("doc", "chunk", 0, []float32{0, 0})}); err != nil {
+	if err := service.addEncodedDocument(ctx, "doc", []EncodedChunk{testChunk("doc", "chunk", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	canceled, cancel := context.WithCancel(ctx)
@@ -355,59 +410,29 @@ func TestCanceledFlushDoesNotPublishPendingBatch(t *testing.T) {
 	}
 }
 
-type callerGateContext struct {
-	context.Context
-	function string
-	reached  chan struct{}
-	release  chan struct{}
-	once     sync.Once
-}
-
-func newCallerGateContext(parent context.Context, function string) *callerGateContext {
-	return &callerGateContext{
-		Context:  parent,
-		function: function,
-		reached:  make(chan struct{}),
-		release:  make(chan struct{}),
-	}
-}
-
-func (c *callerGateContext) Err() error {
-	if err := c.Context.Err(); err != nil {
-		return err
-	}
-	caller, _, _, ok := runtime.Caller(1)
-	if !ok || runtime.FuncForPC(caller).Name() != c.function {
-		return nil
-	}
-	blocked := false
-	c.once.Do(func() {
-		blocked = true
-		close(c.reached)
-	})
-	if blocked {
-		<-c.release
-	}
-	return c.Context.Err()
-}
-
 func TestFlushRejectsPublicationAfterConcurrentMutation(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := service.addEncodedDocument(ctx, "doc-a", []ChunkVector{testChunk("doc-a", "a", 0, []float32{0, 0})}); err != nil {
+	if err := service.addEncodedDocument(ctx, "doc-a", []EncodedChunk{testChunk("doc-a", "a", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
 
-	flushCtx := newCallerGateContext(ctx, "github.com/dariasmyr/fts-engine/pkg/semantic.buildPendingSegment")
-	result := make(chan error, 1)
-	go func() { result <- service.Flush(flushCtx) }()
-	<-flushCtx.reached
-
-	if err := service.addEncodedDocument(ctx, "doc-b", []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+	state, err := service.captureFlushState(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	close(flushCtx.release)
-	if err := <-result; !errors.Is(err, ErrPublicationConflict) {
+	if err := service.addEncodedDocument(ctx, "doc-b", []EncodedChunk{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	segment, err := buildPendingSegment(ctx, state.componentID, state.pendingVectors, state.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, locations, err := publishIndex(ctx, state.base, state.locations, state.disabledIDs, segment, state.componentID, state.version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.commitFlush(ctx, state, published, locations, segment != nil); !errors.Is(err, ErrPublicationConflict) {
 		t.Fatalf("Flush error = %v, want %v", err, ErrPublicationConflict)
 	}
 
@@ -447,7 +472,7 @@ func TestCanceledOperationDoesNotWaitForStateLock(t *testing.T) {
 	go func() {
 		close(started)
 		encoder := newSearchEncoder(service.config, testChunk("query", "query", 0, []float32{0, 0}))
-		_, err := service.SearchDocuments(ctx, encoder, Document{ID: "query"}, 1)
+		_, err := service.SearchDocuments(ctx, encoder, fts.Document{ID: "query"}, 1)
 		searchResult <- err
 	}()
 	<-started
@@ -501,10 +526,10 @@ func (c *cancelAfterErrContext) Err() error {
 func TestCanceledCompactLeavesServiceUnchanged(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc", "old", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc", "old", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := replaceDocument(t, service, ctx, []ChunkVector{testChunk("doc", "new", 0, []float32{1, 0})}); err != nil {
+	if err := replaceDocument(t, service, ctx, []EncodedChunk{testChunk("doc", "new", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	want := service.Statistics()
@@ -522,11 +547,11 @@ func TestPreCanceledCompactAlwaysReturnsCancellation(t *testing.T) {
 	ctx := context.Background()
 	empty := newTestService(t)
 	clean := newTestService(t)
-	if err := addDocument(t, clean, ctx, []ChunkVector{testChunk("doc", "chunk", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, clean, ctx, []EncodedChunk{testChunk("doc", "chunk", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	pending := newTestService(t)
-	if err := pending.addEncodedDocument(ctx, "doc", []ChunkVector{testChunk("doc", "chunk", 0, []float32{0, 0})}); err != nil {
+	if err := pending.addEncodedDocument(ctx, "doc", []EncodedChunk{testChunk("doc", "chunk", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	for name, service := range map[string]*Service{"empty": empty, "clean": clean, "pending": pending} {
@@ -581,10 +606,10 @@ func blockCompactionMaterialization(t *testing.T, service *Service) *blockingPre
 func TestCompactRejectsPublicationAfterConcurrentMutation(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-a", "a", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	before := service.ReadView()
@@ -594,14 +619,14 @@ func TestCompactRejectsPublicationAfterConcurrentMutation(t *testing.T) {
 	<-store.reached
 
 	encoder := newSearchEncoder(service.config, testChunk("query", "query", 0, []float32{0, 0}))
-	search, err := service.SearchDocuments(ctx, encoder, Document{ID: "query"}, 2)
+	search, err := service.SearchDocuments(ctx, encoder, fts.Document{ID: "query"}, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(search.Hits) != 2 || search.Hits[0].DocID != "doc-a" || search.Hits[1].DocID != "doc-b" {
 		t.Fatalf("search during compaction = %+v", search.Hits)
 	}
-	if err := service.addEncodedDocument(ctx, "doc-c", []ChunkVector{testChunk("doc-c", "c", 0, []float32{2, 0})}); err != nil {
+	if err := service.addEncodedDocument(ctx, "doc-c", []EncodedChunk{testChunk("doc-c", "c", 0, []float32{2, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	close(store.release)
@@ -622,7 +647,7 @@ func TestDocumentValidationAndExplicitMutationErrors(t *testing.T) {
 	if err := service.addEncodedDocument(ctx, "", nil); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("empty batch error = %v", err)
 	}
-	mixed := []ChunkVector{
+	mixed := []EncodedChunk{
 		testChunk("doc-a", "one", 0, []float32{0, 0}),
 		testChunk("doc-b", "two", 1, []float32{1, 0}),
 	}
@@ -631,24 +656,24 @@ func TestDocumentValidationAndExplicitMutationErrors(t *testing.T) {
 	}
 	invalidRange := testChunk("doc-a", "bad-range", 0, []float32{0, 0})
 	invalidRange.Ref.StartByte, invalidRange.Ref.EndByte = 10, 2
-	if err := service.addEncodedDocument(ctx, "doc-a", []ChunkVector{invalidRange}); !errors.Is(err, ErrInvalidBatch) {
+	if err := service.addEncodedDocument(ctx, "doc-a", []EncodedChunk{invalidRange}); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("range error = %v", err)
 	}
-	duplicateChunks := []ChunkVector{
+	duplicateChunks := []EncodedChunk{
 		testChunk("doc-a", "duplicate", 0, []float32{0, 0}),
 		testChunk("doc-a", "duplicate", 1, []float32{1, 0}),
 	}
 	if err := service.addEncodedDocument(ctx, "doc-a", duplicateChunks); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("duplicate chunk error = %v", err)
 	}
-	valid := []ChunkVector{testChunk("doc-a", "one", 0, []float32{0, 0})}
+	valid := []EncodedChunk{testChunk("doc-a", "one", 0, []float32{0, 0})}
 	if err := addDocument(t, service, ctx, valid); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.addEncodedDocument(ctx, "doc-a", valid); !errors.Is(err, ErrDocumentExists) {
 		t.Fatalf("duplicate document error = %v", err)
 	}
-	if err := service.replaceEncodedDocument(ctx, "missing", []ChunkVector{testChunk("missing", "one", 0, []float32{0, 0})}); !errors.Is(err, ErrDocumentNotFound) {
+	if err := service.replaceEncodedDocument(ctx, "missing", []EncodedChunk{testChunk("missing", "one", 0, []float32{0, 0})}); !errors.Is(err, ErrDocumentNotFound) {
 		t.Fatalf("missing replacement error = %v", err)
 	}
 	if stats := service.Statistics(); stats.Documents != 1 || stats.PhysicalVectors != 1 || stats.MaxAllocatedVectorID != 1 {
@@ -659,11 +684,11 @@ func TestDocumentValidationAndExplicitMutationErrors(t *testing.T) {
 func TestVectorIDsAreMonotonicAndExhaustionIsAtomic(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-a", "a", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	deleteDocument(t, service, "doc-a")
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	if stats := service.Statistics(); stats.MaxAllocatedVectorID != 2 || stats.LiveVectors != 1 || stats.StaleVectors != 1 {
@@ -671,12 +696,19 @@ func TestVectorIDsAreMonotonicAndExhaustionIsAtomic(t *testing.T) {
 	}
 
 	config := testConfig(2, 2)
-	config.InitialMaxAllocatedVectorID = uint64(math.MaxUint64 - 1)
-	exhausted, err := New(config)
+	config, err := config.normalized()
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = exhausted.addEncodedDocument(ctx, "doc", []ChunkVector{
+	exhausted, err := Hydrate(ctx, HydrationState{
+		Config:               config,
+		MaxAllocatedVectorID: uint64(math.MaxUint64 - 1),
+		NextComponentID:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = exhausted.addEncodedDocument(ctx, "doc", []EncodedChunk{
 		testChunk("doc", "one", 0, []float32{0, 0}),
 		testChunk("doc", "two", 1, []float32{1, 0}),
 	})
@@ -690,18 +722,18 @@ func TestVectorIDsAreMonotonicAndExhaustionIsAtomic(t *testing.T) {
 
 func TestReplacementUsesLiveCapacity(t *testing.T) {
 	config := testConfig(2, 2)
-	config.MaxVectors = 2
-	config.MaxChunksPerDocument = 2
-	config.MaxChunksPerDocumentHit = 2
+	config.Limits.MaxLiveVectors = 2
+	config.Limits.MaxChunksPerDocument = 2
+	config.Limits.MaxChunksPerDocumentHit = 2
 	service, err := New(config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc", "old", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc", "old", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	err = replaceDocument(t, service, ctx, []ChunkVector{
+	err = replaceDocument(t, service, ctx, []EncodedChunk{
 		testChunk("doc", "new-1", 0, []float32{5, 0}),
 		testChunk("doc", "new-2", 1, []float32{6, 0}),
 	})
@@ -730,10 +762,10 @@ func TestWholeDocumentAndGroupingBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := addDocument(t, service, context.Background(), []ChunkVector{{Ref: whole.Ref, Vector: []float32{0, 0}}}); err != nil {
+	if err := addDocument(t, service, context.Background(), []EncodedChunk{{Ref: whole.Ref, Vector: []float32{0, 0}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := addDocument(t, service, context.Background(), []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+	if err := addDocument(t, service, context.Background(), []EncodedChunk{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := service.searchEncodedDocuments(context.Background(), []float32{0, 0}, 1)
@@ -748,7 +780,7 @@ func TestWholeDocumentAndGroupingBudget(t *testing.T) {
 func TestCompleteGroupingUsesAllCandidateChunks(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{
+	if err := addDocument(t, service, ctx, []EncodedChunk{
 		testChunk("doc-a", "a-1", 0, []float32{0, 0}),
 		testChunk("doc-a", "a-2", 1, []float32{1, 0}),
 		testChunk("doc-a", "a-3", 2, []float32{2, 0}),
@@ -756,7 +788,7 @@ func TestCompleteGroupingUsesAllCandidateChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, docID := range []fts.DocID{"doc-b", "doc-c", "doc-d"} {
-		if err := addDocument(t, service, ctx, []ChunkVector{testChunk(docID, "whole", 0, []float32{float32(i + 3), 0})}); err != nil {
+		if err := addDocument(t, service, ctx, []EncodedChunk{testChunk(docID, "whole", 0, []float32{float32(i + 3), 0})}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -777,7 +809,7 @@ func TestDocumentGroupingCandidateBudgetMayExceedPublicMaxK(t *testing.T) {
 	ctx := context.Background()
 	for i := range 11 {
 		docID := fts.DocID(fmt.Sprintf("doc-%02d", i))
-		if err := addDocument(t, service, ctx, []ChunkVector{testChunk(docID, "whole", 0, []float32{float32(i), 0})}); err != nil {
+		if err := addDocument(t, service, ctx, []EncodedChunk{testChunk(docID, "whole", 0, []float32{float32(i), 0})}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -798,7 +830,7 @@ func TestDocumentSearchCandidateBudgetIsRequestScoped(t *testing.T) {
 	ctx := context.Background()
 	for i := range 4 {
 		docID := fts.DocID(fmt.Sprintf("doc-%d", i))
-		if err := addDocument(t, service, ctx, []ChunkVector{testChunk(docID, "whole", 0, []float32{float32(i), 0})}); err != nil {
+		if err := addDocument(t, service, ctx, []EncodedChunk{testChunk(docID, "whole", 0, []float32{float32(i), 0})}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -825,7 +857,7 @@ func TestDocumentSearchCandidateBudgetIsRequestScoped(t *testing.T) {
 
 func TestDocumentSearchClampsCandidateBudgetToConfiguredMaximum(t *testing.T) {
 	service := newTestService(t)
-	if err := addDocument(t, service, context.Background(), []ChunkVector{testChunk("doc", "whole", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, context.Background(), []EncodedChunk{testChunk("doc", "whole", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := service.searchEncodedDocumentsWithOptions(context.Background(), []float32{0, 0}, 1, SearchOptions{CandidateChunks: 101})
@@ -847,7 +879,7 @@ func TestConcurrentSameDocumentAddAndSearchReplace(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errorsCh <- service.addEncodedDocument(ctx, "shared", []ChunkVector{testChunk("shared", chunk.ID("version"), 0, []float32{float32(i), 0})})
+			errorsCh <- service.addEncodedDocument(ctx, "shared", []EncodedChunk{testChunk("shared", chunk.ID("version"), 0, []float32{float32(i), 0})})
 		}(i)
 	}
 	wg.Wait()
@@ -879,7 +911,7 @@ func TestConcurrentSameDocumentAddAndSearchReplace(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := range 20 {
-			if err := service.replaceEncodedDocument(ctx, "shared", []ChunkVector{testChunk("shared", "version", 0, []float32{float32(i), 0})}); err != nil {
+			if err := service.replaceEncodedDocument(ctx, "shared", []EncodedChunk{testChunk("shared", "version", 0, []float32{float32(i), 0})}); err != nil {
 				searchErrors <- err
 				return
 			}
@@ -898,7 +930,7 @@ func TestConcurrentSameDocumentAddAndSearchReplace(t *testing.T) {
 func TestConcurrentSearchAcrossFlushPublications(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc", "chunk-0", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc", "chunk-0", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	stop := make(chan struct{})
@@ -923,7 +955,7 @@ func TestConcurrentSearchAcrossFlushPublications(t *testing.T) {
 		}()
 	}
 	for version := 1; version <= 20; version++ {
-		if err := service.replaceEncodedDocument(ctx, "doc", []ChunkVector{testChunk("doc", chunk.ID(fmt.Sprintf("chunk-%d", version)), 0, []float32{float32(version), 0})}); err != nil {
+		if err := service.replaceEncodedDocument(ctx, "doc", []EncodedChunk{testChunk("doc", chunk.ID(fmt.Sprintf("chunk-%d", version)), 0, []float32{float32(version), 0})}); err != nil {
 			t.Fatal(err)
 		}
 		if err := service.Flush(ctx); err != nil {
@@ -941,13 +973,13 @@ func TestConcurrentSearchAcrossFlushPublications(t *testing.T) {
 func TestOldReadViewRemainsCoherentAfterCompaction(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a-old", 0, []float32{0, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-a", "a-old", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := replaceDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a-new", 0, []float32{2, 0})}); err != nil {
+	if err := replaceDocument(t, service, ctx, []EncodedChunk{testChunk("doc-a", "a-new", 0, []float32{2, 0})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-b", "b", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -955,7 +987,7 @@ func TestOldReadViewRemainsCoherentAfterCompaction(t *testing.T) {
 	oldGeneration := oldView.generation
 	oldSegments := append([]visibleSegment(nil), oldView.segments...)
 	encoder := newSearchEncoder(service.config, testChunk("query", "query", 0, []float32{0, 0}))
-	before, err := oldView.SearchDocumentsWithOptions(ctx, encoder, Document{ID: "query"}, 2, SearchOptions{})
+	before, err := oldView.SearchDocumentsWithOptions(ctx, encoder, fts.Document{ID: "query"}, 2, SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -963,7 +995,7 @@ func TestOldReadViewRemainsCoherentAfterCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	after, err := oldView.SearchDocumentsWithOptions(ctx, encoder, Document{ID: "query"}, 2, SearchOptions{})
+	after, err := oldView.SearchDocumentsWithOptions(ctx, encoder, fts.Document{ID: "query"}, 2, SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -993,10 +1025,10 @@ func TestCosineCompactionPreservesPreparedVectorBits(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a", 0, []float32{3, 4})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-a", "a", 0, []float32{3, 4})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-b", "b", 0, []float32{5, 12})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-b", "b", 0, []float32{5, 12})}); err != nil {
 		t.Fatal(err)
 	}
 	want := preparedVectorBits(t, service.ReadView())
@@ -1039,7 +1071,7 @@ func preparedVectorBits(t *testing.T, view *ReadView) map[uint64][]uint32 {
 func TestConcurrentReplaceAndDeleteAreLinearizable(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	if err := service.addEncodedDocument(ctx, "doc", []ChunkVector{testChunk("doc", "old", 0, []float32{0, 0})}); err != nil {
+	if err := service.addEncodedDocument(ctx, "doc", []EncodedChunk{testChunk("doc", "old", 0, []float32{0, 0})}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1048,7 +1080,7 @@ func TestConcurrentReplaceAndDeleteAreLinearizable(t *testing.T) {
 	deleteResult := make(chan error, 1)
 	go func() {
 		<-start
-		replaceResult <- service.replaceEncodedDocument(ctx, "doc", []ChunkVector{testChunk("doc", "new", 0, []float32{1, 0})})
+		replaceResult <- service.replaceEncodedDocument(ctx, "doc", []EncodedChunk{testChunk("doc", "new", 0, []float32{1, 0})})
 	}()
 	go func() {
 		<-start

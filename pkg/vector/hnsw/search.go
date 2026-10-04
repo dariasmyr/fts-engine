@@ -132,8 +132,8 @@ func greedySearch(state *searchState, current searchCandidate, maxLevel int) (se
 			if !ok {
 				return searchCandidate{}, errInvalidGraph
 			}
-			for _, neighbor := range neighbors {
-				if err := state.periodicContextError(); err != nil {
+			for i, neighbor := range neighbors {
+				if err := contextcheck.PeriodicError(state.ctx, i); err != nil {
 					return searchCandidate{}, err
 				}
 				candidate, err := state.score(neighbor)
@@ -183,8 +183,8 @@ func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCou
 		if !ok {
 			return results, errInvalidGraph
 		}
-		for _, neighbor := range neighbors {
-			if err := state.periodicContextError(); err != nil {
+		for i, neighbor := range neighbors {
+			if err := contextcheck.PeriodicError(state.ctx, i); err != nil {
 				return results, err
 			}
 			if uint64(neighbor) >= uint64(state.index.Len()) {
@@ -245,12 +245,6 @@ func (state *searchState) score(node nodeOrdinal) (searchCandidate, error) {
 		state.stats.RejectedNodes++
 	}
 	return candidate, nil
-}
-
-func (state *searchState) periodicContextError() error {
-	err := contextcheck.PeriodicError(state.ctx, state.workItems)
-	state.workItems++
-	return err
 }
 
 func (state *searchState) acceptedResults(capacity int) resultHeap {

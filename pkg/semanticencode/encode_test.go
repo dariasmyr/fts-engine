@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
+	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
@@ -27,13 +28,15 @@ func testService(t *testing.T) *semantic.Service {
 	t.Helper()
 	embedding, chunking := testDescriptors()
 	service, err := semantic.New(semantic.Config{
-		Embedding:               embedding,
-		Chunking:                chunking,
-		MaxVectors:              10,
-		MaxChunksPerDocument:    10,
-		MaxK:                    10,
-		MaxChunkCandidates:      10,
-		MaxChunksPerDocumentHit: 3,
+		Embedding: embedding,
+		Chunking:  chunking,
+		Limits: semantic.Limits{
+			MaxLiveVectors:          10,
+			MaxChunksPerDocument:    10,
+			MaxDocumentsPerSearch:   10,
+			MaxChunkCandidates:      10,
+			MaxChunksPerDocumentHit: 3,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -56,9 +59,9 @@ func TestDocumentEncoderWithoutChunkerUsesWholeFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	document := semantic.Document{ID: "doc", Fields: map[string]string{
-		"z-field": "second",
-		"a-field": "first",
+	document := fts.Document{ID: "doc", Fields: map[string]fts.FieldData{
+		"a-field": {Text: "first"},
+		"z-field": {Text: "second"},
 	}}
 	vectors, err := encoder.Encode(context.Background(), document)
 	if err != nil {
@@ -73,9 +76,9 @@ func TestDocumentEncoderWithoutChunkerUsesWholeFields(t *testing.T) {
 	if err := service.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.SearchDocuments(context.Background(), encoder, semantic.Document{ID: "query", Fields: map[string]string{
-		"a-field": "first",
-		"z-field": "second",
+	result, err := service.SearchDocuments(context.Background(), encoder, fts.Document{ID: "query", Fields: map[string]fts.FieldData{
+		"a-field": {Text: "first"},
+		"z-field": {Text: "second"},
 	}}, 1)
 	if err != nil || len(result.Hits) != 1 || len(result.Hits[0].Chunks) != 2 || result.Stats.Termination == "" {
 		t.Fatalf("encoded search = %+v, %v", result, err)
@@ -88,7 +91,7 @@ func TestDocumentEncoderRejectsEmbeddingCountMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = encoder.Encode(context.Background(), semantic.Document{ID: "doc", Fields: map[string]string{"field": "text"}})
+	_, err = encoder.Encode(context.Background(), fts.Document{ID: "doc", Fields: map[string]fts.FieldData{"field": {Text: "text"}}})
 	if !errors.Is(err, ErrEmbeddingCountMismatch) {
 		t.Fatalf("embedding count error = %v", err)
 	}

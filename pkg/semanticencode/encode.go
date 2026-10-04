@@ -52,8 +52,8 @@ func (e *DocumentEncoder) Descriptor() semantic.PipelineDescriptor { return e.de
 
 // Encode chunks and embeds a complete document and returns prepared vectors
 // for the semantic service's internal encoded stage.
-func (e *DocumentEncoder) Encode(ctx context.Context, document semantic.Document) ([]semantic.ChunkVector, error) {
-	chunks, err := e.prepare(ctx, document)
+func (e *DocumentEncoder) Encode(ctx context.Context, document fts.Document) ([]semantic.EncodedChunk, error) {
+	chunks, err := e.chunkDocument(ctx, document)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +64,7 @@ func (e *DocumentEncoder) Encode(ctx context.Context, document semantic.Document
 	return makeChunkVectors(chunks, vectors)
 }
 
-func (e *DocumentEncoder) prepare(ctx context.Context, document semantic.Document) ([]chunk.Chunk, error) {
+func (e *DocumentEncoder) chunkDocument(ctx context.Context, document fts.Document) ([]chunk.Chunk, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -74,46 +74,53 @@ func (e *DocumentEncoder) prepare(ctx context.Context, document semantic.Documen
 	if document.ID == "" || len(document.Fields) == 0 {
 		return nil, ErrInvalidDocument
 	}
+	chunks := make([]chunk.Chunk, 0, len(document.Fields))
 	fields := make([]string, 0, len(document.Fields))
 	for field := range document.Fields {
-		if field == "" {
-			return nil, ErrInvalidDocument
-		}
 		fields = append(fields, field)
 	}
 	slices.Sort(fields)
-	chunks := make([]chunk.Chunk, 0, len(fields))
 	for _, field := range fields {
-		text := document.Fields[field]
-		var fieldChunks []chunk.Chunk
-		var err error
-		if e.chunker == nil {
-			var whole chunk.Chunk
-			whole, err = chunk.Whole(document.ID, field, text)
-			if err == nil && whole.Ref.ID != "" {
-				fieldChunks = []chunk.Chunk{whole}
-			}
-		} else {
-			fieldChunks, err = e.chunker.Split(document.ID, field, text)
+		value := document.Fields[field]
+		if field == "" || value.Text == "" {
+			return nil, ErrInvalidDocument
 		}
+
+		if e.chunker == nil {
+			whole, err := chunk.Whole(document.ID, field, value.Text)
+			if err != nil {
+				return nil, err
+			}
+
+			if whole.Ref.ID != "" {
+				chunks = append(chunks, whole)
+			}
+
+			continue
+		}
+
+		fieldChunks, err := e.chunker.Split(document.ID, field, value.Text)
 		if err != nil {
 			return nil, err
 		}
+
 		chunks = append(chunks, fieldChunks...)
 	}
+
 	if len(chunks) == 0 {
 		return nil, ErrInvalidDocument
 	}
+
 	return chunks, nil
 }
 
-func makeChunkVectors(chunks []chunk.Chunk, vectors [][]float32) ([]semantic.ChunkVector, error) {
+func makeChunkVectors(chunks []chunk.Chunk, vectors [][]float32) ([]semantic.EncodedChunk, error) {
 	if len(chunks) != len(vectors) {
 		return nil, fmt.Errorf("%w: got %d vectors for %d chunks", ErrEmbeddingCountMismatch, len(vectors), len(chunks))
 	}
-	result := make([]semantic.ChunkVector, len(chunks))
+	result := make([]semantic.EncodedChunk, len(chunks))
 	for i, item := range chunks {
-		result[i] = semantic.ChunkVector{Ref: item.Ref, Vector: vectors[i]}
+		result[i] = semantic.EncodedChunk{Ref: item.Ref, Vector: vectors[i]}
 	}
 	return result, nil
 }

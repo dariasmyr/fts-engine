@@ -3,6 +3,7 @@ package semantic
 import (
 	"context"
 
+	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
@@ -34,17 +35,14 @@ func buildSegment(ctx context.Context, component uint64, descriptor PipelineDesc
 	if component == 0 || !descriptor.Embedding.IsValid() || !descriptor.Chunking.IsValid() {
 		return nil, ErrInvalidSegment
 	}
-	if err := validateSegmentRowsContext(ctx, rows); err != nil {
-		return nil, err
-	}
 	index, err := hnsw.Build(ctx, source, options)
 	if err != nil {
 		return nil, err
 	}
-	return newSegment(ctx, component, descriptor, source, index, rows, false)
+	return newSegment(ctx, component, descriptor, source, index, rows)
 }
 
-func newSegment(ctx context.Context, component uint64, descriptor PipelineDescriptor, vectors vectorstore.PreparedVectorStore, index *hnsw.Index, rows []VectorRow, validateRows bool) (*segment, error) {
+func newSegment(ctx context.Context, component uint64, descriptor PipelineDescriptor, vectors vectorstore.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -53,6 +51,9 @@ func newSegment(ctx context.Context, component uint64, descriptor PipelineDescri
 	}
 	if component == 0 || vectors == nil || index == nil || len(rows) != index.Len() {
 		return nil, ErrInvalidSegment
+	}
+	if err := validateSegmentRowsContext(ctx, rows); err != nil {
+		return nil, err
 	}
 	if err := index.ValidateSource(ctx, vectors); err != nil {
 		if ctx.Err() != nil {
@@ -70,11 +71,6 @@ func newSegment(ctx context.Context, component uint64, descriptor PipelineDescri
 	}
 	if err := segment.validateContents(); err != nil {
 		return nil, err
-	}
-	if validateRows {
-		if err := validateSegmentRowsContext(ctx, segment.rows); err != nil {
-			return nil, err
-		}
 	}
 	return segment, nil
 }
@@ -139,11 +135,10 @@ func validateSegmentRowsContext(ctx context.Context, rows []VectorRow) error {
 	}
 	seenChunks := make(map[chunkKey]struct{}, len(rows))
 	for i, row := range rows {
-		if i%64 == 0 {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
+		if err := contextcheck.PeriodicError(ctx, i); err != nil {
+			return err
 		}
+
 		if row.VectorID == 0 || row.Chunk.ID == "" || row.Chunk.DocID == "" || row.Chunk.Field == "" || row.Chunk.StartByte > row.Chunk.EndByte {
 			return ErrInvalidSegment
 		}

@@ -2,11 +2,95 @@ package semantic
 
 import (
 	"context"
+	"math"
 
+	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
+
+// Compact merges all visible live rows into one immutable HNSW segment.
+func (s *Service) Compact(ctx context.Context) error {
+	if ctx == nil {
+		return vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.lockFlush(ctx); err != nil {
+		return err
+	}
+	defer s.unlockFlush()
+	if err := s.lockState(ctx); err != nil {
+		return err
+	}
+	version := s.mutationVersion
+	published := s.published
+	config := s.config
+	componentID := s.nextComponentID
+	hasPending := s.mutationVersion != s.published.generation
+	s.unlockState()
+	if hasPending {
+		return ErrPendingMutations
+	}
+	if len(published.segments) <= 1 {
+		stale := false
+		for _, item := range published.segments {
+			stale = stale || item.filter.AllowedOrdinalCount() != item.segment.len()
+		}
+		if !stale {
+			return nil
+		}
+	}
+	var merged *segment
+	var rows []VectorRow
+	if published.liveCount > 0 {
+		if componentID == uint64(math.MaxUint64) {
+			return ErrComponentIDExhausted
+		}
+		var err error
+		merged, rows, err = buildCompactedSegment(ctx, published, componentID, config)
+		if err != nil {
+			return err
+		}
+	}
+	locations := make(map[uint64]vectorLocation, len(rows))
+	for ordinal, row := range rows {
+		if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
+			return err
+		}
+
+		locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
+	}
+	segments := []visibleSegment(nil)
+	if merged != nil {
+		segments = []visibleSegment{{segment: merged, filter: vector.NewFullBitSet(uint32(len(rows)))}}
+	}
+	buildOptions, ok := config.hnswOptions()
+	if !ok {
+		return ErrInvalidConfig
+	}
+	view, err := newReadView(ctx, version, segments, published.descriptor, config.searchPolicy(), buildOptions.Search)
+	if err != nil {
+		return err
+	}
+	if err := s.lockState(ctx); err != nil {
+		return err
+	}
+	defer s.unlockState()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if version != s.mutationVersion {
+		return ErrPublicationConflict
+	}
+	s.published = view
+	s.locations = locations
+	if merged != nil {
+		s.nextComponentID++
+	}
+	return nil
+}
 
 // buildCompactedSegment materializes live rows from an immutable read view and
 // builds the replacement HNSW segment without touching mutable service state.
@@ -23,20 +107,18 @@ func buildCompactedSegment(ctx context.Context, view *ReadView, componentID uint
 	if err != nil {
 		return nil, nil, err
 	}
+	buildOptions, ok := config.hnswOptions()
+	if !ok {
+		return nil, nil, ErrInvalidConfig
+	}
 	segment, err := buildSegment(
 		ctx,
 		componentID,
-		PipelineDescriptor{
-			Embedding: config.Embedding,
-			Chunking:  config.Chunking,
-		},
+		config.pipelineDescriptor(),
 		source,
 		liveRows,
-		hnsw.BuildOptions{
-			Build:  config.HNSWBuild,
-			Search: config.HNSWSearch,
-		})
-
+		buildOptions,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -53,11 +135,10 @@ func materializeLiveRows(ctx context.Context, published *ReadView) ([]float32, [
 		dim := item.segment.dimensions()
 
 		for ordinal, row := range item.segment.rows {
-			if ordinal%64 == 0 {
-				if err := ctx.Err(); err != nil {
-					return nil, nil, err
-				}
+			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
+				return nil, nil, err
 			}
+
 			if !item.filter.Allows(vector.Ordinal(ordinal)) {
 				continue
 			}

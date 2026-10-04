@@ -6,22 +6,44 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
+// Config defines the semantic pipeline, service limits, and optional HNSW
+// tuning. New derives vector-space and allocation settings from these values.
 type Config struct {
 	Embedding EmbeddingDescriptor
 	Chunking  ChunkingDescriptor
-	// MaxVectors limits the number of live vectors accepted by the service.
-	// Replaced and deleted physical rows remain until Compact.
-	MaxVectors              int
-	MaxChunksPerDocument    int
-	MaxK                    int
-	MaxChunkCandidates      int
+	Limits    Limits
+	HNSW      HNSWTuning
+}
+
+// Limits bounds semantic document lifecycle and result grouping.
+type Limits struct {
+	// MaxLiveVectors bounds visible vectors. Stale physical rows remain until
+	// compaction.
+	MaxLiveVectors int
+	// MaxChunksPerDocument bounds one encoded document mutation or query.
+	MaxChunksPerDocument int
+	// MaxDocumentsPerSearch bounds the public document result count.
+	MaxDocumentsPerSearch int
+	// MaxChunkCandidates bounds chunk hits collected before document grouping.
+	MaxChunkCandidates int
+	// MaxChunksPerDocumentHit bounds explanatory chunks attached to one result.
 	MaxChunksPerDocumentHit int
-	InitialVectorCapacity   int
-	HNSWBuild               hnsw.BuildConfig
-	HNSWSearch              hnsw.SearchConfig
-	// InitialMaxAllocatedVectorID seeds the allocator; the first new vector gets
-	// the following ID. Use it when continuing an existing ID namespace.
-	InitialMaxAllocatedVectorID uint64
+}
+
+// HNSWTuning controls graph quality and request work. Zero fields select
+// defaults derived from Limits and the embedding descriptor.
+type HNSWTuning struct {
+	// MaxNeighbors and EfConstruction control graph build quality and cost.
+	MaxNeighbors   int
+	EfConstruction int
+	// Seed makes graph construction deterministic for a fixed insertion order.
+	Seed uint64
+	// DefaultEfSearch and MaxEfSearch control candidate breadth per request.
+	DefaultEfSearch int
+	MaxEfSearch     int
+	// DefaultVisitLimit and MaxVisitLimit bound scored graph nodes per request.
+	DefaultVisitLimit int
+	MaxVisitLimit     int
 }
 
 func (c Config) Validate() error {
@@ -30,84 +52,99 @@ func (c Config) Validate() error {
 }
 
 func (c Config) normalized() (Config, error) {
+	limits := c.Limits
 	if !c.Embedding.IsValid() || !c.Chunking.IsValid() ||
-		c.MaxVectors <= 0 || c.MaxChunksPerDocument <= 0 || c.MaxK <= 0 ||
-		c.MaxChunkCandidates < c.MaxK || c.MaxChunkCandidates > c.MaxVectors ||
-		c.MaxChunksPerDocument > c.MaxVectors || c.MaxChunksPerDocumentHit <= 0 ||
-		c.MaxChunksPerDocumentHit > c.MaxChunksPerDocument || c.InitialVectorCapacity < 0 ||
-		c.InitialVectorCapacity > c.MaxVectors {
+		limits.MaxLiveVectors <= 0 || limits.MaxChunksPerDocument <= 0 ||
+		limits.MaxDocumentsPerSearch <= 0 || limits.MaxChunkCandidates < limits.MaxDocumentsPerSearch ||
+		limits.MaxChunkCandidates > limits.MaxLiveVectors || limits.MaxChunksPerDocument > limits.MaxLiveVectors ||
+		limits.MaxChunksPerDocumentHit <= 0 || limits.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
 		return Config{}, ErrInvalidConfig
 	}
-	c.HNSWBuild = normalizeBuildConfig(c.HNSWBuild, c.Embedding, c.MaxVectors)
-	c.HNSWSearch = normalizeSearchConfig(c.HNSWSearch, c.MaxK, c.MaxChunkCandidates, c.MaxVectors)
-	if c.HNSWBuild.Dimensions != c.Embedding.Dimensions || c.HNSWBuild.Metric != c.Embedding.Metric ||
-		c.HNSWBuild.MaxVectors < c.MaxVectors || c.HNSWSearch.MaxK < c.MaxChunkCandidates ||
-		c.HNSWSearch.MaxEfSearch < c.MaxChunkCandidates {
+
+	c.HNSW = normalizeHNSWTuning(c.HNSW, limits)
+	options, ok := c.hnswOptions()
+	if !ok {
 		return Config{}, ErrInvalidConfig
 	}
-	dimensions := uint64(c.Embedding.Dimensions)
-	if dimensions > math.MaxUint64/4 || uint64(c.MaxVectors) > math.MaxUint64/(dimensions*4) ||
-		c.HNSWBuild.MaxVectorBytes < uint64(c.MaxVectors)*dimensions*4 {
-		return Config{}, ErrInvalidConfig
-	}
-	if err := (hnsw.BuildOptions{Build: c.HNSWBuild, Search: c.HNSWSearch}).Validate(c.MaxVectors); err != nil {
+	if err := options.Validate(limits.MaxLiveVectors); err != nil {
 		return Config{}, ErrInvalidConfig
 	}
 	return c, nil
 }
 
-func normalizeBuildConfig(config hnsw.BuildConfig, embedding EmbeddingDescriptor, maxVectors int) hnsw.BuildConfig {
-	if config.Dimensions == 0 {
-		config.Dimensions = embedding.Dimensions
+func normalizeHNSWTuning(tuning HNSWTuning, limits Limits) HNSWTuning {
+	if tuning.MaxNeighbors == 0 {
+		tuning.MaxNeighbors = 16
 	}
-	if config.Metric == 0 {
-		config.Metric = embedding.Metric
+	if tuning.EfConstruction == 0 {
+		tuning.EfConstruction = max(64, tuning.MaxNeighbors)
 	}
-	if config.MaxVectors == 0 {
-		config.MaxVectors = maxVectors
+	if tuning.DefaultEfSearch == 0 {
+		tuning.DefaultEfSearch = max(limits.MaxDocumentsPerSearch, min(limits.MaxChunkCandidates, 64))
 	}
-	dimensions := uint64(embedding.Dimensions)
-	if config.MaxVectorBytes == 0 && embedding.Dimensions > 0 && dimensions <= math.MaxUint64/4 && uint64(maxVectors) <= math.MaxUint64/(dimensions*4) {
-		config.MaxVectorBytes = uint64(maxVectors) * uint64(embedding.Dimensions) * 4
+	if tuning.MaxEfSearch == 0 {
+		tuning.MaxEfSearch = max(limits.MaxChunkCandidates, tuning.DefaultEfSearch)
 	}
-	if config.MaxNeighbors == 0 {
-		config.MaxNeighbors = 16
+	if tuning.DefaultVisitLimit == 0 {
+		tuning.DefaultVisitLimit = limits.MaxLiveVectors
 	}
-	if config.EfConstruction == 0 {
-		config.EfConstruction = max(64, config.MaxNeighbors)
+	if tuning.MaxVisitLimit == 0 {
+		tuning.MaxVisitLimit = limits.MaxLiveVectors
 	}
-	return config
+	return tuning
 }
 
-func normalizeSearchConfig(config hnsw.SearchConfig, maxK, maxCandidates, maxVectors int) hnsw.SearchConfig {
-	if config.DefaultEfSearch == 0 {
-		config.DefaultEfSearch = max(maxK, min(maxCandidates, 64))
+func (c Config) hnswOptions() (hnsw.BuildOptions, bool) {
+	dimensions := uint64(c.Embedding.Dimensions)
+	maxVectors := uint64(c.Limits.MaxLiveVectors)
+	if dimensions == 0 || dimensions > math.MaxUint64/4 || maxVectors > math.MaxUint64/(dimensions*4) {
+		return hnsw.BuildOptions{}, false
 	}
-	if config.MaxEfSearch == 0 {
-		config.MaxEfSearch = max(maxCandidates, config.DefaultEfSearch)
+	return hnsw.BuildOptions{
+		Build: hnsw.BuildConfig{
+			Dimensions:     c.Embedding.Dimensions,
+			Metric:         c.Embedding.Metric,
+			MaxVectors:     c.Limits.MaxLiveVectors,
+			MaxVectorBytes: maxVectors * dimensions * 4,
+			MaxNeighbors:   c.HNSW.MaxNeighbors,
+			EfConstruction: c.HNSW.EfConstruction,
+			Seed:           c.HNSW.Seed,
+		},
+		Search: hnsw.SearchConfig{
+			DefaultEfSearch:   c.HNSW.DefaultEfSearch,
+			MaxEfSearch:       c.HNSW.MaxEfSearch,
+			DefaultVisitLimit: c.HNSW.DefaultVisitLimit,
+			MaxVisitLimit:     c.HNSW.MaxVisitLimit,
+			MaxK:              c.Limits.MaxChunkCandidates,
+		},
+	}, true
+}
+
+func (c Config) pipelineDescriptor() PipelineDescriptor {
+	return PipelineDescriptor{Embedding: c.Embedding, Chunking: c.Chunking}
+}
+
+func (c Config) searchPolicy() searchPolicy {
+	return searchPolicy{
+		MaxDocumentsPerSearch:   c.Limits.MaxDocumentsPerSearch,
+		MaxChunkCandidates:      c.Limits.MaxChunkCandidates,
+		MaxChunksPerDocumentHit: c.Limits.MaxChunksPerDocumentHit,
+		MaxQueryChunks:          c.Limits.MaxChunksPerDocument,
 	}
-	if config.DefaultVisitLimit == 0 {
-		config.DefaultVisitLimit = maxVectors
-	}
-	if config.MaxVisitLimit == 0 {
-		config.MaxVisitLimit = maxVectors
-	}
-	if config.MaxK == 0 {
-		config.MaxK = maxCandidates
-	}
-	return config
 }
 
 // searchPolicy contains the immutable limits required to search and group a
 // read view. It is separate from request-local SearchOptions.
 type searchPolicy struct {
-	MaxK                    int
+	MaxDocumentsPerSearch   int
 	MaxChunkCandidates      int
 	MaxChunksPerDocumentHit int
+	MaxQueryChunks          int
 }
 
 func (p searchPolicy) validate() error {
-	if p.MaxK <= 0 || p.MaxChunkCandidates < p.MaxK || p.MaxChunksPerDocumentHit <= 0 {
+	if p.MaxDocumentsPerSearch <= 0 || p.MaxChunkCandidates < p.MaxDocumentsPerSearch ||
+		p.MaxChunksPerDocumentHit <= 0 || p.MaxQueryChunks <= 0 {
 		return ErrInvalidConfig
 	}
 	return nil

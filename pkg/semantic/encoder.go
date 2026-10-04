@@ -7,16 +7,10 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 )
 
-type ChunkVector struct {
+// EncodedChunk couples source-chunk metadata with its prepared embedding.
+type EncodedChunk struct {
 	Ref    chunk.Ref
 	Vector []float32
-}
-
-// Document is the application-level input for semantic ingestion and query.
-// Its fields are encoded into chunks and embeddings by an Encoder.
-type Document struct {
-	ID     fts.DocID
-	Fields map[string]string
 }
 
 // Encoder converts a document into prepared chunk vectors. The semantic
@@ -24,6 +18,6 @@ type Document struct {
 // Implementations passed to concurrent Service operations must be safe for
 // concurrent use.
 type Encoder interface {
-	Encode(context.Context, Document) ([]ChunkVector, error)
+	Encode(context.Context, fts.Document) ([]EncodedChunk, error)
 	Descriptor() PipelineDescriptor
 }

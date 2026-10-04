@@ -17,13 +17,19 @@ type visibleSegment struct {
 	filter  vector.BitSet
 }
 
-// SearchDocuments encodes every query chunk, searches each embedding, and
-// merges the results by document using the best query-to-document distance.
-func (s *Service) SearchDocuments(ctx context.Context, encoder Encoder, query Document, k int) (DocumentSearchResult, error) {
-	return s.SearchDocumentsWithOptions(ctx, encoder, query, k, SearchOptions{})
+type chunkSearchResult struct {
+	Hits       []ChunkHit
+	Stats      vector.SearchStats
+	Incomplete bool
 }
 
-func (s *Service) SearchDocumentsWithOptions(ctx context.Context, encoder Encoder, query Document, k int, options SearchOptions) (DocumentSearchResult, error) {
+// SearchDocuments encodes every query chunk, searches each embedding, and
+// merges the results by document using the best query-to-document distance.
+func (s *Service) SearchDocuments(ctx context.Context, encoder Encoder, query fts.Document, maxResultCount int) (DocumentSearchResult, error) {
+	return s.SearchDocumentsWithOptions(ctx, encoder, query, maxResultCount, SearchOptions{})
+}
+
+func (s *Service) SearchDocumentsWithOptions(ctx context.Context, encoder Encoder, query fts.Document, maxResultCount int, options SearchOptions) (DocumentSearchResult, error) {
 	if ctx == nil {
 		return DocumentSearchResult{}, vector.ErrNilContext
 	}
@@ -31,7 +37,7 @@ func (s *Service) SearchDocumentsWithOptions(ctx context.Context, encoder Encode
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
-	return published.SearchDocumentsWithOptions(ctx, encoder, query, k, options)
+	return published.SearchDocumentsWithOptions(ctx, encoder, query, maxResultCount, options)
 }
 
 func mergeSearchStats(total *vector.SearchStats, partial vector.SearchStats) {
@@ -61,21 +67,20 @@ func (s *Service) searchEncodedDocumentsWithOptions(ctx context.Context, query [
 	if err := published.validateEncodedQuery(ctx, query, k, options); err != nil {
 		return DocumentSearchResult{}, err
 	}
-	return published.searchEncodedQueries(ctx, []ChunkVector{{Vector: query}}, k, options)
+	return published.searchEncodedQueries(ctx, []EncodedChunk{{Vector: query}}, k, options)
 }
 
-func searchReadViewDocuments(ctx context.Context, published *ReadView, query []float32, options SearchOptions) (DocumentSearchResult, error) {
-	candidateBudget, _ := resolveCandidateBudget(options.CandidateChunks, published.maxCandidates)
+func searchReadViewDocuments(ctx context.Context, published *ReadView, query []float32, options SearchOptions, candidateBudget, visitBudget int) (DocumentSearchResult, error) {
 	liveCount := published.liveCount
 	if liveCount == 0 {
 		return DocumentSearchResult{Hits: []DocumentHit{}}, nil
 	}
 	budget := min(liveCount, candidateBudget)
-	chunks, err := searchSegmentsChunks(ctx, published.calculator, published.segments, query, budget, candidateBudget, vector.SearchOptions{EfSearch: options.EfSearch, VisitLimit: options.VisitLimit})
+	chunks, err := searchSegmentsChunks(ctx, published.calculator, published.segments, query, budget, candidateBudget, vector.SearchOptions{EfSearch: options.EfSearch, VisitLimit: visitBudget})
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
-	documents, err := groupDocuments(ctx, chunks.Hits, published.maxChunksPerDocumentHit)
+	documents, err := groupDocuments(ctx, chunks.Hits, candidateBudget)
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
@@ -125,15 +130,20 @@ func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, vie
 			continue
 		}
 		options := searchOptions
+		if searchOptions.VisitLimit > 0 {
+			remaining := searchOptions.VisitLimit - stats.VisitedNodes
+			if remaining <= 0 {
+				incomplete = true
+				break
+			}
+			options.VisitLimit = remaining
+		}
 		options.ResultFilter = view.filter
 		result, err := view.segment.searchVectors(ctx, query, k, options)
 		if err != nil {
 			return chunkSearchResult{}, err
 		}
-		stats.VisitedNodes += result.Stats.VisitedNodes
-		stats.ExpandedNodes += result.Stats.ExpandedNodes
-		stats.DistanceComputations += result.Stats.DistanceComputations
-		stats.RejectedNodes += result.Stats.RejectedNodes
+		mergeSearchStats(&stats, result.Stats)
 		if result.Incomplete {
 			incomplete = true
 		}
@@ -213,23 +223,41 @@ func groupDocuments(ctx context.Context, hits []ChunkHit, maxChunksPerDocumentHi
 	for docID, group := range byDoc {
 		documents = append(documents, DocumentHit{DocID: docID, Distance: group.distance, Chunks: group.chunks})
 	}
-	slices.SortFunc(documents, func(a, b DocumentHit) int {
-		if a.Distance < b.Distance {
-			return -1
-		}
-		if a.Distance > b.Distance {
-			return 1
-		}
-		if a.DocID < b.DocID {
-			return -1
-		}
-		if a.DocID > b.DocID {
-			return 1
-		}
-		return 0
-	})
+	slices.SortFunc(documents, compareDocumentHits)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return documents, nil
+}
+
+func compareChunkHits(a, b ChunkHit) int {
+	if a.Distance < b.Distance {
+		return -1
+	}
+	if a.Distance > b.Distance {
+		return 1
+	}
+	if a.Ref.ID < b.Ref.ID {
+		return -1
+	}
+	if a.Ref.ID > b.Ref.ID {
+		return 1
+	}
+	return 0
+}
+
+func compareDocumentHits(a, b DocumentHit) int {
+	if a.Distance < b.Distance {
+		return -1
+	}
+	if a.Distance > b.Distance {
+		return 1
+	}
+	if a.DocID < b.DocID {
+		return -1
+	}
+	if a.DocID > b.DocID {
+		return 1
+	}
+	return 0
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
+	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/semanticencode"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
@@ -18,13 +19,15 @@ func main() {
 		panic(err)
 	}
 	service, err := semantic.New(semantic.Config{
-		Embedding:               embedding,
-		Chunking:                semantic.ChunkingDescriptor{ID: "publication-example-v1", Version: 1, Fingerprint: "publication-chunks-fp-v1"},
-		MaxVectors:              100,
-		MaxChunksPerDocument:    10,
-		MaxK:                    10,
-		MaxChunkCandidates:      100,
-		MaxChunksPerDocumentHit: 3,
+		Embedding: embedding,
+		Chunking:  semantic.ChunkingDescriptor{ID: "publication-example-v1", Version: 1, Fingerprint: "publication-chunks-fp-v1"},
+		Limits: semantic.Limits{
+			MaxLiveVectors:          100,
+			MaxChunksPerDocument:    10,
+			MaxDocumentsPerSearch:   10,
+			MaxChunkCandidates:      100,
+			MaxChunksPerDocumentHit: 3,
+		},
 	})
 	must(err)
 	embedding, chunking := service.Embedding(), service.Chunking()
@@ -34,7 +37,7 @@ func main() {
 	// Expected: no hits. The initial published index is empty.
 	search(ctx, encoder, service, "initial empty published index")
 
-	must(service.AddDocument(ctx, encoder, semantic.Document{ID: "doc-a", Fields: map[string]string{"body": "doc-a"}}))
+	must(service.AddDocument(ctx, encoder, fts.Document{ID: "doc-a", Fields: map[string]fts.FieldData{"body": {Text: "doc-a"}}}))
 	// Expected: no hits. AddDocument only queues the mutation.
 	search(ctx, encoder, service, "after AddDocument, before Flush")
 
@@ -54,7 +57,7 @@ func main() {
 }
 
 func search(ctx context.Context, encoder semantic.Encoder, service *semantic.Service, label string) {
-	result, err := service.SearchDocuments(ctx, encoder, semantic.Document{ID: "query", Fields: map[string]string{"body": "query"}}, 1)
+	result, err := service.SearchDocuments(ctx, encoder, fts.Document{ID: "query", Fields: map[string]fts.FieldData{"body": {Text: "query"}}}, 1)
 	must(err)
 	if len(result.Hits) == 0 {
 		fmt.Printf("%s: no hits\n", label)

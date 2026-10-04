@@ -46,9 +46,9 @@ func buildExecService(t *testing.T) *Service {
 		"doc-d": {"title": "mars rover", "body": "james likes mars exploration"},
 	}
 	for id, fields := range seed {
-		docFields := make(map[string]Field, len(fields))
+		docFields := make(map[string]FieldData, len(fields))
 		for name, value := range fields {
-			docFields[name] = Field{Value: value}
+			docFields[name] = FieldData{Text: value}
 		}
 		if err := svc.Index(ctx, Document{ID: DocID(id), Fields: docFields}); err != nil {
 			t.Fatalf("Index(%s) error = %v", id, err)

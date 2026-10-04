@@ -33,10 +33,19 @@ func (descriptor EmbeddingDescriptor) Calculator() (vector.Calculator, error) {
 	return vector.NewCalculator(descriptor.Dimensions, descriptor.Metric)
 }
 
+func (descriptor EmbeddingDescriptor) IsValid() bool {
+	return descriptor.ProviderID != "" && descriptor.ModelID != "" && descriptor.ModelVersion != "" &&
+		descriptor.PipelineFingerprint != "" && descriptor.Dimensions > 0 && descriptor.VectorFormatVersion > 0 && descriptor.Metric.Valid()
+}
+
 type ChunkingDescriptor struct {
 	ID          string
 	Version     uint32
 	Fingerprint string
+}
+
+func (descriptor ChunkingDescriptor) IsValid() bool {
+	return descriptor.ID != "" && descriptor.Version > 0 && descriptor.Fingerprint != ""
 }
 
 type PipelineDescriptor struct {
@@ -44,21 +53,12 @@ type PipelineDescriptor struct {
 	Chunking  ChunkingDescriptor
 }
 
-func (descriptor EmbeddingDescriptor) IsValid() bool {
-	return descriptor.ProviderID != "" && descriptor.ModelID != "" && descriptor.ModelVersion != "" &&
-		descriptor.PipelineFingerprint != "" && descriptor.Dimensions > 0 && descriptor.VectorFormatVersion > 0 && descriptor.Metric.Valid()
-}
-
-func (descriptor ChunkingDescriptor) IsValid() bool {
-	return descriptor.ID != "" && descriptor.Version > 0 && descriptor.Fingerprint != ""
-}
-
-func descriptorsEqual(left, right PipelineDescriptor) (bool, error) {
+func validatePipelineCompatibility(left, right PipelineDescriptor) error {
 	if left.Embedding != right.Embedding {
-		return false, ErrEmbeddingMismatch
+		return ErrEmbeddingMismatch
 	}
 	if left.Chunking != right.Chunking {
-		return false, ErrChunkingMismatch
+		return ErrChunkingMismatch
 	}
-	return true, nil
+	return nil
 }

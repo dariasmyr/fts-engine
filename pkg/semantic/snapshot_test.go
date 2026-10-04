@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 func TestCommittedSnapshotRejectsPendingMutations(t *testing.T) {
 	service := newTestService(t)
-	batch := []ChunkVector{testChunk("doc-a", "a-1", 0, []float32{1, 0})}
+	batch := []EncodedChunk{testChunk("doc-a", "a-1", 0, []float32{1, 0})}
 	if err := service.addEncodedDocument(context.Background(), "doc-a", batch); err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +20,7 @@ func TestCommittedSnapshotRejectsPendingMutations(t *testing.T) {
 func TestHydrateRejectsInvalidWatermarksAndLiveness(t *testing.T) {
 	ctx := context.Background()
 	service := newTestService(t)
-	if err := addDocument(t, service, ctx, []ChunkVector{testChunk("doc-a", "a-1", 0, []float32{1, 0})}); err != nil {
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-a", "a-1", 0, []float32{1, 0})}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := service.CommittedSnapshot(ctx)
@@ -44,7 +42,7 @@ func TestHydrateRejectsInvalidWatermarksAndLiveness(t *testing.T) {
 		t.Fatalf("invalid vector watermark error = %v", err)
 	}
 	invalidComponent := base
-	invalidComponent.NextComponentID = segment.Snapshot().ComponentID()
+	invalidComponent.NextComponentID = segment.Snapshot().Data().ComponentID
 	if _, err := Hydrate(ctx, invalidComponent); !errors.Is(err, ErrInternalState) {
 		t.Fatalf("invalid component watermark error = %v", err)
 	}
@@ -54,8 +52,77 @@ func TestHydrateRejectsInvalidWatermarksAndLiveness(t *testing.T) {
 		t.Fatalf("invalid liveness error = %v", err)
 	}
 	unnormalized := base
-	unnormalized.Config.HNSWSearch = hnsw.SearchConfig{}
+	unnormalized.Config.HNSW.DefaultEfSearch = 0
 	if _, err := Hydrate(ctx, unnormalized); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("unnormalized config error = %v", err)
+	}
+}
+
+func TestHydrateRejectsSegmentsOutsideVectorIDOrder(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-a", "a-1", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc-b", "b-1", 0, []float32{2, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := service.CommittedSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segments := snapshot.Segments()
+	state := HydrationState{
+		Config:               snapshot.Config(),
+		Revision:             snapshot.Revision(),
+		MaxAllocatedVectorID: snapshot.MaxAllocatedVectorID(),
+		NextComponentID:      snapshot.NextComponentID(),
+		Segments: []HydratedSegment{
+			{Snapshot: segments[1].Snapshot(), LivenessWords: segments[1].LivenessWords()},
+			{Snapshot: segments[0].Snapshot(), LivenessWords: segments[0].LivenessWords()},
+		},
+	}
+
+	if _, err := Hydrate(ctx, state); !errors.Is(err, ErrInvalidSegment) {
+		t.Fatalf("Hydrate error = %v, want %v", err, ErrInvalidSegment)
+	}
+}
+
+func TestHydrateRejectsNonContiguousDocumentVersion(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	if err := service.addEncodedDocument(ctx, "doc-a", []EncodedChunk{
+		testChunk("doc-a", "a-1", 0, []float32{1, 0}),
+		testChunk("doc-a", "a-2", 1, []float32{2, 0}),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.addEncodedDocument(ctx, "doc-b", []EncodedChunk{testChunk("doc-b", "b-1", 0, []float32{3, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := service.CommittedSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed := snapshot.Segments()[0]
+	data := committed.Snapshot().Data()
+	data.Rows[1].Chunk.DocID = "doc-b"
+	data.Rows[2].Chunk.DocID = "doc-a"
+	state := HydrationState{
+		Config:               snapshot.Config(),
+		Revision:             snapshot.Revision(),
+		MaxAllocatedVectorID: snapshot.MaxAllocatedVectorID(),
+		NextComponentID:      snapshot.NextComponentID(),
+		Segments: []HydratedSegment{{
+			Snapshot:      NewSegmentSnapshot(data),
+			LivenessWords: committed.LivenessWords(),
+		}},
+	}
+
+	if _, err := Hydrate(ctx, state); !errors.Is(err, ErrInvalidSegment) {
+		t.Fatalf("Hydrate error = %v, want %v", err, ErrInvalidSegment)
 	}
 }

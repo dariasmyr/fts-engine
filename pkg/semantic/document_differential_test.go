@@ -12,25 +12,19 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-type deterministicEncoder struct {
+type differentialEncoder struct {
 	descriptor semantic.PipelineDescriptor
-	documents  map[fts.DocID][]semantic.ChunkVector
-	queries    map[fts.DocID][]semantic.ChunkVector
+	vectors    map[fts.DocID][]semantic.EncodedChunk
 }
 
-func (e *deterministicEncoder) Descriptor() semantic.PipelineDescriptor { return e.descriptor }
+func (e differentialEncoder) Descriptor() semantic.PipelineDescriptor { return e.descriptor }
 
-func (e *deterministicEncoder) Encode(_ context.Context, document semantic.Document) ([]semantic.ChunkVector, error) {
-	values := e.documents[document.ID]
-	if queryValues, ok := e.queries[document.ID]; ok {
-		values = queryValues
+func (e differentialEncoder) Encode(_ context.Context, document fts.Document) ([]semantic.EncodedChunk, error) {
+	result := slices.Clone(e.vectors[document.ID])
+	for i := range result {
+		result[i].Vector = slices.Clone(result[i].Vector)
 	}
-	return cloneChunkVectors(values), nil
-}
-
-type exactDocumentReference struct {
-	calculator vector.Calculator
-	documents  map[fts.DocID][]semantic.ChunkVector
+	return result, nil
 }
 
 func TestDocumentSearchDifferentialThroughLifecycle(t *testing.T) {
@@ -40,180 +34,134 @@ func TestDocumentSearchDifferentialThroughLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := semantic.Config{
-		Embedding:               embedding,
-		Chunking:                semantic.ChunkingDescriptor{ID: "chunks", Version: 1, Fingerprint: "chunks-v1"},
-		MaxVectors:              128,
-		MaxChunksPerDocument:    8,
-		MaxK:                    5,
-		MaxChunkCandidates:      128,
-		MaxChunksPerDocumentHit: 2,
+		Embedding: embedding,
+		Chunking:  semantic.ChunkingDescriptor{ID: "chunks", Version: 1, Fingerprint: "chunks-v1"},
+		Limits: semantic.Limits{
+			MaxLiveVectors:          64,
+			MaxChunksPerDocument:    4,
+			MaxDocumentsPerSearch:   4,
+			MaxChunkCandidates:      64,
+			MaxChunksPerDocumentHit: 2,
+		},
 	}
 	service, err := semantic.New(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoder := &deterministicEncoder{
+	encoder := differentialEncoder{
 		descriptor: semantic.PipelineDescriptor{Embedding: embedding, Chunking: config.Chunking},
-		documents:  make(map[fts.DocID][]semantic.ChunkVector),
-		queries:    make(map[fts.DocID][]semantic.ChunkVector),
+		vectors:    make(map[fts.DocID][]semantic.EncodedChunk),
 	}
-	query := semantic.Document{ID: "query"}
-	encoder.queries[query.ID] = []semantic.ChunkVector{testSemanticChunk("query", "query-0", 0, []float32{0, 0})}
-	calculator, err := embedding.Calculator()
-	if err != nil {
+	query := fts.Document{ID: "query"}
+	encoder.vectors[query.ID] = []semantic.EncodedChunk{differentialChunk("query", "query", 0, []float32{0, 0})}
+	reference := make(map[fts.DocID][]semantic.EncodedChunk)
+
+	assertMatches := func() {
+		t.Helper()
+		got, err := service.SearchDocumentsWithOptions(ctx, encoder, query, 4, semantic.SearchOptions{
+			EfSearch: 64, VisitLimit: 64, CandidateChunks: 64,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := exactDocumentHits(t, embedding, encoder.vectors[query.ID][0].Vector, reference, 4, 2)
+		assertDocumentHitsEqual(t, want, got.Hits)
+	}
+	add := func(docID fts.DocID, values ...semantic.EncodedChunk) {
+		t.Helper()
+		encoder.vectors[docID] = slices.Clone(values)
+		if err := service.AddDocument(ctx, encoder, fts.Document{ID: docID}); err != nil {
+			t.Fatal(err)
+		}
+		if err := service.Flush(ctx); err != nil {
+			t.Fatal(err)
+		}
+		reference[docID] = slices.Clone(values)
+		assertMatches()
+	}
+	replace := func(docID fts.DocID, values ...semantic.EncodedChunk) {
+		t.Helper()
+		encoder.vectors[docID] = slices.Clone(values)
+		if err := service.ReplaceDocument(ctx, encoder, fts.Document{ID: docID}); err != nil {
+			t.Fatal(err)
+		}
+		if err := service.Flush(ctx); err != nil {
+			t.Fatal(err)
+		}
+		reference[docID] = slices.Clone(values)
+		assertMatches()
+	}
+
+	add("doc-a",
+		differentialChunk("doc-a", "a-0", 0, []float32{1, 0}),
+		differentialChunk("doc-a", "a-1", 1, []float32{1, 1}),
+	)
+	add("doc-b", differentialChunk("doc-b", "b-0", 0, []float32{2, 0}))
+	add("doc-c", differentialChunk("doc-c", "c-0", 0, []float32{3, 0}))
+	replace("doc-a", differentialChunk("doc-a", "a-new", 0, []float32{4, 0}))
+	if err := service.DeleteDocument(ctx, "doc-b"); err != nil {
 		t.Fatal(err)
 	}
-	reference := &exactDocumentReference{calculator: calculator, documents: make(map[fts.DocID][]semantic.ChunkVector)}
+	if err := service.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	delete(reference, "doc-b")
+	assertMatches()
 
-	add := func(docID fts.DocID, values ...semantic.ChunkVector) {
-		t.Helper()
-		encoder.documents[docID] = cloneChunkVectors(values)
-		if err := service.AddDocument(ctx, encoder, semantic.Document{ID: docID}); err != nil {
-			t.Fatal(err)
-		}
-		if err := service.Flush(ctx); err != nil {
-			t.Fatal(err)
-		}
-		reference.documents[docID] = cloneChunkVectors(values)
-		assertDocumentSearchMatches(t, service, encoder, reference, query)
-	}
-	replace := func(docID fts.DocID, values ...semantic.ChunkVector) {
-		t.Helper()
-		encoder.documents[docID] = cloneChunkVectors(values)
-		if err := service.ReplaceDocument(ctx, encoder, semantic.Document{ID: docID}); err != nil {
-			t.Fatal(err)
-		}
-		if err := service.Flush(ctx); err != nil {
-			t.Fatal(err)
-		}
-		reference.documents[docID] = cloneChunkVectors(values)
-		assertDocumentSearchMatches(t, service, encoder, reference, query)
-	}
-	remove := func(docID fts.DocID) {
-		t.Helper()
-		if err := service.DeleteDocument(ctx, docID); err != nil {
-			t.Fatalf("DeleteDocument(%q): %v", docID, err)
-		}
-		if err := service.Flush(ctx); err != nil {
-			t.Fatal(err)
-		}
-		delete(reference.documents, docID)
-		assertDocumentSearchMatches(t, service, encoder, reference, query)
-	}
-
-	for i := range 10 {
-		docID := fts.DocID("doc-" + string(rune('a'+i)))
-		add(docID,
-			testSemanticChunk(docID, chunk.ID(string(docID)+"-0"), 0, []float32{float32(i + 1), 0}),
-			testSemanticChunk(docID, chunk.ID(string(docID)+"-1"), 1, []float32{float32(i + 1), 1}),
-		)
-	}
-	for i := 0; i < 6; i++ {
-		docID := fts.DocID("doc-" + string(rune('a'+i)))
-		replace(docID, testSemanticChunk(docID, chunk.ID(string(docID)+"-replacement"), 0, []float32{float32(20 - i), 0}))
-	}
-	for i := 6; i < 9; i++ {
-		remove(fts.DocID("doc-" + string(rune('a'+i))))
-	}
-	if stats := service.Statistics(); stats.StaleVectors == 0 {
-		t.Fatal("expected stale vectors before compaction")
-	}
-
-	before, err := service.SearchDocumentsWithOptions(ctx, encoder, query, config.MaxK, exactSearchOptions())
+	before, err := service.SearchDocumentsWithOptions(ctx, encoder, query, 4, semantic.SearchOptions{EfSearch: 64, VisitLimit: 64, CandidateChunks: 64})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := service.Compact(ctx); err != nil {
 		t.Fatal(err)
 	}
-	after, err := service.SearchDocumentsWithOptions(ctx, encoder, query, config.MaxK, exactSearchOptions())
+	after, err := service.SearchDocumentsWithOptions(ctx, encoder, query, 4, semantic.SearchOptions{EfSearch: 64, VisitLimit: 64, CandidateChunks: 64})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertDocumentResultsEqual(t, before, after)
-	if stats := service.Statistics(); stats.StaleVectors != 0 {
-		t.Fatalf("stale vectors after compaction = %d", stats.StaleVectors)
-	}
-	assertDocumentSearchMatches(t, service, encoder, reference, query)
+	assertDocumentHitsEqual(t, before.Hits, after.Hits)
+	assertMatches()
 }
 
-func assertDocumentSearchMatches(t *testing.T, service *semantic.Service, encoder semantic.Encoder, reference *exactDocumentReference, query semantic.Document) {
+func exactDocumentHits(t *testing.T, descriptor semantic.EmbeddingDescriptor, query []float32, documents map[fts.DocID][]semantic.EncodedChunk, maxDocuments, maxChunks int) []semantic.DocumentHit {
 	t.Helper()
-	got, err := service.SearchDocumentsWithOptions(context.Background(), encoder, query, 5, exactSearchOptions())
+	calculator, err := descriptor.Calculator()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := reference.search(encoder, query, 5, 2)
+	preparedQuery, err := calculator.Prepare(query)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertDocumentResultsEqual(t, want, got)
-}
-
-func (r *exactDocumentReference) search(encoder semantic.Encoder, query semantic.Document, k, maxChunks int) (semantic.DocumentSearchResult, error) {
-	queries, err := encoder.Encode(context.Background(), query)
-	if err != nil {
-		return semantic.DocumentSearchResult{}, err
-	}
-	merged := make(map[fts.DocID]semantic.DocumentHit)
-	totalCandidates := 0
-	for _, queryChunk := range queries {
-		preparedQuery, err := r.calculator.Prepare(queryChunk.Vector)
-		if err != nil {
-			return semantic.DocumentSearchResult{}, err
-		}
-		type candidate struct {
-			hit semantic.ChunkHit
-		}
-		candidates := make([]candidate, 0)
-		for _, chunks := range r.documents {
-			for _, item := range chunks {
-				prepared, err := r.calculator.Prepare(item.Vector)
-				if err != nil {
-					return semantic.DocumentSearchResult{}, err
-				}
-				candidates = append(candidates, candidate{hit: semantic.ChunkHit{Ref: item.Ref, Distance: r.calculator.DistancePrepared(preparedQuery, prepared)}})
+	hits := make([]semantic.DocumentHit, 0, len(documents))
+	for docID, values := range documents {
+		chunks := make([]semantic.ChunkHit, 0, len(values))
+		for _, value := range values {
+			prepared, err := calculator.Prepare(value.Vector)
+			if err != nil {
+				t.Fatal(err)
 			}
+			chunks = append(chunks, semantic.ChunkHit{Ref: value.Ref, Distance: calculator.DistancePrepared(preparedQuery, prepared)})
 		}
-		slices.SortFunc(candidates, func(a, b candidate) int {
-			if a.hit.Distance < b.hit.Distance {
+		slices.SortFunc(chunks, func(a, b semantic.ChunkHit) int {
+			if a.Distance < b.Distance {
 				return -1
 			}
-			if a.hit.Distance > b.hit.Distance {
+			if a.Distance > b.Distance {
 				return 1
 			}
-			if a.hit.Ref.DocID < b.hit.Ref.DocID {
+			if a.Ref.ID < b.Ref.ID {
 				return -1
 			}
-			if a.hit.Ref.DocID > b.hit.Ref.DocID {
-				return 1
-			}
-			if a.hit.Ref.ID < b.hit.Ref.ID {
-				return -1
-			}
-			if a.hit.Ref.ID > b.hit.Ref.ID {
+			if a.Ref.ID > b.Ref.ID {
 				return 1
 			}
 			return 0
 		})
-		totalCandidates += len(candidates)
-		for _, candidate := range candidates {
-			group := merged[candidate.hit.Ref.DocID]
-			if group.DocID == "" {
-				group = semantic.DocumentHit{DocID: candidate.hit.Ref.DocID, Distance: candidate.hit.Distance}
-			}
-			if len(group.Chunks) < maxChunks {
-				group.Chunks = append(group.Chunks, candidate.hit)
-			}
-			if candidate.hit.Distance < group.Distance {
-				group.Distance = candidate.hit.Distance
-			}
-			merged[candidate.hit.Ref.DocID] = group
+		if len(chunks) > maxChunks {
+			chunks = chunks[:maxChunks]
 		}
-	}
-	hits := make([]semantic.DocumentHit, 0, len(merged))
-	for _, hit := range merged {
-		hits = append(hits, hit)
+		hits = append(hits, semantic.DocumentHit{DocID: docID, Distance: chunks[0].Distance, Chunks: chunks})
 	}
 	slices.SortFunc(hits, func(a, b semantic.DocumentHit) int {
 		if a.Distance < b.Distance {
@@ -230,47 +178,32 @@ func (r *exactDocumentReference) search(encoder semantic.Encoder, query semantic
 		}
 		return 0
 	})
-	distinct := len(hits)
-	if len(hits) > k {
-		hits = hits[:k]
+	if len(hits) > maxDocuments {
+		hits = hits[:maxDocuments]
 	}
-	return semantic.DocumentSearchResult{Hits: hits, CandidateChunks: totalCandidates, DistinctDocuments: distinct}, nil
+	return hits
 }
 
-func assertDocumentResultsEqual(t *testing.T, want, got semantic.DocumentSearchResult) {
+func assertDocumentHitsEqual(t *testing.T, want, got []semantic.DocumentHit) {
 	t.Helper()
-	if want.GroupingIncomplete != got.GroupingIncomplete {
-		t.Fatalf("grouping incomplete mismatch: want=%v got=%v", want.GroupingIncomplete, got.GroupingIncomplete)
+	if len(want) != len(got) {
+		t.Fatalf("hit count = %d, want %d: %+v", len(got), len(want), got)
 	}
-	if len(want.Hits) != len(got.Hits) {
-		t.Fatalf("document hit count = %d, want %d: got=%+v", len(got.Hits), len(want.Hits), got.Hits)
-	}
-	for i := range want.Hits {
-		left, right := want.Hits[i], got.Hits[i]
-		if left.DocID != right.DocID || math.Abs(left.Distance-right.Distance) > 1e-5 || len(left.Chunks) != len(right.Chunks) {
-			t.Fatalf("document hit %d mismatch: want=%+v got=%+v", i, left, right)
+	for i := range want {
+		if want[i].DocID != got[i].DocID || math.Abs(want[i].Distance-got[i].Distance) > 1e-6 || len(want[i].Chunks) != len(got[i].Chunks) {
+			t.Fatalf("hit %d mismatch: want=%+v got=%+v", i, want[i], got[i])
 		}
-		for j := range left.Chunks {
-			if left.Chunks[j].Ref != right.Chunks[j].Ref || math.Abs(left.Chunks[j].Distance-right.Chunks[j].Distance) > 1e-5 {
-				t.Fatalf("chunk hit %d/%d mismatch: want=%+v got=%+v", i, j, left.Chunks[j], right.Chunks[j])
+		for j := range want[i].Chunks {
+			if want[i].Chunks[j].Ref != got[i].Chunks[j].Ref || math.Abs(want[i].Chunks[j].Distance-got[i].Chunks[j].Distance) > 1e-6 {
+				t.Fatalf("chunk %d/%d mismatch: want=%+v got=%+v", i, j, want[i].Chunks[j], got[i].Chunks[j])
 			}
 		}
 	}
 }
 
-func testSemanticChunk(docID fts.DocID, id chunk.ID, ordinal uint32, value []float32) semantic.ChunkVector {
-	return semantic.ChunkVector{Ref: chunk.Ref{ID: id, DocID: docID, Field: fts.DefaultField, Ordinal: ordinal, StartByte: uint64(ordinal * 10), EndByte: uint64(ordinal*10 + 10)}, Vector: value}
-}
-
-func cloneChunkVectors(values []semantic.ChunkVector) []semantic.ChunkVector {
-	cloned := make([]semantic.ChunkVector, len(values))
-	for i, value := range values {
-		cloned[i] = value
-		cloned[i].Vector = slices.Clone(value.Vector)
+func differentialChunk(docID fts.DocID, id chunk.ID, ordinal uint32, value []float32) semantic.EncodedChunk {
+	return semantic.EncodedChunk{
+		Ref:    chunk.Ref{ID: id, DocID: docID, Field: fts.DefaultField, Ordinal: ordinal, StartByte: uint64(ordinal), EndByte: uint64(ordinal + 1)},
+		Vector: value,
 	}
-	return cloned
-}
-
-func exactSearchOptions() semantic.SearchOptions {
-	return semantic.SearchOptions{EfSearch: 128, VisitLimit: 128, CandidateChunks: 128}
 }

@@ -93,7 +93,7 @@ func TestSemanticFormatsRejectPreviousVersions(t *testing.T) {
 		version uint16
 		decode  func([]byte) error
 	}{
-		{name: "state v6", data: stateData, version: 6, decode: func(data []byte) error { _, err := decodeState(data, DefaultLimits()); return err }},
+		{name: "state v7", data: stateData, version: 7, decode: func(data []byte) error { _, err := decodeState(data, DefaultLimits()); return err }},
 		{name: "manifest v5", data: manifestData, version: 5, decode: func(data []byte) error { _, err := decodeManifest(data, DefaultLimits()); return err }},
 	} {
 		t.Run(test.name, func(t *testing.T) {

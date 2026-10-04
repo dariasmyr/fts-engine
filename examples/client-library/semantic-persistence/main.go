@@ -28,20 +28,22 @@ func main() {
 		ID: "persistence-example-v1", Version: 1, Fingerprint: "persistence-chunks-v1",
 	}
 	service, err := semantic.New(semantic.Config{
-		Embedding:               embedding,
-		Chunking:                chunking,
-		MaxVectors:              100,
-		MaxChunksPerDocument:    10,
-		MaxK:                    10,
-		MaxChunkCandidates:      100,
-		MaxChunksPerDocumentHit: 3,
+		Embedding: embedding,
+		Chunking:  chunking,
+		Limits: semantic.Limits{
+			MaxLiveVectors:          100,
+			MaxChunksPerDocument:    10,
+			MaxDocumentsPerSearch:   10,
+			MaxChunkCandidates:      100,
+			MaxChunksPerDocumentHit: 3,
+		},
 	})
 	must(err)
 	encoder, err := semanticencode.New(nil, persistenceEmbedder{}, embedding, chunking)
 	must(err)
 
-	must(service.AddDocument(ctx, encoder, document("doc-a", "a-v1")))
-	must(service.AddDocument(ctx, encoder, document("doc-b", "b")))
+	must(service.AddDocument(ctx, encoder, fts.Document{ID: "doc-a", Fields: map[string]fts.FieldData{"body": {Text: "a-v1"}}}))
+	must(service.AddDocument(ctx, encoder, fts.Document{ID: "doc-b", Fields: map[string]fts.FieldData{"body": {Text: "b"}}}))
 	must(service.Flush(ctx))
 
 	generation, err := semanticpersist.Publish(ctx, root, service, semanticpersist.Options{
@@ -62,7 +64,7 @@ func main() {
 	writable := store.Service()
 	search(ctx, encoder, writable, "query-v1", "after open")
 
-	must(writable.ReplaceDocument(ctx, encoder, document("doc-a", "a-v2")))
+	must(writable.ReplaceDocument(ctx, encoder, fts.Document{ID: "doc-a", Fields: map[string]fts.FieldData{"body": {Text: "a-v2"}}}))
 	must(writable.Flush(ctx))
 	generation, err = store.Publish(ctx, semanticpersist.Options{
 		Durability: semanticpersist.DurabilitySynchronous,
@@ -83,12 +85,8 @@ func main() {
 	must(reopened.Close())
 }
 
-func document(id fts.DocID, body string) semantic.Document {
-	return semantic.Document{ID: id, Fields: map[string]string{"body": body}}
-}
-
 func search(ctx context.Context, encoder semantic.Encoder, service *semantic.Service, query, label string) {
-	result, err := service.SearchDocuments(ctx, encoder, document("query", query), 1)
+	result, err := service.SearchDocuments(ctx, encoder, fts.Document{ID: "query", Fields: map[string]fts.FieldData{"body": {Text: query}}}, 1)
 	must(err)
 	if len(result.Hits) == 0 {
 		fmt.Printf("%s: no hits\n", label)

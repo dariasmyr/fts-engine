@@ -3,6 +3,7 @@ package semantic
 import (
 	"context"
 
+	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
@@ -20,56 +21,50 @@ type SegmentSnapshot struct {
 	index       *hnsw.Index
 }
 
+// SegmentData is the persistence transfer value for one immutable segment.
+// Callers must treat Vectors and Index as immutable.
+type SegmentData struct {
+	ComponentID uint64
+	Pipeline    PipelineDescriptor
+	Rows        []VectorRow
+	Vectors     vectorstore.PreparedVectorStore
+	Index       *hnsw.Index
+}
+
 // NewSegmentSnapshot creates persistence transfer data for hydration. Hydrate
 // validates the data and constructs the private runtime segment.
-func NewSegmentSnapshot(componentID uint64, descriptor PipelineDescriptor, rows []VectorRow, vectors vectorstore.PreparedVectorStore, index *hnsw.Index) SegmentSnapshot {
+func NewSegmentSnapshot(data SegmentData) SegmentSnapshot {
 	return SegmentSnapshot{
-		componentID: componentID,
-		descriptor:  descriptor,
-		rows:        append([]VectorRow(nil), rows...),
-		vectors:     vectors,
-		index:       index,
+		componentID: data.ComponentID,
+		descriptor:  data.Pipeline,
+		rows:        append([]VectorRow(nil), data.Rows...),
+		vectors:     data.Vectors,
+		index:       data.Index,
 	}
 }
 
-func (s SegmentSnapshot) ComponentID() uint64 { return s.componentID }
-
-func (s SegmentSnapshot) Pipeline() PipelineDescriptor { return s.descriptor }
-
-func (s SegmentSnapshot) Rows() []VectorRow { return append([]VectorRow(nil), s.rows...) }
-
-func (s SegmentSnapshot) Vectors() vectorstore.PreparedVectorStore { return s.vectors }
-
-func (s SegmentSnapshot) Index() *hnsw.Index { return s.index }
-
-func (s SegmentSnapshot) SearchConfig() hnsw.SearchConfig {
-	if s.index == nil {
-		return hnsw.SearchConfig{}
+// Data returns a defensive persistence transfer value.
+func (s SegmentSnapshot) Data() SegmentData {
+	return SegmentData{
+		ComponentID: s.componentID,
+		Pipeline:    s.descriptor,
+		Rows:        append([]VectorRow(nil), s.rows...),
+		Vectors:     s.vectors,
+		Index:       s.index,
 	}
-	return s.index.Report().Search
 }
-
-func (s SegmentSnapshot) Len() int {
-	if s.index == nil {
-		return 0
-	}
-	return s.index.Len()
-}
-
-func (s SegmentSnapshot) Dimensions() int {
-	if s.index == nil {
-		return 0
-	}
-	return s.index.Dimensions()
-}
-
-func (s SegmentSnapshot) MaxK() int { return s.SearchConfig().MaxK }
 
 func (s *segment) snapshot() SegmentSnapshot {
 	if s == nil {
 		return SegmentSnapshot{}
 	}
-	return NewSegmentSnapshot(s.component, s.descriptor, s.rows, s.vectors, s.index)
+	return NewSegmentSnapshot(SegmentData{
+		ComponentID: s.component,
+		Pipeline:    s.descriptor,
+		Rows:        s.rows,
+		Vectors:     s.vectors,
+		Index:       s.index,
+	})
 }
 
 // CommittedSegment is one immutable component of a committed snapshot.
@@ -146,13 +141,19 @@ func (s *Service) CommittedSnapshot(ctx context.Context) (*CommittedSnapshot, er
 	if err := s.lockState(ctx); err != nil {
 		return nil, err
 	}
-	defer s.unlockState()
 	if s.mutationVersion != s.published.generation {
+		s.unlockState()
 		return nil, ErrPendingMutations
 	}
+	published := s.published
+	config := s.config
+	revision := s.mutationVersion
+	maxAllocatedVectorID := s.maxAllocatedID
+	nextComponentID := s.nextComponentID
+	s.unlockState()
 
-	segments := make([]CommittedSegment, len(s.published.segments))
-	for i, item := range s.published.segments {
+	segments := make([]CommittedSegment, len(published.segments))
+	for i, item := range published.segments {
 		if i%16 == 0 {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -164,10 +165,10 @@ func (s *Service) CommittedSnapshot(ctx context.Context) (*CommittedSnapshot, er
 		}
 	}
 	return &CommittedSnapshot{
-		config:               s.config,
-		revision:             s.mutationVersion,
-		maxAllocatedVectorID: s.maxAllocatedID,
-		nextComponentID:      s.nextComponentID,
+		config:               config,
+		revision:             revision,
+		maxAllocatedVectorID: maxAllocatedVectorID,
+		nextComponentID:      nextComponentID,
 		segments:             segments,
 	}, nil
 }
@@ -204,13 +205,13 @@ func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
 	if config != state.Config {
 		return nil, ErrInvalidConfig
 	}
-	if state.NextComponentID == 0 || state.MaxAllocatedVectorID < config.InitialMaxAllocatedVectorID {
+	if state.NextComponentID == 0 {
 		return nil, ErrInternalState
 	}
 
 	visible := make([]visibleSegment, len(state.Segments))
 	locations := make(map[uint64]vectorLocation)
-	documents := make(map[fts.DocID][]uint64)
+	documents := make(map[fts.DocID]documentVersion)
 	var maxVectorID uint64
 	var maxComponentID uint64
 	for segmentIndex, persisted := range state.Segments {
@@ -223,7 +224,7 @@ func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
 		if snapshot.index == nil || snapshot.vectors == nil {
 			return nil, ErrInvalidSegment
 		}
-		segment, err := newSegment(ctx, snapshot.componentID, snapshot.descriptor, snapshot.vectors, snapshot.index, snapshot.rows, true)
+		segment, err := newSegment(ctx, snapshot.componentID, snapshot.descriptor, snapshot.vectors, snapshot.index, snapshot.rows)
 		if err != nil {
 			return nil, err
 		}
@@ -235,15 +236,21 @@ func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
 		componentID := segment.componentID()
 		maxComponentID = max(maxComponentID, componentID)
 		for ordinal, row := range segment.rows {
-			if ordinal%64 == 0 {
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
+			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
+				return nil, err
 			}
+
 			maxVectorID = max(maxVectorID, row.VectorID)
 			locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
 			if filter.Allows(vector.Ordinal(ordinal)) {
-				documents[row.Chunk.DocID] = append(documents[row.Chunk.DocID], row.VectorID)
+				version := documents[row.Chunk.DocID]
+				if version.vectorCount == 0 {
+					version.firstVectorID = row.VectorID
+				} else if row.VectorID != version.vectorID(version.vectorCount) {
+					return nil, ErrInvalidSegment
+				}
+				version.vectorCount++
+				documents[row.Chunk.DocID] = version
 			}
 		}
 	}
@@ -251,23 +258,29 @@ func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
 		return nil, ErrInternalState
 	}
 
-	descriptor := PipelineDescriptor{Embedding: config.Embedding, Chunking: config.Chunking}
-	policy := searchPolicy{MaxK: config.MaxK, MaxChunkCandidates: config.MaxChunkCandidates, MaxChunksPerDocumentHit: config.MaxChunksPerDocumentHit}
-	published, err := newReadView(ctx, state.Revision, visible, descriptor, policy, config.HNSWSearch)
+	buildOptions, ok := config.hnswOptions()
+	if !ok {
+		return nil, ErrInvalidConfig
+	}
+
+	published, err := newReadView(ctx, state.Revision, visible, config.pipelineDescriptor(), config.searchPolicy(), buildOptions.Search)
 	if err != nil {
 		return nil, err
 	}
-	if published.liveCount > config.MaxVectors {
+	if published.liveCount > config.Limits.MaxLiveVectors {
 		return nil, ErrCapacityExceeded
 	}
-	for _, ids := range documents {
-		if len(ids) > config.MaxChunksPerDocument {
+	for _, version := range documents {
+		if version.vectorCount > config.Limits.MaxChunksPerDocument {
 			return nil, ErrInvalidSegment
 		}
 	}
 	calculator, err := config.Embedding.Calculator()
 	if err != nil {
 		return nil, ErrInvalidConfig
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return &Service{
 		stateGate:       make(chan struct{}, 1),
@@ -277,9 +290,9 @@ func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
 		published:       published,
 		currentByDoc:    documents,
 		locations:       locations,
+		liveVectorCount: published.liveCount,
 		maxAllocatedID:  state.MaxAllocatedVectorID,
 		nextComponentID: state.NextComponentID,
 		mutationVersion: state.Revision,
-		pendingVectors:  make([]pendingVector, 0, config.InitialVectorCapacity),
 	}, nil
 }
