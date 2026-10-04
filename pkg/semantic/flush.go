@@ -86,14 +86,8 @@ func (s *Service) captureFlushState(ctx context.Context) (flushState, error) {
 		return flushState{}, err
 	}
 	defer s.unlockState()
-	pendingVectors := make([]pendingVector, len(s.pendingVectors))
-	for i, item := range s.pendingVectors {
-		if err := contextcheck.PeriodicError(ctx, i); err != nil {
-			return flushState{}, err
-		}
+	pendingVectors := append([]pendingVector(nil), s.pendingVectors...)
 
-		pendingVectors[i] = pendingVector{row: item.row, vector: append([]float32(nil), item.vector...)}
-	}
 	disabledIDs := append([]uint64(nil), s.pendingDisabledIDs...)
 	locations, err := cloneLocations(ctx, s.locations)
 	if err != nil {
