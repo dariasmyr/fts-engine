@@ -8,7 +8,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-func publishIndex(ctx context.Context, base *ReadView, locations map[uint64]vectorLocation, disabledIDs []uint64, pending *segment, pendingComponent, generation uint64) (*ReadView, map[uint64]vectorLocation, error) {
+func publishIndex(ctx context.Context, base *ReadView, locations map[uint64]vectorLocation, disabledIDs []uint64, pending *segment, pendingComponent, revision uint64) (*ReadView, map[uint64]vectorLocation, error) {
 	segments := append([]visibleSegment(nil), base.segments...)
 	componentIndexes := make(map[uint64]int, len(segments))
 	for i, view := range segments {
@@ -58,7 +58,7 @@ func publishIndex(ctx context.Context, base *ReadView, locations map[uint64]vect
 			resultLocations[row.VectorID] = vectorLocation{component: pendingComponent, ordinal: vector.Ordinal(ordinal)}
 		}
 	}
-	view, err := newReadView(ctx, generation, segments, base.descriptor, searchPolicy{
+	view, err := newReadView(ctx, revision, segments, base.descriptor, searchPolicy{
 		MaxDocumentsPerSearch:   base.maxDocumentsPerSearch,
 		MaxChunkCandidates:      base.maxCandidates,
 		MaxChunksPerDocumentHit: base.maxChunksPerDocumentHit,

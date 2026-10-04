@@ -33,7 +33,7 @@ func (s *Service) flushPending(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if state.version == state.base.generation {
+	if state.revision == state.base.revision {
 		return nil
 	}
 	if len(state.pendingVectors) > 0 && state.componentID == uint64(math.MaxUint64) {
@@ -43,7 +43,7 @@ func (s *Service) flushPending(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	published, locations, err := publishIndex(ctx, state.base, state.locations, state.disabledIDs, segment, state.componentID, state.version)
+	published, locations, err := publishIndex(ctx, state.base, state.locations, state.disabledIDs, segment, state.componentID, state.revision)
 	if err != nil {
 		return err
 	}
@@ -58,7 +58,7 @@ func (s *Service) commitFlush(ctx context.Context, state flushState, published *
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if state.version != s.mutationVersion {
+	if state.revision != s.revision {
 		return ErrPublicationConflict
 	}
 	s.published = published
@@ -72,7 +72,7 @@ func (s *Service) commitFlush(ctx context.Context, state flushState, published *
 }
 
 type flushState struct {
-	version        uint64
+	revision       uint64
 	componentID    uint64
 	pendingVectors []pendingVector
 	disabledIDs    []uint64
@@ -100,7 +100,7 @@ func (s *Service) captureFlushState(ctx context.Context) (flushState, error) {
 		return flushState{}, err
 	}
 	return flushState{
-		version: s.mutationVersion, componentID: s.nextComponentID,
+		revision: s.revision, componentID: s.nextComponentID,
 		pendingVectors: pendingVectors, disabledIDs: disabledIDs,
 		locations: locations, base: s.published, config: s.config,
 	}, nil

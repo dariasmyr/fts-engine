@@ -24,11 +24,11 @@ func (s *Service) Compact(ctx context.Context) error {
 	if err := s.lockState(ctx); err != nil {
 		return err
 	}
-	version := s.mutationVersion
+	revision := s.revision
 	published := s.published
 	config := s.config
 	componentID := s.nextComponentID
-	hasPending := s.mutationVersion != s.published.generation
+	hasPending := s.revision != s.published.revision
 	s.unlockState()
 	if hasPending {
 		return ErrPendingMutations
@@ -70,7 +70,7 @@ func (s *Service) Compact(ctx context.Context) error {
 	if !ok {
 		return ErrInvalidConfig
 	}
-	view, err := newReadView(ctx, version, segments, published.descriptor, config.searchPolicy(), buildOptions.Search)
+	view, err := newReadView(ctx, revision, segments, published.descriptor, config.searchPolicy(), buildOptions.Search)
 	if err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func (s *Service) Compact(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if version != s.mutationVersion {
+	if revision != s.revision {
 		return ErrPublicationConflict
 	}
 	s.published = view

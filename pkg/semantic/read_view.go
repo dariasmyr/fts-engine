@@ -17,7 +17,7 @@ import (
 // while the service publishes newer views.
 type ReadView struct {
 	segments                []visibleSegment
-	generation              uint64
+	revision                uint64
 	liveCount               int
 	descriptor              PipelineDescriptor
 	maxDocumentsPerSearch   int
@@ -184,7 +184,7 @@ func (v *ReadView) searchEncodedQueries(ctx context.Context, queries []EncodedCh
 	return result, nil
 }
 
-func newReadView(ctx context.Context, generation uint64, segments []visibleSegment, descriptor PipelineDescriptor, policy searchPolicy, search hnsw.SearchConfig) (*ReadView, error) {
+func newReadView(ctx context.Context, revision uint64, segments []visibleSegment, descriptor PipelineDescriptor, policy searchPolicy, search hnsw.SearchConfig) (*ReadView, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -203,7 +203,7 @@ func newReadView(ctx context.Context, generation uint64, segments []visibleSegme
 		return nil, err
 	}
 	view := &ReadView{
-		segments: append([]visibleSegment(nil), segments...), generation: generation,
+		segments: append([]visibleSegment(nil), segments...), revision: revision,
 		descriptor: descriptor, maxDocumentsPerSearch: policy.MaxDocumentsPerSearch, maxCandidates: policy.MaxChunkCandidates,
 		maxChunksPerDocumentHit: policy.MaxChunksPerDocumentHit, maxQueryChunks: policy.MaxQueryChunks,
 		search: search, calculator: calculator,

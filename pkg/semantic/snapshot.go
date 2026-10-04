@@ -141,13 +141,13 @@ func (s *Service) CommittedSnapshot(ctx context.Context) (*CommittedSnapshot, er
 	if err := s.lockState(ctx); err != nil {
 		return nil, err
 	}
-	if s.mutationVersion != s.published.generation {
+	if s.revision != s.published.revision {
 		s.unlockState()
 		return nil, ErrPendingMutations
 	}
 	published := s.published
 	config := s.config
-	revision := s.mutationVersion
+	revision := s.revision
 	maxAllocatedVectorID := s.maxAllocatedID
 	nextComponentID := s.nextComponentID
 	s.unlockState()
@@ -293,6 +293,6 @@ func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
 		liveVectorCount: published.liveCount,
 		maxAllocatedID:  state.MaxAllocatedVectorID,
 		nextComponentID: state.NextComponentID,
-		mutationVersion: state.Revision,
+		revision:        state.Revision,
 	}, nil
 }

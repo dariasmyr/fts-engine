@@ -428,7 +428,7 @@ func TestFlushRejectsPublicationAfterConcurrentMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	published, locations, err := publishIndex(ctx, state.base, state.locations, state.disabledIDs, segment, state.componentID, state.version)
+	published, locations, err := publishIndex(ctx, state.base, state.locations, state.disabledIDs, segment, state.componentID, state.revision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -984,7 +984,7 @@ func TestOldReadViewRemainsCoherentAfterCompaction(t *testing.T) {
 	}
 
 	oldView := service.ReadView()
-	oldGeneration := oldView.generation
+	oldRevision := oldView.revision
 	oldSegments := append([]visibleSegment(nil), oldView.segments...)
 	encoder := newSearchEncoder(service.config, testChunk("query", "query", 0, []float32{0, 0}))
 	before, err := oldView.SearchDocumentsWithOptions(ctx, encoder, fts.Document{ID: "query"}, 2, SearchOptions{})
@@ -999,8 +999,8 @@ func TestOldReadViewRemainsCoherentAfterCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if oldView.generation != oldGeneration || len(oldView.segments) != len(oldSegments) {
-		t.Fatalf("old view metadata changed: generation=%d segments=%d", oldView.generation, len(oldView.segments))
+	if oldView.revision != oldRevision || len(oldView.segments) != len(oldSegments) {
+		t.Fatalf("old view metadata changed: revision=%d segments=%d", oldView.revision, len(oldView.segments))
 	}
 	for i, segment := range oldSegments {
 		if oldView.segments[i].segment != segment.segment ||

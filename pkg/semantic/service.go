@@ -46,7 +46,7 @@ type Service struct {
 	liveVectorCount    int
 	maxAllocatedID     uint64
 	nextComponentID    uint64
-	mutationVersion    uint64
+	revision           uint64
 }
 
 func New(config Config) (*Service, error) {
@@ -183,7 +183,7 @@ func (s *Service) DeleteDocument(ctx context.Context, docID fts.DocID) error {
 	if _, exists := s.currentByDoc[docID]; !exists {
 		return fmt.Errorf("%w: %s", ErrDocumentNotFound, docID)
 	}
-	if s.mutationVersion == math.MaxUint64 {
+	if s.revision == math.MaxUint64 {
 		return ErrRevisionExhausted
 	}
 	current := s.currentByDoc[docID]
@@ -196,7 +196,7 @@ func (s *Service) DeleteDocument(ctx context.Context, docID fts.DocID) error {
 	if len(publishedOldIDs) > 0 {
 		s.pendingDisabledIDs = append(s.pendingDisabledIDs, publishedOldIDs...)
 	}
-	s.mutationVersion++
+	s.revision++
 	return nil
 }
 
@@ -261,7 +261,7 @@ func (s *Service) queueVersionLocked(docID fts.DocID, encodedChunks []EncodedChu
 	if nextLiveVectorCount > s.config.Limits.MaxLiveVectors {
 		return ErrCapacityExceeded
 	}
-	if s.mutationVersion == math.MaxUint64 {
+	if s.revision == math.MaxUint64 {
 		return ErrRevisionExhausted
 	}
 	version, err := s.allocateVersionLocked(len(encodedChunks))
@@ -285,7 +285,7 @@ func (s *Service) queueVersionLocked(docID fts.DocID, encodedChunks []EncodedChu
 	}
 	s.liveVectorCount = nextLiveVectorCount
 	s.maxAllocatedID = version.vectorID(version.vectorCount - 1)
-	s.mutationVersion++
+	s.revision++
 	return nil
 }
 
