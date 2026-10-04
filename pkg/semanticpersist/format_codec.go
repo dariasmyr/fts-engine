@@ -2,6 +2,7 @@ package semanticpersist
 
 import (
 	"errors"
+	"fmt"
 
 	semanticformat "github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/format"
 )
@@ -11,16 +12,26 @@ func codecLimits(limits Limits) semanticformat.Limits {
 }
 
 func mapCodecError(err error) error {
+	if err == nil {
+		return nil
+	}
 	switch {
 	case errors.Is(err, semanticformat.ErrCorrupt):
-		return ErrCorrupt
+		return mapCodecErrorCategory(err, semanticformat.ErrCorrupt, ErrCorrupt)
 	case errors.Is(err, semanticformat.ErrUnsupportedVersion):
-		return ErrUnsupportedVersion
+		return mapCodecErrorCategory(err, semanticformat.ErrUnsupportedVersion, ErrUnsupportedVersion)
 	case errors.Is(err, semanticformat.ErrLimitExceeded):
-		return ErrLimitExceeded
+		return mapCodecErrorCategory(err, semanticformat.ErrLimitExceeded, ErrLimitExceeded)
 	default:
 		return err
 	}
+}
+
+func mapCodecErrorCategory(err, internalCategory, publicCategory error) error {
+	if err == internalCategory {
+		return publicCategory
+	}
+	return fmt.Errorf("%w: %s", publicCategory, err)
 }
 
 func formatReference(value fileReference) semanticformat.FileReference {

@@ -297,7 +297,8 @@ func (s *Service) discardSupersededVersion(version documentVersion) ([]uint64, e
 		return nil, nil
 	}
 
-	// Classify the whole version as published or pending.
+	// locations contains only vectors already published into segments, so every
+	// vector in one document version must agree with the first vector's state.
 	_, published := s.locations[version.firstVectorID]
 	for i := 1; i < version.vectorCount; i++ {
 		_, currentPublished := s.locations[version.vectorID(i)]
