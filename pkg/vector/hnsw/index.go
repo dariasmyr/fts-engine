@@ -6,7 +6,6 @@ import (
 	"reflect"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 type topology struct {
@@ -16,31 +15,31 @@ type topology struct {
 	stats        GraphStats
 	validated    bool
 
-	nodeToVector []vector.Ordinal
+	nodeToVector []uint32
 	levels       []uint8
 	entry        nodeOrdinal
 	hasEntry     bool
 
 	level0Offsets   []uint32
-	level0Neighbors []nodeOrdinal
+	level0Neighbors []uint32
 
 	upperNodeOffsets []uint32
 	upperLinkOffsets []uint32
-	upperNeighbors   []nodeOrdinal
+	upperNeighbors   []uint32
 }
 
 // Index is an immutable HNSW topology paired with authoritative vector storage.
 // The vector storage is retained for search and is never mutated by Index.
 type Index struct {
 	topology   topology
-	vectors    vectorstore.PreparedVectorStore
+	vectors    vector.PreparedVectorStore
 	workspaces *searchWorkspacePool
 }
 
 // newHNSWIndex binds an immutable topology to authoritative prepared vector
 // storage. The storage must have the same ordinal layout and vector metadata as
 // the topology.
-func newIndex(vectors vectorstore.PreparedVectorStore, topology topology) (*Index, error) {
+func newIndex(vectors vector.PreparedVectorStore, topology topology) (*Index, error) {
 	if vectors == nil || isNilPreparedVectorStore(vectors) || !topology.validated {
 		return nil, ErrBuildSourceMismatch
 	}
@@ -51,7 +50,7 @@ func newIndex(vectors vectorstore.PreparedVectorStore, topology topology) (*Inde
 	return &Index{topology: topology, vectors: vectors, workspaces: newSearchWorkspacePool()}, nil
 }
 
-func newIndexFromGraph(calculator vector.Calculator, searchConfig SearchConfig, buildInfo BuildInfo, graph graphData, source vectorstore.PreparedVectorStore) (*Index, error) {
+func newIndexFromGraph(calculator vector.Calculator, searchConfig SearchConfig, buildInfo BuildInfo, graph graphData, source vector.PreparedVectorStore) (*Index, error) {
 	if err := searchConfig.validate(); err != nil {
 		return nil, err
 	}
@@ -62,7 +61,7 @@ func newIndexFromGraph(calculator vector.Calculator, searchConfig SearchConfig, 
 	topology := &topology{
 		calculator: calculator, searchConfig: searchConfig, buildInfo: buildInfo, stats: cloneGraphStats(stats),
 		levels:       make([]uint8, len(graph.nodes)),
-		nodeToVector: make([]vector.Ordinal, len(graph.nodes)), entry: graph.entry, hasEntry: graph.hasEntry,
+		nodeToVector: make([]uint32, len(graph.nodes)), entry: graph.entry, hasEntry: graph.hasEntry,
 		level0Offsets: make([]uint32, len(graph.nodes)+1), upperNodeOffsets: make([]uint32, len(graph.nodes)+1),
 	}
 
@@ -73,7 +72,7 @@ func newIndexFromGraph(calculator vector.Calculator, searchConfig SearchConfig, 
 	var upperNeighborCount uint64
 	for nodeOrdinal, node := range graph.nodes {
 		topology.levels[nodeOrdinal] = node.level
-		topology.nodeToVector[nodeOrdinal] = node.vectorOrdinal
+		topology.nodeToVector[nodeOrdinal] = uint32(node.vectorOrdinal)
 		topology.level0Offsets[nodeOrdinal] = uint32(level0Count)
 		level0Count += uint64(len(node.links[0]))
 		topology.upperNodeOffsets[nodeOrdinal] = uint32(upperPlacementCount)
@@ -108,7 +107,21 @@ func newIndexFromGraph(calculator vector.Calculator, searchConfig SearchConfig, 
 }
 
 func (r *Index) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
-	return search(ctx, r, query, k, options)
+	return search(ctx, r, query, nil, k, options)
+}
+
+// PrepareQuery creates a query reusable across HNSW indexes with matching
+// dimensions, metric, and normalization.
+func (r *Index) PrepareQuery(query []float32) (vector.PreparedQuery, error) {
+	if r == nil || !r.topology.validated {
+		return vector.PreparedQuery{}, errInvalidGraph
+	}
+	return r.topology.calculator.PrepareQuery(query)
+}
+
+// SearchPrepared searches without preparing the same query again.
+func (r *Index) SearchPrepared(ctx context.Context, query vector.PreparedQuery, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+	return search(ctx, r, nil, &query, k, options)
 }
 
 func (r *Index) Len() int {
@@ -134,7 +147,7 @@ func (r *Index) Metric() vector.Metric {
 
 // ValidateSource verifies that source is the prepared vector store bound to the
 // index, or contains exactly the same prepared rows.
-func (r *Index) ValidateSource(ctx context.Context, source vectorstore.PreparedVectorStore) error {
+func (r *Index) ValidateSource(ctx context.Context, source vector.PreparedVectorStore) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
@@ -229,7 +242,7 @@ func (r *Index) vectorByNode(node nodeOrdinal) ([]float32, vector.Ordinal, bool)
 	if r == nil || uint64(node) >= uint64(len(r.topology.nodeToVector)) {
 		return nil, 0, false
 	}
-	ordinal := r.topology.nodeToVector[node]
+	ordinal := vector.Ordinal(r.topology.nodeToVector[node])
 	value := make([]float32, r.Dimensions())
 	if err := r.vectors.ReadVectorInto(context.Background(), ordinal, value); err != nil {
 		return nil, 0, false

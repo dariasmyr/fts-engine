@@ -107,6 +107,30 @@ func TestSpaceValidateAndPrepareIntoDoNotAllocate(t *testing.T) {
 	}
 }
 
+func TestPreparedQueryCompatibilityAndPreparedValidation(t *testing.T) {
+	space := mustSpace(t, 2, MetricCosine)
+	query, err := space.PrepareQuery([]float32{3, 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := space.ValidatePreparedQuery(query); err != nil {
+		t.Fatalf("ValidatePreparedQuery() error = %v", err)
+	}
+	if distance := space.DistancePreparedQuery(query, []float32{0.6, 0.8}); !closeFloat(distance, 0, 1e-6) {
+		t.Fatalf("DistancePreparedQuery() = %v, want 0", distance)
+	}
+	other := mustSpace(t, 3, MetricCosine)
+	if err := other.ValidatePreparedQuery(query); !errors.Is(err, ErrDimensionMismatch) {
+		t.Fatalf("incompatible query error = %v", err)
+	}
+	if err := space.ValidatePrepared([]float32{0.6, 0.8}); err != nil {
+		t.Fatalf("ValidatePrepared() error = %v", err)
+	}
+	if err := space.ValidatePrepared([]float32{float32(math.Copysign(0, -1)), 1}); err == nil {
+		t.Fatal("ValidatePrepared() accepted negative zero")
+	}
+}
+
 func TestSpacePrepareValidation(t *testing.T) {
 	space := mustSpace(t, 2, MetricCosine)
 	tests := []struct {

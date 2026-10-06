@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	semanticformat "github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/format"
+	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/format"
 )
 
 func TestMapCodecErrorPreservesContext(t *testing.T) {
-	internalErr := fmt.Errorf("state segment 0 row 0 has zero vector ID: %w", semanticformat.ErrCorrupt)
+	internalErr := fmt.Errorf("state segment 0 row 0 has zero vector ID: %w", format.ErrCorrupt)
 
 	err := mapCodecError(internalErr)
 	if !errors.Is(err, ErrCorrupt) {

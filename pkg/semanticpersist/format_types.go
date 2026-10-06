@@ -13,6 +13,7 @@ type manifest struct {
 	GenerationID uint64
 	Segments     []manifestSegment
 	State        fileReference
+	componentIDs []uint64
 }
 
 type manifestSegment struct {

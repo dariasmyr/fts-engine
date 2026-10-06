@@ -1,5 +1,3 @@
-// Package format owns the SSTA, SMAN, and SCUR binary wire formats for the
-// owning semantic persistence package.
 package format
 
 import (

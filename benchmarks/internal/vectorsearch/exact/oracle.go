@@ -5,13 +5,13 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dariasmyr/fts-engine/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 // Oracle performs an exact scan over an immutable prepared vector store.
 type Oracle struct {
-	store      vectorstore.PreparedVectorStore
+	store      vector.PreparedVectorStore
 	calculator vector.Calculator
 	maxK       int
 }
@@ -22,7 +22,7 @@ func New(vectors [][]float32, dimensions int, metric vector.Metric, maxK int) (*
 	if err != nil {
 		return nil, err
 	}
-	store, err := vectorstore.NewMemoryVectorStore(calculator, vectors)
+	store, err := memorystore.New(calculator, vectors)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func New(vectors [][]float32, dimensions int, metric vector.Metric, maxK int) (*
 }
 
 // NewFromPreparedStore constructs an oracle over a complete immutable store.
-func NewFromPreparedStore(store vectorstore.PreparedVectorStore, maxK int) (*Oracle, error) {
+func NewFromPreparedStore(store vector.PreparedVectorStore, maxK int) (*Oracle, error) {
 	if store == nil {
 		return nil, vector.ErrInvalidSearchOptions
 	}
@@ -112,7 +112,7 @@ func (o *Oracle) Dimensions() int { return o.store.Dimensions() }
 func (o *Oracle) Metric() vector.Metric { return o.store.Metric() }
 
 // Store returns the immutable prepared store used by the oracle.
-func (o *Oracle) Store() vectorstore.PreparedVectorStore { return o.store }
+func (o *Oracle) Store() vector.PreparedVectorStore { return o.store }
 
 func allowedCount(rowCount int, filter vector.ResultFilter) (int, error) {
 	if filter == nil {

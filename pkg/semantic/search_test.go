@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
@@ -252,6 +253,44 @@ func TestServiceAndReadViewUseIdenticalDocumentSearch(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fromService, fromView) {
 		t.Fatalf("service/view mismatch\nservice=%+v\nview=%+v", fromService, fromView)
+	}
+}
+
+func TestRankedHitHeapRetainsDeterministicTopK(t *testing.T) {
+	hits := []rankedHit{
+		{hit: ChunkHit{Distance: 4}, component: 1, ordinal: 0},
+		{hit: ChunkHit{Distance: 1}, component: 2, ordinal: 0},
+		{hit: ChunkHit{Distance: 1}, component: 1, ordinal: 2},
+		{hit: ChunkHit{Distance: 2}, component: 1, ordinal: 0},
+		{hit: ChunkHit{Distance: 1}, component: 1, ordinal: 1},
+	}
+	heap := make(rankedHitHeap, 0, 3)
+	for _, hit := range hits {
+		heap.add(hit, 3)
+	}
+	slices.SortFunc(heap, compareRankedHits)
+	want := []rankedHit{hits[4], hits[2], hits[1]}
+	if !reflect.DeepEqual([]rankedHit(heap), want) {
+		t.Fatalf("top hits = %+v, want %+v", heap, want)
+	}
+}
+
+func TestPublishIndexResolvesAllDisabledLocationsBeforeDeleting(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	if err := addDocument(t, service, ctx, []EncodedChunk{testChunk("doc", "chunk", 0, []float32{1, 0})}); err != nil {
+		t.Fatal(err)
+	}
+	locations, err := cloneLocations(ctx, service.locations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = publishIndex(ctx, service.ReadView(), locations, []uint64{1, 999}, nil, service.nextComponentID, service.revision+1)
+	if !errors.Is(err, ErrInternalState) {
+		t.Fatalf("publishIndex error = %v, want %v", err, ErrInternalState)
+	}
+	if _, exists := locations[1]; !exists {
+		t.Fatal("publishIndex partially deleted locations after validation failure")
 	}
 }
 

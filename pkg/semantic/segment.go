@@ -8,7 +8,6 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 // segment searches one immutable HNSW component. The vector source is
@@ -17,7 +16,7 @@ type segment struct {
 	component  uint64
 	descriptor PipelineDescriptor
 	rows       []VectorRow
-	vectors    vectorstore.PreparedVectorStore
+	vectors    vector.PreparedVectorStore
 	search     hnsw.SearchConfig
 	index      *hnsw.Index
 }
@@ -25,7 +24,7 @@ type segment struct {
 // buildSegment builds the target immutable semantic segment. The HNSW index
 // navigates source rows by local ordinal; rows resolve those ordinals to stable
 // semantic identities.
-func buildSegment(ctx context.Context, component uint64, descriptor PipelineDescriptor, source vectorstore.PreparedVectorStore, rows []VectorRow, options hnsw.BuildOptions) (*segment, error) {
+func buildSegment(ctx context.Context, component uint64, descriptor PipelineDescriptor, source vector.PreparedVectorStore, rows []VectorRow, options hnsw.BuildOptions) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -39,10 +38,27 @@ func buildSegment(ctx context.Context, component uint64, descriptor PipelineDesc
 	if err != nil {
 		return nil, err
 	}
-	return newSegment(ctx, component, descriptor, source, index, rows)
+	return newBuiltSegment(component, descriptor, source, index, rows)
 }
 
-func newSegment(ctx context.Context, component uint64, descriptor PipelineDescriptor, vectors vectorstore.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
+// newBuiltSegment takes ownership of rows produced together with an index by
+// the package's ingestion or compaction path.
+func newBuiltSegment(component uint64, descriptor PipelineDescriptor, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
+	segment := &segment{
+		component:  component,
+		descriptor: descriptor,
+		rows:       rows,
+		vectors:    vectors,
+		search:     index.Report().Search,
+		index:      index,
+	}
+	if err := segment.validateContents(); err != nil {
+		return nil, err
+	}
+	return segment, nil
+}
+
+func newSegment(ctx context.Context, component uint64, descriptor PipelineDescriptor, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -89,18 +105,18 @@ func (s *segment) rowAt(index int) (VectorRow, bool) {
 	return s.rows[index], true
 }
 
-func (s *segment) vectorStore() vectorstore.PreparedVectorStore {
+func (s *segment) vectorStore() vector.PreparedVectorStore {
 	if s == nil {
 		return nil
 	}
 	return s.vectors
 }
 
-func (s *segment) searchVectors(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func (s *segment) searchPrepared(ctx context.Context, query vector.PreparedQuery, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	if s == nil || s.index == nil {
 		return vector.SearchResult{}, ErrInvalidSegment
 	}
-	return s.index.Search(ctx, query, k, options)
+	return s.index.SearchPrepared(ctx, query, k, options)
 }
 
 func (s *segment) len() int {
@@ -128,7 +144,6 @@ func validateSegmentRowsContext(ctx context.Context, rows []VectorRow) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	seenIDs := make(map[uint64]struct{}, len(rows))
 	type chunkKey struct {
 		documentID fts.DocID
 		chunkID    chunk.ID
@@ -145,10 +160,6 @@ func validateSegmentRowsContext(ctx context.Context, rows []VectorRow) error {
 		if i > 0 && rows[i-1].VectorID >= row.VectorID {
 			return ErrInvalidSegment
 		}
-		if _, exists := seenIDs[row.VectorID]; exists {
-			return ErrInvalidSegment
-		}
-		seenIDs[row.VectorID] = struct{}{}
 		key := chunkKey{documentID: row.Chunk.DocID, chunkID: row.Chunk.ID}
 		if _, exists := seenChunks[key]; exists {
 			return ErrInvalidSegment

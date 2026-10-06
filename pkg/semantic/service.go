@@ -109,7 +109,8 @@ func (s *Service) AddDocument(ctx context.Context, encoder Encoder, document fts
 }
 
 func (s *Service) addEncodedDocument(ctx context.Context, docID fts.DocID, batch []EncodedChunk) error {
-	if err := s.validateBatch(ctx, docID, batch); err != nil {
+	prepared, err := s.prepareBatch(ctx, docID, batch)
+	if err != nil {
 		return err
 	}
 	if err := s.lockState(ctx); err != nil {
@@ -122,7 +123,7 @@ func (s *Service) addEncodedDocument(ctx context.Context, docID fts.DocID, batch
 	if _, exists := s.currentByDoc[docID]; exists {
 		return fmt.Errorf("%w: %s", ErrDocumentExists, docID)
 	}
-	return s.queueVersionLocked(docID, batch, documentVersion{})
+	return s.queueVersionLocked(docID, prepared, documentVersion{})
 }
 
 // ReplaceDocument encodes a document version through encoder and queues it.
@@ -144,7 +145,8 @@ func (s *Service) ReplaceDocument(ctx context.Context, encoder Encoder, document
 }
 
 func (s *Service) replaceEncodedDocument(ctx context.Context, docID fts.DocID, batch []EncodedChunk) error {
-	if err := s.validateBatch(ctx, docID, batch); err != nil {
+	prepared, err := s.prepareBatch(ctx, docID, batch)
+	if err != nil {
 		return err
 	}
 	if err := s.lockState(ctx); err != nil {
@@ -158,7 +160,7 @@ func (s *Service) replaceEncodedDocument(ctx context.Context, docID fts.DocID, b
 	if !exists {
 		return fmt.Errorf("%w: %s", ErrDocumentNotFound, docID)
 	}
-	return s.queueVersionLocked(docID, batch, old)
+	return s.queueVersionLocked(docID, prepared, old)
 }
 
 // DeleteDocument queues a deletion. The document remains searchable until
@@ -276,7 +278,7 @@ func (s *Service) queueVersionLocked(docID fts.DocID, encodedChunks []EncodedChu
 		id := version.vectorID(i)
 		s.pendingVectors = append(s.pendingVectors, pendingVector{
 			row:    VectorRow{VectorID: id, Chunk: item.Ref},
-			vector: append([]float32(nil), item.Vector...),
+			vector: item.Vector,
 		})
 	}
 	s.currentByDoc[docID] = version
@@ -348,37 +350,40 @@ func (s *Service) physicalVectorCountLocked() int {
 	return count
 }
 
-func (s *Service) validateBatch(ctx context.Context, docID fts.DocID, batch []EncodedChunk) error {
+func (s *Service) prepareBatch(ctx context.Context, docID fts.DocID, batch []EncodedChunk) ([]EncodedChunk, error) {
 	if ctx == nil {
-		return vector.ErrNilContext
+		return nil, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	if len(batch) == 0 || len(batch) > s.config.Limits.MaxChunksPerDocument {
-		return ErrInvalidBatch
+		return nil, ErrInvalidBatch
 	}
 	if docID == "" {
-		return chunk.ErrInvalidDocID
+		return nil, chunk.ErrInvalidDocID
 	}
 	seenChunks := make(map[chunk.ID]struct{}, len(batch))
+	prepared := make([]EncodedChunk, len(batch))
 	for i, item := range batch {
 		if err := contextcheck.PeriodicError(ctx, i); err != nil {
-			return err
+			return nil, err
 		}
 
 		if item.Ref.DocID != docID || item.Ref.ID == "" || item.Ref.Field == "" || item.Ref.StartByte > item.Ref.EndByte {
-			return ErrInvalidBatch
+			return nil, ErrInvalidBatch
 		}
 		if _, exists := seenChunks[item.Ref.ID]; exists {
-			return ErrInvalidBatch
+			return nil, ErrInvalidBatch
 		}
 		seenChunks[item.Ref.ID] = struct{}{}
-		if err := s.calculator.Validate(item.Vector); err != nil {
-			return err
+		preparedVector, err := s.calculator.Prepare(item.Vector)
+		if err != nil {
+			return nil, err
 		}
+		prepared[i] = EncodedChunk{Ref: item.Ref, Vector: preparedVector}
 	}
-	return nil
+	return prepared, nil
 }
 
 func (s *Service) allocateVersionLocked(count int) (documentVersion, error) {

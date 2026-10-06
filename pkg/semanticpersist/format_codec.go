@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	semanticformat "github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/format"
+	semanticformat "github.com/dariasmyr/fts-engine/pkg/semanticpersist/format"
 )
 
 func codecLimits(limits Limits) semanticformat.Limits {

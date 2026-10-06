@@ -1,9 +1,7 @@
-package vectorstore
+package vector
 
 import (
 	"context"
-
-	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
 // PreparedVectorStore provides immutable prepared vector rows by ordinal.
@@ -12,7 +10,7 @@ import (
 type PreparedVectorStore interface {
 	Len() int
 	Dimensions() int
-	Metric() vector.Metric
-	Normalization() vector.Normalization
-	ReadVectorInto(context.Context, vector.Ordinal, []float32) error
+	Metric() Metric
+	Normalization() Normalization
+	ReadVectorInto(context.Context, Ordinal, []float32) error
 }

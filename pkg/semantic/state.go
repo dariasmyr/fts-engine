@@ -4,22 +4,11 @@ import (
 	"context"
 
 	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
+	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
-
-// SegmentSnapshot is the persistence transfer representation of one immutable
-// semantic segment. Rows returns a defensive copy; vectors and index are
-// immutable readers shared with the runtime segment.
-type SegmentSnapshot struct {
-	componentID uint64
-	descriptor  PipelineDescriptor
-	rows        []VectorRow
-	vectors     vectorstore.PreparedVectorStore
-	index       *hnsw.Index
-}
 
 // SegmentData is the persistence transfer value for one immutable segment.
 // Callers must treat Vectors and Index as immutable.
@@ -27,26 +16,16 @@ type SegmentData struct {
 	ComponentID uint64
 	Pipeline    PipelineDescriptor
 	Rows        []VectorRow
-	Vectors     vectorstore.PreparedVectorStore
+	Vectors     vector.PreparedVectorStore
 	Index       *hnsw.Index
 }
 
-// NewSegmentSnapshot creates persistence transfer data for hydration. Hydrate
-// validates the data and constructs the private runtime segment.
-func NewSegmentSnapshot(data SegmentData) SegmentSnapshot {
-	return SegmentSnapshot{
-		componentID: data.ComponentID,
-		descriptor:  data.Pipeline,
-		rows:        append([]VectorRow(nil), data.Rows...),
-		vectors:     data.Vectors,
-		index:       data.Index,
+func (s *segment) data() SegmentData {
+	if s == nil {
+		return SegmentData{}
 	}
-}
-
-// Data returns a defensive persistence transfer value.
-func (s SegmentSnapshot) Data() SegmentData {
 	return SegmentData{
-		ComponentID: s.componentID,
+		ComponentID: s.component,
 		Pipeline:    s.descriptor,
 		Rows:        append([]VectorRow(nil), s.rows...),
 		Vectors:     s.vectors,
@@ -54,35 +33,23 @@ func (s SegmentSnapshot) Data() SegmentData {
 	}
 }
 
-func (s *segment) snapshot() SegmentSnapshot {
-	if s == nil {
-		return SegmentSnapshot{}
-	}
-	return NewSegmentSnapshot(SegmentData{
-		ComponentID: s.component,
-		Pipeline:    s.descriptor,
-		Rows:        s.rows,
-		Vectors:     s.vectors,
-		Index:       s.index,
-	})
-}
-
-// CommittedSegment is one immutable component of a committed snapshot.
+// CommittedSegment is one immutable component of committed state.
 type CommittedSegment struct {
 	segment       *segment
 	livenessWords []uint64
 }
 
-func (s CommittedSegment) Snapshot() SegmentSnapshot { return s.segment.snapshot() }
+// Data returns a defensive persistence transfer value.
+func (s CommittedSegment) Data() SegmentData { return s.segment.data() }
 
 // LivenessWords returns a canonical copy of the component-local liveness mask.
 func (s CommittedSegment) LivenessWords() []uint64 {
 	return append([]uint64(nil), s.livenessWords...)
 }
 
-// CommittedSnapshot is a clean, immutable persistence boundary. It contains no
+// CommittedState is a clean, immutable persistence boundary. It contains no
 // pending mutations and does not own the segment resources it references.
-type CommittedSnapshot struct {
+type CommittedState struct {
 	config               Config
 	revision             uint64
 	maxAllocatedVectorID uint64
@@ -90,51 +57,44 @@ type CommittedSnapshot struct {
 	segments             []CommittedSegment
 }
 
-func (s *CommittedSnapshot) Config() Config {
+func (s *CommittedState) Config() Config {
 	if s == nil {
 		return Config{}
 	}
 	return s.config
 }
 
-func (s *CommittedSnapshot) Revision() uint64 {
+func (s *CommittedState) Revision() uint64 {
 	if s == nil {
 		return 0
 	}
 	return s.revision
 }
 
-func (s *CommittedSnapshot) MaxAllocatedVectorID() uint64 {
+func (s *CommittedState) MaxAllocatedVectorID() uint64 {
 	if s == nil {
 		return 0
 	}
 	return s.maxAllocatedVectorID
 }
 
-func (s *CommittedSnapshot) NextComponentID() uint64 {
+func (s *CommittedState) NextComponentID() uint64 {
 	if s == nil {
 		return 0
 	}
 	return s.nextComponentID
 }
 
-func (s *CommittedSnapshot) Segments() []CommittedSegment {
+func (s *CommittedState) Segments() []CommittedSegment {
 	if s == nil {
 		return nil
 	}
-	result := make([]CommittedSegment, len(s.segments))
-	for i, segment := range s.segments {
-		result[i] = CommittedSegment{
-			segment:       segment.segment,
-			livenessWords: append([]uint64(nil), segment.livenessWords...),
-		}
-	}
-	return result
+	return append([]CommittedSegment(nil), s.segments...)
 }
 
-// CommittedSnapshot captures the current committed state without publishing
+// CommittedState captures the current committed state without publishing
 // pending mutations.
-func (s *Service) CommittedSnapshot(ctx context.Context) (*CommittedSnapshot, error) {
+func (s *Service) CommittedState(ctx context.Context) (*CommittedState, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -164,7 +124,7 @@ func (s *Service) CommittedSnapshot(ctx context.Context) (*CommittedSnapshot, er
 			livenessWords: item.filter.SnapshotWords(),
 		}
 	}
-	return &CommittedSnapshot{
+	return &CommittedState{
 		config:               config,
 		revision:             revision,
 		maxAllocatedVectorID: maxAllocatedVectorID,
@@ -173,25 +133,25 @@ func (s *Service) CommittedSnapshot(ctx context.Context) (*CommittedSnapshot, er
 	}, nil
 }
 
-// HydratedSegment describes one persisted immutable component and its local
+// StoredSegment describes one persisted immutable component and its local
 // liveness mask. LivenessWords uses the same canonical layout as vector.BitSet.
-type HydratedSegment struct {
-	Snapshot      SegmentSnapshot
+type StoredSegment struct {
+	Data          SegmentData
 	LivenessWords []uint64
 }
 
-// HydrationState contains the persisted state required to resume writes.
-type HydrationState struct {
+// RestoreState contains the persisted state required to resume writes.
+type RestoreState struct {
 	Config               Config
 	Revision             uint64
 	MaxAllocatedVectorID uint64
 	NextComponentID      uint64
-	Segments             []HydratedSegment
+	Segments             []StoredSegment
 }
 
-// Hydrate validates persisted committed state and restores a writable service
+// Restore validates persisted committed state and restores a writable service
 // with empty pending mutation queues.
-func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
+func Restore(ctx context.Context, state RestoreState) (*Service, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -212,6 +172,11 @@ func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
 	visible := make([]visibleSegment, len(state.Segments))
 	locations := make(map[uint64]vectorLocation)
 	documents := make(map[fts.DocID]documentVersion)
+	type chunkKey struct {
+		documentID fts.DocID
+		chunkID    chunk.ID
+	}
+	seenChunks := make(map[chunkKey]struct{})
 	var maxVectorID uint64
 	var maxComponentID uint64
 	for segmentIndex, persisted := range state.Segments {
@@ -220,11 +185,11 @@ func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
 				return nil, err
 			}
 		}
-		snapshot := persisted.Snapshot
-		if snapshot.index == nil || snapshot.vectors == nil {
+		data := persisted.Data
+		if data.Index == nil || data.Vectors == nil {
 			return nil, ErrInvalidSegment
 		}
-		segment, err := newSegment(ctx, snapshot.componentID, snapshot.descriptor, snapshot.vectors, snapshot.index, snapshot.rows)
+		segment, err := newSegment(ctx, data.ComponentID, data.Pipeline, data.Vectors, data.Index, data.Rows)
 		if err != nil {
 			return nil, err
 		}
@@ -241,8 +206,13 @@ func Hydrate(ctx context.Context, state HydrationState) (*Service, error) {
 			}
 
 			maxVectorID = max(maxVectorID, row.VectorID)
-			locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
+			key := chunkKey{documentID: row.Chunk.DocID, chunkID: row.Chunk.ID}
+			if _, exists := seenChunks[key]; exists {
+				return nil, ErrInvalidSegment
+			}
+			seenChunks[key] = struct{}{}
 			if filter.Allows(vector.Ordinal(ordinal)) {
+				locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
 				version := documents[row.Chunk.DocID]
 				if version.vectorCount == 0 {
 					version.firstVectorID = row.VectorID

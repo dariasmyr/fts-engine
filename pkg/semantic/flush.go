@@ -4,9 +4,9 @@ import (
 	"context"
 	"math"
 
+	"github.com/dariasmyr/fts-engine/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 // Flush builds one HNSW segment outside the state lock and atomically publishes
@@ -104,17 +104,22 @@ func buildPendingSegment(ctx context.Context, componentID uint64, pending []pend
 	if len(pending) == 0 {
 		return nil, nil
 	}
-	values := make([][]float32, len(pending))
+	dimensions := config.Embedding.Dimensions
+	flatVectors := make([]float32, len(pending)*dimensions)
 	rows := make([]VectorRow, len(pending))
 	for i, item := range pending {
 		if err := contextcheck.PeriodicError(ctx, i); err != nil {
 			return nil, err
 		}
 
-		values[i] = item.vector
+		copy(flatVectors[i*dimensions:(i+1)*dimensions], item.vector)
 		rows[i] = item.row
 	}
-	source, err := newInMemoryVectorStoreFromConfig(config, values)
+	calculator, err := config.Embedding.Calculator()
+	if err != nil {
+		return nil, err
+	}
+	source, err := memorystore.NewPrepared(calculator, flatVectors)
 	if err != nil {
 		return nil, err
 	}
@@ -123,12 +128,4 @@ func buildPendingSegment(ctx context.Context, componentID uint64, pending []pend
 		return nil, ErrInvalidConfig
 	}
 	return buildSegment(ctx, componentID, config.pipelineDescriptor(), source, rows, buildOptions)
-}
-
-func newInMemoryVectorStoreFromConfig(config Config, values [][]float32) (*vectorstore.MemoryVectorStore, error) {
-	calculator, err := config.Embedding.Calculator()
-	if err != nil {
-		return nil, err
-	}
-	return vectorstore.NewMemoryVectorStore(calculator, values)
 }

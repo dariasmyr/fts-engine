@@ -48,26 +48,27 @@ func publishIndex(ctx context.Context, base *ReadView, locations map[uint64]vect
 		}
 		segments[index].filter = filter
 	}
-	resultLocations, err := cloneLocations(ctx, locations)
-	if err != nil {
-		return nil, nil, err
+	// All disabled locations must resolve before any are removed so a malformed
+	// batch cannot leave the owned working map partially updated.
+	for _, id := range disabledIDs {
+		delete(locations, id)
 	}
 	if pending != nil {
 		segments = append(segments, visibleSegment{segment: pending, filter: vector.NewFullBitSet(uint32(pending.len()))})
 		for ordinal, row := range pending.rows {
-			resultLocations[row.VectorID] = vectorLocation{component: pendingComponent, ordinal: vector.Ordinal(ordinal)}
+			locations[row.VectorID] = vectorLocation{component: pendingComponent, ordinal: vector.Ordinal(ordinal)}
 		}
 	}
-	view, err := newReadView(ctx, revision, segments, base.descriptor, searchPolicy{
+	view, err := newTrustedReadView(ctx, revision, segments, base.descriptor, searchPolicy{
 		MaxDocumentsPerSearch:   base.maxDocumentsPerSearch,
 		MaxChunkCandidates:      base.maxCandidates,
 		MaxChunksPerDocumentHit: base.maxChunksPerDocumentHit,
 		MaxQueryChunks:          base.maxQueryChunks,
-	}, base.search)
+	}, base.searchConfig, base.calculator)
 	if err != nil {
 		return nil, nil, err
 	}
-	return view, resultLocations, nil
+	return view, locations, nil
 }
 func cloneLocations(ctx context.Context, source map[uint64]vectorLocation) (map[uint64]vectorLocation, error) {
 	result := make(map[uint64]vectorLocation, len(source))

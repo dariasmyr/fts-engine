@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/exact"
+	"github.com/dariasmyr/fts-engine/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func TestNewCopiesCompleteVectorSet(t *testing.T) {
@@ -33,7 +33,7 @@ func TestNewFromPreparedStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := vectorstore.NewMemoryVectorStore(calculator, [][]float32{{1, 0}, {0, 1}})
+	store, err := memorystore.New(calculator, [][]float32{{1, 0}, {0, 1}})
 	if err != nil {
 		t.Fatal(err)
 	}

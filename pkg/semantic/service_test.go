@@ -14,7 +14,6 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func testConfig(maxDocuments, maxCandidates int) Config {
@@ -285,6 +284,12 @@ func TestMutationsBecomeVisibleAfterFlush(t *testing.T) {
 	if err := service.Flush(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if _, exists := service.locations[1]; exists {
+		t.Fatal("stale replaced vector retained a location")
+	}
+	if _, exists := service.locations[2]; !exists {
+		t.Fatal("replacement vector location is missing")
+	}
 	result, err = service.searchChunks(ctx, []float32{0, 0}, 1)
 	if err != nil || len(result.Hits) != 1 || result.Hits[0].Ref.ID != "new" {
 		t.Fatalf("flushed replacement result = %+v, %v", result, err)
@@ -300,9 +305,32 @@ func TestMutationsBecomeVisibleAfterFlush(t *testing.T) {
 	if err := service.Flush(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if len(service.locations) != 0 {
+		t.Fatalf("deleted vector locations = %v, want empty", service.locations)
+	}
 	result, err = service.searchChunks(ctx, []float32{0, 0}, 1)
 	if err != nil || len(result.Hits) != 0 {
 		t.Fatalf("flushed deletion result = %+v, %v", result, err)
+	}
+}
+
+func TestAddEncodedDocumentOwnsPreparedVectors(t *testing.T) {
+	service := newTestService(t)
+	ctx := context.Background()
+	input := []float32{1, 2}
+	if err := service.addEncodedDocument(ctx, "doc", []EncodedChunk{testChunk("doc", "chunk", 0, input)}); err != nil {
+		t.Fatal(err)
+	}
+	input[0] = 99
+	if got := service.pendingVectors[0].vector; !slices.Equal(got, []float32{1, 2}) {
+		t.Fatalf("pending vector aliases encoder output: %v", got)
+	}
+	if err := service.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.searchChunks(ctx, []float32{1, 2}, 1)
+	if err != nil || len(result.Hits) != 1 || result.Hits[0].Distance != 0 {
+		t.Fatalf("owned vector search = %+v, %v", result, err)
 	}
 }
 
@@ -566,7 +594,7 @@ func TestPreCanceledCompactAlwaysReturnsCancellation(t *testing.T) {
 }
 
 type blockingPreparedVectorStore struct {
-	vectorstore.PreparedVectorStore
+	vector.PreparedVectorStore
 	reached chan struct{}
 	release chan struct{}
 	once    sync.Once
@@ -700,7 +728,7 @@ func TestVectorIDsAreMonotonicAndExhaustionIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exhausted, err := Hydrate(ctx, HydrationState{
+	exhausted, err := Restore(ctx, RestoreState{
 		Config:               config,
 		MaxAllocatedVectorID: uint64(math.MaxUint64 - 1),
 		NextComponentID:      1,

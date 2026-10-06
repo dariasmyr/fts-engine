@@ -7,9 +7,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/dariasmyr/fts-engine/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func testBuildConfig(dimensions, count int, metric vector.Metric) hnsw.BuildConfig {
@@ -27,20 +27,20 @@ func testSearchConfig(count int) hnsw.SearchConfig {
 	}
 }
 
-func testMemoryStore(t testing.TB, values [][]float32, metric vector.Metric) *vectorstore.MemoryVectorStore {
+func testMemoryStore(t testing.TB, values [][]float32, metric vector.Metric) *memorystore.MemoryVectorStore {
 	t.Helper()
 	calculator, err := vector.NewCalculator(len(values[0]), metric)
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx, err := vectorstore.NewMemoryVectorStore(calculator, values)
+	idx, err := memorystore.New(calculator, values)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return idx
 }
 
-func testBuild(t testing.TB, source vectorstore.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.Index {
+func testBuild(t testing.TB, source vector.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.Index {
 	t.Helper()
 	reader, err := hnsw.Build(context.Background(), source, hnsw.BuildOptions{
 		Build: testBuildConfig(dimensions, count, metric), Search: testSearchConfig(count),
@@ -51,7 +51,7 @@ func testBuild(t testing.TB, source vectorstore.PreparedVectorStore, dimensions,
 	return reader
 }
 
-func readPreparedVector(source vectorstore.PreparedVectorStore, ordinal vector.Ordinal) ([]float32, bool) {
+func readPreparedVector(source vector.PreparedVectorStore, ordinal vector.Ordinal) ([]float32, bool) {
 	if source == nil || uint64(ordinal) >= uint64(source.Len()) {
 		return nil, false
 	}

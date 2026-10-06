@@ -85,6 +85,24 @@ func TestResultHeapIgnoresZeroCapacityAndInvalidDistances(t *testing.T) {
 	}
 }
 
+func TestResultHeapResultsPreservesHeapInvariants(t *testing.T) {
+	heap := newResultHeap(3)
+	heap.Add(searchCandidate{node: 1, vectorOrdinal: 1, distance: 1})
+	heap.Add(searchCandidate{node: 2, vectorOrdinal: 2, distance: 2})
+	heap.Add(searchCandidate{node: 3, vectorOrdinal: 3, distance: 3})
+
+	heap.Results(2)
+	worst, ok := heap.Worst()
+	if !ok || worst.distance != 3 {
+		t.Fatalf("Worst() after Results() = (%+v, %t), want distance 3", worst, ok)
+	}
+	heap.Add(searchCandidate{node: 0, vectorOrdinal: 0, distance: 0})
+	worst, ok = heap.Worst()
+	if !ok || worst.distance != 2 {
+		t.Fatalf("Worst() after Results()/Add() = (%+v, %t), want distance 2", worst, ok)
+	}
+}
+
 func FuzzCandidateHeapOrdering(f *testing.F) {
 	f.Add([]byte{3, 1, 3, 0, 2})
 	f.Add([]byte{255, 0, 255, 1})

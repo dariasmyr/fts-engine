@@ -12,7 +12,6 @@ import (
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/exact"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func BenchmarkBuildPreparedSource(b *testing.B) {
@@ -71,7 +70,7 @@ func BenchmarkOpenGraph(b *testing.B) {
 	}
 }
 
-func benchmarkVectorReference(ctx context.Context, source vectorstore.PreparedVectorStore) (hnsw.VectorFileReference, error) {
+func benchmarkVectorReference(ctx context.Context, source vector.PreparedVectorStore) (hnsw.VectorFileReference, error) {
 	hash := sha256.New()
 	values := make([]float32, source.Dimensions())
 	var encoded [4]byte
@@ -137,7 +136,7 @@ func benchmarkExactOracle(t testing.TB, values [][]float32, metric vector.Metric
 	return oracle
 }
 
-func benchmarkBuild(t testing.TB, source vectorstore.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.Index {
+func benchmarkBuild(t testing.TB, source vector.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.Index {
 	t.Helper()
 	reader, err := hnsw.Build(context.Background(), source, hnsw.BuildOptions{
 		Build: benchmarkBuildConfig(dimensions, count, metric), Search: benchmarkSearchConfig(count),
@@ -148,7 +147,7 @@ func benchmarkBuild(t testing.TB, source vectorstore.PreparedVectorStore, dimens
 	return reader
 }
 
-func readPreparedVector(source vectorstore.PreparedVectorStore, ordinal vector.Ordinal) ([]float32, bool) {
+func readPreparedVector(source vector.PreparedVectorStore, ordinal vector.Ordinal) ([]float32, bool) {
 	if source == nil || uint64(ordinal) >= uint64(source.Len()) {
 		return nil, false
 	}

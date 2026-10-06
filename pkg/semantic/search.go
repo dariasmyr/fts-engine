@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
@@ -64,31 +63,17 @@ func (s *Service) searchEncodedDocumentsWithOptions(ctx context.Context, query [
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
-	if err := published.validateEncodedQuery(ctx, query, k, options); err != nil {
+	if published == nil {
+		return DocumentSearchResult{}, ErrInvalidSegment
+	}
+	if err := published.validateSearchLimits(ctx, k, options); err != nil {
 		return DocumentSearchResult{}, err
 	}
-	return published.searchEncodedQueries(ctx, []EncodedChunk{{Vector: query}}, k, options)
-}
-
-func searchReadViewDocuments(ctx context.Context, published *ReadView, query []float32, options SearchOptions, candidateBudget, visitBudget int) (DocumentSearchResult, error) {
-	liveCount := published.liveCount
-	if liveCount == 0 {
-		return DocumentSearchResult{Hits: []DocumentHit{}}, nil
-	}
-	budget := min(liveCount, candidateBudget)
-	chunks, err := searchSegmentsChunks(ctx, published.calculator, published.segments, query, budget, candidateBudget, vector.SearchOptions{EfSearch: options.EfSearch, VisitLimit: visitBudget})
+	prepared, err := published.calculator.PrepareQuery(query)
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
-	documents, err := groupDocuments(ctx, chunks.Hits, candidateBudget)
-	if err != nil {
-		return DocumentSearchResult{}, err
-	}
-	distinctDocuments := len(documents)
-	return DocumentSearchResult{
-		Hits: documents, CandidateChunks: len(chunks.Hits), DistinctDocuments: distinctDocuments,
-		GroupingIncomplete: budget < liveCount || chunks.Incomplete, Stats: chunks.Stats,
-	}, nil
+	return published.searchEncodedQueries(ctx, []vector.PreparedQuery{prepared}, k, options)
 }
 
 func resolveCandidateBudget(candidateChunks, maxCandidates int) (int, error) {
@@ -102,6 +87,14 @@ func resolveCandidateBudget(candidateChunks, maxCandidates int) (int, error) {
 }
 
 func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, views []visibleSegment, query []float32, k, maxResults int, searchOptions vector.SearchOptions) (chunkSearchResult, error) {
+	prepared, err := calculator.PrepareQuery(query)
+	if err != nil {
+		return chunkSearchResult{}, err
+	}
+	return searchSegmentsChunksPrepared(ctx, calculator, views, prepared, k, maxResults, searchOptions)
+}
+
+func searchSegmentsChunksPrepared(ctx context.Context, calculator vector.Calculator, views []visibleSegment, query vector.PreparedQuery, k, maxResults int, searchOptions vector.SearchOptions) (chunkSearchResult, error) {
 	if k <= 0 || k > maxResults {
 		return chunkSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxResults)
 	}
@@ -111,18 +104,13 @@ func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, vie
 	if err := ctx.Err(); err != nil {
 		return chunkSearchResult{}, err
 	}
-	if _, err := calculator.Prepare(query); err != nil {
+	if err := calculator.ValidatePreparedQuery(query); err != nil {
 		return chunkSearchResult{}, err
 	}
 	if len(views) == 0 {
 		return chunkSearchResult{Hits: []ChunkHit{}}, nil
 	}
-	type rankedHit struct {
-		hit       ChunkHit
-		component uint64
-		ordinal   vector.Ordinal
-	}
-	all := make([]rankedHit, 0, len(views)*k)
+	top := make(rankedHitHeap, 0, k)
 	var stats vector.SearchStats
 	incomplete := false
 	for _, view := range views {
@@ -139,7 +127,7 @@ func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, vie
 			options.VisitLimit = remaining
 		}
 		options.ResultFilter = view.filter
-		result, err := view.segment.searchVectors(ctx, query, k, options)
+		result, err := view.segment.searchPrepared(ctx, query, k, options)
 		if err != nil {
 			return chunkSearchResult{}, err
 		}
@@ -152,38 +140,15 @@ func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, vie
 			if !ok {
 				return chunkSearchResult{}, ErrInternalState
 			}
-			all = append(all, rankedHit{
+			top.add(rankedHit{
 				hit:       ChunkHit{Ref: row.Chunk, Distance: hit.Distance},
 				component: view.segment.componentID(), ordinal: hit.Ordinal,
-			})
+			}, k)
 		}
 	}
-	slices.SortFunc(all, func(a, b rankedHit) int {
-		if a.hit.Distance < b.hit.Distance {
-			return -1
-		}
-		if a.hit.Distance > b.hit.Distance {
-			return 1
-		}
-		if a.component < b.component {
-			return -1
-		}
-		if a.component > b.component {
-			return 1
-		}
-		if a.ordinal < b.ordinal {
-			return -1
-		}
-		if a.ordinal > b.ordinal {
-			return 1
-		}
-		return 0
-	})
-	if len(all) > k {
-		all = all[:k]
-	}
-	hits := make([]ChunkHit, len(all))
-	for i, item := range all {
+	slices.SortFunc(top, compareRankedHits)
+	hits := make([]ChunkHit, len(top))
+	for i, item := range top {
 		hits[i] = item.hit
 	}
 	stats.Termination = vector.TerminationComplete
@@ -193,41 +158,69 @@ func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, vie
 	return chunkSearchResult{Hits: hits, Stats: stats, Incomplete: incomplete}, nil
 }
 
-func groupDocuments(ctx context.Context, hits []ChunkHit, maxChunksPerDocumentHit int) ([]DocumentHit, error) {
-	type accumulator struct {
-		distance float64
-		chunks   []ChunkHit
-		seen     map[chunk.ID]struct{}
-	}
-	byDoc := make(map[fts.DocID]*accumulator)
-	for i, hit := range hits {
-		if i%256 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
+type rankedHit struct {
+	hit       ChunkHit
+	component uint64
+	ordinal   vector.Ordinal
+}
+
+type rankedHitHeap []rankedHit
+
+func (h *rankedHitHeap) add(hit rankedHit, limit int) {
+	if len(*h) < limit {
+		*h = append(*h, hit)
+		for child := len(*h) - 1; child > 0; {
+			parent := (child - 1) / 2
+			if compareRankedHits((*h)[child], (*h)[parent]) <= 0 {
+				break
 			}
+			(*h)[child], (*h)[parent] = (*h)[parent], (*h)[child]
+			child = parent
 		}
-		group := byDoc[hit.Ref.DocID]
-		if group == nil {
-			group = &accumulator{distance: hit.Distance, seen: make(map[chunk.ID]struct{})}
-			byDoc[hit.Ref.DocID] = group
-		}
-		if _, duplicate := group.seen[hit.Ref.ID]; duplicate {
-			continue
-		}
-		group.seen[hit.Ref.ID] = struct{}{}
-		if len(group.chunks) < maxChunksPerDocumentHit {
-			group.chunks = append(group.chunks, hit)
-		}
+		return
 	}
-	documents := make([]DocumentHit, 0, len(byDoc))
-	for docID, group := range byDoc {
-		documents = append(documents, DocumentHit{DocID: docID, Distance: group.distance, Chunks: group.chunks})
+	if compareRankedHits(hit, (*h)[0]) >= 0 {
+		return
 	}
-	slices.SortFunc(documents, compareDocumentHits)
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	(*h)[0] = hit
+	for parent := 0; ; {
+		left := parent*2 + 1
+		if left >= len(*h) {
+			return
+		}
+		worse := left
+		right := left + 1
+		if right < len(*h) && compareRankedHits((*h)[right], (*h)[left]) > 0 {
+			worse = right
+		}
+		if compareRankedHits((*h)[worse], (*h)[parent]) <= 0 {
+			return
+		}
+		(*h)[parent], (*h)[worse] = (*h)[worse], (*h)[parent]
+		parent = worse
 	}
-	return documents, nil
+}
+
+func compareRankedHits(a, b rankedHit) int {
+	if a.hit.Distance < b.hit.Distance {
+		return -1
+	}
+	if a.hit.Distance > b.hit.Distance {
+		return 1
+	}
+	if a.component < b.component {
+		return -1
+	}
+	if a.component > b.component {
+		return 1
+	}
+	if a.ordinal < b.ordinal {
+		return -1
+	}
+	if a.ordinal > b.ordinal {
+		return 1
+	}
+	return 0
 }
 
 func compareChunkHits(a, b ChunkHit) int {

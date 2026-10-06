@@ -8,7 +8,6 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	vhng "github.com/dariasmyr/fts-engine/pkg/vector/hnsw/internal/format"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 const (
@@ -71,14 +70,8 @@ func WriteGraph(ctx context.Context, writer io.Writer, index *Index, vectors Vec
 	if err := ctx.Err(); err != nil {
 		return FileMetadata{}, err
 	}
-	if writer == nil || index == nil || !validVectorFileReference(vectors) {
+	if writer == nil || index == nil || !index.topology.validated || !validVectorFileReference(vectors) {
 		return FileMetadata{}, ErrCorruptGraphData
-	}
-	if _, err := validatePackedTopologyContext(ctx, index); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return FileMetadata{}, err
-		}
-		return FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptGraphData, err)
 	}
 	if err := index.topology.searchConfig.validate(); err != nil {
 		return FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptGraphData, err)
@@ -89,9 +82,25 @@ func WriteGraph(ctx context.Context, writer io.Writer, index *Index, vectors Vec
 	if !indexConfigEncodable(index) {
 		return FileMetadata{}, ErrGraphLimitExceeded
 	}
+	if index.vectors == nil || isNilPreparedVectorStore(index.vectors) || index.vectors.Len() != index.Len() ||
+		index.vectors.Dimensions() != index.Dimensions() || index.vectors.Metric() != index.Metric() ||
+		index.vectors.Normalization() != index.topology.calculator.Normalization() {
+		return FileMetadata{}, ErrGraphVectorStore
+	}
+	if _, err := validatePackedTopologyContext(ctx, index); err != nil {
+		if ctx.Err() != nil {
+			return FileMetadata{}, ctx.Err()
+		}
+		return FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptGraphData, err)
+	}
 	if err := validateIndexVectorsContext(ctx, index); err != nil {
 		return FileMetadata{}, err
 	}
+	return writeValidatedGraph(ctx, writer, index, vectors)
+}
+
+// writeValidatedGraph relies on Index's immutable, package-owned topology.
+func writeValidatedGraph(ctx context.Context, writer io.Writer, index *Index, vectors VectorFileReference) (FileMetadata, error) {
 	metadata, err := vhng.Encode(contextWriter{ctx: ctx, writer: writer}, graphToFormat(index, vectors))
 	if err != nil {
 		return FileMetadata{}, mapFormatError(err)
@@ -101,7 +110,7 @@ func WriteGraph(ctx context.Context, writer io.Writer, index *Index, vectors Vec
 
 // OpenGraph validates a graph stream and its vector-file binding, then opens an
 // immutable HNSW index.
-func OpenGraph(ctx context.Context, source io.Reader, vectors vectorstore.PreparedVectorStore, vectorFile VectorFileReference, limits GraphLimits) (*Index, FileMetadata, error) {
+func OpenGraph(ctx context.Context, source io.Reader, vectors vector.PreparedVectorStore, vectorFile VectorFileReference, limits GraphLimits) (*Index, FileMetadata, error) {
 	if ctx == nil {
 		return nil, FileMetadata{}, vector.ErrNilContext
 	}
@@ -119,6 +128,39 @@ func OpenGraph(ctx context.Context, source io.Reader, vectors vectorstore.Prepar
 		return nil, FileMetadata{}, err
 	}
 	decoded, metadata, err := vhng.DecodeContext(ctx, source, formatLimits(limits))
+	if err != nil {
+		return nil, FileMetadata{}, mapFormatError(err)
+	}
+	if decoded.Vectors.Size != vectorFile.Size || decoded.Vectors.SHA256 != vectorFile.SHA256 {
+		return nil, FileMetadata{}, ErrVectorFileRefMismatch
+	}
+	index, err := indexFromFormat(ctx, decoded, vectors, limits)
+	if err != nil {
+		return nil, FileMetadata{}, err
+	}
+	return index, fileMetadata(metadata), nil
+}
+
+// OpenGraphBytes validates graph bytes and their vector-file binding, then
+// opens an immutable HNSW index.
+func OpenGraphBytes(ctx context.Context, data []byte, vectors vector.PreparedVectorStore, vectorFile VectorFileReference, limits GraphLimits) (*Index, FileMetadata, error) {
+	if ctx == nil {
+		return nil, FileMetadata{}, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, FileMetadata{}, err
+	}
+	if vectors == nil || isNilPreparedVectorStore(vectors) {
+		return nil, FileMetadata{}, ErrGraphVectorStore
+	}
+	if !validVectorFileReference(vectorFile) {
+		return nil, FileMetadata{}, ErrVectorFileRefMismatch
+	}
+	limits = normalizeGraphLimits(limits)
+	if err := validateGraphLimits(limits); err != nil {
+		return nil, FileMetadata{}, err
+	}
+	decoded, metadata, err := vhng.DecodeBytesContext(ctx, data, formatLimits(limits))
 	if err != nil {
 		return nil, FileMetadata{}, mapFormatError(err)
 	}

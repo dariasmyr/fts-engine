@@ -64,11 +64,13 @@ func validateGraphData(calculator vector.Calculator, info BuildInfo, graph graph
 	seenOrdinals := make([]bool, vectorCount)
 	maxLevel := 0
 	var totalLinks uint64
+	marks := make([]uint32, vectorCount)
+	var epoch uint32
 	for nodeOrdinal, node := range graph.nodes {
 		if err := validateGraphNode(calculator, graph, nodeOrdinal, seenOrdinals); err != nil {
 			return GraphStats{}, err
 		}
-		if err := validateNodeLinks(info, graph, nodeOrdinal, &totalLinks); err != nil {
+		if err := validateNodeLinks(info, graph, nodeOrdinal, &totalLinks, marks, &epoch); err != nil {
 			return GraphStats{}, err
 		}
 		maxLevel = max(maxLevel, int(node.level))
@@ -100,26 +102,30 @@ func validateGraphNode(calculator vector.Calculator, graph graphData, nodeOrdina
 	seenOrdinals[node.vectorOrdinal] = true
 	dimensions := calculator.Dimensions()
 	rowStart := int(node.vectorOrdinal) * dimensions
-	if err := validatePreparedVector(calculator, graph.values[rowStart:rowStart+dimensions]); err != nil {
+	if err := calculator.ValidatePrepared(graph.values[rowStart : rowStart+dimensions]); err != nil {
 		return fmt.Errorf("%w: node %d vector: %v", errInvalidGraph, nodeOrdinal, err)
 	}
 	return nil
 }
 
-func validateNodeLinks(info BuildInfo, graph graphData, nodeIndex int, totalLinks *uint64) error {
+func validateNodeLinks(info BuildInfo, graph graphData, nodeIndex int, totalLinks *uint64, marks []uint32, epoch *uint32) error {
 	for level, neighbors := range graph.nodes[nodeIndex].links {
 		if len(neighbors) > info.neighborLimit(level) {
 			return fmt.Errorf("%w: node %d level %d degree", errInvalidGraph, nodeIndex, level)
 		}
-		seenNeighbors := make(map[nodeOrdinal]struct{}, len(neighbors))
+		(*epoch)++
+		if *epoch == 0 {
+			clear(marks)
+			*epoch = 1
+		}
 		for _, neighbor := range neighbors {
 			if uint64(neighbor) >= uint64(len(graph.nodes)) || int(neighbor) == nodeIndex || int(graph.nodes[neighbor].level) < level {
 				return fmt.Errorf("%w: node %d level %d link", errInvalidGraph, nodeIndex, level)
 			}
-			if _, duplicate := seenNeighbors[neighbor]; duplicate {
+			if marks[neighbor] == *epoch {
 				return fmt.Errorf("%w: node %d level %d duplicate link", errInvalidGraph, nodeIndex, level)
 			}
-			seenNeighbors[neighbor] = struct{}{}
+			marks[neighbor] = *epoch
 		}
 		*totalLinks += uint64(len(neighbors))
 		if *totalLinks >= math.MaxUint32 {
@@ -130,24 +136,7 @@ func validateNodeLinks(info BuildInfo, graph graphData, nodeIndex int, totalLink
 }
 
 func validatePreparedVector(calculator vector.Calculator, value []float32) error {
-	if err := calculator.Validate(value); err != nil {
-		return err
-	}
-	if calculator.Normalization() == vector.NormalizationUnitLength {
-		var normSquared float64
-		for _, component := range value {
-			normSquared += float64(component) * float64(component)
-		}
-		if math.Abs(normSquared-1) > 1e-4 {
-			return errInvalidGraph
-		}
-	}
-	for _, component := range value {
-		if math.Float32bits(component) == 1<<31 {
-			return errInvalidGraph
-		}
-	}
-	return nil
+	return calculator.ValidatePrepared(value)
 }
 
 func graphStatistics(graph graphData, maxLevel int) GraphStats {
@@ -165,7 +154,8 @@ func graphStatistics(graph graphData, maxLevel int) GraphStats {
 		}
 	}
 	visited := make([]bool, len(graph.nodes))
-	queue := []nodeOrdinal{graph.entry}
+	queue := make([]nodeOrdinal, 1, len(graph.nodes))
+	queue[0] = graph.entry
 	visited[graph.entry] = true
 	for len(queue) > 0 {
 		node := queue[0]

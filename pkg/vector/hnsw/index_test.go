@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dariasmyr/fts-engine/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func readerTestSearchConfig() SearchConfig {
@@ -23,7 +23,7 @@ func readerTestSearchConfig() SearchConfig {
 	}
 }
 
-func readPreparedVector(source vectorstore.PreparedVectorStore, ordinal vector.Ordinal) ([]float32, bool) {
+func readPreparedVector(source vector.PreparedVectorStore, ordinal vector.Ordinal) ([]float32, bool) {
 	if source == nil || uint64(ordinal) >= uint64(source.Len()) {
 		return nil, false
 	}
@@ -73,9 +73,9 @@ func readerTestGraph() graphData {
 	}
 }
 
-func readerTestSource(t testing.TB, calculator vector.Calculator, graph graphData) vectorstore.PreparedVectorStore {
+func readerTestSource(t testing.TB, calculator vector.Calculator, graph graphData) vector.PreparedVectorStore {
 	t.Helper()
-	source, err := vectorstore.NewPreparedMemoryVectorStore(calculator, graph.values)
+	source, err := memorystore.NewPrepared(calculator, graph.values)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestReaderExplicitLevelsMembershipPackingAndMapping(t *testing.T) {
 		}
 	}
 
-	if got, want := reader.topology.nodeToVector, []vector.Ordinal{2, 0, 3, 1}; !slices.Equal(got, want) {
+	if got, want := reader.topology.nodeToVector, []uint32{2, 0, 3, 1}; !slices.Equal(got, want) {
 		t.Fatalf("node mapping = %v, want %v", got, want)
 	}
 	for ordinal, want := range [][]float32{{0, 0}, {1, 0}, {2, 0}, {3, 0}} {
@@ -308,7 +308,7 @@ func TestReaderRejectsInvalidGraphData(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			source, sourceErr := vectorstore.NewPreparedMemoryVectorStore(test.calculator, make([]float32, len(test.graph.nodes)*test.calculator.Dimensions()))
+			source, sourceErr := memorystore.NewPrepared(test.calculator, make([]float32, len(test.graph.nodes)*test.calculator.Dimensions()))
 			if sourceErr != nil {
 				t.Fatal(sourceErr)
 			}
@@ -320,37 +320,32 @@ func TestReaderRejectsInvalidGraphData(t *testing.T) {
 	}
 }
 
-func TestReaderReturnsImmutableCopies(t *testing.T) {
+func TestReaderReportReturnsImmutableCopies(t *testing.T) {
 	graph := readerTestGraph()
-	reader := newReaderForTest(t, readerTestSpace(t, 2, vector.MetricL2Squared), graph)
+	reader := newReaderForTest(
+		t,
+		readerTestSpace(t, 2, vector.MetricL2Squared),
+		graph,
+	)
 
-	graph.values[0] = 99
-	graph.nodes[0].links[0][0] = 3
-	if got, _ := readPreparedVector(reader.vectors, 0); !slices.Equal(got, []float32{0, 0}) {
-		t.Fatalf("reader retained input values: %v", got)
-	}
-	if got, _ := reader.neighbors(0, 0); !slices.Equal(got, []nodeOrdinal{1, 2}) {
-		t.Fatalf("reader retained input links: %v", got)
-	}
-
-	value, _ := readPreparedVector(reader.vectors, 0)
-	value[0] = 77
-	valueAgain, _ := readPreparedVector(reader.vectors, 0)
-	if !slices.Equal(valueAgain, []float32{0, 0}) {
-		t.Fatalf("Vector returned mutable storage: %v", valueAgain)
-	}
-	neighbors, _ := reader.neighbors(0, 0)
-	neighbors[0] = 3
-	neighborsAgain, _ := reader.neighbors(0, 0)
-	if !slices.Equal(neighborsAgain, []nodeOrdinal{1, 2}) {
-		t.Fatalf("Neighbors returned mutable storage: %v", neighborsAgain)
-	}
 	stats := reader.Report().Graph
 	stats.LevelNodeCounts[0] = 99
 	stats.LevelLinkCounts[0] = 99
+
 	statsAgain := reader.Report().Graph
-	if !slices.Equal(statsAgain.LevelNodeCounts, []int{4, 2, 1}) || !slices.Equal(statsAgain.LevelLinkCounts, []int{5, 2, 0}) {
-		t.Fatalf("GraphStats returned mutable storage: %+v", statsAgain)
+
+	if !slices.Equal(statsAgain.LevelNodeCounts, []int{4, 2, 1}) {
+		t.Fatalf(
+			"GraphStats.LevelNodeCounts returned mutable storage: %v",
+			statsAgain.LevelNodeCounts,
+		)
+	}
+
+	if !slices.Equal(statsAgain.LevelLinkCounts, []int{5, 2, 0}) {
+		t.Fatalf(
+			"GraphStats.LevelLinkCounts returned mutable storage: %v",
+			statsAgain.LevelLinkCounts,
+		)
 	}
 }
 

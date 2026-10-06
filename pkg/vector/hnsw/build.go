@@ -7,12 +7,11 @@ import (
 	"reflect"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 // Build constructs and freezes one HNSW index from prepared source rows in
 // stable ordinal order 0..source.Len()-1.
-func Build(ctx context.Context, source vectorstore.PreparedVectorStore, options BuildOptions) (*Index, error) {
+func Build(ctx context.Context, source vector.PreparedVectorStore, options BuildOptions) (*Index, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -82,7 +81,7 @@ func Build(ctx context.Context, source vectorstore.PreparedVectorStore, options 
 	return index, nil
 }
 
-func isNilPreparedVectorStore(source vectorstore.PreparedVectorStore) bool {
+func isNilPreparedVectorStore(source vector.PreparedVectorStore) bool {
 	value := reflect.ValueOf(source)
 	switch value.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:

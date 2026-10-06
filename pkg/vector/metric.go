@@ -22,6 +22,14 @@ type Calculator struct {
 	normalization Normalization
 }
 
+// PreparedQuery is an immutable query reusable by compatible vector indexes.
+type PreparedQuery struct {
+	value         []float32
+	dimensions    int
+	metric        Metric
+	normalization Normalization
+}
+
 func NewCalculator(dimensions int, metric Metric) (Calculator, error) {
 	if dimensions <= 0 {
 		return Calculator{}, ErrInvalidDimensions
@@ -54,6 +62,29 @@ func (s Calculator) Prepare(value []float32) ([]float32, error) {
 	prepared := make([]float32, len(value))
 	s.prepareIntoValidated(prepared, value, normSquared)
 	return prepared, nil
+}
+
+// PrepareQuery creates an immutable reusable query.
+func (s Calculator) PrepareQuery(value []float32) (PreparedQuery, error) {
+	prepared, err := s.Prepare(value)
+	if err != nil {
+		return PreparedQuery{}, err
+	}
+	return PreparedQuery{value: prepared, dimensions: s.dimensions, metric: s.metric, normalization: s.normalization}, nil
+}
+
+// ValidatePreparedQuery checks compatibility without rescanning components.
+func (s Calculator) ValidatePreparedQuery(query PreparedQuery) error {
+	if s.dimensions <= 0 || !s.metric.Valid() || len(query.value) != s.dimensions ||
+		query.dimensions != s.dimensions || query.metric != s.metric || query.normalization != s.normalization {
+		return ErrDimensionMismatch
+	}
+	return nil
+}
+
+// DistancePreparedQuery calculates distance from a validated prepared query.
+func (s Calculator) DistancePreparedQuery(query PreparedQuery, value []float32) float64 {
+	return s.DistancePrepared(query.value, value)
 }
 
 // PrepareInto validates value and writes its copied, canonicalized, normalized
@@ -123,15 +154,17 @@ func (s Calculator) validate(value []float32) (float64, error) {
 	if len(value) != s.dimensions {
 		return 0, fmt.Errorf("%w: got %d, want %d", ErrDimensionMismatch, len(value), s.dimensions)
 	}
+	var normSquared float64
 	for i, component := range value {
 		v := float64(component)
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return 0, fmt.Errorf("%w at dimension %d", ErrNonFiniteVector, i)
 		}
+		if s.normalization == NormalizationUnitLength {
+			normSquared += v * v
+		}
 	}
-	var normSquared float64
 	if s.normalization == NormalizationUnitLength {
-		normSquared = dotFloat64(value, value)
 		if normSquared == 0 {
 			return 0, ErrZeroNorm
 		}
@@ -140,6 +173,33 @@ func (s Calculator) validate(value []float32) (float64, error) {
 		}
 	}
 	return normSquared, nil
+}
+
+// ValidatePrepared validates a canonical stored vector in one component pass.
+func (s Calculator) ValidatePrepared(value []float32) error {
+	if s.dimensions <= 0 || !s.metric.Valid() {
+		return errors.New("vector: invalid calculator")
+	}
+	if len(value) != s.dimensions {
+		return fmt.Errorf("%w: got %d, want %d", ErrDimensionMismatch, len(value), s.dimensions)
+	}
+	var normSquared float64
+	for i, component := range value {
+		v := float64(component)
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("%w at dimension %d", ErrNonFiniteVector, i)
+		}
+		if math.Float32bits(component) == 1<<31 {
+			return errors.New("vector: prepared vector contains negative zero")
+		}
+		if s.normalization == NormalizationUnitLength {
+			normSquared += v * v
+		}
+	}
+	if s.normalization == NormalizationUnitLength && math.Abs(normSquared-1) > 1e-4 {
+		return errors.New("vector: prepared vector is not unit length")
+	}
+	return nil
 }
 
 func (s Calculator) prepareIntoValidated(dst, value []float32, normSquared float64) {

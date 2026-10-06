@@ -17,6 +17,7 @@ type searchState struct {
 	index         *Index
 	calculator    vector.Calculator
 	preparedQuery []float32
+	reusableQuery *vector.PreparedQuery
 	filter        vector.ResultFilter
 	visitLimit    int
 	vectorCount   int
@@ -25,7 +26,7 @@ type searchState struct {
 	stats         vector.SearchStats
 }
 
-func search(ctx context.Context, reader *Index, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func search(ctx context.Context, reader *Index, query []float32, prepared *vector.PreparedQuery, k int, options vector.SearchOptions) (vector.SearchResult, error) {
 	if ctx == nil {
 		return vector.SearchResult{}, vector.ErrNilContext
 	}
@@ -65,8 +66,12 @@ func search(ctx context.Context, reader *Index, query []float32, k int, options 
 	nodeCount := reader.Len()
 	workspace := reader.workspaces.acquire()
 	defer reader.workspaces.release(workspace)
-	workspace.prepareQuery(calculator.Dimensions())
-	if err := calculator.PrepareInto(workspace.preparedQuery, query); err != nil {
+	if prepared == nil {
+		workspace.prepareQuery(calculator.Dimensions())
+		if err := calculator.PrepareInto(workspace.preparedQuery, query); err != nil {
+			return vector.SearchResult{}, err
+		}
+	} else if err := calculator.ValidatePreparedQuery(*prepared); err != nil {
 		return vector.SearchResult{}, err
 	}
 	filter := options.ResultFilter
@@ -103,7 +108,8 @@ func search(ctx context.Context, reader *Index, query []float32, k int, options 
 	}
 	state := searchState{
 		ctx: ctx, index: reader, calculator: calculator, preparedQuery: workspace.preparedQuery, filter: filter,
-		visitLimit: visitLimit, vectorCount: vectorCount,
+		reusableQuery: prepared,
+		visitLimit:    visitLimit, vectorCount: vectorCount,
 		workspace: workspace,
 		stats:     vector.SearchStats{Termination: vector.TerminationComplete},
 	}
@@ -116,6 +122,7 @@ func search(ctx context.Context, reader *Index, query []float32, k int, options 
 	if err != nil {
 		return finishSearch(state, state.acceptedResults(min(efSearch, allowedCount)), k, err)
 	}
+	workspace.stopTrackingScored()
 	results, err := levelSearch(&state, entryCandidate, efSearch, allowedCount)
 	return finishSearch(state, results, k, err)
 }
@@ -197,9 +204,15 @@ func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCou
 			if err != nil {
 				return results, err
 			}
-			frontier.Push(discovered)
 			if discovered.accepted {
 				results.Add(discovered)
+			}
+			if results.Len() == allowedCount {
+				continue
+			}
+			worst, full := results.Worst()
+			if !full || results.Len() < efSearch || discovered.distance <= worst.distance {
+				frontier.Push(discovered)
 			}
 		}
 	}
@@ -221,7 +234,7 @@ func (state *searchState) score(node nodeOrdinal) (searchCandidate, error) {
 	if uint64(node) >= uint64(len(state.index.topology.nodeToVector)) {
 		return searchCandidate{}, errInvalidGraph
 	}
-	ordinal := state.index.topology.nodeToVector[node]
+	ordinal := vector.Ordinal(state.index.topology.nodeToVector[node])
 	if uint64(ordinal) >= uint64(state.vectorCount) {
 		return searchCandidate{}, errInvalidGraph
 	}
@@ -232,7 +245,12 @@ func (state *searchState) score(node nodeOrdinal) (searchCandidate, error) {
 		}
 		return searchCandidate{}, fmt.Errorf("%w: read vector row %d: %v", errInvalidGraph, ordinal, err)
 	}
-	distance := state.calculator.DistancePrepared(state.preparedQuery, value)
+	var distance float64
+	if state.reusableQuery != nil {
+		distance = state.calculator.DistancePreparedQuery(*state.reusableQuery, value)
+	} else {
+		distance = state.calculator.DistancePrepared(state.preparedQuery, value)
+	}
 	if math.IsNaN(distance) || math.IsInf(distance, 0) {
 		return searchCandidate{}, errInvalidGraph
 	}

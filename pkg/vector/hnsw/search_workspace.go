@@ -4,6 +4,8 @@ import "sync"
 
 const (
 	maxDenseSearchNodes       = 1 << 18
+	minDenseSearchNodes       = 1 << 12
+	denseSearchVisitRatio     = 8
 	maxPooledSparseSearchRows = 1 << 16
 	maxPooledSearchDimensions = 1 << 16
 	sparseSearchInitialRows   = 256
@@ -29,6 +31,7 @@ type searchWorkspace struct {
 	vector        []float32
 	frontier      []searchCandidate
 	results       []searchCandidate
+	trackScored   bool
 }
 
 func newSearchWorkspacePool() *searchWorkspacePool {
@@ -47,7 +50,11 @@ func (p *searchWorkspacePool) acquire() *searchWorkspace {
 }
 
 func (p *searchWorkspacePool) release(workspace *searchWorkspace) {
-	if p == nil || workspace == nil || !workspace.retainable() {
+	if p == nil || workspace == nil {
+		return
+	}
+	workspace.prepareForPool()
+	if !workspace.retainable() {
 		return
 	}
 	p.pool.Put(workspace)
@@ -64,12 +71,19 @@ func (w *searchWorkspace) prepareQuery(dimensions int) {
 
 func (w *searchWorkspace) resetSearch(nodeCount, dimensions, visitLimit, efSearch int) {
 	w.scoredNodes = w.scoredNodes[:0]
+	w.trackScored = true
 	w.frontier = resetSearchCandidates(w.frontier, min(nodeCount, efSearch))
 	w.results = resetSearchCandidates(w.results, min(nodeCount, efSearch))
 	w.vector = resetFloat32s(w.vector, dimensions)
 
-	if nodeCount <= maxDenseSearchNodes {
+	denseLimit := maxDenseSearchNodes
+	if visitLimit < maxDenseSearchNodes/denseSearchVisitRatio {
+		denseLimit = max(minDenseSearchNodes, visitLimit*denseSearchVisitRatio)
+	}
+	if nodeCount <= maxDenseSearchNodes && nodeCount <= denseLimit {
 		w.dense = true
+		w.sparseCandidates = nil
+		w.sparseSeen = nil
 		w.candidates = resetCandidateSlots(w.candidates, nodeCount)
 		w.candidateEpoch = resetUint32s(w.candidateEpoch, nodeCount)
 		w.seenEpoch = resetUint32s(w.seenEpoch, nodeCount)
@@ -83,6 +97,9 @@ func (w *searchWorkspace) resetSearch(nodeCount, dimensions, visitLimit, efSearc
 	}
 
 	w.dense = false
+	w.candidates = nil
+	w.candidateEpoch = nil
+	w.seenEpoch = nil
 	initialRows := min(nodeCount, visitLimit, sparseSearchInitialRows)
 	if w.sparseCandidates == nil {
 		w.sparseCandidates = make(map[nodeOrdinal]searchCandidate, initialRows)
@@ -114,7 +131,14 @@ func (w *searchWorkspace) storeCandidate(candidate searchCandidate) {
 	} else {
 		w.sparseCandidates[candidate.node] = candidate
 	}
-	w.scoredNodes = append(w.scoredNodes, candidate.node)
+	if w.trackScored {
+		w.scoredNodes = append(w.scoredNodes, candidate.node)
+	}
+}
+
+func (w *searchWorkspace) stopTrackingScored() {
+	w.trackScored = false
+	w.scoredNodes = w.scoredNodes[:0]
 }
 
 func (w *searchWorkspace) markSeen(node nodeOrdinal) bool {
@@ -142,6 +166,30 @@ func (w *searchWorkspace) retainable() bool {
 	return cap(w.scoredNodes) <= maxPooledSparseSearchRows &&
 		cap(w.frontier) <= maxPooledSparseSearchRows &&
 		cap(w.results) <= maxPooledSparseSearchRows
+}
+
+func (w *searchWorkspace) prepareForPool() {
+	w.scoredNodes = w.scoredNodes[:0]
+	w.frontier = w.frontier[:0]
+	w.results = w.results[:0]
+	if w.dense {
+		w.sparseCandidates = nil
+		w.sparseSeen = nil
+		return
+	}
+	w.candidates = nil
+	w.candidateEpoch = nil
+	w.seenEpoch = nil
+	if len(w.sparseCandidates) > maxPooledSparseSearchRows {
+		w.sparseCandidates = nil
+	} else {
+		clear(w.sparseCandidates)
+	}
+	if len(w.sparseSeen) > maxPooledSparseSearchRows {
+		w.sparseSeen = nil
+	} else {
+		clear(w.sparseSeen)
+	}
 }
 
 func resetSearchCandidates(values []searchCandidate, capacity int) []searchCandidate {

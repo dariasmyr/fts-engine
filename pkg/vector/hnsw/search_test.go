@@ -87,6 +87,42 @@ func TestSearchGreedyUpperLevelStopsAtLocalMinimum(t *testing.T) {
 	}
 }
 
+func TestSearchPreparedReusesQueryAcrossCompatibleIndexes(t *testing.T) {
+	space := testSpace(t, 1, vector.MetricL2Squared)
+	graph := graphData{
+		values: []float32{3, 1},
+		nodes: []mutableNode{
+			{links: [][]nodeOrdinal{{1}}},
+			{vectorOrdinal: 1, links: [][]nodeOrdinal{{0}}},
+		},
+		hasEntry: true,
+	}
+	first := newTestReader(t, space, testSearchConfig(), graph)
+	second := newTestReader(t, space, testSearchConfig(), graph)
+	query := []float32{0}
+	prepared, err := first.PrepareQuery(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query[0] = 100
+	want, err := first.Search(context.Background(), []float32{0}, 2, vector.SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := second.SearchPrepared(context.Background(), prepared, 2, vector.SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Hits, want.Hits) || got.Stats != want.Stats || got.Incomplete != want.Incomplete {
+		t.Fatalf("prepared search = %+v, want %+v", got, want)
+	}
+
+	incompatible := newTestReader(t, testSpace(t, 2, vector.MetricL2Squared), testSearchConfig(), graphData{})
+	if _, err := incompatible.SearchPrepared(context.Background(), prepared, 1, vector.SearchOptions{}); !errors.Is(err, vector.ErrDimensionMismatch) {
+		t.Fatalf("incompatible prepared query error = %v", err)
+	}
+}
+
 func TestSearchLevelZeroBeamEscapesLocalMinimumOverDirectedLinks(t *testing.T) {
 	space := testSpace(t, 1, vector.MetricL2Squared)
 	reader := newTestReader(t, space, testSearchConfig(), graphData{

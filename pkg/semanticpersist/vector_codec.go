@@ -11,7 +11,6 @@ import (
 	"math"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 const (
@@ -68,7 +67,12 @@ type vectorFileMetadata struct {
 	SHA256 [sha256.Size]byte
 }
 
-func writeVectorFile(ctx context.Context, writer io.Writer, source vectorstore.PreparedVectorStore, maxK int) (vectorFileMetadata, error) {
+type preparedVectors struct {
+	Calculator vector.Calculator
+	Values     []float32
+}
+
+func writeVectorFile(ctx context.Context, writer io.Writer, source vector.PreparedVectorStore, maxK int, validateRows bool) (vectorFileMetadata, error) {
 	if ctx == nil {
 		return vectorFileMetadata{}, vector.ErrNilContext
 	}
@@ -91,21 +95,23 @@ func writeVectorFile(ctx context.Context, writer io.Writer, source vectorstore.P
 		return vectorFileMetadata{}, errVectorFileLimit
 	}
 	scratch := make([]float32, source.Dimensions())
-	for row := range source.Len() {
-		if err := ctx.Err(); err != nil {
-			return vectorFileMetadata{}, err
-		}
-		for i := range scratch {
-			scratch[i] = float32(math.NaN())
-		}
-		if err := source.ReadVectorInto(ctx, vector.Ordinal(row), scratch); err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if validateRows {
+		for row := range source.Len() {
+			if err := ctx.Err(); err != nil {
 				return vectorFileMetadata{}, err
 			}
-			return vectorFileMetadata{}, fmt.Errorf("%w: row %d: %v", errCorruptVectorFile, row, err)
-		}
-		if err := validatePreparedRow(space, scratch); err != nil {
-			return vectorFileMetadata{}, fmt.Errorf("%w: row %d: %v", errCorruptVectorFile, row, err)
+			for i := range scratch {
+				scratch[i] = float32(math.NaN())
+			}
+			if err := source.ReadVectorInto(ctx, vector.Ordinal(row), scratch); err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return vectorFileMetadata{}, err
+				}
+				return vectorFileMetadata{}, fmt.Errorf("%w: row %d: %v", errCorruptVectorFile, row, err)
+			}
+			if err := validatePreparedRow(space, scratch); err != nil {
+				return vectorFileMetadata{}, fmt.Errorf("%w: row %d: %v", errCorruptVectorFile, row, err)
+			}
 		}
 	}
 	header := make([]byte, codecHeaderSize)
@@ -156,45 +162,22 @@ func writeVectorFile(ctx context.Context, writer io.Writer, source vectorstore.P
 	return metadata, nil
 }
 
-func openVectorFile(source io.Reader, limits codecLimitsConfig) (vectorstore.PreparedVectorStore, vectorFileMetadata, error) {
-	if source == nil {
-		return nil, vectorFileMetadata{}, errCorruptVectorFile
-	}
-	limits = normalizeCodecLimits(limits)
-	if limits.MaxDimensions <= 0 || limits.MaxVectors <= 0 || limits.MaxK <= 0 {
-		return nil, vectorFileMetadata{}, errVectorFileLimit
-	}
-	maxFileBytes, ok := checkedAdd(uint64(codecHeaderSize+codecFooterSize), limits.MaxVectorBytes)
-	if !ok || maxFileBytes >= math.MaxInt64 {
-		return nil, vectorFileMetadata{}, errVectorFileLimit
-	}
-	data, err := io.ReadAll(io.LimitReader(source, int64(maxFileBytes)+1))
-	if err != nil {
-		return nil, vectorFileMetadata{}, fmt.Errorf("semanticpersist: read vector segment: %w", err)
-	}
-	if uint64(len(data)) > maxFileBytes {
-		return nil, vectorFileMetadata{}, errVectorFileLimit
-	}
-	reader, metadata, err := openBytes(data, limits)
-	return reader, metadata, err
-}
-
-func openBytes(data []byte, limits codecLimitsConfig) (vectorstore.PreparedVectorStore, vectorFileMetadata, error) {
+func openBytes(data []byte, limits codecLimitsConfig) (preparedVectors, vectorFileMetadata, error) {
 	if len(data) < codecHeaderSize+codecFooterSize || string(data[headerMagicOffset:headerVersionOffset]) != codecMagic {
-		return nil, vectorFileMetadata{}, errCorruptVectorFile
+		return preparedVectors{}, vectorFileMetadata{}, errCorruptVectorFile
 	}
 	if binary.LittleEndian.Uint16(data[headerVersionOffset:headerSizeOffset]) != codecVersion {
-		return nil, vectorFileMetadata{}, errUnsupportedVectorFile
+		return preparedVectors{}, vectorFileMetadata{}, errUnsupportedVectorFile
 	}
 	if binary.LittleEndian.Uint16(data[headerSizeOffset:headerDimensionsOffset]) != codecHeaderSize ||
 		data[headerReservedOffset] != 0 || data[headerReservedOffset+1] != 0 ||
 		binary.LittleEndian.Uint64(data[headerTailOffset:codecHeaderSize]) != 0 {
-		return nil, vectorFileMetadata{}, errCorruptVectorFile
+		return preparedVectors{}, vectorFileMetadata{}, errCorruptVectorFile
 	}
 	body, footer := data[:len(data)-codecFooterSize], data[len(data)-codecFooterSize:]
 	checksum := binary.LittleEndian.Uint32(footer)
 	if crc32.ChecksumIEEE(body) != checksum {
-		return nil, vectorFileMetadata{}, errCorruptVectorFile
+		return preparedVectors{}, vectorFileMetadata{}, errCorruptVectorFile
 	}
 	dimensions := int(binary.LittleEndian.Uint32(data[headerDimensionsOffset:headerMetricOffset]))
 	metric := vector.Metric(data[headerMetricOffset])
@@ -203,30 +186,30 @@ func openBytes(data []byte, limits codecLimitsConfig) (vectorstore.PreparedVecto
 	maxK := uint64(binary.LittleEndian.Uint32(data[headerMaxKOffset:headerVectorBytesOffset]))
 	vectorBytes := binary.LittleEndian.Uint64(data[headerVectorBytesOffset:headerTailOffset])
 	if dimensions <= 0 || dimensions > limits.MaxDimensions || count > uint64(limits.MaxVectors) || maxK == 0 || maxK > uint64(limits.MaxK) || vectorBytes > limits.MaxVectorBytes {
-		return nil, vectorFileMetadata{}, errVectorFileLimit
+		return preparedVectors{}, vectorFileMetadata{}, errVectorFileLimit
 	}
 	expectedComponents, ok := checkedMultiply(count, uint64(dimensions))
 	if !ok {
-		return nil, vectorFileMetadata{}, errVectorFileLimit
+		return preparedVectors{}, vectorFileMetadata{}, errVectorFileLimit
 	}
 	expectedBytes, ok := checkedMultiply(expectedComponents, float32ByteSize)
 	if !ok || expectedBytes != vectorBytes {
-		return nil, vectorFileMetadata{}, errCorruptVectorFile
+		return preparedVectors{}, vectorFileMetadata{}, errCorruptVectorFile
 	}
 	expectedSize, ok := checkedAdd(uint64(codecHeaderSize+codecFooterSize), vectorBytes)
 	if !ok || expectedSize != uint64(len(data)) || expectedComponents > uint64(math.MaxInt) {
-		return nil, vectorFileMetadata{}, errCorruptVectorFile
+		return preparedVectors{}, vectorFileMetadata{}, errCorruptVectorFile
 	}
 	space, err := vector.NewCalculator(dimensions, metric)
 	if err != nil || space.Normalization() != normalization {
-		return nil, vectorFileMetadata{}, errCorruptVectorFile
+		return preparedVectors{}, vectorFileMetadata{}, errCorruptVectorFile
 	}
 	values := make([]float32, int(expectedComponents))
 	payload := data[codecHeaderSize : len(data)-codecFooterSize]
 	for i := range values {
 		bits := binary.LittleEndian.Uint32(payload[i*float32ByteSize : (i+1)*float32ByteSize])
 		if bits == negativeZeroBits {
-			return nil, vectorFileMetadata{}, errCorruptVectorFile
+			return preparedVectors{}, vectorFileMetadata{}, errCorruptVectorFile
 		}
 		values[i] = math.Float32frombits(bits)
 	}
@@ -234,32 +217,13 @@ func openBytes(data []byte, limits codecLimitsConfig) (vectorstore.PreparedVecto
 		start := row * dimensions
 		value := values[start : start+dimensions]
 		if err := validatePreparedRow(space, value); err != nil {
-			return nil, vectorFileMetadata{}, fmt.Errorf("%w: row %d: %v", errCorruptVectorFile, row, err)
+			return preparedVectors{}, vectorFileMetadata{}, fmt.Errorf("%w: row %d: %v", errCorruptVectorFile, row, err)
 		}
 	}
 	identity := sha256.Sum256(data)
-	prepared, err := vectorstore.NewPreparedMemoryVectorStore(space, values)
-	if err != nil {
-		return nil, vectorFileMetadata{}, fmt.Errorf("%w: %v", errCorruptVectorFile, err)
-	}
-	return prepared, vectorFileMetadata{Size: uint64(len(data)), CRC32: checksum, SHA256: identity}, nil
-}
+	metadata := vectorFileMetadata{Size: uint64(len(data)), CRC32: checksum, SHA256: identity}
+	return preparedVectors{Calculator: space, Values: values}, metadata, nil
 
-func normalizeCodecLimits(limits codecLimitsConfig) codecLimitsConfig {
-	defaults := defaultCodecLimits()
-	if limits.MaxDimensions == 0 {
-		limits.MaxDimensions = defaults.MaxDimensions
-	}
-	if limits.MaxVectors == 0 {
-		limits.MaxVectors = defaults.MaxVectors
-	}
-	if limits.MaxVectorBytes == 0 {
-		limits.MaxVectorBytes = defaults.MaxVectorBytes
-	}
-	if limits.MaxK == 0 {
-		limits.MaxK = defaults.MaxK
-	}
-	return limits
 }
 
 func validatePreparedRow(calculator vector.Calculator, value []float32) error {

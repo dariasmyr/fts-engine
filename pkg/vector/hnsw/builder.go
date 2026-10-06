@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 // builder constructs one HNSW graph. It is single-writer and is not searchable.
@@ -18,6 +17,7 @@ type builder struct {
 	present      []bool
 	graph        graphData
 	rng          levelRNG
+	neighborWork []searchCandidate
 }
 
 func newBuilder(buildConfig BuildConfig, searchConfig SearchConfig, vectorCount int) (*builder, error) {
@@ -57,12 +57,19 @@ func (b *builder) Add(ctx context.Context, ordinal vector.Ordinal, value []float
 	if err != nil {
 		return 0, err
 	}
-	return b.addPrepared(ordinal, prepared)
+	return b.addPreparedTrusted(ordinal, prepared)
 }
 
 // addPrepared validates and copies an already prepared row without normalizing
 // it again. This preserves source float32 bits exactly.
 func (b *builder) addPrepared(ordinal vector.Ordinal, prepared []float32) (nodeOrdinal, error) {
+	if err := validatePreparedVector(b.calculator, prepared); err != nil {
+		return 0, err
+	}
+	return b.addPreparedTrusted(ordinal, prepared)
+}
+
+func (b *builder) addPreparedTrusted(ordinal vector.Ordinal, prepared []float32) (nodeOrdinal, error) {
 	if len(b.graph.nodes) >= b.expected {
 		return 0, errCapacityExceeded
 	}
@@ -72,10 +79,6 @@ func (b *builder) addPrepared(ordinal vector.Ordinal, prepared []float32) (nodeO
 	if b.present[ordinal] {
 		return 0, fmt.Errorf("%w: %d", errDuplicateOrdinal, ordinal)
 	}
-	if err := validatePreparedVector(b.calculator, prepared); err != nil {
-		return 0, err
-	}
-
 	nextRNG := b.rng
 	level := nextRNG.level(b.buildConfig.MaxNeighbors)
 	nodeID := nodeOrdinal(len(b.graph.nodes))
@@ -122,7 +125,7 @@ func (b *builder) Check() (GraphStats, error) {
 }
 
 // Freeze validates and copies a complete graph into an immutable packed HNSW index.
-func (b *builder) Freeze(source vectorstore.PreparedVectorStore) (*Index, error) {
+func (b *builder) Freeze(source vector.PreparedVectorStore) (*Index, error) {
 	if len(b.graph.nodes) != b.expected {
 		return nil, errBuilderIncomplete
 	}
@@ -150,17 +153,16 @@ func (b *builder) insert(node nodeOrdinal) {
 	// candidates seed the next lower level, but links from different levels never mix.
 	for level := min(newLevel, oldMaxLevel); level >= 0; level-- {
 		candidates := b.searchLayer(node, entryPoints, b.buildConfig.EfConstruction, level)
-		candidateNodes := make([]nodeOrdinal, len(candidates))
-		for i, candidate := range candidates {
-			candidateNodes[i] = candidate.node
-		}
-		selected := b.selectNeighbors(node, candidateNodes, b.buildConfig.MaxNeighbors)
+		selected := b.selectNeighbors(candidates, b.buildConfig.MaxNeighbors)
 		b.graph.nodes[node].links[level] = selected
 		for _, neighbor := range selected {
 			b.addReverseLink(neighbor, node, level)
 		}
-		if len(candidateNodes) > 0 {
-			entryPoints = candidateNodes
+		if len(candidates) > 0 {
+			entryPoints = entryPoints[:0]
+			for _, candidate := range candidates {
+				entryPoints = append(entryPoints, candidate.node)
+			}
 		}
 	}
 	if newLevel > oldMaxLevel {
@@ -231,5 +233,5 @@ func (b *builder) searchLayer(queryNode nodeOrdinal, entryPoints []nodeOrdinal, 
 			}
 		}
 	}
-	return results.Candidates()
+	return results.items
 }

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/arithmetic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
@@ -27,23 +28,35 @@ const (
 
 // Publish writes a detached service's clean committed state and atomically
 // switches CURRENT. Opened stores publish subsequent generations through Store.
-func Publish(ctx context.Context, root string, service *semantic.Service, options Options) (Generation, error) {
+func Publish(
+	ctx context.Context,
+	root string,
+	service *semantic.Service,
+	options Options,
+) (Generation, error) {
 	if ctx == nil {
 		return Generation{}, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return Generation{}, err
 	}
-	if service == nil || root == "" || (options.Durability != 0 && options.Durability != DurabilitySynchronous && options.Durability != DurabilityAsynchronous) {
+	if service == nil ||
+		root == "" ||
+		(options.Durability != 0 &&
+			options.Durability != DurabilitySynchronous &&
+			options.Durability != DurabilityAsynchronous) {
 		return Generation{}, ErrCorrupt
 	}
+
 	if err := normalizeOptions(&options); err != nil {
 		return Generation{}, err
 	}
+
 	paths, rootCreated, err := prepareStoreDirectories(root)
 	if err != nil {
 		return Generation{}, err
 	}
+
 	// Serialize the CURRENT check and the complete publication across processes.
 	// Without one lock, two writers could both validate the same base generation.
 	storeLock, err := acquireStoreLock(filepath.Join(paths.root, "LOCK"))
@@ -51,19 +64,78 @@ func Publish(ctx context.Context, root string, service *semantic.Service, option
 		return Generation{}, err
 	}
 	defer storeLock.Close()
+
 	if options.Durability == DurabilitySynchronous {
-		for _, path := range []string{paths.segments, paths.objects, paths.generations, paths.root} {
-			if err := syncDirectory(path); err != nil {
-				return Generation{}, err
-			}
+		if err := syncDirectory(paths.segments); err != nil {
+			return Generation{}, err
 		}
+		if err := syncDirectory(paths.objects); err != nil {
+			return Generation{}, err
+		}
+		if err := syncDirectory(paths.generations); err != nil {
+			return Generation{}, err
+		}
+		if err := syncDirectory(paths.root); err != nil {
+			return Generation{}, err
+		}
+
 		if rootCreated {
 			if err := syncDirectory(filepath.Dir(paths.root)); err != nil {
 				return Generation{}, err
 			}
 		}
 	}
-	return publishLocked(ctx, paths, service, options)
+
+	return publishDetached(ctx, paths, service, options)
+}
+
+func Open(
+	ctx context.Context,
+	root string,
+	options OpenOptions,
+) (*Store, error) {
+	if ctx == nil {
+		return nil, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	limits := normalizeLimits(options.Limits)
+	if err := validateLimits(limits); err != nil {
+		return nil, err
+	}
+
+	paths, err := validateStoreDirectories(root)
+	if err != nil {
+		return nil, err
+	}
+
+	storeLock, err := acquireStoreLock(filepath.Join(paths.root, "LOCK"))
+	if err != nil {
+		return nil, err
+	}
+
+	service, generation, manifestValue, err := openCurrent(
+		ctx,
+		paths,
+		limits,
+		options.ExpectedDescriptors,
+	)
+	if err != nil {
+		_ = storeLock.Close()
+		return nil, err
+	}
+
+	return &Store{
+		service:      service,
+		paths:        paths,
+		limits:       limits,
+		generation:   generation,
+		segmentFiles: componentSegmentFiles(manifestValue),
+		storeLock:    storeLock,
+		publishGate:  make(chan struct{}, 1),
+	}, nil
 }
 
 func normalizeOptions(options *Options) error {
@@ -77,66 +149,82 @@ func normalizeOptions(options *Options) error {
 	return validateLimits(options.Limits)
 }
 
-func Open(ctx context.Context, root string, options OpenOptions) (*Store, error) {
-	if ctx == nil {
-		return nil, vector.ErrNilContext
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	limits := normalizeLimits(options.Limits)
-	if err := validateLimits(limits); err != nil {
-		return nil, err
-	}
-	paths, err := validateStoreDirectories(root)
+func publishDetached(ctx context.Context, paths storePaths, service *semantic.Service, options Options) (Generation, error) {
+	currentGeneration, err := fullyValidatedCurrentGeneration(ctx, paths, options.Limits)
 	if err != nil {
-		return nil, err
+		return Generation{}, err
 	}
-	storeLock, err := acquireStoreLock(filepath.Join(paths.root, "LOCK"))
-	if err != nil {
-		return nil, err
-	}
-	service, generation, err := openCurrent(ctx, paths, limits, options.ExpectedDescriptors)
-	if err != nil {
-		_ = storeLock.Close()
-		return nil, err
-	}
-	return &Store{service: service, paths: paths, limits: limits, generation: generation, storeLock: storeLock, publishGate: make(chan struct{}, 1)}, nil
+	generation, _, err := publishValidated(ctx, paths, service, options, currentGeneration, nil)
+	return generation, err
 }
 
-func publishLocked(ctx context.Context, paths storePaths, service *semantic.Service, options Options) (Generation, error) {
-	if err := ctx.Err(); err != nil {
-		return Generation{}, err
-	}
-	currentGeneration, err := validatedCurrentGeneration(ctx, paths, options.Limits)
+func publishFromOpenedStore(ctx context.Context, paths storePaths, service *semantic.Service, options Options, reusable map[uint64]manifestSegment) (Generation, map[uint64]manifestSegment, error) {
+	currentGeneration, err := manifestValidatedCurrentGeneration(ctx, paths, options.Limits)
 	if err != nil {
-		return Generation{}, err
+		return Generation{}, nil, err
+	}
+	return publishValidated(ctx, paths, service, options, currentGeneration, reusable)
+}
+
+func publishValidated(ctx context.Context, paths storePaths, service *semantic.Service, options Options, currentGeneration uint64, reusable map[uint64]manifestSegment) (Generation, map[uint64]manifestSegment, error) {
+	if err := ctx.Err(); err != nil {
+		return Generation{}, nil, err
 	}
 	if currentGeneration != options.ExpectedGeneration || currentGeneration == math.MaxUint64 {
-		return Generation{}, ErrStaleGeneration
+		return Generation{}, nil, ErrStaleGeneration
 	}
-	snapshot, err := service.CommittedSnapshot(ctx)
+	state, err := service.CommittedState(ctx)
 	if err != nil {
-		return Generation{}, err
+		return Generation{}, nil, err
 	}
-	segments := snapshot.Segments()
-	objects := make([]segmentObject, len(segments))
-	for i, persisted := range segments {
-		segment := persisted.Snapshot()
-		if err := validateSegment(segment, snapshot.Config(), options.Limits); err != nil {
-			return Generation{}, err
+	captured, err := captureCommittedState(state, options.Limits)
+	if err != nil {
+		return Generation{}, nil, err
+	}
+	segmentFiles := make([]manifestSegment, len(captured.segments))
+	reusedSegmentFiles := false
+	for i, persisted := range captured.segments {
+		if err := validateSegmentData(persisted.data, captured.config, options.Limits); err != nil {
+			return Generation{}, nil, err
 		}
-		objects[i], err = writeSegmentObject(ctx, paths, segment, options)
+		if files, ok := reusable[persisted.data.ComponentID]; ok {
+			if err := verifyStoredSegment(filepath.Join(paths.segments, files.ObjectID), files.Vectors, files.Graph, options.Limits, options.Durability); err != nil {
+				return Generation{}, nil, err
+			}
+			segmentFiles[i] = files
+			reusedSegmentFiles = true
+			continue
+		}
+		segmentFiles[i], err = writeStoredSegment(ctx, paths, persisted.data.Vectors, persisted.data.Index, options)
 		if err != nil {
-			return Generation{}, err
+			return Generation{}, nil, err
+		}
+	}
+	if reusedSegmentFiles && options.Durability == DurabilitySynchronous {
+		if err := beforeStep(ctx, options, stepSyncReusedSegments); err != nil {
+			return Generation{}, nil, err
+		}
+		if err := syncDirectory(paths.segments); err != nil {
+			return Generation{}, nil, err
+		}
+		if err := afterStep(options, stepSyncReusedSegments, false); err != nil {
+			return Generation{}, nil, err
 		}
 	}
 	generationID := currentGeneration + 1
-	manifestRef, err := writeGeneration(ctx, paths, generationID, objects, snapshot, options)
+	manifestRef, err := writeGeneration(ctx, paths, generationID, segmentFiles, captured, options)
 	if err != nil {
-		return Generation{}, err
+		return Generation{}, nil, err
 	}
-	return commitCurrent(ctx, paths, generationID, manifestRef, options)
+	generation, err := commitCurrent(ctx, paths, generationID, manifestRef, options)
+	if err != nil {
+		return Generation{}, nil, err
+	}
+	nextSegmentFiles := make(map[uint64]manifestSegment, len(segmentFiles))
+	for i, persisted := range captured.segments {
+		nextSegmentFiles[persisted.data.ComponentID] = segmentFiles[i]
+	}
+	return generation, nextSegmentFiles, nil
 }
 
 type storePaths struct {
@@ -202,8 +290,7 @@ func validateDirectory(path string) error {
 	return nil
 }
 
-func validateSegment(segment semantic.SegmentSnapshot, config semantic.Config, limits Limits) error {
-	data := segment.Data()
+func validateSegmentData(data semantic.SegmentData, config semantic.Config, limits Limits) error {
 	semanticLimits := config.Limits
 	if data.Vectors == nil || data.Index == nil {
 		return ErrLimitExceeded
@@ -217,11 +304,11 @@ func validateSegment(segment semantic.SegmentSnapshot, config semantic.Config, l
 		semanticLimits.MaxChunksPerDocumentHit <= 0 || semanticLimits.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
 		return ErrLimitExceeded
 	}
-	components, ok := checkedMultiply64(uint64(length), uint64(dimensions))
+	components, ok := arithmetic.CheckMultiply64(uint64(length), uint64(dimensions))
 	if !ok {
 		return ErrLimitExceeded
 	}
-	vectorBytes, ok := checkedMultiply64(components, 4)
+	vectorBytes, ok := arithmetic.CheckMultiply64(components, 4)
 	if !ok || vectorBytes > limits.MaxVectorBytes || limits.MaxFileBytes < 44 || vectorBytes > limits.MaxFileBytes-44 {
 		return ErrLimitExceeded
 	}
@@ -232,26 +319,6 @@ func validateSegment(segment semantic.SegmentSnapshot, config semantic.Config, l
 		report.Build.EfConstruction != config.HNSW.EfConstruction || report.Build.Seed != config.HNSW.Seed ||
 		uint64(report.Storage.DirectedLinks) > limits.MaxGraphLinks ||
 		graphFileSize(index) > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
-		return ErrLimitExceeded
-	}
-	validString := func(value string) bool { return len(value) <= limits.MaxStringBytes }
-	descriptor := data.Pipeline
-	if !validString(descriptor.Embedding.ProviderID) || !validString(descriptor.Embedding.ModelID) || !validString(descriptor.Embedding.ModelVersion) || !validString(descriptor.Embedding.PipelineFingerprint) ||
-		!validString(descriptor.Chunking.ID) || !validString(descriptor.Chunking.Fingerprint) {
-		return ErrLimitExceeded
-	}
-	documentChunks := make(map[string]int)
-	for _, record := range data.Rows {
-		if !validString(string(record.Chunk.ID)) || !validString(string(record.Chunk.DocID)) || !validString(record.Chunk.Field) {
-			return ErrLimitExceeded
-		}
-		docID := string(record.Chunk.DocID)
-		documentChunks[docID]++
-		if documentChunks[docID] > limits.MaxChunksPerDocument {
-			return ErrLimitExceeded
-		}
-	}
-	if len(documentChunks) > limits.MaxDocuments {
 		return ErrLimitExceeded
 	}
 	return nil
@@ -275,20 +342,20 @@ func validateOpenReferences(manifestData []byte, value manifest, limits Limits) 
 		components = append(components, struct{ size, multiplier uint64 }{segment.Vectors.Size, 4}, struct{ size, multiplier uint64 }{segment.Graph.Size, 8})
 	}
 	for _, component := range components {
-		weighted, ok := checkedMultiply64(component.size, component.multiplier)
+		weighted, ok := arithmetic.CheckMultiply64(component.size, component.multiplier)
 		if !ok {
 			return ErrLimitExceeded
 		}
-		estimate, ok = checkedAdd64(estimate, weighted)
+		estimate, ok = arithmetic.CheckAdd64(estimate, weighted)
 		if !ok {
 			return ErrLimitExceeded
 		}
 	}
-	scratchBytes, ok := checkedMultiply64(uint64(limits.MaxDimensions), 8)
+	scratchBytes, ok := arithmetic.CheckMultiply64(uint64(limits.MaxDimensions), 8)
 	if !ok {
 		return ErrLimitExceeded
 	}
-	estimate, ok = checkedAdd64(estimate, scratchBytes)
+	estimate, ok = arithmetic.CheckAdd64(estimate, scratchBytes)
 	if !ok {
 		return ErrLimitExceeded
 	}
@@ -328,6 +395,14 @@ func readRegularFile(path string, limit uint64) ([]byte, error) {
 }
 
 func readReferencedFile(path string, reference fileReference, limit uint64) ([]byte, error) {
+	return readReferencedFileData(path, reference, limit, true)
+}
+
+func readReferencedFileWithoutHash(path string, reference fileReference, limit uint64) ([]byte, error) {
+	return readReferencedFileData(path, reference, limit, false)
+}
+
+func readReferencedFileData(path string, reference fileReference, limit uint64, verifyHash bool) ([]byte, error) {
 	if reference.Size == 0 || reference.Size > limit {
 		return nil, ErrLimitExceeded
 	}
@@ -350,10 +425,53 @@ func readReferencedFile(path string, reference fileReference, limit uint64) ([]b
 	if err != nil {
 		return nil, err
 	}
-	if uint64(len(data)) != reference.Size || sha256.Sum256(data) != reference.SHA256 {
+	if uint64(len(data)) != reference.Size || verifyHash && sha256.Sum256(data) != reference.SHA256 {
 		return nil, ErrCorrupt
 	}
 	return data, nil
+}
+
+func verifyReferencedFile(path string, reference fileReference, limit uint64, durability DurabilityMode) error {
+	if reference.Size == 0 || reference.Size > limit {
+		return ErrLimitExceeded
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return ErrSymlink
+	}
+	if !info.Mode().IsRegular() || uint64(info.Size()) != reference.Size {
+		return ErrCorrupt
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	hash := sha256.New()
+	buffer := make([]byte, 64<<10)
+	written, copyErr := io.CopyBuffer(hash, io.LimitReader(file, int64(reference.Size)+1), buffer)
+	if copyErr == nil && (uint64(written) != reference.Size || !equalSHA256(hash.Sum(nil), reference.SHA256)) {
+		copyErr = ErrCorrupt
+	}
+	if copyErr == nil && durability == DurabilitySynchronous {
+		copyErr = file.Sync()
+	}
+	closeErr := file.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
+}
+
+func equalSHA256(sum []byte, expected [sha256.Size]byte) bool {
+	if len(sum) != sha256.Size {
+		return false
+	}
+	var actual [sha256.Size]byte
+	copy(actual[:], sum)
+	return actual == expected
 }
 
 func syncRegularFile(path string) error {
@@ -435,10 +553,19 @@ func ensureContained(root, path string) error {
 	return nil
 }
 
-func generationName(id uint64) string { return fmt.Sprintf("%020d", id) }
+func manifestValidatedCurrentGeneration(ctx context.Context, paths storePaths, limits Limits) (uint64, error) {
+	current, _, err := readCurrentManifest(ctx, paths, limits)
+	if errors.Is(err, ErrCurrentMissing) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return current.GenerationID, nil
+}
 
-func validatedCurrentGeneration(ctx context.Context, paths storePaths, limits Limits) (uint64, error) {
-	_, generation, err := openCurrent(ctx, paths, limits, semantic.PipelineDescriptor{})
+func fullyValidatedCurrentGeneration(ctx context.Context, paths storePaths, limits Limits) (uint64, error) {
+	_, generation, _, err := openCurrent(ctx, paths, limits, semantic.PipelineDescriptor{})
 	if errors.Is(err, ErrCurrentMissing) {
 		return 0, nil
 	}
@@ -446,4 +573,15 @@ func validatedCurrentGeneration(ctx context.Context, paths storePaths, limits Li
 		return 0, err
 	}
 	return generation.ID, nil
+}
+
+func componentSegmentFiles(value manifest) map[uint64]manifestSegment {
+	if len(value.componentIDs) != len(value.Segments) {
+		return nil
+	}
+	segmentFiles := make(map[uint64]manifestSegment, len(value.Segments))
+	for i, files := range value.Segments {
+		segmentFiles[value.componentIDs[i]] = files
+	}
+	return segmentFiles
 }

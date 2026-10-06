@@ -15,7 +15,6 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func testVectorFileReference() VectorFileReference {
@@ -28,7 +27,7 @@ func marshalGraph(index *Index, vectors VectorFileReference) ([]byte, FileMetada
 	return buffer.Bytes(), metadata, err
 }
 
-func openGraph(source io.Reader, vectors vectorstore.PreparedVectorStore, reference VectorFileReference, limits GraphLimits) (*Index, FileMetadata, error) {
+func openGraph(source io.Reader, vectors vector.PreparedVectorStore, reference VectorFileReference, limits GraphLimits) (*Index, FileMetadata, error) {
 	return OpenGraph(context.Background(), source, vectors, reference, limits)
 }
 
@@ -173,6 +172,10 @@ func TestOpenGraphValidatesPreparedVectorStore(t *testing.T) {
 	if _, _, err := openGraph(bytes.NewReader(data), partial, reference, DefaultGraphLimits()); !errors.Is(err, ErrGraphVectorStore) {
 		t.Fatalf("partial source row error = %v", err)
 	}
+	partial = &graphPreparedSource{values: values, dimensions: 2, metric: vector.MetricL2Squared, partial: true}
+	if _, _, err := OpenGraphBytes(context.Background(), data, partial, reference, DefaultGraphLimits()); !errors.Is(err, ErrGraphVectorStore) {
+		t.Fatalf("byte-slice partial source row error = %v", err)
+	}
 }
 
 func TestGraphFormatRejectsReferenceSizeAndIntegrityFailures(t *testing.T) {
@@ -300,6 +303,7 @@ func TestOpenGraphContextCancellation(t *testing.T) {
 	}
 
 	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
 	source := &graphPreparedSource{
 		values: [][]float32{{0, 0}, {1, 0}, {2, 0}, {3, 0}}, dimensions: 2,
 		metric: vector.MetricL2Squared, cancel: cancel,
@@ -327,6 +331,7 @@ func TestWriteGraphContextCancellation(t *testing.T) {
 		t.Fatalf("writes after cancellation = %d, want 1", writer.writes)
 	}
 	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
 	source := &graphPreparedSource{
 		values: [][]float32{{0, 0}, {1, 0}, {2, 0}, {3, 0}}, dimensions: 2,
 		metric: vector.MetricL2Squared, cancel: cancel,
@@ -335,11 +340,28 @@ func TestWriteGraphContextCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := WriteGraph(ctx, io.Discard, index, testVectorFileReference()); !errors.Is(err, context.Canceled) {
-		t.Fatalf("source-cancelled write error = %v", err)
+	if _, err := WriteGraph(ctx, io.Discard, index, testVectorFileReference()); !errors.Is(err, context.Canceled) || source.reads != 1 {
+		t.Fatalf("source-cancelled write error/reads = %v/%d, want canceled/1", err, source.reads)
 	}
 	if _, err := WriteGraph(nil, io.Discard, index, testVectorFileReference()); !errors.Is(err, vector.ErrNilContext) {
 		t.Fatalf("nil context write error = %v", err)
+	}
+}
+
+func TestWriteGraphValidatesVectorRows(t *testing.T) {
+	space := readerTestSpace(t, 2, vector.MetricL2Squared)
+	graph := readerTestGraph()
+	source := &graphPreparedSource{
+		values: [][]float32{{0, 0}, {1, 0}, {2, 0}, {3, 0}}, dimensions: 2,
+		metric: vector.MetricL2Squared,
+	}
+	index, err := newIndexFromGraph(space, readerTestSearchConfig(), readerTestBuildInfo(), graph, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.values[2][0] = float32(math.NaN())
+	if _, err := WriteGraph(context.Background(), io.Discard, index, testVectorFileReference()); !errors.Is(err, ErrGraphVectorStore) {
+		t.Fatalf("malformed vector write error = %v", err)
 	}
 }
 
@@ -512,7 +534,7 @@ func FuzzOpenGraph(f *testing.F) {
 			MaxLinks: 256, MaxLevel: MaxLevel, MaxEfSearch: 64, MaxVisitLimit: 256,
 			MaxK: 32, MaxNeighbors: 8, MaxEfConstruction: 64,
 		}
-		source := vectorstore.PreparedVectorStore(empty.vectors)
+		source := vector.PreparedVectorStore(empty.vectors)
 		if sourceKind&1 != 0 {
 			source = singleton.vectors
 		}

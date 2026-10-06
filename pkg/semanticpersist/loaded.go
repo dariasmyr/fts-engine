@@ -14,14 +14,15 @@ type Generation struct {
 
 // Store owns one writable semantic service and the exclusive store lock.
 type Store struct {
-	service     *semantic.Service
-	paths       storePaths
-	limits      Limits
-	generation  Generation
-	storeLock   *storeLock
-	publishGate chan struct{}
-	closeOnce   sync.Once
-	closeErr    error
+	service      *semantic.Service
+	paths        storePaths
+	limits       Limits
+	generation   Generation
+	segmentFiles map[uint64]manifestSegment
+	storeLock    *storeLock
+	publishGate  chan struct{}
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 func (s *Store) Service() *semantic.Service {
@@ -52,9 +53,10 @@ func (s *Store) Publish(ctx context.Context, options Options) (Generation, error
 	if err := normalizeOptions(&options); err != nil {
 		return Generation{}, err
 	}
-	generation, err := publishLocked(ctx, s.paths, s.service, options)
+	generation, segmentFiles, err := publishFromOpenedStore(ctx, s.paths, s.service, options, s.segmentFiles)
 	if err == nil {
 		s.generation = generation
+		s.segmentFiles = segmentFiles
 	}
 	return generation, err
 }

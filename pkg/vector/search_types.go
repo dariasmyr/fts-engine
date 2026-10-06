@@ -52,3 +52,8 @@ type Index interface {
 	Dimensions() int
 	Metric() Metric
 }
+
+// PreparedSearcher searches with a query prepared once for compatible indexes.
+type PreparedSearcher interface {
+	SearchPrepared(context.Context, PreparedQuery, int, SearchOptions) (SearchResult, error)
+}

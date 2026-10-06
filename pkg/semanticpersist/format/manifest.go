@@ -40,7 +40,7 @@ func EncodeManifest(value Manifest, limits Limits) ([]byte, FileReference, error
 	// dynamically sized object ID.
 	expectedSize := uint64(manifestFixedEncodedSize)
 	for _, segment := range value.Segments {
-		if !validObjectID(segment.ObjectID) || !validSegment(segment) {
+		if !ValidObjectID(segment.ObjectID) || !validSegment(segment) {
 			return nil, FileReference{}, ErrCorrupt
 		}
 		if !addEncodedSize(&expectedSize, manifestSegmentFixedSize) || !addEncodedSize(&expectedSize, uint64(len(segment.ObjectID))) {
@@ -74,7 +74,7 @@ func DecodeManifest(data []byte, limits Limits) (Manifest, error) {
 	for i := range value.Segments {
 		segment := SegmentObject{ObjectID: d.readString()}
 		segment.Vectors, segment.Graph = decodeFileReference(d), decodeFileReference(d)
-		if !validObjectID(segment.ObjectID) || !validSegment(segment) {
+		if !ValidObjectID(segment.ObjectID) || !validSegment(segment) {
 			return Manifest{}, ErrCorrupt
 		}
 		value.Segments[i] = segment
@@ -107,10 +107,32 @@ func validSegment(value SegmentObject) bool {
 	return validReference(value.Vectors) && validReference(value.Graph)
 }
 
-func validObjectID(id string) bool {
-	if len(id) != len("seg-")+sha256.Size*2 || !strings.HasPrefix(id, "seg-") || filepath.IsAbs(id) || filepath.VolumeName(id) != "" || strings.ContainsAny(id, `/\`) || id == "." || id == ".." {
+func ValidObjectID(id string) bool {
+	const prefix = "seg-"
+	const hashHexLength = sha256.Size * 2
+
+	if len(id) != len(prefix)+hashHexLength {
 		return false
 	}
-	decoded, err := hex.DecodeString(strings.TrimPrefix(id, "seg-"))
-	return err == nil && len(decoded) == sha256.Size && id == strings.ToLower(id)
+
+	if !strings.HasPrefix(id, prefix) {
+		return false
+	}
+
+	if filepath.IsAbs(id) ||
+		filepath.VolumeName(id) != "" ||
+		strings.ContainsAny(id, `/\`) ||
+		id == "." ||
+		id == ".." {
+		return false
+	}
+
+	hashPart := strings.TrimPrefix(id, prefix)
+
+	decoded, err := hex.DecodeString(hashPart)
+	if err != nil || len(decoded) != sha256.Size {
+		return false
+	}
+
+	return id == strings.ToLower(id)
 }

@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/dariasmyr/fts-engine/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 func builderTestConfig(seed uint64, maxVectors int) BuildConfig {
@@ -46,7 +46,7 @@ func addTestVector(t *testing.T, builder *builder, ordinal vector.Ordinal, value
 
 func freezeTestBuilder(t testing.TB, builder *builder) (*Index, error) {
 	t.Helper()
-	source, err := vectorstore.NewPreparedMemoryVectorStore(builder.calculator, builder.graph.values)
+	source, err := memorystore.NewPrepared(builder.calculator, builder.graph.values)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +393,11 @@ func TestBuilderDiversifiedSelection(t *testing.T) {
 		addTestVector(t, builder, vector.Ordinal(ordinal), value)
 	}
 
-	got := builder.selectNeighbors(0, []nodeOrdinal{3, 2, 1, 2, 0}, 3)
+	got := builder.selectNeighbors([]searchCandidate{
+		{node: 3, distance: builder.distanceNodes(0, 3)},
+		{node: 2, distance: builder.distanceNodes(0, 2)},
+		{node: 1, distance: builder.distanceNodes(0, 1)},
+	}, 3)
 	want := []nodeOrdinal{1, 3}
 	if !slices.Equal(got, want) {
 		t.Fatalf("diversified selection = %v, want %v", got, want)
@@ -433,7 +437,11 @@ func TestBuilderDiversificationAcceptsEqualBoundary(t *testing.T) {
 	for ordinal, value := range [][]float32{{0, 0}, {2, 0}, {1, 2}} {
 		addTestVector(t, builder, vector.Ordinal(ordinal), value)
 	}
-	if got, want := builder.selectNeighbors(0, []nodeOrdinal{1, 2}, 2), []nodeOrdinal{1, 2}; !slices.Equal(got, want) {
+	candidates := []searchCandidate{
+		{node: 1, distance: builder.distanceNodes(0, 1)},
+		{node: 2, distance: builder.distanceNodes(0, 2)},
+	}
+	if got, want := builder.selectNeighbors(candidates, 2), []nodeOrdinal{1, 2}; !slices.Equal(got, want) {
 		t.Fatalf("equal-boundary diversified selection = %v, want %v", got, want)
 	}
 }

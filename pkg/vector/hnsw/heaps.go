@@ -117,10 +117,9 @@ func (h *resultHeap) Add(value searchCandidate) {
 }
 
 func (h *resultHeap) Results(k int) []vector.Hit {
-	items := h.Candidates()
-	if len(items) > k {
-		items = items[:k]
-	}
+	items := append([]searchCandidate(nil), h.items...)
+	slices.SortFunc(items, compareResults)
+	items = items[:min(k, len(items))]
 	hits := make([]vector.Hit, len(items))
 	for i, item := range items {
 		hits[i] = vector.Hit{Ordinal: item.vectorOrdinal, Distance: item.distance}
@@ -130,16 +129,18 @@ func (h *resultHeap) Results(k int) []vector.Hit {
 
 func (h *resultHeap) Candidates() []searchCandidate {
 	items := append([]searchCandidate(nil), h.items...)
-	slices.SortFunc(items, func(a, b searchCandidate) int {
-		if resultBetter(a, b) {
-			return -1
-		}
-		if resultBetter(b, a) {
-			return 1
-		}
-		return 0
-	})
+	slices.SortFunc(items, compareResults)
 	return items
+}
+
+func compareResults(a, b searchCandidate) int {
+	if resultBetter(a, b) {
+		return -1
+	}
+	if resultBetter(b, a) {
+		return 1
+	}
+	return 0
 }
 
 func (h *resultHeap) siftDown(parent int) {

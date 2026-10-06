@@ -142,7 +142,8 @@ func Encode(writer io.Writer, graph Graph) (Metadata, error) {
 	if err := writeBytes(body, header); err != nil {
 		return Metadata{}, fmt.Errorf("vector/hnsw: write graph header: %w", err)
 	}
-	if err := writeUint32s(body, graph.NodeToVector); err != nil {
+	uint32Buffer := make([]byte, 64<<10)
+	if err := writeUint32s(body, graph.NodeToVector, uint32Buffer); err != nil {
 		return Metadata{}, fmt.Errorf("vector/hnsw: write node mapping: %w", err)
 	}
 	if err := writeBytes(body, graph.Levels); err != nil {
@@ -154,7 +155,7 @@ func Encode(writer io.Writer, graph Graph) (Metadata, error) {
 		}
 	}
 	for _, section := range [][]uint32{graph.Level0Offsets, graph.Level0Links, graph.UpperNodeOffsets, graph.UpperLinkOffsets, graph.UpperLinks} {
-		if err := writeUint32s(body, section); err != nil {
+		if err := writeUint32s(body, section, uint32Buffer); err != nil {
 			return Metadata{}, fmt.Errorf("vector/hnsw: write graph topology: %w", err)
 		}
 	}
@@ -196,10 +197,22 @@ func DecodeContext(ctx context.Context, source io.Reader, limits Limits) (Graph,
 	if uint64(len(data)) > limits.MaxGraphBytes {
 		return Graph{}, Metadata{}, ErrLimitExceeded
 	}
-	return decodeBytes(ctx, data, limits)
+	return DecodeBytesContext(ctx, data, limits)
 }
 
-func decodeBytes(ctx context.Context, data []byte, limits Limits) (Graph, Metadata, error) {
+// DecodeBytesContext validates an already bounded graph byte slice without
+// copying it through an intermediate reader buffer.
+func DecodeBytesContext(ctx context.Context, data []byte, limits Limits) (Graph, Metadata, error) {
+	if ctx == nil {
+		return Graph{}, Metadata{}, context.Canceled
+	}
+	if err := ctx.Err(); err != nil {
+		return Graph{}, Metadata{}, err
+	}
+	limits = normalizeLimits(limits)
+	if uint64(len(data)) > limits.MaxGraphBytes {
+		return Graph{}, Metadata{}, ErrLimitExceeded
+	}
 	if len(data) < HeaderSize+FooterSize || string(data[:4]) != Magic {
 		return Graph{}, Metadata{}, ErrCorruptData
 	}
@@ -272,7 +285,9 @@ func decodeBytes(ctx context.Context, data []byte, limits Limits) (Graph, Metada
 	if data[14] > 1 || (data[124] != 0xff && uint64(data[124]) > 63) {
 		return Graph{}, Metadata{}, ErrCorruptData
 	}
-	return graph, Metadata{Size: uint64(len(data)), CRC32: checksum, SHA256: sha256.Sum256(data)}, nil
+	var digest [sha256.Size]byte
+	copy(digest[:], hash.Sum(nil))
+	return graph, Metadata{Size: uint64(len(data)), CRC32: checksum, SHA256: digest}, nil
 }
 
 func normalizeLimits(l Limits) Limits {
@@ -365,8 +380,7 @@ func writeBytes(w io.Writer, data []byte) error {
 	}
 	return nil
 }
-func writeUint32s(w io.Writer, values []uint32) error {
-	b := make([]byte, 64<<10)
+func writeUint32s(w io.Writer, values []uint32, b []byte) error {
 	for off := 0; off < len(values); {
 		n := min(len(b)/4, len(values)-off)
 		for i := 0; i < n; i++ {

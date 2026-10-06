@@ -24,7 +24,7 @@ type ReadView struct {
 	maxCandidates           int
 	maxChunksPerDocumentHit int
 	maxQueryChunks          int
-	search                  hnsw.SearchConfig
+	searchConfig            hnsw.SearchConfig
 	calculator              vector.Calculator
 }
 
@@ -44,16 +44,19 @@ func (v *ReadView) SearchDocumentsWithOptions(ctx context.Context, encoder Encod
 	if len(queries) == 0 || len(queries) > v.maxQueryChunks {
 		return DocumentSearchResult{}, ErrInvalidQuery
 	}
+	preparedQueries := make([]vector.PreparedQuery, len(queries))
 	for i, item := range queries {
 		if err := contextcheck.PeriodicError(ctx, i); err != nil {
 			return DocumentSearchResult{}, err
 		}
 
-		if err := v.calculator.Validate(item.Vector); err != nil {
+		prepared, err := v.calculator.PrepareQuery(item.Vector)
+		if err != nil {
 			return DocumentSearchResult{}, err
 		}
+		preparedQueries[i] = prepared
 	}
-	return v.searchEncodedQueries(ctx, queries, maxResultCount, options)
+	return v.searchEncodedQueries(ctx, preparedQueries, maxResultCount, options)
 }
 
 func (v *ReadView) validateSearchRequest(ctx context.Context, encoder Encoder, maxResultCount int, options SearchOptions) error {
@@ -89,33 +92,27 @@ func (v *ReadView) validateSearchLimits(ctx context.Context, maxResultCount int,
 		return err
 	}
 	if options.EfSearch < 0 || options.VisitLimit < 0 ||
-		options.EfSearch > v.search.MaxEfSearch || options.VisitLimit > v.search.MaxVisitLimit {
+		options.EfSearch > v.searchConfig.MaxEfSearch || options.VisitLimit > v.searchConfig.MaxVisitLimit {
 		return ErrInvalidSearchOptions
 	}
 	return nil
 }
 
-func (v *ReadView) validateEncodedQuery(ctx context.Context, query []float32, k int, options SearchOptions) error {
-	if v == nil {
-		return ErrInvalidSegment
-	}
-	if err := v.validateSearchLimits(ctx, k, options); err != nil {
-		return err
-	}
-	return v.calculator.Validate(query)
-}
-
-func (v *ReadView) searchEncodedQueries(ctx context.Context, queries []EncodedChunk, k int, options SearchOptions) (DocumentSearchResult, error) {
+func (v *ReadView) searchEncodedQueries(ctx context.Context, queries []vector.PreparedQuery, k int, options SearchOptions) (DocumentSearchResult, error) {
 	type documentAccumulator struct {
 		distance float64
 		chunks   map[chunk.ID]ChunkHit
 	}
 	merged := make(map[fts.DocID]*documentAccumulator)
 	var result DocumentSearchResult
+	if v.liveCount == 0 {
+		result.Hits = []DocumentHit{}
+		return result, nil
+	}
 	candidateBudget, _ := resolveCandidateBudget(options.CandidateChunks, v.maxCandidates)
 	visitBudget := options.VisitLimit
 	if visitBudget == 0 {
-		visitBudget = v.search.DefaultVisitLimit
+		visitBudget = v.searchConfig.DefaultVisitLimit
 	}
 	for _, item := range queries {
 		if err := ctx.Err(); err != nil {
@@ -127,30 +124,31 @@ func (v *ReadView) searchEncodedQueries(ctx context.Context, queries []EncodedCh
 			result.GroupingIncomplete = true
 			break
 		}
-		partial, err := searchReadViewDocuments(ctx, v, item.Vector, options, remainingCandidates, remainingVisits)
+		budget := min(v.liveCount, remainingCandidates)
+		partial, err := searchSegmentsChunksPrepared(ctx, v.calculator, v.segments, item, budget, candidateBudget, vector.SearchOptions{
+			EfSearch: options.EfSearch, VisitLimit: remainingVisits,
+		})
 		if err != nil {
 			return DocumentSearchResult{}, err
 		}
-		result.CandidateChunks += partial.CandidateChunks
+		result.CandidateChunks += len(partial.Hits)
 		mergeSearchStats(&result.Stats, partial.Stats)
-		result.GroupingIncomplete = result.GroupingIncomplete || partial.GroupingIncomplete
+		result.GroupingIncomplete = result.GroupingIncomplete || budget < v.liveCount || partial.Incomplete
 		for i, hit := range partial.Hits {
 			if i%256 == 0 {
 				if err := ctx.Err(); err != nil {
 					return DocumentSearchResult{}, err
 				}
 			}
-			current := merged[hit.DocID]
+			current := merged[hit.Ref.DocID]
 			if current == nil {
 				current = &documentAccumulator{distance: hit.Distance, chunks: make(map[chunk.ID]ChunkHit)}
-				merged[hit.DocID] = current
+				merged[hit.Ref.DocID] = current
 			}
 			current.distance = min(current.distance, hit.Distance)
-			for _, candidate := range hit.Chunks {
-				previous, exists := current.chunks[candidate.Ref.ID]
-				if !exists || candidate.Distance < previous.Distance {
-					current.chunks[candidate.Ref.ID] = candidate
-				}
+			previous, exists := current.chunks[hit.Ref.ID]
+			if !exists || compareChunkHits(hit, previous) < 0 {
+				current.chunks[hit.Ref.ID] = hit
 			}
 		}
 	}
@@ -202,13 +200,33 @@ func newReadView(ctx context.Context, revision uint64, segments []visibleSegment
 	if err := validateVisibleSegments(ctx, segments, descriptor, search); err != nil {
 		return nil, err
 	}
+	return newTrustedReadView(ctx, revision, segments, descriptor, policy, search, calculator)
+}
+
+// newTrustedReadView publishes segments already validated at ingestion or
+// compaction boundaries. It validates only view-local shape while preserving
+// full historical validation for New and Restore through newReadView.
+func newTrustedReadView(ctx context.Context, revision uint64, segments []visibleSegment, descriptor PipelineDescriptor, policy searchPolicy, search hnsw.SearchConfig, calculator vector.Calculator) (*ReadView, error) {
+	if ctx == nil {
+		return nil, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	view := &ReadView{
-		segments: append([]visibleSegment(nil), segments...), revision: revision,
+		segments: segments, revision: revision,
 		descriptor: descriptor, maxDocumentsPerSearch: policy.MaxDocumentsPerSearch, maxCandidates: policy.MaxChunkCandidates,
 		maxChunksPerDocumentHit: policy.MaxChunksPerDocumentHit, maxQueryChunks: policy.MaxQueryChunks,
-		search: search, calculator: calculator,
+		searchConfig: search, calculator: calculator,
 	}
-	for _, segment := range view.segments {
+	for i, segment := range view.segments {
+		if err := contextcheck.PeriodicError(ctx, i); err != nil {
+			return nil, err
+		}
+
+		if segment.segment == nil || segment.filter.TotalOrdinalCount() != uint32(segment.segment.len()) {
+			return nil, ErrInternalState
+		}
 		view.liveCount += segment.filter.AllowedOrdinalCount()
 	}
 	if err := ctx.Err(); err != nil {
@@ -219,7 +237,6 @@ func newReadView(ctx context.Context, revision uint64, segments []visibleSegment
 
 func validateVisibleSegments(ctx context.Context, segments []visibleSegment, descriptor PipelineDescriptor, search hnsw.SearchConfig) error {
 	components := make(map[uint64]struct{}, len(segments))
-	vectorIDs := make(map[uint64]struct{})
 	type chunkKey struct {
 		documentID fts.DocID
 		chunkID    chunk.ID
@@ -254,10 +271,6 @@ func validateVisibleSegments(ctx context.Context, segments []visibleSegment, des
 				return ErrInvalidSegment
 			}
 			previousVectorID = row.VectorID
-			if _, exists := vectorIDs[row.VectorID]; exists {
-				return ErrInvalidSegment
-			}
-			vectorIDs[row.VectorID] = struct{}{}
 			if !item.filter.Allows(vector.Ordinal(ordinal)) {
 				continue
 			}

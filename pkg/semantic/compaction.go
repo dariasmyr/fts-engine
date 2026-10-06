@@ -4,9 +4,9 @@ import (
 	"context"
 	"math"
 
+	"github.com/dariasmyr/fts-engine/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/internal/vector/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vectorstore"
 )
 
 // Compact merges all visible live rows into one immutable HNSW segment.
@@ -42,20 +42,19 @@ func (s *Service) Compact(ctx context.Context) error {
 			return nil
 		}
 	}
-	var merged *segment
-	var rows []VectorRow
+	var compactedSegment *segment
 	if published.liveCount > 0 {
 		if componentID == uint64(math.MaxUint64) {
 			return ErrComponentIDExhausted
 		}
 		var err error
-		merged, rows, err = buildCompactedSegment(ctx, published, componentID, config)
+		compactedSegment, err = buildCompactedSegment(ctx, published, componentID, config)
 		if err != nil {
 			return err
 		}
 	}
-	locations := make(map[uint64]vectorLocation, len(rows))
-	for ordinal, row := range rows {
+	locations := make(map[uint64]vectorLocation, published.liveCount)
+	for ordinal, row := range compactedSegment.rows {
 		if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
 			return err
 		}
@@ -63,14 +62,14 @@ func (s *Service) Compact(ctx context.Context) error {
 		locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
 	}
 	segments := []visibleSegment(nil)
-	if merged != nil {
-		segments = []visibleSegment{{segment: merged, filter: vector.NewFullBitSet(uint32(len(rows)))}}
+	if compactedSegment != nil {
+		segments = []visibleSegment{{segment: compactedSegment, filter: vector.NewFullBitSet(uint32(len(compactedSegment.rows)))}}
 	}
 	buildOptions, ok := config.hnswOptions()
 	if !ok {
 		return ErrInvalidConfig
 	}
-	view, err := newReadView(ctx, revision, segments, published.descriptor, config.searchPolicy(), buildOptions.Search)
+	view, err := newTrustedReadView(ctx, revision, segments, published.descriptor, config.searchPolicy(), buildOptions.Search, published.calculator)
 	if err != nil {
 		return err
 	}
@@ -86,7 +85,7 @@ func (s *Service) Compact(ctx context.Context) error {
 	}
 	s.published = view
 	s.locations = locations
-	if merged != nil {
+	if compactedSegment != nil {
 		s.nextComponentID++
 	}
 	return nil
@@ -94,22 +93,22 @@ func (s *Service) Compact(ctx context.Context) error {
 
 // buildCompactedSegment materializes live rows from an immutable read view and
 // builds the replacement HNSW segment without touching mutable service state.
-func buildCompactedSegment(ctx context.Context, view *ReadView, componentID uint64, config Config) (*segment, []VectorRow, error) {
+func buildCompactedSegment(ctx context.Context, view *ReadView, componentID uint64, config Config) (*segment, error) {
 	flatVectors, liveRows, err := materializeLiveRows(ctx, view)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	calculator, err := config.Embedding.Calculator()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	source, err := vectorstore.NewPreparedMemoryVectorStore(calculator, flatVectors)
+	source, err := memorystore.NewPrepared(calculator, flatVectors)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	buildOptions, ok := config.hnswOptions()
 	if !ok {
-		return nil, nil, ErrInvalidConfig
+		return nil, ErrInvalidConfig
 	}
 	segment, err := buildSegment(
 		ctx,
@@ -120,20 +119,20 @@ func buildCompactedSegment(ctx context.Context, view *ReadView, componentID uint
 		buildOptions,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return segment, liveRows, nil
+	return segment, nil
 }
 
 func materializeLiveRows(ctx context.Context, published *ReadView) ([]float32, []VectorRow, error) {
 	// flatVectors is a flat slice of all live vectors in the published segments, concatenated in order.
 	// liveRows is a slice of all live vector ids in the published segments, concatenated in order.
 	// The two slices are aligned by ordinal: flatVectors[dim*i:dim*(i+1)] is the vector for liveRows[i].
-	var flatVectors []float32
-	var liveRows []VectorRow
+	dimensions := published.calculator.Dimensions()
+	flatVectors := make([]float32, published.liveCount*dimensions)
+	liveRows := make([]VectorRow, published.liveCount)
+	liveOrdinal := 0
 	for _, item := range published.segments {
-		dim := item.segment.dimensions()
-
 		for ordinal, row := range item.segment.rows {
 			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
 				return nil, nil, err
@@ -143,14 +142,18 @@ func materializeLiveRows(ctx context.Context, published *ReadView) ([]float32, [
 				continue
 			}
 
-			start := len(flatVectors)
-			flatVectors = append(flatVectors, make([]float32, dim)...)
-			dst := flatVectors[start:]
-			if err := item.segment.vectorStore().ReadVectorInto(ctx, vector.Ordinal(ordinal), dst); err != nil {
+			start := liveOrdinal * dimensions
+			dst := flatVectors[start : start+dimensions]
+			store := item.segment.vectorStore()
+			if err := store.ReadVectorInto(ctx, vector.Ordinal(ordinal), dst); err != nil {
 				return nil, nil, err
 			}
-			liveRows = append(liveRows, row)
+			liveRows[liveOrdinal] = row
+			liveOrdinal++
 		}
+	}
+	if liveOrdinal != published.liveCount {
+		return nil, nil, ErrInternalState
 	}
 	return flatVectors, liveRows, nil
 }

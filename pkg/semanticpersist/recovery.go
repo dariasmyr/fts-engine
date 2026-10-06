@@ -1,32 +1,65 @@
 package semanticpersist
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"os"
 	"path/filepath"
 
+	"github.com/dariasmyr/fts-engine/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/format"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
-func openCurrent(ctx context.Context, paths storePaths, limits Limits, expected semantic.PipelineDescriptor) (*semantic.Service, Generation, error) {
+func openCurrent(ctx context.Context, paths storePaths, limits Limits, expected semantic.PipelineDescriptor) (*semantic.Service, Generation, manifest, error) {
+	current, manifestValue, err := readCurrentManifest(ctx, paths, limits)
+	if err != nil {
+		return nil, Generation{}, manifest{}, err
+	}
+	service, generation, manifestValue, err := openDecodedGeneration(ctx, paths, current.GenerationID, manifestValue, limits, expected)
+	return service, generation, manifestValue, err
+}
+
+func readCurrentManifest(ctx context.Context, paths storePaths, limits Limits) (currentRecord, manifest, error) {
+	if err := ctx.Err(); err != nil {
+		return currentRecord{}, manifest{}, err
+	}
 	currentData, err := readRegularFile(filepath.Join(paths.root, currentFileName), limits.MaxFileBytes)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, Generation{}, ErrCurrentMissing
+		return currentRecord{}, manifest{}, ErrCurrentMissing
 	}
 	if err != nil {
-		return nil, Generation{}, err
+		return currentRecord{}, manifest{}, err
 	}
 	current, err := decodeCurrent(currentData, limits)
 	if err != nil {
-		return nil, Generation{}, err
+		return currentRecord{}, manifest{}, err
 	}
-	service, generation, _, err := openGeneration(ctx, paths, current.GenerationID, current.ManifestHash, true, limits, expected)
-	return service, generation, err
+	generationPath := filepath.Join(paths.generations, generationName(current.GenerationID))
+	if err := validateDirectory(generationPath); err != nil {
+		return currentRecord{}, manifest{}, err
+	}
+	manifestData, err := readRegularFile(filepath.Join(generationPath, manifestFileName), limits.MaxFileBytes)
+	if err != nil {
+		return currentRecord{}, manifest{}, err
+	}
+	if sha256.Sum256(manifestData) != current.ManifestHash {
+		return currentRecord{}, manifest{}, ErrCorrupt
+	}
+	manifestValue, err := decodeManifest(manifestData, limits)
+	if err != nil {
+		return currentRecord{}, manifest{}, err
+	}
+	if manifestValue.GenerationID != current.GenerationID {
+		return currentRecord{}, manifest{}, ErrCorrupt
+	}
+	if err := validateOpenReferences(manifestData, manifestValue, limits); err != nil {
+		return currentRecord{}, manifest{}, err
+	}
+	return current, manifestValue, nil
 }
 
 // RepairCurrent explicitly validates and selects generationID. Normal Open
@@ -92,6 +125,11 @@ func openGeneration(ctx context.Context, paths storePaths, generationID uint64, 
 	if err := validateOpenReferences(manifestData, manifestValue, limits); err != nil {
 		return nil, Generation{}, manifest{}, err
 	}
+	return openDecodedGeneration(ctx, paths, generationID, manifestValue, limits, expected)
+}
+
+func openDecodedGeneration(ctx context.Context, paths storePaths, generationID uint64, manifestValue manifest, limits Limits, expected semantic.PipelineDescriptor) (*semantic.Service, Generation, manifest, error) {
+	generationPath := filepath.Join(paths.generations, generationName(generationID))
 	stateData, err := readReferencedFile(filepath.Join(generationPath, stateFileName), manifestValue.State, limits.MaxFileBytes)
 	if err != nil {
 		return nil, Generation{}, manifest{}, err
@@ -107,18 +145,20 @@ func openGeneration(ctx context.Context, paths storePaths, generationID uint64, 
 		return nil, Generation{}, manifest{}, err
 	}
 
-	hydrated := make([]semantic.HydratedSegment, len(state.Segments))
+	stored := make([]semantic.StoredSegment, len(state.Segments))
+	manifestValue.componentIDs = make([]uint64, len(state.Segments))
 	for i, stateSegment := range state.Segments {
 		manifestSegment := manifestValue.Segments[i]
-		segment, err := openSegmentObject(ctx, paths, manifestSegment, state.Config, stateSegment, limits)
+		segment, err := openStoredSegment(ctx, paths, manifestSegment, state.Config, stateSegment, limits)
 		if err != nil {
 			return nil, Generation{}, manifest{}, err
 		}
-		hydrated[i] = semantic.HydratedSegment{Snapshot: segment, LivenessWords: stateSegment.LivenessWords}
+		stored[i] = semantic.StoredSegment{Data: segment, LivenessWords: stateSegment.LivenessWords}
+		manifestValue.componentIDs[i] = stateSegment.ComponentID
 	}
-	service, err := semantic.Hydrate(ctx, semantic.HydrationState{
+	service, err := semantic.Restore(ctx, semantic.RestoreState{
 		Config: state.Config, Revision: state.Revision, MaxAllocatedVectorID: state.MaxAllocatedVectorID,
-		NextComponentID: state.NextComponentID, Segments: hydrated,
+		NextComponentID: state.NextComponentID, Segments: stored,
 	})
 	if err != nil {
 		if ctx.Err() != nil {
@@ -129,49 +169,73 @@ func openGeneration(ctx context.Context, paths storePaths, generationID uint64, 
 	return service, Generation{ID: generationID}, manifestValue, nil
 }
 
-func openSegmentObject(ctx context.Context, paths storePaths, value manifestSegment, config semantic.Config, state decodedStateSegment, limits Limits) (semantic.SegmentSnapshot, error) {
-	if !validObjectID(value.ObjectID) || value.ObjectID != segmentObjectID(value.Vectors, value.Graph) {
-		return semantic.SegmentSnapshot{}, ErrCorrupt
+func openStoredSegment(ctx context.Context, paths storePaths, value manifestSegment, config semantic.Config, state decodedStateSegment, limits Limits) (semantic.SegmentData, error) {
+	if !format.ValidObjectID(value.ObjectID) || value.ObjectID != segmentObjectID(value.Vectors, value.Graph) {
+		return semantic.SegmentData{}, ErrCorrupt
 	}
-	objectPath := filepath.Join(paths.segments, value.ObjectID)
-	if err := ensureContained(paths.root, objectPath); err != nil {
-		return semantic.SegmentSnapshot{}, err
+	storedSegmentPath := filepath.Join(paths.segments, value.ObjectID)
+	if err := ensureContained(paths.root, storedSegmentPath); err != nil {
+		return semantic.SegmentData{}, err
 	}
-	if err := validateDirectory(objectPath); err != nil {
-		return semantic.SegmentSnapshot{}, err
+	if err := validateDirectory(storedSegmentPath); err != nil {
+		return semantic.SegmentData{}, err
 	}
-	vectorsData, err := readReferencedFile(filepath.Join(objectPath, vectorsFileName), value.Vectors, min(limits.MaxFileBytes, limits.MaxVectorBytes+128))
+	vectorsData, err := readReferencedFileWithoutHash(filepath.Join(storedSegmentPath, vectorsFileName), value.Vectors, min(limits.MaxFileBytes, limits.MaxVectorBytes+128))
 	if err != nil {
-		return semantic.SegmentSnapshot{}, err
+		return semantic.SegmentData{}, err
 	}
-	vectors, metadata, err := openVectorFile(bytes.NewReader(vectorsData), codecLimitsConfig{MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes, MaxK: limits.MaxK})
+	prepared, metadata, err := openBytes(vectorsData, codecLimitsConfig{MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes, MaxK: limits.MaxK})
+
 	if err != nil || metadata.Size != value.Vectors.Size || metadata.SHA256 != value.Vectors.SHA256 {
-		return semantic.SegmentSnapshot{}, ErrCorrupt
+		return semantic.SegmentData{}, ErrCorrupt
 	}
-	graphData, err := readReferencedFile(filepath.Join(objectPath, graphFileName), value.Graph, min(limits.MaxFileBytes, limits.MaxGraphBytes))
+
+	vectors, err := memorystore.NewPrepared(
+		prepared.Calculator,
+		prepared.Values,
+	)
 	if err != nil {
-		return semantic.SegmentSnapshot{}, err
+		return semantic.SegmentData{}, ErrCorrupt
 	}
-	index, graphMetadata, err := hnsw.OpenGraph(ctx, bytes.NewReader(graphData), vectors, hnsw.VectorFileReference{Size: value.Vectors.Size, SHA256: value.Vectors.SHA256}, hnsw.GraphLimits{
-		MaxDimensions: limits.MaxDimensions, MaxVectors: limits.MaxVectors, MaxVectorBytes: limits.MaxVectorBytes,
-		MaxGraphBytes: min(limits.MaxFileBytes, limits.MaxGraphBytes), MaxLinks: limits.MaxGraphLinks,
-		MaxK: limits.MaxK, MaxEfSearch: limits.MaxEfSearch, MaxVisitLimit: limits.MaxVisitLimit,
-	})
+
+	graphData, err := readReferencedFileWithoutHash(filepath.Join(storedSegmentPath, graphFileName), value.Graph, min(limits.MaxFileBytes, limits.MaxGraphBytes))
 	if err != nil {
-		return semantic.SegmentSnapshot{}, err
+		return semantic.SegmentData{}, err
+	}
+
+	index, graphMetadata, err := hnsw.OpenGraphBytes(
+		ctx,
+		graphData,
+		vectors,
+		hnsw.VectorFileReference{
+			Size:   value.Vectors.Size,
+			SHA256: value.Vectors.SHA256,
+		},
+		hnsw.GraphLimits{
+			MaxDimensions:  limits.MaxDimensions,
+			MaxVectors:     limits.MaxVectors,
+			MaxVectorBytes: limits.MaxVectorBytes,
+			MaxGraphBytes:  min(limits.MaxFileBytes, limits.MaxGraphBytes),
+			MaxLinks:       limits.MaxGraphLinks,
+			MaxK:           limits.MaxK,
+			MaxEfSearch:    limits.MaxEfSearch,
+			MaxVisitLimit:  limits.MaxVisitLimit,
+		})
+	if err != nil {
+		return semantic.SegmentData{}, err
 	}
 	if graphMetadata.Size != value.Graph.Size || graphMetadata.SHA256 != value.Graph.SHA256 {
-		return semantic.SegmentSnapshot{}, ErrCorrupt
+		return semantic.SegmentData{}, ErrCorrupt
 	}
-	segment := semantic.NewSegmentSnapshot(semantic.SegmentData{
+	segment := semantic.SegmentData{
 		ComponentID: state.ComponentID,
 		Pipeline:    semantic.PipelineDescriptor{Embedding: config.Embedding, Chunking: config.Chunking},
 		Rows:        state.Rows,
 		Vectors:     vectors,
 		Index:       index,
-	})
-	if err := validateSegment(segment, config, limits); err != nil {
-		return semantic.SegmentSnapshot{}, err
+	}
+	if err := validateSegmentData(segment, config, limits); err != nil {
+		return semantic.SegmentData{}, err
 	}
 	return segment, nil
 }
