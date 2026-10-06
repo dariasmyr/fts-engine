@@ -9,7 +9,6 @@ import (
 
 	"github.com/dariasmyr/fts-engine/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/format"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
@@ -170,7 +169,7 @@ func openDecodedGeneration(ctx context.Context, paths storePaths, generationID u
 }
 
 func openStoredSegment(ctx context.Context, paths storePaths, value manifestSegment, config semantic.Config, state decodedStateSegment, limits Limits) (semantic.SegmentData, error) {
-	if !format.ValidObjectID(value.ObjectID) || value.ObjectID != segmentObjectID(value.Vectors, value.Graph) {
+	if !ValidObjectID(value.ObjectID) || value.ObjectID != segmentObjectID(value.Vectors, value.Graph) {
 		return semantic.SegmentData{}, ErrCorrupt
 	}
 	storedSegmentPath := filepath.Join(paths.segments, value.ObjectID)

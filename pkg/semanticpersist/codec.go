@@ -1,4 +1,4 @@
-package format
+package semanticpersist
 
 import (
 	"bytes"
@@ -9,12 +9,6 @@ import (
 	"unicode/utf8"
 
 	internalformat "github.com/dariasmyr/fts-engine/internal/format"
-)
-
-var (
-	ErrCorrupt            = errorString("semanticpersist/format: corrupt data")
-	ErrUnsupportedVersion = errorString("semanticpersist/format: unsupported version")
-	ErrLimitExceeded      = errorString("semanticpersist/format: configured limit exceeded")
 )
 
 const (
@@ -51,20 +45,6 @@ func (e categorizedError) Is(target error) bool { return target == e.category }
 
 func codecErrorf(category error, format string, args ...any) error {
 	return categorizedError{category: category, detail: fmt.Sprintf(format, args...)}
-}
-
-// Limits bounds semantic persistence codec input and output.
-type Limits struct {
-	MaxFileBytes         uint64
-	MaxDimensions        int
-	MaxVectors           int
-	MaxDocuments         int
-	MaxStringBytes       int
-	MaxChunksPerDocument int
-	MaxK                 int
-	MaxVectorBytes       uint64
-	MaxEfSearch          int
-	MaxVisitLimit        int
 }
 
 // FileReference identifies an immutable file by size and SHA-256.
