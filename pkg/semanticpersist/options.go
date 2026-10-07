@@ -1,6 +1,11 @@
 package semanticpersist
 
-import "github.com/dariasmyr/fts-engine/pkg/semantic"
+import (
+	"context"
+	"fmt"
+
+	"github.com/dariasmyr/fts-engine/pkg/semantic"
+)
 
 type publicationStep string
 
@@ -20,16 +25,46 @@ const (
 )
 
 type Options struct {
-	Durability DurabilityMode
-	Limits     Limits
-	beforeStep func(publicationStep) error
-	afterStep  func(publicationStep) error
-	// ExpectedGeneration is the CURRENT generation on which this publication is
-	// based. A mismatch rejects a stale writer before any generation is committed.
+	Durability         DurabilityMode
+	Limits             Limits
+	beforeStep         func(publicationStep) error
+	afterStep          func(publicationStep) error
 	ExpectedGeneration uint64
 }
 
 type OpenOptions struct {
 	Limits              Limits
 	ExpectedDescriptors semantic.PipelineDescriptor
+}
+
+func normalizeOptions(options *Options) error {
+	if options.Durability == 0 {
+		options.Durability = DurabilitySynchronous
+	}
+	if options.Durability != DurabilitySynchronous && options.Durability != DurabilityAsynchronous {
+		return ErrCorrupt
+	}
+	options.Limits = normalizeLimits(options.Limits)
+	return validateLimits(options.Limits)
+}
+
+func beforeStep(ctx context.Context, options Options, step publicationStep) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if options.beforeStep != nil {
+		return options.beforeStep(step)
+	}
+	return nil
+}
+
+func afterStep(options Options, step publicationStep, committed bool) error {
+	var err error
+	if options.afterStep != nil {
+		err = options.afterStep(step)
+	}
+	if err != nil && committed {
+		return fmt.Errorf("%w: %v", ErrIndeterminate, err)
+	}
+	return err
 }

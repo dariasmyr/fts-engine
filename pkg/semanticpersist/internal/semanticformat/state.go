@@ -1,4 +1,4 @@
-package semanticpersist
+package semanticformat
 
 import (
 	"math"
@@ -14,7 +14,7 @@ import (
 const stateVersion = uint16(8)
 
 // Conservative decoder bound before reading a variable-size row.
-const minimumRowBytes = 32
+const minimumRowBytes = wireUint64Size + 3*wireStringLengthPrefixSize + wireUint32Size + 2*wireUint64Size
 
 const (
 	// Five service limits and six HNSW integer settings.
@@ -39,29 +39,32 @@ const (
 	stateRowFixedSize = wireUint64Size + wireUint32Size + 2*wireUint64Size
 )
 
-type StateSegment struct {
+type SegmentState struct {
 	ComponentID   uint64
 	Rows          []semantic.VectorRow
 	LivenessWords []uint64
 }
 
-// State is the decoded SSTA payload required to resume semantic writes.
-type State struct {
+// ServiceState is the decoded SSTA payload required to resume semantic writes.
+type ServiceState struct {
 	Config               semantic.Config
 	Revision             uint64
 	MaxAllocatedVectorID uint64
 	NextComponentID      uint64
-	Segments             []StateSegment
+	Segments             []SegmentState
 }
 
-func EncodeState(value State, limits Limits) ([]byte, FileReference, error) {
+func EncodeState(value ServiceState, limits StateLimits) ([]byte, FileRef, error) {
+	if err := limits.validate(); err != nil {
+		return nil, FileRef{}, err
+	}
 	expectedSize, err := validateStateAndSize(value, limits)
 	if err != nil {
-		return nil, FileReference{}, err
+		return nil, FileRef{}, err
 	}
 	c := value.Config
 	calculator, _ := c.Embedding.Calculator()
-	e := newEncoder("SSTA", stateVersion, expectedSize, limits)
+	e := newEncoder("SSTA", stateVersion, expectedSize, limits.FileLimits)
 	e.writeUint32(uint32(c.Embedding.Dimensions))
 	e.writeUint8(uint8(c.Embedding.Metric))
 	e.writeUint8(uint8(calculator.Normalization()))
@@ -94,35 +97,38 @@ func EncodeState(value State, limits Limits) ([]byte, FileReference, error) {
 	return e.finish()
 }
 
-func DecodeState(data []byte, limits Limits) (State, error) {
-	d, err := newDecoder(data, "SSTA", stateVersion, limits)
+func DecodeState(data []byte, limits StateLimits) (ServiceState, error) {
+	if err := limits.validate(); err != nil {
+		return ServiceState{}, err
+	}
+	d, err := newDecoder(data, "SSTA", stateVersion, limits.FileLimits)
 	if err != nil {
-		return State{}, err
+		return ServiceState{}, err
 	}
 	dimensions := int(d.readUint32())
 	metric := vector.Metric(d.readUint8())
 	normalization := vector.Normalization(d.readUint8())
 	if d.readUint16() != 0 {
-		return State{}, ErrCorrupt
+		return ServiceState{}, ErrCorrupt
 	}
 	formatVersion := d.readUint32()
 	embedding := semantic.EmbeddingDescriptor{Dimensions: dimensions, Metric: metric, VectorFormatVersion: formatVersion}
 	embedding.ProviderID, embedding.ModelID, embedding.ModelVersion, embedding.PipelineFingerprint = d.readString(), d.readString(), d.readString(), d.readString()
 	chunking := semantic.ChunkingDescriptor{ID: d.readString(), Version: d.readUint32(), Fingerprint: d.readString()}
 	config := decodeConfig(d, embedding, chunking)
-	value := State{Config: config, Revision: d.readUint64(), MaxAllocatedVectorID: d.readUint64(), NextComponentID: d.readUint64()}
+	value := ServiceState{Config: config, Revision: d.readUint64(), MaxAllocatedVectorID: d.readUint64(), NextComponentID: d.readUint64()}
 	countValue := uint64(d.readUint32())
 	if countValue > uint64(limits.MaxVectors) || countValue > uint64(d.remaining()/16) {
-		return State{}, ErrLimitExceeded
+		return ServiceState{}, ErrLimitExceeded
 	}
 	count := int(countValue)
-	value.Segments = make([]StateSegment, count)
+	value.Segments = make([]SegmentState, count)
 	totalRows := 0
 	for i := range value.Segments {
-		segment := StateSegment{ComponentID: d.readUint64()}
+		segment := SegmentState{ComponentID: d.readUint64()}
 		rowCountValue, wordCountValue := uint64(d.readUint32()), uint64(d.readUint32())
 		if rowCountValue > uint64(limits.MaxVectors-totalRows) || wordCountValue != (rowCountValue+63)/64 || wordCountValue > uint64(d.remaining()/8) {
-			return State{}, ErrLimitExceeded
+			return ServiceState{}, ErrLimitExceeded
 		}
 		rowCount, wordCount := int(rowCountValue), int(wordCountValue)
 		segment.LivenessWords = make([]uint64, wordCount)
@@ -130,27 +136,27 @@ func DecodeState(data []byte, limits Limits) (State, error) {
 			segment.LivenessWords[j] = d.readUint64()
 		}
 		if rowCount > d.remaining()/minimumRowBytes {
-			return State{}, ErrLimitExceeded
+			return ServiceState{}, ErrLimitExceeded
 		}
 		segment.Rows = make([]semantic.VectorRow, rowCount)
 		for j := range segment.Rows {
 			segment.Rows[j] = semantic.VectorRow{VectorID: d.readUint64(), Chunk: decodeRef(d)}
 			if err := d.err(); err != nil {
-				return State{}, err
+				return ServiceState{}, err
 			}
 		}
 		totalRows += rowCount
 		value.Segments[i] = segment
 	}
 	if err := d.done(); err != nil {
-		return State{}, err
+		return ServiceState{}, err
 	}
 	calculator, err := vector.NewCalculator(dimensions, metric)
 	if err != nil || calculator.Normalization() != normalization {
-		return State{}, ErrCorrupt
+		return ServiceState{}, ErrCorrupt
 	}
 	if _, err := validateStateAndSize(value, limits); err != nil {
-		return State{}, err
+		return ServiceState{}, err
 	}
 	return value, nil
 }
@@ -196,15 +202,15 @@ func decodeConfig(d *decoder, embedding semantic.EmbeddingDescriptor, chunking s
 	return c
 }
 
-func validateStateAndSize(value State, limits Limits) (uint64, error) {
+func validateStateAndSize(value ServiceState, limits StateLimits) (uint64, error) {
 	if err := value.Config.Validate(); err != nil {
 		return 0, codecErrorf(ErrCorrupt, "state config is invalid: %v", err)
 	}
 	if value.NextComponentID == 0 {
 		return 0, codecErrorf(ErrCorrupt, "state next component ID is zero")
 	}
-	if len(value.Segments) > limits.MaxVectors {
-		return 0, codecErrorf(ErrLimitExceeded, "state segment count %d exceeds limit %d", len(value.Segments), limits.MaxVectors)
+	if len(value.Segments) > limits.MaxSegments {
+		return 0, codecErrorf(ErrLimitExceeded, "state segment count %d exceeds limit %d", len(value.Segments), limits.MaxSegments)
 	}
 	c := value.Config
 	size := uint64(stateFixedEncodedSize)
@@ -350,66 +356,4 @@ func encodeRef(e *encoder, ref chunk.Ref, maxString int) {
 
 func decodeRef(d *decoder) chunk.Ref {
 	return chunk.Ref{ID: chunk.ID(d.readString()), DocID: fts.DocID(d.readString()), Field: d.readString(), Ordinal: d.readUint32(), StartByte: d.readUint64(), EndByte: d.readUint64()}
-}
-
-type committedSegment struct {
-	data          semantic.SegmentData
-	livenessWords []uint64
-}
-
-type committedState struct {
-	config               semantic.Config
-	revision             uint64
-	maxAllocatedVectorID uint64
-	nextComponentID      uint64
-	segments             []committedSegment
-	stateSegments        []StateSegment
-	encodedState         []byte
-	stateReference       fileReference
-}
-
-func captureCommittedState(state *semantic.CommittedState, limits Limits) (committedState, error) {
-	segments := state.Segments()
-	captured := committedState{
-		config:               state.Config(),
-		revision:             state.Revision(),
-		maxAllocatedVectorID: state.MaxAllocatedVectorID(),
-		nextComponentID:      state.NextComponentID(),
-		segments:             make([]committedSegment, len(segments)),
-		stateSegments:        make([]StateSegment, len(segments)),
-	}
-	for i, segment := range segments {
-		data := segment.Data()
-		livenessWords := segment.LivenessWords()
-		captured.segments[i] = committedSegment{data: data, livenessWords: livenessWords}
-		captured.stateSegments[i] = StateSegment{ComponentID: data.ComponentID, Rows: data.Rows, LivenessWords: livenessWords}
-	}
-	value := State{Config: captured.config, Revision: captured.revision, MaxAllocatedVectorID: captured.maxAllocatedVectorID, NextComponentID: captured.nextComponentID, Segments: captured.stateSegments}
-	data, ref, err := EncodeState(value, codecLimits(limits))
-	if err != nil {
-		return committedState{}, mapCodecError(err)
-	}
-	captured.encodedState = data
-	captured.stateReference = persistReference(ref)
-	return captured, nil
-}
-
-func encodeState(state *semantic.CommittedState, limits Limits) ([]byte, fileReference, error) {
-	captured, err := captureCommittedState(state, limits)
-	if err != nil {
-		return nil, fileReference{}, err
-	}
-	return captured.encodedState, captured.stateReference, nil
-}
-
-func decodeState(data []byte, limits Limits) (decodedState, error) {
-	value, err := DecodeState(data, codecLimits(limits))
-	if err != nil {
-		return decodedState{}, mapCodecError(err)
-	}
-	segments := make([]decodedStateSegment, len(value.Segments))
-	for i, segment := range value.Segments {
-		segments[i] = decodedStateSegment{ComponentID: segment.ComponentID, Rows: segment.Rows, LivenessWords: segment.LivenessWords}
-	}
-	return decodedState{Config: value.Config, Revision: value.Revision, MaxAllocatedVectorID: value.MaxAllocatedVectorID, NextComponentID: value.NextComponentID, Segments: segments}, nil
 }
