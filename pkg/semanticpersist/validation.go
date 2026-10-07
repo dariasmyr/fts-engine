@@ -5,6 +5,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 func validateSegmentData(data semantic.SegmentData, config semantic.Config, limits Limits) error {
@@ -14,10 +15,10 @@ func validateSegmentData(data semantic.SegmentData, config semantic.Config, limi
 	}
 	dimensions := data.Index.Dimensions()
 	length := data.Index.Len()
-	search := data.Index.Report().Search
+	topology := hnsw.Snapshot(data.Index)
 	if dimensions <= 0 || dimensions > limits.MaxDimensions || length < 0 || length > limits.MaxVectors ||
-		search.MaxK > limits.MaxK || semanticLimits.MaxDocumentsPerSearch <= 0 || semanticLimits.MaxDocumentsPerSearch > limits.MaxK || semanticLimits.MaxDocumentsPerSearch > search.MaxK ||
-		semanticLimits.MaxChunkCandidates < semanticLimits.MaxDocumentsPerSearch || semanticLimits.MaxChunkCandidates > limits.MaxK || semanticLimits.MaxChunkCandidates > search.MaxK ||
+		semanticLimits.MaxDocumentsPerSearch <= 0 || semanticLimits.MaxDocumentsPerSearch > limits.MaxK ||
+		semanticLimits.MaxChunkCandidates < semanticLimits.MaxDocumentsPerSearch || semanticLimits.MaxChunkCandidates > limits.MaxK ||
 		semanticLimits.MaxChunksPerDocumentHit <= 0 || semanticLimits.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
 		return ErrLimitExceeded
 	}
@@ -29,11 +30,15 @@ func validateSegmentData(data semantic.SegmentData, config semantic.Config, limi
 	if !ok || vectorBytes > limits.MaxVectorBytes || limits.MaxFileBytes < 44 || vectorBytes > limits.MaxFileBytes-44 {
 		return ErrLimitExceeded
 	}
-	report := data.Index.Report()
-	if search.MaxK > limits.MaxK || search.MaxEfSearch > limits.MaxEfSearch || search.MaxVisitLimit > limits.MaxVisitLimit ||
-		report.Build.MaxNeighbors != config.HNSW.MaxNeighbors || report.Build.LevelZeroMaxNeighbors != config.HNSW.MaxNeighbors*2 ||
-		report.Build.EfConstruction != config.HNSW.EfConstruction || report.Build.Seed != config.HNSW.Seed ||
-		uint64(report.Storage.DirectedLinks) > limits.MaxGraphLinks || report.Storage.GraphFileBytes > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
+	directedLinks, ok := checkedAdd64(uint64(len(topology.Level0Links)), uint64(len(topology.UpperLinks)))
+	if !ok || config.HNSW.MaxEfSearch > limits.MaxEfSearch || config.HNSW.MaxVisitLimit > limits.MaxVisitLimit ||
+		topology.MaxNeighbors != config.HNSW.MaxNeighbors || topology.LevelZeroMaxNeighbors != config.HNSW.MaxNeighbors*2 ||
+		topology.EfConstruction != config.HNSW.EfConstruction || topology.Seed != config.HNSW.Seed ||
+		directedLinks > limits.MaxGraphLinks {
+		return ErrLimitExceeded
+	}
+	graphBytes, err := semanticformat.EncodedSize(graphFromSnapshot(topology, semanticformat.FileRef{Size: 1, SHA256: [32]byte{1}}))
+	if err != nil || graphBytes > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
 		return ErrLimitExceeded
 	}
 	return nil

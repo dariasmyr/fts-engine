@@ -190,11 +190,12 @@ func Open(ctx context.Context, state State) (*Index, error) {
 		return nil, ErrInternalState
 	}
 
-	buildOptions, ok := config.hnswOptions()
+	searchConfig, ok := config.hnswSearchConfig()
 	if !ok {
 		return nil, ErrInvalidConfig
 	}
-	snapshot, err := newSnapshot(ctx, state.Revision, views, config.Schema, config.searchPolicy(), buildOptions.Search)
+
+	snapshot, err := newSnapshot(ctx, state.Revision, views, config.Schema, config.searchPolicy(), searchConfig)
 	if err != nil {
 		return nil, err
 	}

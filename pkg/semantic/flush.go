@@ -130,9 +130,22 @@ func buildPendingSegment(ctx context.Context, componentID SegmentID, pending []p
 	if err != nil {
 		return nil, err
 	}
-	buildOptions, ok := config.hnswOptions()
+	buildConfig, ok := config.hnswBuildConfig()
 	if !ok {
 		return nil, ErrInvalidConfig
 	}
-	return buildSegment(ctx, componentID, config.Schema, source, rows, buildOptions)
+	searchConfig, ok := config.hnswSearchConfig()
+	if !ok {
+		return nil, ErrInvalidConfig
+	}
+
+	return buildSegment(
+		ctx,
+		componentID,
+		config.Schema,
+		source,
+		rows,
+		buildConfig,
+		searchConfig,
+	)
 }

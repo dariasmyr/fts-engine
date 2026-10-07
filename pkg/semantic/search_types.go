@@ -3,7 +3,7 @@ package semantic
 import (
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 // ChunkHit identifies one matching source chunk and its vector distance from
@@ -50,5 +50,5 @@ type DocumentSearchResult struct {
 	// live chunks or that an underlying ANN search terminated early.
 	GroupingIncomplete bool
 	// Stats contains the aggregated vector-search work.
-	Stats vector.SearchStats
+	Stats hnsw.SearchStats
 }

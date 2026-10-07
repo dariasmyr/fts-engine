@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 // segmentView binds an immutable physical segment to an immutable local
@@ -17,17 +18,17 @@ type segmentView struct {
 
 type chunkSearchResult struct {
 	Hits       []ChunkHit
-	Stats      vector.SearchStats
+	Stats      hnsw.SearchStats
 	Incomplete bool
 }
 
-func mergeSearchStats(total *vector.SearchStats, partial vector.SearchStats) {
+func mergeSearchStats(total *hnsw.SearchStats, partial hnsw.SearchStats) {
 	total.VisitedNodes += partial.VisitedNodes
 	total.ExpandedNodes += partial.ExpandedNodes
 	total.DistanceComputations += partial.DistanceComputations
 	total.RejectedNodes += partial.RejectedNodes
-	if partial.Termination == vector.TerminationVisitLimit || total.Termination == vector.TerminationVisitLimit {
-		total.Termination = vector.TerminationVisitLimit
+	if partial.Termination == hnsw.TerminationVisitLimit || total.Termination == hnsw.TerminationVisitLimit {
+		total.Termination = hnsw.TerminationVisitLimit
 	} else if total.Termination == "" {
 		total.Termination = partial.Termination
 	}
@@ -43,7 +44,7 @@ func resolveCandidateBudget(candidateChunks, maxCandidates int) (int, error) {
 	return min(candidateChunks, maxCandidates), nil
 }
 
-func searchSegmentsChunksPrepared(ctx context.Context, calculator vector.Calculator, views []segmentView, query vector.PreparedQuery, k, maxResults int, searchOptions vector.SearchOptions) (chunkSearchResult, error) {
+func searchSegmentsChunksPrepared(ctx context.Context, calculator vector.Calculator, views []segmentView, query vector.PreparedQuery, k, maxResults int, searchOptions hnsw.SearchOptions) (chunkSearchResult, error) {
 	if k <= 0 || k > maxResults {
 		return chunkSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxResults)
 	}
@@ -60,7 +61,7 @@ func searchSegmentsChunksPrepared(ctx context.Context, calculator vector.Calcula
 		return chunkSearchResult{Hits: []ChunkHit{}}, nil
 	}
 	top := make(rankedHitHeap, 0, k)
-	var stats vector.SearchStats
+	var stats hnsw.SearchStats
 	incomplete := false
 	for _, view := range views {
 		if view.liveness.AllowedOrdinalCount() == 0 {
@@ -100,9 +101,9 @@ func searchSegmentsChunksPrepared(ctx context.Context, calculator vector.Calcula
 	for i, item := range top {
 		hits[i] = item.hit
 	}
-	stats.Termination = vector.TerminationComplete
+	stats.Termination = hnsw.TerminationComplete
 	if incomplete {
-		stats.Termination = vector.TerminationVisitLimit
+		stats.Termination = hnsw.TerminationVisitLimit
 	}
 	return chunkSearchResult{Hits: hits, Stats: stats, Incomplete: incomplete}, nil
 }

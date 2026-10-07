@@ -17,27 +17,38 @@ type segment struct {
 	schema    Schema
 	rows      []VectorRow
 	vectors   vector.PreparedVectorStore
-	search    hnsw.SearchConfig
 	index     *hnsw.Index
 }
 
 // buildSegment builds the target immutable semantic segment. The HNSW index
 // navigates source rows by local ordinal; rows resolve those ordinals to stable
 // semantic identities.
-func buildSegment(ctx context.Context, component SegmentID, schema Schema, source vector.PreparedVectorStore, rows []VectorRow, options hnsw.BuildOptions) (*segment, error) {
+func buildSegment(
+	ctx context.Context,
+	component SegmentID,
+	schema Schema,
+	source vector.PreparedVectorStore,
+	rows []VectorRow,
+	build hnsw.BuildConfig,
+	search hnsw.SearchConfig,
+) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
+
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+
 	if component == 0 || !schema.IsValid() {
 		return nil, ErrInvalidSegment
 	}
-	index, err := hnsw.Build(ctx, source, options)
+
+	index, err := hnsw.Build(ctx, source, build, search)
 	if err != nil {
 		return nil, err
 	}
+
 	return newBuiltSegment(component, schema, source, index, rows)
 }
 
@@ -49,7 +60,6 @@ func newBuiltSegment(component SegmentID, schema Schema, vectors vector.Prepared
 		schema:    schema,
 		rows:      rows,
 		vectors:   vectors,
-		search:    index.Report().Search,
 		index:     index,
 	}
 	if err := segment.validateContents(); err != nil {
@@ -71,18 +81,12 @@ func newSegment(ctx context.Context, component SegmentID, schema Schema, vectors
 	if err := validateSegmentRowsContext(ctx, rows); err != nil {
 		return nil, err
 	}
-	if err := index.ValidateSource(ctx, vectors); err != nil {
-		if ctx.Err() != nil {
-			return nil, err
-		}
-		return nil, ErrInvalidSegment
-	}
+
 	segment := &segment{
 		component: component,
 		schema:    schema,
 		rows:      append([]VectorRow(nil), rows...),
 		vectors:   vectors,
-		search:    index.Report().Search,
 		index:     index,
 	}
 	if err := segment.validateContents(); err != nil {
@@ -112,9 +116,9 @@ func (s *segment) vectorStore() vector.PreparedVectorStore {
 	return s.vectors
 }
 
-func (s *segment) searchPrepared(ctx context.Context, query vector.PreparedQuery, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func (s *segment) searchPrepared(ctx context.Context, query vector.PreparedQuery, k int, options hnsw.SearchOptions) (hnsw.SearchResult, error) {
 	if s == nil || s.index == nil {
-		return vector.SearchResult{}, ErrInvalidSegment
+		return hnsw.SearchResult{}, ErrInvalidSegment
 	}
 	return s.index.SearchPrepared(ctx, query, k, options)
 }
@@ -131,13 +135,6 @@ func (s *segment) dimensions() int {
 		return 0
 	}
 	return s.index.Dimensions()
-}
-
-func (s *segment) searchConfig() hnsw.SearchConfig {
-	if s == nil {
-		return hnsw.SearchConfig{}
-	}
-	return s.search
 }
 
 func validateSegmentRowsContext(ctx context.Context, rows []VectorRow) error {
@@ -181,7 +178,7 @@ func (s *segment) validateContents() error {
 	if err != nil || s.component == 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
 		vectors.Dimensions() != calculator.Dimensions() || vectors.Metric() != calculator.Metric() ||
 		vectors.Normalization() != calculator.Normalization() || s.index.Dimensions() != vectors.Dimensions() ||
-		s.index.Metric() != vectors.Metric() || s.index.Report().Search != s.search {
+		s.index.Metric() != vectors.Metric() {
 		return ErrInvalidSegment
 	}
 	return nil

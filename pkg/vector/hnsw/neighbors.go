@@ -63,7 +63,10 @@ func (b *builder) addReverseLink(owner, neighbor nodeOrdinal, level int) {
 		candidates = append(candidates, searchCandidate{node: link, distance: b.distanceNodes(owner, link)})
 	}
 	candidates = append(candidates, searchCandidate{node: neighbor, distance: b.distanceNodes(owner, neighbor)})
-	limit := b.config.info().neighborLimit(level)
+	limit := b.config.MaxNeighbors
+	if level == 0 {
+		limit *= 2
+	}
 	// Reverse insertion can overflow an existing node even though the new node
 	// selected only MaxNeighbors links, so prune relative to the existing owner.
 	if len(candidates) > limit {

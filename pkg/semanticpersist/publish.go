@@ -44,7 +44,11 @@ func (p *publisher) publish(ctx context.Context, index *semantic.Index, options 
 			reused = true
 			continue
 		}
-		ref, err := objects.put(ctx, segment.data)
+		ref, err := objects.put(
+			ctx,
+			segment.data,
+			snapshot.state.Config.Limits.MaxChunkCandidates,
+		)
 		if err != nil {
 			return Generation{}, err
 		}

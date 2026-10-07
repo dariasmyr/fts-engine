@@ -40,8 +40,7 @@ func (v *Snapshot) validateSearchLimits(ctx context.Context, maxResultCount int,
 	if _, err := resolveCandidateBudget(options.CandidateChunks, v.maxCandidates); err != nil {
 		return err
 	}
-	if options.EfSearch < 0 || options.VisitLimit < 0 ||
-		options.EfSearch > v.searchConfig.MaxEfSearch || options.VisitLimit > v.searchConfig.MaxVisitLimit {
+	if options.EfSearch < 0 || options.VisitLimit < 0 {
 		return ErrInvalidSearchOptions
 	}
 	return nil
@@ -77,7 +76,7 @@ func (v *Snapshot) collectChunkCandidates(ctx context.Context, queries []vector.
 	candidateBudget, _ := resolveCandidateBudget(options.CandidateChunks, v.maxCandidates)
 	visitBudget := options.VisitLimit
 	if visitBudget == 0 {
-		visitBudget = v.searchConfig.DefaultVisitLimit
+		visitBudget = v.searchConfig.VisitLimit
 	}
 
 	for _, query := range queries {
@@ -93,7 +92,7 @@ func (v *Snapshot) collectChunkCandidates(ctx context.Context, queries []vector.
 		}
 
 		budget := min(v.liveCount, remainingCandidates)
-		partial, err := searchSegmentsChunksPrepared(ctx, v.calculator, v.segments, query, budget, candidateBudget, vector.SearchOptions{
+		partial, err := searchSegmentsChunksPrepared(ctx, v.calculator, v.segments, query, budget, candidateBudget, hnsw.SearchOptions{
 			EfSearch:   options.EfSearch,
 			VisitLimit: remainingVisits,
 		})
@@ -116,8 +115,7 @@ func newSnapshot(ctx context.Context, revision Revision, segments []segmentView,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !schema.IsValid() || policy.validate() != nil ||
-		search.MaxK < policy.MaxChunkCandidates || search.MaxEfSearch < policy.MaxChunkCandidates || search.MaxVisitLimit <= 0 {
+	if !schema.IsValid() || policy.validate() != nil {
 		return nil, ErrInvalidConfig
 	}
 	calculator, err := schema.Embedding.Calculator()
@@ -177,7 +175,7 @@ func validateSegmentViews(ctx context.Context, segments []segmentView, schema Sc
 				return err
 			}
 		}
-		if item.segment == nil || item.liveness.TotalOrdinalCount() != uint32(item.segment.len()) || item.segment.searchConfig() != search {
+		if item.segment == nil || item.liveness.TotalOrdinalCount() != uint32(item.segment.len()) {
 			return ErrInvalidSegment
 		}
 		got := item.segment.schema

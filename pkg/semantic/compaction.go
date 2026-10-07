@@ -75,7 +75,7 @@ func (i *Index) Compact(ctx context.Context) error {
 			liveness: vector.NewFullBitSet(uint32(compacted.len())),
 		}}
 	}
-	buildOptions, ok := config.hnswOptions()
+	searchConfig, ok := config.hnswSearchConfig()
 	if !ok {
 		return ErrInvalidConfig
 	}
@@ -85,7 +85,7 @@ func (i *Index) Compact(ctx context.Context) error {
 		segments,
 		snapshot.schema,
 		config.searchPolicy(),
-		buildOptions.Search,
+		searchConfig,
 		snapshot.calculator,
 	)
 	if err != nil {
@@ -123,11 +123,23 @@ func buildCompactedSegment(ctx context.Context, snapshot *Snapshot, componentID 
 	if err != nil {
 		return nil, err
 	}
-	buildOptions, ok := config.hnswOptions()
+	buildConfig, ok := config.hnswBuildConfig()
 	if !ok {
 		return nil, ErrInvalidConfig
 	}
-	return buildSegment(ctx, componentID, config.Schema, source, liveRows, buildOptions)
+	searchConfig, ok := config.hnswSearchConfig()
+	if !ok {
+		return nil, ErrInvalidConfig
+	}
+	return buildSegment(
+		ctx,
+		componentID,
+		config.Schema,
+		source,
+		liveRows,
+		buildConfig,
+		searchConfig,
+	)
 }
 
 func materializeLiveRows(ctx context.Context, snapshot *Snapshot) ([]float32, []VectorRow, error) {

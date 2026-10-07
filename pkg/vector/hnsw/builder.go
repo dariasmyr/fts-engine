@@ -31,7 +31,7 @@ func newBuilder(config BuildConfig, calculator vector.Calculator, vectorCount, c
 // add validates and copies the next prepared row. Its node ordinal is the
 // source row ordinal, preserving the package-wide node == vector invariant.
 func (b *builder) add(prepared []float32) error {
-	if err := validatePreparedVector(b.calculator, prepared); err != nil {
+	if err := b.calculator.ValidatePrepared(prepared); err != nil {
 		return err
 	}
 	if len(b.graph.nodes) >= cap(b.graph.nodes) {
@@ -57,7 +57,11 @@ func (b *builder) add(prepared []float32) error {
 }
 
 func (b *builder) freeze(source vector.PreparedVectorStore, search SearchConfig) (*Index, error) {
-	return newBuiltIndex(b.calculator, search, b.config.info(), b.graph, source)
+	topology, err := packGraph(b.calculator, b.config.info(), b.graph)
+	if err != nil {
+		return nil, err
+	}
+	return newIndex(topology, source, search)
 }
 
 func (b *builder) insert(node nodeOrdinal) {

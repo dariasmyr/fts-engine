@@ -25,7 +25,7 @@ func newObjectStore(l layout, options PublishOptions) objectStore {
 	return objectStore{layout: l, limits: options.Limits, durability: durabilityPolicy{mode: options.Durability}, hooks: options}
 }
 
-func (s objectStore) put(ctx context.Context, data semantic.SegmentData) (semanticformat.SegmentRef, error) {
+func (s objectStore) put(ctx context.Context, data semantic.SegmentData, maxK int) (semanticformat.SegmentRef, error) {
 	segmentTemp, err := os.MkdirTemp(s.layout.segments, ".tmp-seg-")
 	if err != nil {
 		return semanticformat.SegmentRef{}, fmt.Errorf("semanticpersist: create segment temp: %w", err)
@@ -40,7 +40,7 @@ func (s objectStore) put(ctx context.Context, data semantic.SegmentData) (semant
 	if err := beforeStep(ctx, s.hooks, stepWriteVectors); err != nil {
 		return semanticformat.SegmentRef{}, err
 	}
-	vectorsRef, err := s.writeVectors(ctx, filepath.Join(segmentTemp, vectorsFileName), data.Vectors, data.Index.Report().Search.MaxK)
+	vectorsRef, err := s.writeVectors(ctx, filepath.Join(segmentTemp, vectorsFileName), data.Vectors, maxK)
 	if err != nil {
 		return semanticformat.SegmentRef{}, err
 	}
@@ -136,7 +136,7 @@ func (s objectStore) writeGraph(ctx context.Context, path string, index *hnsw.In
 	if err != nil {
 		return semanticformat.FileRef{}, err
 	}
-	metadata, writeErr := hnsw.WriteGraph(ctx, file, index, hnsw.VectorFileReference{Size: vectors.Size, SHA256: vectors.SHA256})
+	metadata, writeErr := writeGraphFile(ctx, file, index, vectors)
 	if writeErr == nil {
 		writeErr = s.durability.syncFile(file)
 	}
@@ -204,18 +204,30 @@ func (s objectStore) open(ctx context.Context, ref semanticformat.SegmentRef, co
 	if err != nil {
 		return semantic.SegmentData{}, err
 	}
-	index, graphMetadata, err := hnsw.OpenGraphBytes(ctx, graphData, vectors,
-		hnsw.VectorFileReference{Size: ref.Vectors.Size, SHA256: ref.Vectors.SHA256},
-		hnsw.GraphLimits{MaxDimensions: s.limits.MaxDimensions, MaxVectors: s.limits.MaxVectors, MaxVectorBytes: s.limits.MaxVectorBytes,
-			MaxGraphBytes: min(s.limits.MaxFileBytes, s.limits.MaxGraphBytes), MaxLinks: s.limits.MaxGraphLinks,
-			MaxK: s.limits.MaxK, MaxEfSearch: s.limits.MaxEfSearch, MaxVisitLimit: s.limits.MaxVisitLimit})
+	index, graphMetadata, err := openGraphFile(
+		ctx,
+		graphData,
+		vectors,
+		ref.Vectors,
+		hnsw.SearchConfig{
+			EfSearch:   config.HNSW.DefaultEfSearch,
+			VisitLimit: config.HNSW.DefaultVisitLimit,
+		},
+		s.limits,
+	)
 	if err != nil {
 		return semantic.SegmentData{}, err
 	}
 	if graphMetadata.Size != ref.Graph.Size || graphMetadata.SHA256 != ref.Graph.SHA256 {
 		return semantic.SegmentData{}, ErrCorrupt
 	}
-	segment := semantic.SegmentData{ID: state.ID, Schema: semantic.Schema{Embedding: config.Embedding, Chunking: config.Chunking}, Rows: state.Rows, Vectors: vectors, Index: index}
+	segment := semantic.SegmentData{
+		ID:      state.ID,
+		Schema:  config.Schema,
+		Rows:    state.Rows,
+		Vectors: vectors,
+		Index:   index,
+	}
 	if err := validateSegmentData(segment, config, s.limits); err != nil {
 		return semantic.SegmentData{}, err
 	}

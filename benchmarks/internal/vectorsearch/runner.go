@@ -44,7 +44,6 @@ type Progress struct {
 	Seed           uint64
 	Order          BuildOrder
 	BuildPath      string
-	BuildProgress  hnsw.BuildProgress
 }
 
 type buildTiming struct {
@@ -129,10 +128,9 @@ func Run(ctx context.Context, config Config) (Report, error) {
 }
 
 func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, oracle *exact.Oracle, truth []truthSweep, maxNeighbors, efConstruction int, seed uint64, buildNumber, builds int) ([]RunReport, error) {
-	maxEfSearch := max(config.K, maxSlice(config.EfSearch))
 	searchConfig := hnsw.SearchConfig{
-		DefaultEfSearch: max(config.K, config.EfSearch[0]), MaxEfSearch: maxEfSearch,
-		DefaultVisitLimit: config.VisitLimit, MaxVisitLimit: config.VisitLimit, MaxK: config.K,
+		EfSearch:   max(config.K, config.EfSearch[0]),
+		VisitLimit: config.VisitLimit,
 	}
 	buildConfig := hnsw.BuildConfig{
 		MaxNeighbors: maxNeighbors, EfConstruction: efConstruction, Seed: seed,
@@ -163,31 +161,18 @@ func buildReader(ctx context.Context, oracle *exact.Oracle, order BuildOrder, bu
 	buildPath := BuildPathProduction
 	progress.BuildPath = buildPath
 	var callbackDuration time.Duration
-	reportProgress := func(value hnsw.BuildProgress) {
-		if callback == nil {
-			return
-		}
-		started := time.Now()
-		progress.BuildProgress = value
-		callback(progress)
-		callbackDuration += time.Since(started)
-	}
-
 	started := time.Now()
 	var reader *hnsw.Index
 	var err error
 	if order.Name != "ascending" {
 		err = fmt.Errorf("vectorsearch: unknown build order %q", order.Name)
 	} else {
-		store := oracle.Store()
-		reader, err = hnsw.Build(ctx, oracle.Store(), hnsw.BuildOptions{
-			Build: buildConfig,
-			Limits: hnsw.BuildLimits{
-				MaxVectors:     max(1, store.Len()),
-				MaxVectorBytes: uint64(max(1, store.Len()*store.Dimensions()*4)),
-			},
-			Search: searchConfig, Progress: reportProgress,
-		})
+		reader, err = hnsw.Build(ctx, oracle.Store(), buildConfig, searchConfig)
+	}
+	if callback != nil {
+		callbackStarted := time.Now()
+		callback(progress)
+		callbackDuration = time.Since(callbackStarted)
 	}
 	wallDuration := time.Since(started)
 	timing := buildTiming{
@@ -217,7 +202,7 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 	latencies := make([]time.Duration, len(dataset.Queries))
 	var recall, documentRecall, exactDocuments, annDocuments float64
 	var visited, expanded, distances, rejected, incomplete, visitLimit int
-	request := vector.SearchOptions{EfSearch: effectiveEfSearch, VisitLimit: config.VisitLimit, ResultFilter: truth.filter}
+	request := hnsw.SearchOptions{EfSearch: effectiveEfSearch, VisitLimit: config.VisitLimit, ResultFilter: truth.filter}
 	for i, query := range dataset.Queries {
 		started := time.Now()
 		result, err := reader.Search(ctx, query, config.K, request)
@@ -236,15 +221,12 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 		if result.Incomplete {
 			incomplete++
 		}
-		if result.Stats.Termination == vector.TerminationVisitLimit {
+		if result.Stats.Termination == hnsw.TerminationVisitLimit {
 			visitLimit++
 		}
 	}
 	count := float64(len(dataset.Queries))
-	report := reader.Report()
-	graph := report.Graph
-	storage := report.Storage
-	buildInfo := report.Build
+	buildInfo, graph, storage := benchmarkIndexStats(reader)
 	run := RunReport{
 		Dataset: DatasetReport{
 			Kind: dataset.Config.Kind, Hash: dataset.Hash, Metric: metric.String(), Dimensions: dataset.Config.Dimensions,
@@ -265,8 +247,8 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 			EfConstruction: buildInfo.EfConstruction, Seed: buildInfo.Seed,
 		},
 		SearchParameters: SearchParameters{
-			DefaultEfSearch: searchConfig.DefaultEfSearch, MaxEfSearch: searchConfig.MaxEfSearch,
-			DefaultVisitLimit: searchConfig.DefaultVisitLimit, MaxVisitLimit: searchConfig.MaxVisitLimit, MaxK: searchConfig.MaxK,
+			DefaultEfSearch: searchConfig.EfSearch, MaxEfSearch: maxSlice(config.EfSearch),
+			DefaultVisitLimit: searchConfig.VisitLimit, MaxVisitLimit: config.VisitLimit, MaxK: config.K,
 		},
 		Request: RequestParameters{
 			K: config.K, RequestedEfSearch: requestedEfSearch, EffectiveEfSearch: effectiveEfSearch,
@@ -314,7 +296,7 @@ func exactTruthSweeps(ctx context.Context, oracle *exact.Oracle, queries [][]flo
 		}
 		hits := make([][]vector.Hit, len(queries))
 		for i, query := range queries {
-			result, err := oracle.Search(ctx, query, oracle.Len(), vector.SearchOptions{ResultFilter: filter})
+			result, err := oracle.Search(ctx, query, oracle.Len(), exact.Options{ResultFilter: filter})
 			if err != nil {
 				return nil, fmt.Errorf("vectorsearch: exact query %d at selectivity %g: %w", i, selectivity, err)
 			}
@@ -439,4 +421,77 @@ func maxSlice(values []int) int {
 		maximum = max(maximum, value)
 	}
 	return maximum
+}
+
+func benchmarkIndexStats(index *hnsw.Index) (BuildInfoReport, GraphStatsReport, StorageStatsReport) {
+	snapshot := hnsw.Snapshot(index)
+	build := BuildInfoReport{
+		BuildVersion:          snapshot.BuildVersion,
+		LevelGeneratorVersion: snapshot.LevelGeneratorVersion,
+		MaxNeighbors:          snapshot.MaxNeighbors,
+		LevelZeroMaxNeighbors: snapshot.LevelZeroMaxNeighbors,
+		EfConstruction:        snapshot.EfConstruction,
+		Seed:                  snapshot.Seed,
+	}
+	graph := GraphStatsReport{
+		NodeCount:   len(snapshot.Levels),
+		VectorCount: len(snapshot.Levels),
+		MaxLevel:    -1,
+	}
+	if len(snapshot.Levels) > 0 {
+		graph.MaxLevel = int(snapshot.Levels[snapshot.Entry])
+		graph.LevelNodeCounts = make([]int, graph.MaxLevel+1)
+		graph.LevelLinkCounts = make([]int, graph.MaxLevel+1)
+	}
+	levelPlacements := 0
+	for node, maxLevel := range snapshot.Levels {
+		levelPlacements += int(maxLevel)
+		for level := 0; level <= int(maxLevel); level++ {
+			graph.LevelNodeCounts[level]++
+			if level == 0 {
+				degree := int(snapshot.Level0Offsets[node+1] - snapshot.Level0Offsets[node])
+				graph.LevelLinkCounts[level] += degree
+				if degree == 0 {
+					graph.ZeroDegreeNodes++
+				}
+				continue
+			}
+			placement := snapshot.UpperNodeOffsets[node] + uint32(level-1)
+			graph.LevelLinkCounts[level] += int(snapshot.UpperLinkOffsets[placement+1] - snapshot.UpperLinkOffsets[placement])
+		}
+	}
+	if snapshot.HasEntry {
+		visited := make([]bool, len(snapshot.Levels))
+		queue := []uint32{snapshot.Entry}
+		visited[snapshot.Entry] = true
+		for len(queue) > 0 {
+			node := queue[0]
+			queue = queue[1:]
+			graph.ReachableNodes++
+			for _, neighbor := range snapshot.Level0Links[snapshot.Level0Offsets[node]:snapshot.Level0Offsets[node+1]] {
+				if !visited[neighbor] {
+					visited[neighbor] = true
+					queue = append(queue, neighbor)
+				}
+			}
+		}
+	}
+	graph.UnreachableNodes = graph.NodeCount - graph.ReachableNodes
+
+	vectorBytes := uint64(index.Len()) * uint64(index.Dimensions()) * 4
+	nodeBytes := uint64(len(snapshot.Levels))
+	offsetBytes := uint64(len(snapshot.Level0Offsets)+len(snapshot.UpperNodeOffsets)+len(snapshot.UpperLinkOffsets)) * 4
+	linkBytes := uint64(len(snapshot.Level0Links)+len(snapshot.UpperLinks)) * 4
+	storage := StorageStatsReport{
+		VectorRows:        index.Len(),
+		GraphNodes:        index.Len(),
+		LevelPlacements:   levelPlacements,
+		DirectedLinks:     len(snapshot.Level0Links) + len(snapshot.UpperLinks),
+		VectorBytes:       vectorBytes,
+		NodeMetadataBytes: nodeBytes,
+		OffsetBytes:       offsetBytes,
+		LinkBytes:         linkBytes,
+		TotalBytes:        vectorBytes + nodeBytes + offsetBytes + linkBytes,
+	}
+	return build, graph, storage
 }

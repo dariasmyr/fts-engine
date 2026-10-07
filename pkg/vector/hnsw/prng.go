@@ -29,5 +29,5 @@ func (r *levelRNG) level(maxNeighbors int) uint8 {
 
 func levelFromUnit(u float64, maxNeighbors int) uint8 {
 	level := int(math.Floor(-math.Log(u) / math.Log(float64(maxNeighbors))))
-	return uint8(min(level, MaxLevel))
+	return uint8(min(level, maxLevelLimit))
 }

@@ -5,7 +5,9 @@ import (
 	"math/rand/v2"
 	"testing"
 
+	"github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/exact"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 func recallAtK(got, want []vector.Hit) float64 {
@@ -43,11 +45,11 @@ func TestDifferentialRecallAgainstExactOracleUsingPublicAPIs(t *testing.T) {
 		for dimension := range dimensions {
 			query[dimension] = rng.Float32()*2 - 1
 		}
-		exactResult, err := oracle.Search(context.Background(), query, k, vector.SearchOptions{})
+		exactResult, err := oracle.Search(context.Background(), query, k, exact.Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		ann, err := reader.Search(context.Background(), query, k, vector.SearchOptions{EfSearch: 64, VisitLimit: rows})
+		ann, err := reader.Search(context.Background(), query, k, hnsw.SearchOptions{EfSearch: 64, VisitLimit: rows})
 		if err != nil {
 			t.Fatal(err)
 		}

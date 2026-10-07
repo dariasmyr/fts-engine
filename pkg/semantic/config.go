@@ -62,27 +62,51 @@ func (c Config) normalized() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+
 	c.Schema = schema
 	c.Embedding = schema.Embedding
 	c.Chunking = schema.Chunking
 
 	limits := c.Limits
 	if !schema.IsValid() ||
-		limits.MaxLiveVectors <= 0 || limits.MaxChunksPerDocument <= 0 ||
-		limits.MaxDocumentsPerSearch <= 0 || limits.MaxChunkCandidates < limits.MaxDocumentsPerSearch ||
-		limits.MaxChunkCandidates > limits.MaxLiveVectors || limits.MaxChunksPerDocument > limits.MaxLiveVectors ||
-		limits.MaxChunksPerDocumentHit <= 0 || limits.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
+		limits.MaxLiveVectors <= 0 ||
+		limits.MaxChunksPerDocument <= 0 ||
+		limits.MaxDocumentsPerSearch <= 0 ||
+		limits.MaxChunkCandidates < limits.MaxDocumentsPerSearch ||
+		limits.MaxChunkCandidates > limits.MaxLiveVectors ||
+		limits.MaxChunksPerDocument > limits.MaxLiveVectors ||
+		limits.MaxChunksPerDocumentHit <= 0 ||
+		limits.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
 		return Config{}, ErrInvalidConfig
 	}
 
 	c.HNSW = normalizeHNSWTuning(c.HNSW, limits)
-	options, ok := c.hnswOptions()
+
+	buildConfig, ok := c.hnswBuildConfig()
 	if !ok {
 		return Config{}, ErrInvalidConfig
 	}
-	if err := options.Validate(limits.MaxLiveVectors); err != nil {
+
+	searchConfig, ok := c.hnswSearchConfig()
+	if !ok {
 		return Config{}, ErrInvalidConfig
 	}
+
+	if err := validateHNSWBuildConfig(buildConfig); err != nil {
+		return Config{}, ErrInvalidConfig
+	}
+
+	if err := validateHNSWSearchConfig(searchConfig); err != nil {
+		return Config{}, ErrInvalidConfig
+	}
+
+	if !validVectorCapacity(
+		c.Schema.Embedding.Dimensions,
+		limits.MaxLiveVectors,
+	) {
+		return Config{}, ErrInvalidConfig
+	}
+
 	return c, nil
 }
 
@@ -108,27 +132,64 @@ func normalizeHNSWTuning(tuning HNSWTuning, limits Limits) HNSWTuning {
 	return tuning
 }
 
-func (c Config) hnswOptions() (hnsw.BuildOptions, bool) {
-	dimensions := uint64(c.Schema.Embedding.Dimensions)
-	maxVectors := uint64(c.Limits.MaxLiveVectors)
-	if dimensions == 0 || dimensions > math.MaxUint64/4 || maxVectors > math.MaxUint64/(dimensions*4) {
-		return hnsw.BuildOptions{}, false
+func (c Config) hnswBuildConfig() (hnsw.BuildConfig, bool) {
+	if c.HNSW.MaxNeighbors <= 0 ||
+		c.HNSW.EfConstruction <= 0 {
+		return hnsw.BuildConfig{}, false
 	}
-	return hnsw.BuildOptions{
-		Build: hnsw.BuildConfig{
-			MaxNeighbors:   c.HNSW.MaxNeighbors,
-			EfConstruction: c.HNSW.EfConstruction,
-			Seed:           c.HNSW.Seed,
-		},
-		Limits: hnsw.BuildLimits{MaxVectors: c.Limits.MaxLiveVectors, MaxVectorBytes: maxVectors * dimensions * 4},
-		Search: hnsw.SearchConfig{
-			DefaultEfSearch:   c.HNSW.DefaultEfSearch,
-			MaxEfSearch:       c.HNSW.MaxEfSearch,
-			DefaultVisitLimit: c.HNSW.DefaultVisitLimit,
-			MaxVisitLimit:     c.HNSW.MaxVisitLimit,
-			MaxK:              c.Limits.MaxChunkCandidates,
-		},
+
+	return hnsw.BuildConfig{
+		MaxNeighbors:   c.HNSW.MaxNeighbors,
+		EfConstruction: c.HNSW.EfConstruction,
+		Seed:           c.HNSW.Seed,
 	}, true
+}
+
+func (c Config) hnswSearchConfig() (hnsw.SearchConfig, bool) {
+	if c.HNSW.DefaultEfSearch <= 0 ||
+		c.HNSW.DefaultVisitLimit <= 0 {
+		return hnsw.SearchConfig{}, false
+	}
+
+	return hnsw.SearchConfig{
+		EfSearch:   c.HNSW.DefaultEfSearch,
+		VisitLimit: c.HNSW.DefaultVisitLimit,
+	}, true
+}
+
+func validateHNSWBuildConfig(c hnsw.BuildConfig) error {
+	if c.MaxNeighbors < 2 {
+		return ErrInvalidConfig
+	}
+
+	if c.EfConstruction < c.MaxNeighbors {
+		return ErrInvalidConfig
+	}
+
+	return nil
+}
+
+func validateHNSWSearchConfig(c hnsw.SearchConfig) error {
+	if c.EfSearch <= 0 || c.VisitLimit <= 0 {
+		return ErrInvalidConfig
+	}
+
+	return nil
+}
+
+func validVectorCapacity(dimensions, maxVectors int) bool {
+	if dimensions <= 0 || maxVectors <= 0 {
+		return false
+	}
+
+	d := uint64(dimensions)
+	n := uint64(maxVectors)
+
+	if d > math.MaxUint64/4 {
+		return false
+	}
+
+	return n <= math.MaxUint64/(d*4)
 }
 
 func (c Config) schema() Schema {

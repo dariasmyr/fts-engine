@@ -41,7 +41,7 @@ func TestNewFromPreparedStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := oracle.Search(context.Background(), []float32{1, 0}, 2, vector.SearchOptions{})
+	result, err := oracle.Search(context.Background(), []float32{1, 0}, 2, exact.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestSearchFiltersOrdersAndCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := oracle.Search(context.Background(), []float32{0, 0}, 3, vector.SearchOptions{ResultFilter: filter})
+	result, err := oracle.Search(context.Background(), []float32{0, 0}, 3, exact.Options{ResultFilter: filter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,19 +77,19 @@ func TestSearchValidationCancellationAndVisitLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := oracle.Search(context.Background(), []float32{0, 0}, 2, vector.SearchOptions{VisitLimit: 1})
+	result, err := oracle.Search(context.Background(), []float32{0, 0}, 2, exact.Options{VisitLimit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Incomplete || result.Stats.Termination != vector.TerminationVisitLimit || result.Stats.VisitedNodes != 1 {
+	if !result.Incomplete || result.Stats.Termination != exact.TerminationVisitLimit || result.Stats.VisitedNodes != 1 {
 		t.Fatalf("limited result = %+v", result)
 	}
-	if _, err := oracle.Search(context.Background(), []float32{0, 0}, 1, vector.SearchOptions{ResultFilter: vector.NewFullBitSet(2)}); !errors.Is(err, vector.ErrResultFilterSizeMismatch) {
+	if _, err := oracle.Search(context.Background(), []float32{0, 0}, 1, exact.Options{ResultFilter: vector.NewFullBitSet(2)}); !errors.Is(err, vector.ErrResultFilterSizeMismatch) {
 		t.Fatalf("filter size error = %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := oracle.Search(ctx, []float32{0, 0}, 1, vector.SearchOptions{}); !errors.Is(err, context.Canceled) {
+	if _, err := oracle.Search(ctx, []float32{0, 0}, 1, exact.Options{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled error = %v", err)
 	}
 }
@@ -106,7 +106,7 @@ func TestSearchRejectsInvalidFilterCardinality(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, count := range []int{-1, 4} {
-		if _, err := oracle.Search(context.Background(), []float32{0, 0}, 1, vector.SearchOptions{ResultFilter: invalidCountFilter{count: count}}); !errors.Is(err, vector.ErrInvalidSearchOptions) {
+		if _, err := oracle.Search(context.Background(), []float32{0, 0}, 1, exact.Options{ResultFilter: invalidCountFilter{count: count}}); !errors.Is(err, exact.ErrInvalidOptions) {
 			t.Fatalf("allowed count %d error = %v", count, err)
 		}
 	}
@@ -123,7 +123,7 @@ func TestSearchMatchesFullSort(t *testing.T) {
 		t.Fatal(err)
 	}
 	query := []float32{1.5, -2.5}
-	result, err := oracle.Search(context.Background(), query, 17, vector.SearchOptions{})
+	result, err := oracle.Search(context.Background(), query, 17, exact.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

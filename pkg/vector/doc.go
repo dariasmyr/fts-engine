@@ -1,2 +1,2 @@
-// Package vector defines shared contracts for dense-vector search indexes.
+// Package vector defines shared dense-vector primitives and contracts.
 package vector

@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/dariasmyr/fts-engine/internal/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-var errVisitLimit = errors.New("vector/hnsw: visit limit reached")
+type searchCandidate struct {
+	node     nodeOrdinal
+	distance float64
+	accepted bool
+}
 
 type searchState struct {
 	ctx           context.Context
@@ -20,7 +23,7 @@ type searchState struct {
 	filter        vector.ResultFilter
 	visitLimit    int
 	workspace     *searchWorkspace
-	stats         vector.SearchStats
+	stats         SearchStats
 }
 
 type searchRequest struct {
@@ -31,28 +34,31 @@ type searchRequest struct {
 	filter       vector.ResultFilter
 }
 
-func resolveSearchRequest(config SearchConfig, vectorCount, k int, options vector.SearchOptions) (searchRequest, error) {
-	if k <= 0 || k > config.MaxK {
-		return searchRequest{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, config.MaxK)
+func resolveSearchRequest(config SearchConfig, vectorCount, k int, options SearchOptions) (searchRequest, error) {
+	if k <= 0 {
+		return searchRequest{}, vector.ErrInvalidK
 	}
 	if options.EfSearch < 0 || options.VisitLimit < 0 {
-		return searchRequest{}, vector.ErrInvalidSearchOptions
+		return searchRequest{}, ErrInvalidSearchOptions
 	}
+
 	efSearch := options.EfSearch
 	if efSearch == 0 {
-		efSearch = config.DefaultEfSearch
+		efSearch = config.EfSearch
 	}
 	efSearch = max(k, efSearch)
-	if efSearch > config.MaxEfSearch {
-		return searchRequest{}, fmt.Errorf("%w: efSearch=%d max=%d", vector.ErrInvalidSearchOptions, efSearch, config.MaxEfSearch)
+	if vectorCount > 0 {
+		efSearch = min(efSearch, vectorCount)
 	}
+
 	visitLimit := options.VisitLimit
 	if visitLimit == 0 {
-		visitLimit = config.DefaultVisitLimit
+		visitLimit = config.VisitLimit
 	}
-	if visitLimit > config.MaxVisitLimit {
-		return searchRequest{}, fmt.Errorf("%w: visitLimit=%d max=%d", vector.ErrInvalidSearchOptions, visitLimit, config.MaxVisitLimit)
+	if vectorCount > 0 {
+		visitLimit = min(visitLimit, vectorCount)
 	}
+
 	allowedCount := vectorCount
 	if options.ResultFilter != nil {
 		if options.ResultFilter.TotalOrdinalCount() != uint32(vectorCount) {
@@ -60,56 +66,56 @@ func resolveSearchRequest(config SearchConfig, vectorCount, k int, options vecto
 		}
 		allowedCount = options.ResultFilter.AllowedOrdinalCount()
 		if allowedCount < 0 || allowedCount > vectorCount {
-			return searchRequest{}, vector.ErrInvalidSearchOptions
+			return searchRequest{}, ErrInvalidSearchOptions
 		}
 	}
 	return searchRequest{k: k, efSearch: efSearch, visitLimit: visitLimit, allowedCount: allowedCount, filter: options.ResultFilter}, nil
 }
 
-func search(ctx context.Context, reader *Index, query []float32, prepared *vector.PreparedQuery, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func search(ctx context.Context, reader *Index, query []float32, prepared *vector.PreparedQuery, k int, options SearchOptions) (SearchResult, error) {
 	if ctx == nil {
-		return vector.SearchResult{}, vector.ErrNilContext
+		return SearchResult{}, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
-		return vector.SearchResult{}, err
+		return SearchResult{}, err
 	}
 	if reader == nil {
-		return vector.SearchResult{}, errInvalidGraph
+		return SearchResult{}, errInvalidGraph
 	}
 	calculator := reader.topology.calculator
 	vectorCount := reader.Len()
 	request, err := resolveSearchRequest(reader.search, vectorCount, k, options)
 	if err != nil {
-		return vector.SearchResult{}, err
+		return SearchResult{}, err
 	}
 	workspace := reader.workspaces.acquire()
 	defer reader.workspaces.release(workspace)
 	if prepared == nil {
 		workspace.prepareQuery(calculator.Dimensions())
 		if err := calculator.PrepareInto(workspace.preparedQuery, query); err != nil {
-			return vector.SearchResult{}, err
+			return SearchResult{}, err
 		}
 	} else if err := calculator.ValidatePreparedQuery(*prepared); err != nil {
-		return vector.SearchResult{}, err
+		return SearchResult{}, err
 	}
-	complete := vector.SearchResult{Hits: []vector.Hit{}, Stats: vector.SearchStats{Termination: vector.TerminationComplete}}
+	complete := SearchResult{Hits: []vector.Hit{}, Stats: SearchStats{Termination: TerminationComplete}}
 	if vectorCount == 0 || request.allowedCount == 0 {
 		if err := ctx.Err(); err != nil {
-			return vector.SearchResult{}, err
+			return SearchResult{}, err
 		}
 		return complete, nil
 	}
 	workspace.resetSearch(vectorCount, calculator.Dimensions(), request.visitLimit, request.efSearch)
 	entry, maxLevel, ok := reader.entryPoint()
-	if !ok || maxLevel < 0 || maxLevel > MaxLevel || uint64(entry) >= uint64(vectorCount) {
-		return vector.SearchResult{}, errInvalidGraph
+	if !ok || maxLevel < 0 || maxLevel > maxLevelLimit || uint64(entry) >= uint64(vectorCount) {
+		return SearchResult{}, errInvalidGraph
 	}
 	state := searchState{
 		ctx: ctx, index: reader, preparedQuery: workspace.preparedQuery, filter: request.filter,
 		reusableQuery: prepared,
 		visitLimit:    request.visitLimit,
 		workspace:     workspace,
-		stats:         vector.SearchStats{Termination: vector.TerminationComplete},
+		stats:         SearchStats{Termination: TerminationComplete},
 	}
 	entryCandidate, err := state.score(entry)
 	if err != nil {
@@ -138,7 +144,7 @@ func greedySearch(state *searchState, current searchCandidate, maxLevel int) (se
 				return searchCandidate{}, errInvalidGraph
 			}
 			for i, neighbor := range neighbors {
-				if err := contextcheck.PeriodicError(state.ctx, i); err != nil {
+				if err := periodicContextError(state.ctx, i); err != nil {
 					return searchCandidate{}, err
 				}
 				candidate, err := state.score(neighbor)
@@ -189,7 +195,7 @@ func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCou
 			return results, errInvalidGraph
 		}
 		for i, neighbor := range neighbors {
-			if err := contextcheck.PeriodicError(state.ctx, i); err != nil {
+			if err := periodicContextError(state.ctx, i); err != nil {
 				return results, err
 			}
 			if uint64(neighbor) >= uint64(state.index.Len()) {
@@ -269,17 +275,24 @@ func (state *searchState) acceptedResults(capacity int) resultHeap {
 	return results
 }
 
-func finishSearch(state searchState, results resultHeap, k int, err error) (vector.SearchResult, error) {
+func periodicContextError(ctx context.Context, iteration int) error {
+	if iteration&63 != 0 {
+		return nil
+	}
+	return ctx.Err()
+}
+
+func finishSearch(state searchState, results resultHeap, k int, err error) (SearchResult, error) {
 	if err != nil && !errors.Is(err, errVisitLimit) {
-		return vector.SearchResult{}, err
+		return SearchResult{}, err
 	}
 	if contextErr := state.ctx.Err(); contextErr != nil {
-		return vector.SearchResult{}, contextErr
+		return SearchResult{}, contextErr
 	}
-	result := vector.SearchResult{Hits: results.Hits(k), Stats: state.stats}
+	result := SearchResult{Hits: results.Hits(k), Stats: state.stats}
 	if errors.Is(err, errVisitLimit) {
 		result.Incomplete = true
-		result.Stats.Termination = vector.TerminationVisitLimit
+		result.Stats.Termination = TerminationVisitLimit
 	}
 	return result, nil
 }

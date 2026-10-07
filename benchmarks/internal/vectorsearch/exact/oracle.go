@@ -3,11 +3,37 @@ package exact
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dariasmyr/fts-engine/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
+
+var ErrInvalidOptions = errors.New("vectorsearch/exact: invalid search options")
+
+const (
+	TerminationComplete   = "complete"
+	TerminationVisitLimit = "visit_limit"
+)
+
+type Options struct {
+	VisitLimit   int
+	ResultFilter vector.ResultFilter
+}
+
+type Stats struct {
+	VisitedNodes         int
+	DistanceComputations int
+	RejectedNodes        int
+	Termination          string
+}
+
+type Result struct {
+	Hits       []vector.Hit
+	Stats      Stats
+	Incomplete bool
+}
 
 // Oracle performs an exact scan over an immutable prepared vector store.
 type Oracle struct {
@@ -32,7 +58,7 @@ func New(vectors [][]float32, dimensions int, metric vector.Metric, maxK int) (*
 // NewFromPreparedStore constructs an oracle over a complete immutable store.
 func NewFromPreparedStore(store vector.PreparedVectorStore, maxK int) (*Oracle, error) {
 	if store == nil {
-		return nil, vector.ErrInvalidSearchOptions
+		return nil, ErrInvalidOptions
 	}
 	if maxK <= 0 {
 		return nil, fmt.Errorf("%w: got %d", vector.ErrInvalidK, maxK)
@@ -42,46 +68,46 @@ func NewFromPreparedStore(store vector.PreparedVectorStore, maxK int) (*Oracle, 
 		return nil, err
 	}
 	if calculator.Normalization() != store.Normalization() {
-		return nil, vector.ErrInvalidSearchOptions
+		return nil, ErrInvalidOptions
 	}
 	return &Oracle{store: store, calculator: calculator, maxK: maxK}, nil
 }
 
 // Search returns the exact nearest vectors in distance and ordinal order.
-func (o *Oracle) Search(ctx context.Context, query []float32, k int, options vector.SearchOptions) (vector.SearchResult, error) {
+func (o *Oracle) Search(ctx context.Context, query []float32, k int, options Options) (Result, error) {
 	if ctx == nil {
-		return vector.SearchResult{}, vector.ErrNilContext
+		return Result{}, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
-		return vector.SearchResult{}, err
+		return Result{}, err
 	}
 	if k <= 0 || k > o.maxK {
-		return vector.SearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, o.maxK)
+		return Result{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, o.maxK)
 	}
-	if options.EfSearch < 0 || options.VisitLimit < 0 {
-		return vector.SearchResult{}, vector.ErrInvalidSearchOptions
+	if options.VisitLimit < 0 {
+		return Result{}, ErrInvalidOptions
 	}
 	preparedQuery, err := o.calculator.Prepare(query)
 	if err != nil {
-		return vector.SearchResult{}, err
+		return Result{}, err
 	}
 	allowedCount, err := allowedCount(o.store.Len(), options.ResultFilter)
 	if err != nil {
-		return vector.SearchResult{}, err
+		return Result{}, err
 	}
 
 	topK := newTopK(min(k, allowedCount))
-	stats := vector.SearchStats{Termination: vector.TerminationComplete}
+	stats := Stats{Termination: TerminationComplete}
 	value := make([]float32, o.store.Dimensions())
 	incomplete := false
 	for row := range o.store.Len() {
 		if options.VisitLimit > 0 && stats.VisitedNodes >= options.VisitLimit {
-			stats.Termination = vector.TerminationVisitLimit
+			stats.Termination = TerminationVisitLimit
 			incomplete = true
 			break
 		}
 		if err := periodicContextError(ctx, row); err != nil {
-			return vector.SearchResult{}, err
+			return Result{}, err
 		}
 		stats.VisitedNodes++
 		ordinal := vector.Ordinal(row)
@@ -90,16 +116,16 @@ func (o *Oracle) Search(ctx context.Context, query []float32, k int, options vec
 			continue
 		}
 		if err := o.store.ReadVectorInto(ctx, ordinal, value); err != nil {
-			return vector.SearchResult{}, err
+			return Result{}, err
 		}
 		distance := o.calculator.DistancePrepared(preparedQuery, value)
 		stats.DistanceComputations++
 		topK.add(vector.Hit{Ordinal: ordinal, Distance: distance})
 	}
 	if err := ctx.Err(); err != nil {
-		return vector.SearchResult{}, err
+		return Result{}, err
 	}
-	return vector.SearchResult{Hits: topK.results(), Stats: stats, Incomplete: incomplete}, nil
+	return Result{Hits: topK.results(), Stats: stats, Incomplete: incomplete}, nil
 }
 
 // Len returns the number of vectors searched by the oracle.
@@ -123,7 +149,7 @@ func allowedCount(rowCount int, filter vector.ResultFilter) (int, error) {
 	}
 	allowed := filter.AllowedOrdinalCount()
 	if allowed < 0 || allowed > rowCount {
-		return 0, vector.ErrInvalidSearchOptions
+		return 0, ErrInvalidOptions
 	}
 	return allowed, nil
 }
@@ -136,5 +162,3 @@ func periodicContextError(ctx context.Context, iteration int) error {
 	}
 	return nil
 }
-
-var _ vector.Index = (*Oracle)(nil)

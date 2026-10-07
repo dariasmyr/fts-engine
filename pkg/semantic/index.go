@@ -31,12 +31,12 @@ func NewIndex(config Config) (*Index, error) {
 	if err != nil {
 		return nil, ErrInvalidConfig
 	}
-	buildOptions, ok := config.hnswOptions()
+	searchConfig, ok := config.hnswSearchConfig()
 	if !ok {
 		return nil, ErrInvalidConfig
 	}
 
-	snapshot, err := newSnapshot(context.Background(), 0, nil, config.Schema, config.searchPolicy(), buildOptions.Search)
+	snapshot, err := newSnapshot(context.Background(), 0, nil, config.Schema, config.searchPolicy(), searchConfig)
 	if err != nil {
 		return nil, err
 	}

@@ -182,7 +182,8 @@ func encodeConfig(e *encoder, c semantic.Config) {
 }
 
 func decodeConfig(d *decoder, embedding semantic.EmbeddingDescriptor, chunking semantic.ChunkingDescriptor) semantic.Config {
-	c := semantic.Config{Embedding: embedding, Chunking: chunking}
+	schema := semantic.Schema{Embedding: embedding, Chunking: chunking}
+	c := semantic.Config{Schema: schema, Embedding: embedding, Chunking: chunking}
 	c.Limits = semantic.Limits{
 		MaxLiveVectors:          int(d.readUint32()),
 		MaxChunksPerDocument:    int(d.readUint32()),

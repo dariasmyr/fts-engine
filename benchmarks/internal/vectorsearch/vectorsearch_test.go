@@ -308,7 +308,7 @@ func TestBuildReaderRejectsUnsupportedOrder(t *testing.T) {
 	buildConfig := hnsw.BuildConfig{
 		MaxNeighbors: 2, EfConstruction: 8, Seed: 4,
 	}
-	searchConfig := hnsw.SearchConfig{DefaultEfSearch: 3, MaxEfSearch: 8, DefaultVisitLimit: 24, MaxVisitLimit: 24, MaxK: 3}
+	searchConfig := hnsw.SearchConfig{EfSearch: 3, VisitLimit: 24}
 	_, path, _, err := buildReader(context.Background(), oracle, BuildOrder{Name: "shuffled"}, buildConfig, searchConfig, Progress{}, nil)
 	if err == nil {
 		t.Fatal("unsupported build order succeeded")
@@ -330,7 +330,7 @@ func TestBuildTimingSeparatesProgressCallback(t *testing.T) {
 	buildConfig := hnsw.BuildConfig{
 		MaxNeighbors: 2, EfConstruction: 4, Seed: 1,
 	}
-	searchConfig := hnsw.SearchConfig{DefaultEfSearch: 1, MaxEfSearch: 1, DefaultVisitLimit: 8, MaxVisitLimit: 8, MaxK: 1}
+	searchConfig := hnsw.SearchConfig{EfSearch: 1, VisitLimit: 8}
 	_, path, timing, err := buildReader(context.Background(), oracle, BuildOrder{Name: "ascending"}, buildConfig, searchConfig, Progress{}, func(Progress) {
 		time.Sleep(100 * time.Microsecond)
 	})
