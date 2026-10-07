@@ -10,14 +10,15 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
-// SegmentData is the persistence transfer value for one immutable segment.
-// Callers must treat Vectors and Index as immutable.
+// SegmentData is the persistence transfer value for one immutable physical
+// segment. Vectors and Index are immutable resources and must not be mutated by
+// the persistence layer.
 type SegmentData struct {
-	ComponentID uint64
-	Pipeline    PipelineDescriptor
-	Rows        []VectorRow
-	Vectors     vector.PreparedVectorStore
-	Index       *hnsw.Index
+	ID      SegmentID
+	Schema  Schema
+	Rows    []VectorRow
+	Vectors vector.PreparedVectorStore
+	Index   *hnsw.Index
 }
 
 func (s *segment) data() SegmentData {
@@ -25,139 +26,90 @@ func (s *segment) data() SegmentData {
 		return SegmentData{}
 	}
 	return SegmentData{
-		ComponentID: s.component,
-		Pipeline:    s.descriptor,
-		Rows:        append([]VectorRow(nil), s.rows...),
-		Vectors:     s.vectors,
-		Index:       s.index,
+		ID:      s.component,
+		Schema:  s.schema,
+		Rows:    append([]VectorRow(nil), s.rows...),
+		Vectors: s.vectors,
+		Index:   s.index,
 	}
 }
 
-// CommittedSegment is one immutable component of committed state.
-type CommittedSegment struct {
-	segment       *segment
-	livenessWords []uint64
-}
-
-// Data returns a defensive persistence transfer value.
-func (s CommittedSegment) Data() SegmentData { return s.segment.data() }
-
-// LivenessWords returns a canonical copy of the component-local liveness mask.
-func (s CommittedSegment) LivenessWords() []uint64 {
-	return append([]uint64(nil), s.livenessWords...)
-}
-
-// CommittedState is a clean, immutable persistence boundary. It contains no
-// pending mutations and does not own the segment resources it references.
-type CommittedState struct {
-	config               Config
-	revision             uint64
-	maxAllocatedVectorID uint64
-	nextComponentID      uint64
-	segments             []CommittedSegment
-}
-
-func (s *CommittedState) Config() Config {
-	if s == nil {
-		return Config{}
-	}
-	return s.config
-}
-
-func (s *CommittedState) Revision() uint64 {
-	if s == nil {
-		return 0
-	}
-	return s.revision
-}
-
-func (s *CommittedState) MaxAllocatedVectorID() uint64 {
-	if s == nil {
-		return 0
-	}
-	return s.maxAllocatedVectorID
-}
-
-func (s *CommittedState) NextComponentID() uint64 {
-	if s == nil {
-		return 0
-	}
-	return s.nextComponentID
-}
-
-func (s *CommittedState) Segments() []CommittedSegment {
-	if s == nil {
-		return nil
-	}
-	return append([]CommittedSegment(nil), s.segments...)
-}
-
-// CommittedState captures the current committed state without publishing
-// pending mutations.
-func (s *Service) CommittedState(ctx context.Context) (*CommittedState, error) {
-	if ctx == nil {
-		return nil, vector.ErrNilContext
-	}
-	if err := s.lockState(ctx); err != nil {
-		return nil, err
-	}
-	if s.revision != s.published.revision {
-		s.unlockState()
-		return nil, ErrPendingMutations
-	}
-	published := s.published
-	config := s.config
-	revision := s.revision
-	maxAllocatedVectorID := s.maxAllocatedID
-	nextComponentID := s.nextComponentID
-	s.unlockState()
-
-	segments := make([]CommittedSegment, len(published.segments))
-	for i, item := range published.segments {
-		if i%16 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		segments[i] = CommittedSegment{
-			segment:       item.segment,
-			livenessWords: item.filter.SnapshotWords(),
-		}
-	}
-	return &CommittedState{
-		config:               config,
-		revision:             revision,
-		maxAllocatedVectorID: maxAllocatedVectorID,
-		nextComponentID:      nextComponentID,
-		segments:             segments,
-	}, nil
-}
-
-// StoredSegment describes one persisted immutable component and its local
-// liveness mask. LivenessWords uses the same canonical layout as vector.BitSet.
-type StoredSegment struct {
+// StateSegment is one persisted immutable segment plus the liveness mask that
+// belongs to the committed Snapshot from which State was created.
+type StateSegment struct {
 	Data          SegmentData
 	LivenessWords []uint64
 }
 
-// RestoreState contains the persisted state required to resume writes.
-type RestoreState struct {
+// State is the persistence boundary of semantic.Index. It contains everything
+// required to reconstruct the committed index and continue writing after a
+// process restart. Pending mutations are intentionally excluded.
+type State struct {
 	Config               Config
-	Revision             uint64
-	MaxAllocatedVectorID uint64
-	NextComponentID      uint64
-	Segments             []StoredSegment
+	Revision             Revision
+	MaxAllocatedVectorID VectorID
+	NextSegmentID        SegmentID
+	Segments             []StateSegment
 }
 
-// Restore validates persisted committed state and restores a writable service
-// with empty pending mutation queues.
-func Restore(ctx context.Context, state RestoreState) (*Service, error) {
+// State returns a durable representation of the current committed index.
+// Pending mutations must be flushed first so the returned value has one clear
+// revision and one matching Snapshot.
+func (i *Index) State(ctx context.Context) (*State, error) {
+	if ctx == nil {
+		return nil, vector.ErrNilContext
+	}
+	if err := i.lockState(ctx); err != nil {
+		return nil, err
+	}
+	if !i.state.pending.empty() || i.state.revision != i.snapshot.revision {
+		i.unlockState()
+		return nil, ErrPendingMutations
+	}
+
+	snapshot := i.snapshot
+	config := i.config
+	revision := i.state.revision
+	maxAllocatedVectorID := i.state.maxAllocatedVectorID
+	nextComponentID := i.state.nextComponentID
+	i.unlockState()
+
+	segments := make([]StateSegment, len(snapshot.segments))
+	for n, item := range snapshot.segments {
+		if n%16 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		segments[n] = StateSegment{
+			Data:          item.segment.data(),
+			LivenessWords: item.liveness.SnapshotWords(),
+		}
+	}
+
+	return &State{
+		Config:               config,
+		Revision:             revision,
+		MaxAllocatedVectorID: maxAllocatedVectorID,
+		NextSegmentID:        nextComponentID,
+		Segments:             segments,
+	}, nil
+}
+
+func (s *Service) State(ctx context.Context) (*State, error) {
+	return s.index.State(ctx)
+}
+
+// Open validates persisted committed state and reconstructs a writable Index
+// with an empty pending batch.
+func Open(ctx context.Context, state State) (*Index, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+
 	config, err := state.Config.normalized()
 	if err != nil {
 		return nil, err
@@ -165,66 +117,76 @@ func Restore(ctx context.Context, state RestoreState) (*Service, error) {
 	if config != state.Config {
 		return nil, ErrInvalidConfig
 	}
-	if state.NextComponentID == 0 {
+	if state.NextSegmentID == 0 {
 		return nil, ErrInternalState
 	}
 
-	visible := make([]visibleSegment, len(state.Segments))
-	locations := make(map[uint64]vectorLocation)
-	documents := make(map[fts.DocID]documentVersion)
+	views := make([]segmentView, len(state.Segments))
+	locations := make(map[VectorID]vectorLocation)
+	documents := make(map[fts.DocID]documentVectors)
 	type chunkKey struct {
 		documentID fts.DocID
 		chunkID    chunk.ID
 	}
-	seenChunks := make(map[chunkKey]struct{})
-	var maxVectorID uint64
-	var maxComponentID uint64
+	liveChunks := make(map[chunkKey]struct{})
+	var maxVectorID VectorID
+	var maxComponentID SegmentID
+
 	for segmentIndex, persisted := range state.Segments {
 		if segmentIndex%16 == 0 {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 		}
+
 		data := persisted.Data
 		if data.Index == nil || data.Vectors == nil {
 			return nil, ErrInvalidSegment
 		}
-		segment, err := newSegment(ctx, data.ComponentID, data.Pipeline, data.Vectors, data.Index, data.Rows)
+		if err := validateSchemaCompatibility(data.Schema, config.Schema); err != nil {
+			return nil, err
+		}
+
+		physical, err := newSegment(ctx, data.ID, data.Schema, data.Vectors, data.Index, data.Rows)
 		if err != nil {
 			return nil, err
 		}
-		filter, err := vector.NewBitSetFromWords(uint32(segment.len()), persisted.LivenessWords)
+		liveness, err := vector.NewBitSetFromWords(uint32(physical.len()), persisted.LivenessWords)
 		if err != nil {
 			return nil, ErrInvalidSegment
 		}
-		visible[segmentIndex] = visibleSegment{segment: segment, filter: filter}
-		componentID := segment.componentID()
+		views[segmentIndex] = segmentView{segment: physical, liveness: liveness}
+
+		componentID := physical.componentID()
 		maxComponentID = max(maxComponentID, componentID)
-		for ordinal, row := range segment.rows {
+		for ordinal, row := range physical.rows {
 			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
 				return nil, err
 			}
-
 			maxVectorID = max(maxVectorID, row.VectorID)
+			if !liveness.Allows(vector.Ordinal(ordinal)) {
+				continue
+			}
+
 			key := chunkKey{documentID: row.Chunk.DocID, chunkID: row.Chunk.ID}
-			if _, exists := seenChunks[key]; exists {
+			if _, exists := liveChunks[key]; exists {
 				return nil, ErrInvalidSegment
 			}
-			seenChunks[key] = struct{}{}
-			if filter.Allows(vector.Ordinal(ordinal)) {
-				locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
-				version := documents[row.Chunk.DocID]
-				if version.vectorCount == 0 {
-					version.firstVectorID = row.VectorID
-				} else if row.VectorID != version.vectorID(version.vectorCount) {
-					return nil, ErrInvalidSegment
-				}
-				version.vectorCount++
-				documents[row.Chunk.DocID] = version
+			liveChunks[key] = struct{}{}
+			locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
+
+			version := documents[row.Chunk.DocID]
+			if version.count == 0 {
+				version.first = row.VectorID
+			} else if row.VectorID != version.vectorID(version.count) {
+				return nil, ErrInvalidSegment
 			}
+			version.count++
+			documents[row.Chunk.DocID] = version
 		}
 	}
-	if state.MaxAllocatedVectorID < maxVectorID || state.NextComponentID <= maxComponentID {
+
+	if state.MaxAllocatedVectorID < maxVectorID || state.NextSegmentID <= maxComponentID {
 		return nil, ErrInternalState
 	}
 
@@ -232,37 +194,40 @@ func Restore(ctx context.Context, state RestoreState) (*Service, error) {
 	if !ok {
 		return nil, ErrInvalidConfig
 	}
-
-	published, err := newReadView(ctx, state.Revision, visible, config.pipelineDescriptor(), config.searchPolicy(), buildOptions.Search)
+	snapshot, err := newSnapshot(ctx, state.Revision, views, config.Schema, config.searchPolicy(), buildOptions.Search)
 	if err != nil {
 		return nil, err
 	}
-	if published.liveCount > config.Limits.MaxLiveVectors {
+	if snapshot.liveCount > config.Limits.MaxLiveVectors {
 		return nil, ErrCapacityExceeded
 	}
 	for _, version := range documents {
-		if version.vectorCount > config.Limits.MaxChunksPerDocument {
+		if version.count > config.Limits.MaxChunksPerDocument {
 			return nil, ErrInvalidSegment
 		}
 	}
-	calculator, err := config.Embedding.Calculator()
+
+	calculator, err := config.Schema.Embedding.Calculator()
 	if err != nil {
 		return nil, ErrInvalidConfig
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return &Service{
-		stateGate:       make(chan struct{}, 1),
-		flushGate:       make(chan struct{}, 1),
-		config:          config,
-		calculator:      calculator,
-		published:       published,
-		currentByDoc:    documents,
-		locations:       locations,
-		liveVectorCount: published.liveCount,
-		maxAllocatedID:  state.MaxAllocatedVectorID,
-		nextComponentID: state.NextComponentID,
-		revision:        state.Revision,
+
+	return &Index{
+		stateGate:   make(chan struct{}, 1),
+		publishGate: make(chan struct{}, 1),
+		config:      config,
+		calculator:  calculator,
+		snapshot:    snapshot,
+		state: workingState{
+			revision:             state.Revision,
+			documents:            documents,
+			locations:            locations,
+			liveVectorCount:      snapshot.liveCount,
+			maxAllocatedVectorID: state.MaxAllocatedVectorID,
+			nextComponentID:      state.NextSegmentID,
+		},
 	}, nil
 }

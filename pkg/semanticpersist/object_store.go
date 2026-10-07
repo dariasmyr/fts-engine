@@ -215,7 +215,7 @@ func (s objectStore) open(ctx context.Context, ref semanticformat.SegmentRef, co
 	if graphMetadata.Size != ref.Graph.Size || graphMetadata.SHA256 != ref.Graph.SHA256 {
 		return semantic.SegmentData{}, ErrCorrupt
 	}
-	segment := semantic.SegmentData{ComponentID: state.ComponentID, Pipeline: semantic.PipelineDescriptor{Embedding: config.Embedding, Chunking: config.Chunking}, Rows: state.Rows, Vectors: vectors, Index: index}
+	segment := semantic.SegmentData{ID: state.ID, Schema: semantic.Schema{Embedding: config.Embedding, Chunking: config.Chunking}, Rows: state.Rows, Vectors: vectors, Index: index}
 	if err := validateSegmentData(segment, config, s.limits); err != nil {
 		return semantic.SegmentData{}, err
 	}

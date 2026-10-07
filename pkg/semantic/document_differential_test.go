@@ -13,11 +13,11 @@ import (
 )
 
 type differentialEncoder struct {
-	descriptor semantic.PipelineDescriptor
+	descriptor semantic.Schema
 	vectors    map[fts.DocID][]semantic.EncodedChunk
 }
 
-func (e differentialEncoder) Descriptor() semantic.PipelineDescriptor { return e.descriptor }
+func (e differentialEncoder) Descriptor() semantic.Schema { return e.descriptor }
 
 func (e differentialEncoder) Encode(_ context.Context, document fts.Document) ([]semantic.EncodedChunk, error) {
 	result := slices.Clone(e.vectors[document.ID])
@@ -34,8 +34,10 @@ func TestDocumentSearchDifferentialThroughLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := semantic.Config{
-		Embedding: embedding,
-		Chunking:  semantic.ChunkingDescriptor{ID: "chunks", Version: 1, Fingerprint: "chunks-v1"},
+		Schema: semantic.Schema{
+			Embedding: embedding,
+			Chunking:  semantic.ChunkingDescriptor{ID: "chunks", Version: 1, Fingerprint: "chunks-v1"},
+		},
 		Limits: semantic.Limits{
 			MaxLiveVectors:          64,
 			MaxChunksPerDocument:    4,
@@ -49,7 +51,7 @@ func TestDocumentSearchDifferentialThroughLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoder := differentialEncoder{
-		descriptor: semantic.PipelineDescriptor{Embedding: embedding, Chunking: config.Chunking},
+		descriptor: semantic.Schema{Embedding: embedding, Chunking: config.Schema.Chunking},
 		vectors:    make(map[fts.DocID][]semantic.EncodedChunk),
 	}
 	query := fts.Document{ID: "query"}

@@ -13,10 +13,10 @@ type publisher struct {
 	layout       layout
 	openedLimits Limits
 	generation   Generation
-	reusable     map[uint64]semanticformat.SegmentRef
+	reusable     map[semantic.SegmentID]semanticformat.SegmentRef
 }
 
-func (p *publisher) publish(ctx context.Context, service *semantic.Service, options PublishOptions, fullyValidateCurrent bool) (Generation, error) {
+func (p *publisher) publish(ctx context.Context, index *semantic.Index, options PublishOptions, fullyValidateCurrent bool) (Generation, error) {
 	currentGeneration, err := p.currentGeneration(ctx, options, fullyValidateCurrent)
 	if err != nil {
 		return Generation{}, err
@@ -25,7 +25,7 @@ func (p *publisher) publish(ctx context.Context, service *semantic.Service, opti
 		return Generation{}, ErrStaleGeneration
 	}
 
-	snapshot, err := buildPersistenceSnapshot(ctx, service)
+	snapshot, err := buildPersistenceSnapshot(ctx, index)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -36,7 +36,7 @@ func (p *publisher) publish(ctx context.Context, service *semantic.Service, opti
 		if err := validateSegmentData(segment.data, snapshot.state.Config, options.Limits); err != nil {
 			return Generation{}, err
 		}
-		if ref, ok := p.reusable[segment.data.ComponentID]; ok {
+		if ref, ok := p.reusable[segment.data.ID]; ok {
 			if err := objects.verify(ref); err != nil {
 				return Generation{}, err
 			}
@@ -74,9 +74,9 @@ func (p *publisher) publish(ctx context.Context, service *semantic.Service, opti
 	}
 
 	p.generation = Generation{ID: nextID}
-	p.reusable = make(map[uint64]semanticformat.SegmentRef, len(segmentRefs))
+	p.reusable = make(map[semantic.SegmentID]semanticformat.SegmentRef, len(segmentRefs))
 	for i, segment := range snapshot.segments {
-		p.reusable[segment.data.ComponentID] = segmentRefs[i]
+		p.reusable[segment.data.ID] = segmentRefs[i]
 	}
 	return p.generation, nil
 }
@@ -110,12 +110,12 @@ func (p *publisher) currentGeneration(ctx context.Context, options PublishOption
 
 	objects := newObjectStore(p.layout, options)
 
-	_, err = restoreService(
+	_, err = restoreIndex(
 		ctx,
 		Generation{ID: head.GenerationID},
 		persisted,
 		objects,
-		semantic.PipelineDescriptor{},
+		semantic.Schema{},
 	)
 	if err != nil {
 		return 0, err

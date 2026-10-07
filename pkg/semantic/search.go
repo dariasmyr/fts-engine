@@ -5,38 +5,20 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-// visibleSegment binds an immutable physical segment to an immutable local
+// segmentView binds an immutable physical segment to an immutable local
 // liveness filter. The filter is view state, not mutable segment state.
-type visibleSegment struct {
-	segment *segment
-	filter  vector.BitSet
+type segmentView struct {
+	segment  *segment
+	liveness vector.BitSet
 }
 
 type chunkSearchResult struct {
 	Hits       []ChunkHit
 	Stats      vector.SearchStats
 	Incomplete bool
-}
-
-// SearchDocuments encodes every query chunk, searches each embedding, and
-// merges the results by document using the best query-to-document distance.
-func (s *Service) SearchDocuments(ctx context.Context, encoder Encoder, query fts.Document, maxResultCount int) (DocumentSearchResult, error) {
-	return s.SearchDocumentsWithOptions(ctx, encoder, query, maxResultCount, SearchOptions{})
-}
-
-func (s *Service) SearchDocumentsWithOptions(ctx context.Context, encoder Encoder, query fts.Document, maxResultCount int, options SearchOptions) (DocumentSearchResult, error) {
-	if ctx == nil {
-		return DocumentSearchResult{}, vector.ErrNilContext
-	}
-	published, err := s.readView(ctx)
-	if err != nil {
-		return DocumentSearchResult{}, err
-	}
-	return published.SearchDocumentsWithOptions(ctx, encoder, query, maxResultCount, options)
 }
 
 func mergeSearchStats(total *vector.SearchStats, partial vector.SearchStats) {
@@ -51,31 +33,6 @@ func mergeSearchStats(total *vector.SearchStats, partial vector.SearchStats) {
 	}
 }
 
-func (s *Service) searchEncodedDocuments(ctx context.Context, query []float32, k int) (DocumentSearchResult, error) {
-	return s.searchEncodedDocumentsWithOptions(ctx, query, k, SearchOptions{})
-}
-
-func (s *Service) searchEncodedDocumentsWithOptions(ctx context.Context, query []float32, k int, options SearchOptions) (DocumentSearchResult, error) {
-	if ctx == nil {
-		return DocumentSearchResult{}, vector.ErrNilContext
-	}
-	published, err := s.readView(ctx)
-	if err != nil {
-		return DocumentSearchResult{}, err
-	}
-	if published == nil {
-		return DocumentSearchResult{}, ErrInvalidSegment
-	}
-	if err := published.validateSearchLimits(ctx, k, options); err != nil {
-		return DocumentSearchResult{}, err
-	}
-	prepared, err := published.calculator.PrepareQuery(query)
-	if err != nil {
-		return DocumentSearchResult{}, err
-	}
-	return published.searchEncodedQueries(ctx, []vector.PreparedQuery{prepared}, k, options)
-}
-
 func resolveCandidateBudget(candidateChunks, maxCandidates int) (int, error) {
 	if candidateChunks == 0 {
 		return maxCandidates, nil
@@ -86,7 +43,7 @@ func resolveCandidateBudget(candidateChunks, maxCandidates int) (int, error) {
 	return min(candidateChunks, maxCandidates), nil
 }
 
-func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, views []visibleSegment, query []float32, k, maxResults int, searchOptions vector.SearchOptions) (chunkSearchResult, error) {
+func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, views []segmentView, query []float32, k, maxResults int, searchOptions vector.SearchOptions) (chunkSearchResult, error) {
 	prepared, err := calculator.PrepareQuery(query)
 	if err != nil {
 		return chunkSearchResult{}, err
@@ -94,7 +51,7 @@ func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, vie
 	return searchSegmentsChunksPrepared(ctx, calculator, views, prepared, k, maxResults, searchOptions)
 }
 
-func searchSegmentsChunksPrepared(ctx context.Context, calculator vector.Calculator, views []visibleSegment, query vector.PreparedQuery, k, maxResults int, searchOptions vector.SearchOptions) (chunkSearchResult, error) {
+func searchSegmentsChunksPrepared(ctx context.Context, calculator vector.Calculator, views []segmentView, query vector.PreparedQuery, k, maxResults int, searchOptions vector.SearchOptions) (chunkSearchResult, error) {
 	if k <= 0 || k > maxResults {
 		return chunkSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxResults)
 	}
@@ -114,7 +71,7 @@ func searchSegmentsChunksPrepared(ctx context.Context, calculator vector.Calcula
 	var stats vector.SearchStats
 	incomplete := false
 	for _, view := range views {
-		if view.filter.AllowedOrdinalCount() == 0 {
+		if view.liveness.AllowedOrdinalCount() == 0 {
 			continue
 		}
 		options := searchOptions
@@ -126,7 +83,7 @@ func searchSegmentsChunksPrepared(ctx context.Context, calculator vector.Calcula
 			}
 			options.VisitLimit = remaining
 		}
-		options.ResultFilter = view.filter
+		options.ResultFilter = view.liveness
 		result, err := view.segment.searchPrepared(ctx, query, k, options)
 		if err != nil {
 			return chunkSearchResult{}, err
@@ -160,7 +117,7 @@ func searchSegmentsChunksPrepared(ctx context.Context, calculator vector.Calcula
 
 type rankedHit struct {
 	hit       ChunkHit
-	component uint64
+	component SegmentID
 	ordinal   vector.Ordinal
 }
 

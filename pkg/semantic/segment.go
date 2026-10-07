@@ -13,44 +13,44 @@ import (
 // segment searches one immutable HNSW component. The vector source is
 // authoritative row storage and the HNSW index contains only navigation topology.
 type segment struct {
-	component  uint64
-	descriptor PipelineDescriptor
-	rows       []VectorRow
-	vectors    vector.PreparedVectorStore
-	search     hnsw.SearchConfig
-	index      *hnsw.Index
+	component SegmentID
+	schema    Schema
+	rows      []VectorRow
+	vectors   vector.PreparedVectorStore
+	search    hnsw.SearchConfig
+	index     *hnsw.Index
 }
 
 // buildSegment builds the target immutable semantic segment. The HNSW index
 // navigates source rows by local ordinal; rows resolve those ordinals to stable
 // semantic identities.
-func buildSegment(ctx context.Context, component uint64, descriptor PipelineDescriptor, source vector.PreparedVectorStore, rows []VectorRow, options hnsw.BuildOptions) (*segment, error) {
+func buildSegment(ctx context.Context, component SegmentID, schema Schema, source vector.PreparedVectorStore, rows []VectorRow, options hnsw.BuildOptions) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if component == 0 || !descriptor.Embedding.IsValid() || !descriptor.Chunking.IsValid() {
+	if component == 0 || !schema.IsValid() {
 		return nil, ErrInvalidSegment
 	}
 	index, err := hnsw.Build(ctx, source, options)
 	if err != nil {
 		return nil, err
 	}
-	return newBuiltSegment(component, descriptor, source, index, rows)
+	return newBuiltSegment(component, schema, source, index, rows)
 }
 
 // newBuiltSegment takes ownership of rows produced together with an index by
 // the package's ingestion or compaction path.
-func newBuiltSegment(component uint64, descriptor PipelineDescriptor, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
+func newBuiltSegment(component SegmentID, schema Schema, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
 	segment := &segment{
-		component:  component,
-		descriptor: descriptor,
-		rows:       rows,
-		vectors:    vectors,
-		search:     index.Report().Search,
-		index:      index,
+		component: component,
+		schema:    schema,
+		rows:      rows,
+		vectors:   vectors,
+		search:    index.Report().Search,
+		index:     index,
 	}
 	if err := segment.validateContents(); err != nil {
 		return nil, err
@@ -58,7 +58,7 @@ func newBuiltSegment(component uint64, descriptor PipelineDescriptor, vectors ve
 	return segment, nil
 }
 
-func newSegment(ctx context.Context, component uint64, descriptor PipelineDescriptor, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
+func newSegment(ctx context.Context, component SegmentID, schema Schema, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -78,12 +78,12 @@ func newSegment(ctx context.Context, component uint64, descriptor PipelineDescri
 		return nil, ErrInvalidSegment
 	}
 	segment := &segment{
-		component:  component,
-		descriptor: descriptor,
-		rows:       append([]VectorRow(nil), rows...),
-		vectors:    vectors,
-		search:     index.Report().Search,
-		index:      index,
+		component: component,
+		schema:    schema,
+		rows:      append([]VectorRow(nil), rows...),
+		vectors:   vectors,
+		search:    index.Report().Search,
+		index:     index,
 	}
 	if err := segment.validateContents(); err != nil {
 		return nil, err
@@ -91,7 +91,7 @@ func newSegment(ctx context.Context, component uint64, descriptor PipelineDescri
 	return segment, nil
 }
 
-func (s *segment) componentID() uint64 {
+func (s *segment) componentID() SegmentID {
 	if s == nil {
 		return 0
 	}
@@ -174,10 +174,10 @@ func (s *segment) validateContents() error {
 		return ErrInvalidSegment
 	}
 	vectors := s.vectors
-	if !s.descriptor.Embedding.IsValid() || !s.descriptor.Chunking.IsValid() {
+	if !s.schema.Embedding.IsValid() || !s.schema.Chunking.IsValid() {
 		return ErrInvalidSegment
 	}
-	calculator, err := s.descriptor.Embedding.Calculator()
+	calculator, err := s.schema.Embedding.Calculator()
 	if err != nil || s.component == 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
 		vectors.Dimensions() != calculator.Dimensions() || vectors.Metric() != calculator.Metric() ||
 		vectors.Normalization() != calculator.Normalization() || s.index.Dimensions() != vectors.Dimensions() ||

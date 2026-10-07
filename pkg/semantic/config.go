@@ -9,10 +9,16 @@ import (
 // Config defines the semantic pipeline, service limits, and optional HNSW
 // tuning. New derives vector-space and allocation settings from these values.
 type Config struct {
+	// Schema is the canonical compatibility contract of the semantic index.
+	Schema Schema
+
+	// Embedding and Chunking are retained for source compatibility. normalized
+	// canonicalizes them with Schema; new code should populate Schema instead.
 	Embedding EmbeddingDescriptor
 	Chunking  ChunkingDescriptor
-	Limits    Limits
-	HNSW      HNSWTuning
+
+	Limits Limits
+	HNSW   HNSWTuning
 }
 
 // Limits bounds semantic document lifecycle and result grouping.
@@ -52,8 +58,16 @@ func (c Config) Validate() error {
 }
 
 func (c Config) normalized() (Config, error) {
+	schema, err := c.resolvedSchema()
+	if err != nil {
+		return Config{}, err
+	}
+	c.Schema = schema
+	c.Embedding = schema.Embedding
+	c.Chunking = schema.Chunking
+
 	limits := c.Limits
-	if !c.Embedding.IsValid() || !c.Chunking.IsValid() ||
+	if !schema.IsValid() ||
 		limits.MaxLiveVectors <= 0 || limits.MaxChunksPerDocument <= 0 ||
 		limits.MaxDocumentsPerSearch <= 0 || limits.MaxChunkCandidates < limits.MaxDocumentsPerSearch ||
 		limits.MaxChunkCandidates > limits.MaxLiveVectors || limits.MaxChunksPerDocument > limits.MaxLiveVectors ||
@@ -95,15 +109,15 @@ func normalizeHNSWTuning(tuning HNSWTuning, limits Limits) HNSWTuning {
 }
 
 func (c Config) hnswOptions() (hnsw.BuildOptions, bool) {
-	dimensions := uint64(c.Embedding.Dimensions)
+	dimensions := uint64(c.Schema.Embedding.Dimensions)
 	maxVectors := uint64(c.Limits.MaxLiveVectors)
 	if dimensions == 0 || dimensions > math.MaxUint64/4 || maxVectors > math.MaxUint64/(dimensions*4) {
 		return hnsw.BuildOptions{}, false
 	}
 	return hnsw.BuildOptions{
 		Build: hnsw.BuildConfig{
-			Dimensions:     c.Embedding.Dimensions,
-			Metric:         c.Embedding.Metric,
+			Dimensions:     c.Schema.Embedding.Dimensions,
+			Metric:         c.Schema.Embedding.Metric,
 			MaxVectors:     c.Limits.MaxLiveVectors,
 			MaxVectorBytes: maxVectors * dimensions * 4,
 			MaxNeighbors:   c.HNSW.MaxNeighbors,
@@ -120,8 +134,28 @@ func (c Config) hnswOptions() (hnsw.BuildOptions, bool) {
 	}, true
 }
 
-func (c Config) pipelineDescriptor() PipelineDescriptor {
-	return PipelineDescriptor{Embedding: c.Embedding, Chunking: c.Chunking}
+func (c Config) schema() Schema {
+	return c.Schema
+}
+
+func (c Config) resolvedSchema() (Schema, error) {
+	legacy := Schema{Embedding: c.Embedding, Chunking: c.Chunking}
+	hasSchema := c.Schema.Embedding != (EmbeddingDescriptor{}) || c.Schema.Chunking != (ChunkingDescriptor{})
+	hasLegacy := c.Embedding != (EmbeddingDescriptor{}) || c.Chunking != (ChunkingDescriptor{})
+
+	switch {
+	case hasSchema && hasLegacy:
+		if c.Schema != legacy {
+			return Schema{}, ErrInvalidConfig
+		}
+		return c.Schema, nil
+	case hasSchema:
+		return c.Schema, nil
+	case hasLegacy:
+		return legacy, nil
+	default:
+		return Schema{}, ErrInvalidConfig
+	}
 }
 
 func (c Config) searchPolicy() searchPolicy {

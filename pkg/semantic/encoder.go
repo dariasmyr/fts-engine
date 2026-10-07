@@ -19,5 +19,5 @@ type EncodedChunk struct {
 // concurrent use.
 type Encoder interface {
 	Encode(context.Context, fts.Document) ([]EncodedChunk, error)
-	Descriptor() PipelineDescriptor
+	Descriptor() Schema
 }

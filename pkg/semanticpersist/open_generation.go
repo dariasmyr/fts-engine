@@ -47,12 +47,12 @@ func OpenByGeneration(ctx context.Context, root string, generationID uint64, opt
 
 	objects := newObjectStore(l, options)
 
-	_, err = restoreService(
+	_, err = restoreIndex(
 		ctx,
 		Generation{ID: generationID},
 		persisted,
 		objects,
-		semantic.PipelineDescriptor{},
+		semantic.Schema{},
 	)
 	if err != nil {
 		return err

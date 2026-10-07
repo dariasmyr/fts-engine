@@ -9,113 +9,120 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-// Flush builds one HNSW segment outside the state lock and atomically publishes
-// it. A concurrent mutation rejects the stale build with ErrPublicationConflict;
-// the caller may retry without losing pending state.
-func (s *Service) Flush(ctx context.Context) error {
+// Flush publishes the complete pending batch as one new immutable segment plus
+// liveness changes to older segments. Expensive HNSW construction happens
+// outside the state lock; commit succeeds only if the captured revision is current.
+func (i *Index) Flush(ctx context.Context) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
-	if err := s.lockFlush(ctx); err != nil {
+	if err := i.lockPublication(ctx); err != nil {
 		return err
 	}
-	defer s.unlockFlush()
-	return s.flushPending(ctx)
+	defer i.unlockPublication()
+	return i.flushPending(ctx)
 }
 
-// flushPending publishes the current pending state. The caller must hold
-// flushGate so flush and compact cannot build competing publications.
-func (s *Service) flushPending(ctx context.Context) error {
+type flushState struct {
+	revision    Revision
+	componentID SegmentID
+	pending     pendingBatch
+	locations   map[VectorID]vectorLocation
+	base        *Snapshot
+	config      Config
+}
+
+func (i *Index) flushPending(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	state, err := s.captureFlushState(ctx)
+	state, err := i.captureFlushState(ctx)
 	if err != nil {
 		return err
 	}
 	if state.revision == state.base.revision {
 		return nil
 	}
-	if len(state.pendingVectors) > 0 && state.componentID == uint64(math.MaxUint64) {
+	if len(state.pending.additions) > 0 && state.componentID == SegmentID(math.MaxUint64) {
 		return ErrComponentIDExhausted
 	}
-	segment, err := buildPendingSegment(ctx, state.componentID, state.pendingVectors, state.config)
+	segment, err := buildPendingSegment(ctx, state.componentID, state.pending.additions, state.config)
 	if err != nil {
 		return err
 	}
-	published, locations, err := publishIndex(ctx, state.base, state.locations, state.disabledIDs, segment, state.componentID, state.revision)
+	snapshot, locations, err := publishSnapshot(
+		ctx,
+		state.base,
+		state.locations,
+		state.pending.removals,
+		segment,
+		state.componentID,
+		state.revision,
+	)
 	if err != nil {
 		return err
 	}
-	return s.commitFlush(ctx, state, published, locations, segment != nil)
+	return i.commitFlush(ctx, state, snapshot, locations, segment != nil)
 }
 
-func (s *Service) commitFlush(ctx context.Context, state flushState, published *ReadView, locations map[uint64]vectorLocation, allocatedComponent bool) error {
-	if err := s.lockState(ctx); err != nil {
-		return err
-	}
-	defer s.unlockState()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if state.revision != s.revision {
-		return ErrPublicationConflict
-	}
-	s.published = published
-	s.locations = locations
-	s.pendingVectors = nil
-	s.pendingDisabledIDs = nil
-	if allocatedComponent {
-		s.nextComponentID++
-	}
-	return nil
-}
-
-type flushState struct {
-	revision       uint64
-	componentID    uint64
-	pendingVectors []pendingVector
-	disabledIDs    []uint64
-	locations      map[uint64]vectorLocation
-	base           *ReadView
-	config         Config
-}
-
-func (s *Service) captureFlushState(ctx context.Context) (flushState, error) {
-	if err := s.lockState(ctx); err != nil {
+func (i *Index) captureFlushState(ctx context.Context) (flushState, error) {
+	if err := i.lockState(ctx); err != nil {
 		return flushState{}, err
 	}
-	defer s.unlockState()
-	pendingVectors := append([]pendingVector(nil), s.pendingVectors...)
+	defer i.unlockState()
 
-	disabledIDs := append([]uint64(nil), s.pendingDisabledIDs...)
-	locations, err := cloneLocations(ctx, s.locations)
+	locations, err := cloneLocations(ctx, i.state.locations)
 	if err != nil {
 		return flushState{}, err
 	}
 	return flushState{
-		revision: s.revision, componentID: s.nextComponentID,
-		pendingVectors: pendingVectors, disabledIDs: disabledIDs,
-		locations: locations, base: s.published, config: s.config,
+		revision:    i.state.revision,
+		componentID: i.state.nextComponentID,
+		pending: pendingBatch{
+			additions: append([]pendingVector(nil), i.state.pending.additions...),
+			removals:  append([]VectorID(nil), i.state.pending.removals...),
+		},
+		locations: locations,
+		base:      i.snapshot,
+		config:    i.config,
 	}, nil
 }
 
-func buildPendingSegment(ctx context.Context, componentID uint64, pending []pendingVector, config Config) (*segment, error) {
+func (i *Index) commitFlush(ctx context.Context, state flushState, snapshot *Snapshot, locations map[VectorID]vectorLocation, allocatedComponent bool) error {
+	if err := i.lockState(ctx); err != nil {
+		return err
+	}
+	defer i.unlockState()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if state.revision != i.state.revision {
+		return ErrPublicationConflict
+	}
+	i.snapshot = snapshot
+	i.state.locations = locations
+	i.state.pending.reset()
+	if allocatedComponent {
+		i.state.nextComponentID++
+	}
+	return nil
+}
+
+func buildPendingSegment(ctx context.Context, componentID SegmentID, pending []pendingVector, config Config) (*segment, error) {
 	if len(pending) == 0 {
 		return nil, nil
 	}
-	dimensions := config.Embedding.Dimensions
+	dimensions := config.Schema.Embedding.Dimensions
 	flatVectors := make([]float32, len(pending)*dimensions)
 	rows := make([]VectorRow, len(pending))
-	for i, item := range pending {
-		if err := contextcheck.PeriodicError(ctx, i); err != nil {
+	for n, item := range pending {
+		if err := contextcheck.PeriodicError(ctx, n); err != nil {
 			return nil, err
 		}
-
-		copy(flatVectors[i*dimensions:(i+1)*dimensions], item.vector)
-		rows[i] = item.row
+		copy(flatVectors[n*dimensions:(n+1)*dimensions], item.vector)
+		rows[n] = item.row
 	}
-	calculator, err := config.Embedding.Calculator()
+	calculator, err := config.Schema.Embedding.Calculator()
 	if err != nil {
 		return nil, err
 	}
@@ -127,5 +134,5 @@ func buildPendingSegment(ctx context.Context, componentID uint64, pending []pend
 	if !ok {
 		return nil, ErrInvalidConfig
 	}
-	return buildSegment(ctx, componentID, config.pipelineDescriptor(), source, rows, buildOptions)
+	return buildSegment(ctx, componentID, config.Schema, source, rows, buildOptions)
 }

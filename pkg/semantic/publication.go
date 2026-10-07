@@ -8,24 +8,23 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-func publishIndex(ctx context.Context, base *ReadView, locations map[uint64]vectorLocation, disabledIDs []uint64, pending *segment, pendingComponent, revision uint64) (*ReadView, map[uint64]vectorLocation, error) {
-	segments := append([]visibleSegment(nil), base.segments...)
-	componentIndexes := make(map[uint64]int, len(segments))
-	for i, view := range segments {
+// publishSnapshot derives the next immutable snapshot from a committed base.
+// The input locations map is owned by the caller and updated transactionally.
+func publishSnapshot(ctx context.Context, base *Snapshot, locations map[VectorID]vectorLocation, removedIDs []VectorID, pending *segment, pendingComponent SegmentID, revision Revision) (*Snapshot, map[VectorID]vectorLocation, error) {
+	segments := append([]segmentView(nil), base.segments...)
+	componentIndexes := make(map[SegmentID]int, len(segments))
+	for n, view := range segments {
 		if view.segment == nil {
 			return nil, nil, ErrInternalState
 		}
-		componentIndexes[view.segment.componentID()] = i
+		componentIndexes[view.segment.componentID()] = n
 	}
-	type componentChanges struct {
-		disallowed []vector.Ordinal
-	}
-	changesByComponent := make(map[uint64]*componentChanges)
-	for idIndex, id := range disabledIDs {
-		if err := contextcheck.PeriodicError(ctx, idIndex); err != nil {
+
+	changesByComponent := make(map[SegmentID][]vector.Ordinal)
+	for n, id := range removedIDs {
+		if err := contextcheck.PeriodicError(ctx, n); err != nil {
 			return nil, nil, err
 		}
-
 		location, ok := locations[id]
 		if !ok {
 			return nil, nil, ErrInternalState
@@ -33,54 +32,66 @@ func publishIndex(ctx context.Context, base *ReadView, locations map[uint64]vect
 		if _, ok := componentIndexes[location.component]; !ok {
 			return nil, nil, ErrInternalState
 		}
-		componentChange := changesByComponent[location.component]
-		if componentChange == nil {
-			componentChange = &componentChanges{}
-			changesByComponent[location.component] = componentChange
-		}
-		componentChange.disallowed = append(componentChange.disallowed, location.ordinal)
+		changesByComponent[location.component] = append(changesByComponent[location.component], location.ordinal)
 	}
-	for componentID, change := range changesByComponent {
+
+	for componentID, removed := range changesByComponent {
 		index := componentIndexes[componentID]
-		filter, err := segments[index].filter.WithChanges(segments[index].filter.TotalOrdinalCount(), nil, change.disallowed)
+		liveness, err := segments[index].liveness.WithChanges(
+			segments[index].liveness.TotalOrdinalCount(), nil, removed,
+		)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%w: update segment filter: %v", ErrInternalState, err)
+			return nil, nil, fmt.Errorf("%w: update segment liveness: %v", ErrInternalState, err)
 		}
-		segments[index].filter = filter
+		segments[index].liveness = liveness
 	}
-	// All disabled locations must resolve before any are removed so a malformed
-	// batch cannot leave the owned working map partially updated.
-	for _, id := range disabledIDs {
+
+	// Validate every removal before mutating the owned locations map.
+	for _, id := range removedIDs {
 		delete(locations, id)
 	}
+
 	if pending != nil {
-		segments = append(segments, visibleSegment{segment: pending, filter: vector.NewFullBitSet(uint32(pending.len()))})
+		segments = append(segments, segmentView{
+			segment:  pending,
+			liveness: vector.NewFullBitSet(uint32(pending.len())),
+		})
 		for ordinal, row := range pending.rows {
 			locations[row.VectorID] = vectorLocation{component: pendingComponent, ordinal: vector.Ordinal(ordinal)}
 		}
 	}
-	view, err := newTrustedReadView(ctx, revision, segments, base.descriptor, searchPolicy{
-		MaxDocumentsPerSearch:   base.maxDocumentsPerSearch,
-		MaxChunkCandidates:      base.maxCandidates,
-		MaxChunksPerDocumentHit: base.maxChunksPerDocumentHit,
-		MaxQueryChunks:          base.maxQueryChunks,
-	}, base.searchConfig, base.calculator)
+
+	snapshot, err := newTrustedSnapshot(
+		ctx,
+		revision,
+		segments,
+		base.schema,
+		searchPolicy{
+			MaxDocumentsPerSearch:   base.maxDocumentsPerSearch,
+			MaxChunkCandidates:      base.maxCandidates,
+			MaxChunksPerDocumentHit: base.maxChunksPerDocumentHit,
+			MaxQueryChunks:          base.maxQueryChunks,
+		},
+		base.searchConfig,
+		base.calculator,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
-	return view, locations, nil
+	return snapshot, locations, nil
 }
-func cloneLocations(ctx context.Context, source map[uint64]vectorLocation) (map[uint64]vectorLocation, error) {
-	result := make(map[uint64]vectorLocation, len(source))
-	i := 0
+
+func cloneLocations(ctx context.Context, source map[VectorID]vectorLocation) (map[VectorID]vectorLocation, error) {
+	result := make(map[VectorID]vectorLocation, len(source))
+	n := 0
 	for id, location := range source {
-		if i%256 == 0 {
+		if n%256 == 0 {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 		}
 		result[id] = location
-		i++
+		n++
 	}
 	return result, nil
 }

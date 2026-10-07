@@ -8,7 +8,7 @@ type Statistics struct {
 	LiveVectors     int
 	StaleVectors    int
 	// MaxAllocatedVectorID never decreases after replacement, deletion, or compaction.
-	MaxAllocatedVectorID uint64
+	MaxAllocatedVectorID VectorID
 }
 
 // VectorRow connects an internal vector identity with the source chunk it
@@ -17,6 +17,6 @@ type Statistics struct {
 // same. For example, VectorID 42 can move from ordinal 5 to ordinal 0 without
 // changing which document chunk it represents.
 type VectorRow struct {
-	VectorID uint64
+	VectorID VectorID
 	Chunk    chunk.Ref
 }

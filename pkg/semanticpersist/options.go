@@ -33,8 +33,8 @@ type PublishOptions struct {
 }
 
 type OpenOptions struct {
-	Limits              Limits
-	ExpectedDescriptors semantic.PipelineDescriptor
+	Limits         Limits
+	ExpectedSchema semantic.Schema
 }
 
 func normalizeOptions(options *PublishOptions) error {

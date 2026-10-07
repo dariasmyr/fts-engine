@@ -9,96 +9,113 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-// Compact merges all visible live rows into one immutable HNSW segment.
-func (s *Service) Compact(ctx context.Context) error {
+// Compact rewrites all live rows from the committed snapshot into at most one
+// immutable segment. Pending mutations must be flushed first.
+func (i *Index) Compact(ctx context.Context) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.lockFlush(ctx); err != nil {
+	if err := i.lockPublication(ctx); err != nil {
 		return err
 	}
-	defer s.unlockFlush()
-	if err := s.lockState(ctx); err != nil {
+	defer i.unlockPublication()
+
+	if err := i.lockState(ctx); err != nil {
 		return err
 	}
-	revision := s.revision
-	published := s.published
-	config := s.config
-	componentID := s.nextComponentID
-	hasPending := s.revision != s.published.revision
-	s.unlockState()
+	revision := i.state.revision
+	snapshot := i.snapshot
+	config := i.config
+	componentID := i.state.nextComponentID
+	hasPending := i.state.revision != i.snapshot.revision
+	i.unlockState()
 	if hasPending {
 		return ErrPendingMutations
 	}
-	if len(published.segments) <= 1 {
+
+	if len(snapshot.segments) <= 1 {
 		stale := false
-		for _, item := range published.segments {
-			stale = stale || item.filter.AllowedOrdinalCount() != item.segment.len()
+		for _, item := range snapshot.segments {
+			stale = stale || item.liveness.AllowedOrdinalCount() != item.segment.len()
 		}
 		if !stale {
 			return nil
 		}
 	}
-	var compactedSegment *segment
-	if published.liveCount > 0 {
-		if componentID == uint64(math.MaxUint64) {
+
+	var compacted *segment
+	if snapshot.liveCount > 0 {
+		if componentID == SegmentID(math.MaxUint64) {
 			return ErrComponentIDExhausted
 		}
 		var err error
-		compactedSegment, err = buildCompactedSegment(ctx, published, componentID, config)
+		compacted, err = buildCompactedSegment(ctx, snapshot, componentID, config)
 		if err != nil {
 			return err
 		}
 	}
-	locations := make(map[uint64]vectorLocation, published.liveCount)
-	for ordinal, row := range compactedSegment.rows {
-		if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
-			return err
-		}
 
-		locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
+	locations := make(map[VectorID]vectorLocation, snapshot.liveCount)
+	if compacted != nil {
+		for ordinal, row := range compacted.rows {
+			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
+				return err
+			}
+			locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
+		}
 	}
-	segments := []visibleSegment(nil)
-	if compactedSegment != nil {
-		segments = []visibleSegment{{segment: compactedSegment, filter: vector.NewFullBitSet(uint32(len(compactedSegment.rows)))}}
+
+	segments := []segmentView(nil)
+	if compacted != nil {
+		segments = []segmentView{{
+			segment:  compacted,
+			liveness: vector.NewFullBitSet(uint32(compacted.len())),
+		}}
 	}
 	buildOptions, ok := config.hnswOptions()
 	if !ok {
 		return ErrInvalidConfig
 	}
-	view, err := newTrustedReadView(ctx, revision, segments, published.descriptor, config.searchPolicy(), buildOptions.Search, published.calculator)
+	compactedSnapshot, err := newTrustedSnapshot(
+		ctx,
+		revision,
+		segments,
+		snapshot.schema,
+		config.searchPolicy(),
+		buildOptions.Search,
+		snapshot.calculator,
+	)
 	if err != nil {
 		return err
 	}
-	if err := s.lockState(ctx); err != nil {
+
+	if err := i.lockState(ctx); err != nil {
 		return err
 	}
-	defer s.unlockState()
+	defer i.unlockState()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if revision != s.revision {
+	if revision != i.state.revision {
 		return ErrPublicationConflict
 	}
-	s.published = view
-	s.locations = locations
-	if compactedSegment != nil {
-		s.nextComponentID++
+	i.snapshot = compactedSnapshot
+	i.state.locations = locations
+	if compacted != nil {
+		i.state.nextComponentID++
 	}
 	return nil
 }
 
-// buildCompactedSegment materializes live rows from an immutable read view and
-// builds the replacement HNSW segment without touching mutable service state.
-func buildCompactedSegment(ctx context.Context, view *ReadView, componentID uint64, config Config) (*segment, error) {
-	flatVectors, liveRows, err := materializeLiveRows(ctx, view)
+func buildCompactedSegment(ctx context.Context, snapshot *Snapshot, componentID SegmentID, config Config) (*segment, error) {
+	flatVectors, liveRows, err := materializeLiveRows(ctx, snapshot)
 	if err != nil {
 		return nil, err
 	}
-	calculator, err := config.Embedding.Calculator()
+	calculator, err := config.Schema.Embedding.Calculator()
 	if err != nil {
 		return nil, err
 	}
@@ -110,49 +127,32 @@ func buildCompactedSegment(ctx context.Context, view *ReadView, componentID uint
 	if !ok {
 		return nil, ErrInvalidConfig
 	}
-	segment, err := buildSegment(
-		ctx,
-		componentID,
-		config.pipelineDescriptor(),
-		source,
-		liveRows,
-		buildOptions,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return segment, nil
+	return buildSegment(ctx, componentID, config.Schema, source, liveRows, buildOptions)
 }
 
-func materializeLiveRows(ctx context.Context, published *ReadView) ([]float32, []VectorRow, error) {
-	// flatVectors is a flat slice of all live vectors in the published segments, concatenated in order.
-	// liveRows is a slice of all live vector ids in the published segments, concatenated in order.
-	// The two slices are aligned by ordinal: flatVectors[dim*i:dim*(i+1)] is the vector for liveRows[i].
-	dimensions := published.calculator.Dimensions()
-	flatVectors := make([]float32, published.liveCount*dimensions)
-	liveRows := make([]VectorRow, published.liveCount)
+func materializeLiveRows(ctx context.Context, snapshot *Snapshot) ([]float32, []VectorRow, error) {
+	dimensions := snapshot.calculator.Dimensions()
+	flatVectors := make([]float32, snapshot.liveCount*dimensions)
+	liveRows := make([]VectorRow, snapshot.liveCount)
 	liveOrdinal := 0
-	for _, item := range published.segments {
+	for _, item := range snapshot.segments {
 		for ordinal, row := range item.segment.rows {
 			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
 				return nil, nil, err
 			}
-
-			if !item.filter.Allows(vector.Ordinal(ordinal)) {
+			if !item.liveness.Allows(vector.Ordinal(ordinal)) {
 				continue
 			}
-
 			start := liveOrdinal * dimensions
 			dst := flatVectors[start : start+dimensions]
-			store := item.segment.vectorStore()
-			if err := store.ReadVectorInto(ctx, vector.Ordinal(ordinal), dst); err != nil {
+			if err := item.segment.vectorStore().ReadVectorInto(ctx, vector.Ordinal(ordinal), dst); err != nil {
 				return nil, nil, err
 			}
 			liveRows[liveOrdinal] = row
 			liveOrdinal++
 		}
 	}
-	if liveOrdinal != published.liveCount {
+	if liveOrdinal != snapshot.liveCount {
 		return nil, nil, ErrInternalState
 	}
 	return flatVectors, liveRows, nil

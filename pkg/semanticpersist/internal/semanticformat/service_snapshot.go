@@ -40,7 +40,7 @@ const (
 )
 
 type SegmentState struct {
-	ComponentID   uint64
+	ID            semantic.SegmentID
 	Rows          []semantic.VectorRow
 	LivenessWords []uint64
 }
@@ -48,9 +48,9 @@ type SegmentState struct {
 // ServiceSnapshot is the decoded SSTA payload required to resume semantic writes.
 type ServiceSnapshot struct {
 	Config               semantic.Config
-	Revision             uint64
-	MaxAllocatedVectorID uint64
-	NextComponentID      uint64
+	Revision             semantic.Revision
+	MaxAllocatedVectorID semantic.VectorID
+	NextSegmentID        semantic.SegmentID
 	Segments             []SegmentState
 }
 
@@ -78,12 +78,12 @@ func EncodeState(value ServiceSnapshot, limits StateLimits) ([]byte, FileRef, er
 	e.writeUint32(c.Chunking.Version)
 	e.writeString(c.Chunking.Fingerprint, limits.MaxStringBytes)
 	encodeConfig(e, c)
-	e.writeUint64(value.Revision)
+	e.writeUint64(uint64(value.Revision))
 	e.writeUint64(uint64(value.MaxAllocatedVectorID))
-	e.writeUint64(uint64(value.NextComponentID))
+	e.writeUint64(uint64(value.NextSegmentID))
 	e.writeUint32(uint32(len(value.Segments)))
 	for _, segment := range value.Segments {
-		e.writeUint64(uint64(segment.ComponentID))
+		e.writeUint64(uint64(segment.ID))
 		e.writeUint32(uint32(len(segment.Rows)))
 		e.writeUint32(uint32(len(segment.LivenessWords)))
 		for _, word := range segment.LivenessWords {
@@ -116,7 +116,7 @@ func DecodeState(data []byte, limits StateLimits) (ServiceSnapshot, error) {
 	embedding.ProviderID, embedding.ModelID, embedding.ModelVersion, embedding.PipelineFingerprint = d.readString(), d.readString(), d.readString(), d.readString()
 	chunking := semantic.ChunkingDescriptor{ID: d.readString(), Version: d.readUint32(), Fingerprint: d.readString()}
 	config := decodeConfig(d, embedding, chunking)
-	value := ServiceSnapshot{Config: config, Revision: d.readUint64(), MaxAllocatedVectorID: d.readUint64(), NextComponentID: d.readUint64()}
+	value := ServiceSnapshot{Config: config, Revision: semantic.Revision(d.readUint64()), MaxAllocatedVectorID: semantic.VectorID(d.readUint64()), NextSegmentID: semantic.SegmentID(d.readUint64())}
 	countValue := uint64(d.readUint32())
 	if countValue > uint64(limits.MaxVectors) || countValue > uint64(d.remaining()/16) {
 		return ServiceSnapshot{}, ErrLimitExceeded
@@ -125,7 +125,7 @@ func DecodeState(data []byte, limits StateLimits) (ServiceSnapshot, error) {
 	value.Segments = make([]SegmentState, count)
 	totalRows := 0
 	for i := range value.Segments {
-		segment := SegmentState{ComponentID: d.readUint64()}
+		segment := SegmentState{ID: semantic.SegmentID(d.readUint64())}
 		rowCountValue, wordCountValue := uint64(d.readUint32()), uint64(d.readUint32())
 		if rowCountValue > uint64(limits.MaxVectors-totalRows) || wordCountValue != (rowCountValue+63)/64 || wordCountValue > uint64(d.remaining()/8) {
 			return ServiceSnapshot{}, ErrLimitExceeded
@@ -140,7 +140,7 @@ func DecodeState(data []byte, limits StateLimits) (ServiceSnapshot, error) {
 		}
 		segment.Rows = make([]semantic.VectorRow, rowCount)
 		for j := range segment.Rows {
-			segment.Rows[j] = semantic.VectorRow{VectorID: d.readUint64(), Chunk: decodeRef(d)}
+			segment.Rows[j] = semantic.VectorRow{VectorID: semantic.VectorID(d.readUint64()), Chunk: decodeRef(d)}
 			if err := d.err(); err != nil {
 				return ServiceSnapshot{}, err
 			}
@@ -206,7 +206,7 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 	if err := value.Config.Validate(); err != nil {
 		return 0, codecErrorf(ErrCorrupt, "state config is invalid: %v", err)
 	}
-	if value.NextComponentID == 0 {
+	if value.NextSegmentID == 0 {
 		return 0, codecErrorf(ErrCorrupt, "state next component ID is zero")
 	}
 	if len(value.Segments) > limits.MaxSegments {
@@ -280,8 +280,8 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 		if !addEncodedSize(&size, stateSegmentFixedSize) || uint64(len(segment.LivenessWords)) > math.MaxUint64/wireUint64Size || !addEncodedSize(&size, uint64(len(segment.LivenessWords))*wireUint64Size) {
 			return 0, ErrLimitExceeded
 		}
-		if segment.ComponentID == 0 {
-			return 0, codecErrorf(ErrCorrupt, "state segment %d has zero component ID", segmentIndex)
+		if segment.ID == 0 {
+			return 0, codecErrorf(ErrCorrupt, "state segment %d has zero ID", segmentIndex)
 		}
 		expectedWordCount := len(segment.Rows) / 64
 		if len(segment.Rows)%64 != 0 {

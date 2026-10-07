@@ -48,12 +48,18 @@ func (descriptor ChunkingDescriptor) IsValid() bool {
 	return descriptor.ID != "" && descriptor.Version > 0 && descriptor.Fingerprint != ""
 }
 
-type PipelineDescriptor struct {
+// Schema identifies the semantic representation stored in an Index. Segments,
+// encoders and persisted State must use exactly the same schema.
+type Schema struct {
 	Embedding EmbeddingDescriptor
 	Chunking  ChunkingDescriptor
 }
 
-func validatePipelineCompatibility(left, right PipelineDescriptor) error {
+func (schema Schema) IsValid() bool {
+	return schema.Embedding.IsValid() && schema.Chunking.IsValid()
+}
+
+func validateSchemaCompatibility(left, right Schema) error {
 	if left.Embedding != right.Embedding {
 		return ErrEmbeddingMismatch
 	}

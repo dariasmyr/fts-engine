@@ -11,7 +11,7 @@ import (
 
 // PersistentService owns one writable semantic service and the exclusive filesystem lock.
 type PersistentService struct {
-	service     *semantic.Service
+	index       *semantic.Index
 	publisher   *publisher
 	serviceLock *serviceLock
 	publishMu   publishLock
@@ -19,14 +19,14 @@ type PersistentService struct {
 	closeErr    error
 }
 
-func Publish(ctx context.Context, root string, service *semantic.Service, options PublishOptions) (Generation, error) {
+func Publish(ctx context.Context, root string, index *semantic.Index, options PublishOptions) (Generation, error) {
 	if ctx == nil {
 		return Generation{}, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return Generation{}, err
 	}
-	if service == nil || root == "" {
+	if index == nil || root == "" {
 		return Generation{}, ErrCorrupt
 	}
 	if err := normalizeOptions(&options); err != nil {
@@ -56,7 +56,7 @@ func Publish(ctx context.Context, root string, service *semantic.Service, option
 		}
 	}
 	p := &publisher{layout: l}
-	return p.publish(ctx, service, options, true)
+	return p.publish(ctx, index, options, true)
 }
 
 func Open(ctx context.Context, root string, options OpenOptions) (*PersistentService, error) {
@@ -112,12 +112,12 @@ func Open(ctx context.Context, root string, options OpenOptions) (*PersistentSer
 		Limits:     limits,
 	})
 
-	restored, err := restoreService(
+	restored, err := restoreIndex(
 		ctx,
 		Generation{ID: head.GenerationID},
 		persisted,
 		objects,
-		options.ExpectedDescriptors,
+		options.ExpectedSchema,
 	)
 	if err != nil {
 		_ = lock.Close()
@@ -125,7 +125,7 @@ func Open(ctx context.Context, root string, options OpenOptions) (*PersistentSer
 	}
 
 	return &PersistentService{
-		service: restored.service,
+		index: restored.index,
 		publisher: &publisher{
 			layout:       l,
 			openedLimits: limits,
@@ -136,18 +136,19 @@ func Open(ctx context.Context, root string, options OpenOptions) (*PersistentSer
 	}, nil
 }
 
-func (s *PersistentService) Service() *semantic.Service {
+func (s *PersistentService) Index() *semantic.Index {
 	if s == nil || s.publisher == nil {
 		return nil
 	}
-	return s.service
+
+	return s.index
 }
 
 func (s *PersistentService) Publish(ctx context.Context, options PublishOptions) (Generation, error) {
 	if ctx == nil {
 		return Generation{}, vector.ErrNilContext
 	}
-	if s == nil || s.service == nil || s.publisher == nil {
+	if s == nil || s.index == nil || s.publisher == nil {
 		return Generation{}, ErrStoreClosed
 	}
 	if err := s.publishMu.Lock(ctx); err != nil {
@@ -164,7 +165,7 @@ func (s *PersistentService) Publish(ctx context.Context, options PublishOptions)
 	if err := normalizeOptions(&options); err != nil {
 		return Generation{}, err
 	}
-	return s.publisher.publish(ctx, s.service, options, false)
+	return s.publisher.publish(ctx, s.index, options, false)
 }
 
 func (s *PersistentService) Close() error {

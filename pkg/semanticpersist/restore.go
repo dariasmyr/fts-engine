@@ -8,25 +8,26 @@ import (
 )
 
 type restoreResult struct {
-	service    *semantic.Service
+	index      *semantic.Index
 	generation Generation
-	reusable   map[uint64]semanticformat.SegmentRef
+	reusable   map[semantic.SegmentID]semanticformat.SegmentRef
 }
 
-func restoreService(
+func restoreIndex(
 	ctx context.Context,
 	generation Generation,
 	persisted persistedGeneration,
 	objects objectStore,
-	expected semantic.PipelineDescriptor,
+	expected semantic.Schema,
 ) (restoreResult, error) {
-	if err := validateExpectedDescriptors(persisted.state.Config, expected); err != nil {
+	if err := validateExpectedSchema(persisted.state.Config, expected); err != nil {
 		return restoreResult{}, err
 	}
 
-	stored := make([]semantic.StoredSegment, len(persisted.state.Segments))
+	stored := make([]semantic.StateSegment, len(persisted.state.Segments))
+
 	reusable := make(
-		map[uint64]semanticformat.SegmentRef,
+		map[semantic.SegmentID]semanticformat.SegmentRef,
 		len(persisted.state.Segments),
 	)
 
@@ -43,21 +44,21 @@ func restoreService(
 			return restoreResult{}, err
 		}
 
-		stored[i] = semantic.StoredSegment{
+		stored[i] = semantic.StateSegment{
 			Data:          data,
 			LivenessWords: stateSegment.LivenessWords,
 		}
 
-		reusable[stateSegment.ComponentID] = ref
+		reusable[stateSegment.ID] = ref
 	}
 
-	service, err := semantic.Restore(
+	index, err := semantic.Open(
 		ctx,
-		semantic.RestoreState{
+		semantic.State{
 			Config:               persisted.state.Config,
 			Revision:             persisted.state.Revision,
 			MaxAllocatedVectorID: persisted.state.MaxAllocatedVectorID,
-			NextComponentID:      persisted.state.NextComponentID,
+			NextSegmentID:        persisted.state.NextSegmentID,
 			Segments:             stored,
 		},
 	)
@@ -70,25 +71,25 @@ func restoreService(
 	}
 
 	return restoreResult{
-		service:    service,
+		index:      index,
 		generation: generation,
 		reusable:   reusable,
 	}, nil
 }
 
-func validateExpectedDescriptors(
+func validateExpectedSchema(
 	config semantic.Config,
-	expected semantic.PipelineDescriptor,
+	expected semantic.Schema,
 ) error {
-	if expected == (semantic.PipelineDescriptor{}) {
+	if expected == (semantic.Schema{}) {
 		return nil
 	}
 
-	if config.Embedding != expected.Embedding {
+	if config.Schema.Embedding != expected.Embedding {
 		return ErrEmbeddingMismatch
 	}
 
-	if config.Chunking != expected.Chunking {
+	if config.Schema.Chunking != expected.Chunking {
 		return ErrChunkingMismatch
 	}
 
