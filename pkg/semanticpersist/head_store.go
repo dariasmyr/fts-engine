@@ -13,10 +13,10 @@ type headStore struct {
 	layout     layout
 	limits     Limits
 	durability durabilityPolicy
-	hooks      Options
+	hooks      PublishOptions
 }
 
-func newHeadStore(l layout, options Options) headStore {
+func newHeadStore(l layout, options PublishOptions) headStore {
 	return headStore{layout: l, limits: options.Limits, durability: durabilityPolicy{mode: options.Durability}, hooks: options}
 }
 
@@ -89,12 +89,12 @@ func (s headStore) commit(ctx context.Context, head semanticformat.Head) error {
 	return nil
 }
 
-func (s headStore) repair(head semanticformat.Head) error {
+func (s headStore) replace(head semanticformat.Head) error {
 	data, _, err := semanticformat.EncodeHead(head, fileFormatLimits(s.limits))
 	if err != nil {
 		return mapFormatError(err)
 	}
-	temp, err := os.CreateTemp(s.layout.root, ".tmp-current-repair-")
+	temp, err := os.CreateTemp(s.layout.root, ".tmp-current-replace-")
 	if err != nil {
 		return err
 	}

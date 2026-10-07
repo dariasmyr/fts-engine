@@ -24,12 +24,12 @@ const (
 	stepSyncStore          publicationStep = "sync_store"
 )
 
-type Options struct {
+type PublishOptions struct {
 	Durability         DurabilityMode
 	Limits             Limits
 	beforeStep         func(publicationStep) error
 	afterStep          func(publicationStep) error
-	ExpectedGeneration uint64
+	ExpectedGeneration *Generation
 }
 
 type OpenOptions struct {
@@ -37,7 +37,7 @@ type OpenOptions struct {
 	ExpectedDescriptors semantic.PipelineDescriptor
 }
 
-func normalizeOptions(options *Options) error {
+func normalizeOptions(options *PublishOptions) error {
 	if options.Durability == 0 {
 		options.Durability = DurabilitySynchronous
 	}
@@ -48,7 +48,7 @@ func normalizeOptions(options *Options) error {
 	return validateLimits(options.Limits)
 }
 
-func beforeStep(ctx context.Context, options Options, step publicationStep) error {
+func beforeStep(ctx context.Context, options PublishOptions, step publicationStep) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -58,7 +58,7 @@ func beforeStep(ctx context.Context, options Options, step publicationStep) erro
 	return nil
 }
 
-func afterStep(options Options, step publicationStep, committed bool) error {
+func afterStep(options PublishOptions, step publicationStep, committed bool) error {
 	var err error
 	if options.afterStep != nil {
 		err = options.afterStep(step)

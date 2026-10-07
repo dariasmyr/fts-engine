@@ -2,7 +2,6 @@ package semanticpersist
 
 import (
 	"context"
-	"crypto/sha256"
 	"path/filepath"
 
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
@@ -10,9 +9,9 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-// RepairCurrent explicitly validates and selects generationID. Normal Open
+// OpenByGeneration explicitly validates and selects generationID. Normal Open
 // never scans for or promotes orphan generations.
-func RepairCurrent(ctx context.Context, root string, generationID uint64, options Options) error {
+func OpenByGeneration(ctx context.Context, root string, generationID uint64, options PublishOptions) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
@@ -35,15 +34,44 @@ func RepairCurrent(ctx context.Context, root string, generationID uint64, option
 	}
 	defer lock.Close()
 
-	// A full restore validates state, every referenced object and semantic.Restore.
-	result, err := newRestorer(l, options.Limits).openGeneration(ctx, generationID, [sha256.Size]byte{}, false, semantic.PipelineDescriptor{})
+	generations := newGenerationStore(l, options)
+
+	persisted, err := generations.open(
+		ctx,
+		generationID,
+		nil,
+	)
 	if err != nil {
 		return err
 	}
-	if err := syncPublishedGeneration(l, result.manifest, options.Durability); err != nil {
+
+	objects := newObjectStore(l, options)
+
+	_, err = restoreService(
+		ctx,
+		Generation{ID: generationID},
+		persisted,
+		objects,
+		semantic.PipelineDescriptor{},
+	)
+	if err != nil {
 		return err
 	}
-	return newHeadStore(l, options).repair(semanticformat.Head{GenerationID: generationID, ManifestHash: result.manifestRef.SHA256})
+
+	if err := syncPublishedGeneration(
+		l,
+		persisted.manifest,
+		options.Durability,
+	); err != nil {
+		return err
+	}
+
+	return newHeadStore(l, options).replace(
+		semanticformat.Head{
+			GenerationID: generationID,
+			ManifestHash: persisted.manifestRef.SHA256,
+		},
+	)
 }
 
 func syncPublishedGeneration(l layout, manifest semanticformat.GenerationManifest, mode DurabilityMode) error {

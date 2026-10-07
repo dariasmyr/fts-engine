@@ -46,9 +46,11 @@ func main() {
 	must(service.AddDocument(ctx, encoder, fts.Document{ID: "doc-b", Fields: map[string]fts.FieldData{"body": {Text: "b"}}}))
 	must(service.Flush(ctx))
 
-	generation, err := semanticpersist.Publish(ctx, root, service, semanticpersist.Options{
-		ExpectedGeneration: 0,
-		Durability:         semanticpersist.DurabilitySynchronous,
+	generation, err := semanticpersist.Publish(ctx, root, service, semanticpersist.PublishOptions{
+		ExpectedGeneration: &semanticpersist.Generation{
+			ID: 0,
+		},
+		Durability: semanticpersist.DurabilitySynchronous,
 	})
 	must(err)
 	fmt.Printf("initial generation=%d\n", generation.ID)
@@ -66,7 +68,7 @@ func main() {
 
 	must(writable.ReplaceDocument(ctx, encoder, fts.Document{ID: "doc-a", Fields: map[string]fts.FieldData{"body": {Text: "a-v2"}}}))
 	must(writable.Flush(ctx))
-	generation, err = store.Publish(ctx, semanticpersist.Options{
+	generation, err = store.Publish(ctx, semanticpersist.PublishOptions{
 		Durability: semanticpersist.DurabilitySynchronous,
 	})
 	must(err)

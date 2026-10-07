@@ -2,8 +2,8 @@
 
 package semanticpersist
 
-type storeLock struct{}
+type serviceLock struct{}
 
-func acquireStoreLock(string) (*storeLock, error) { return nil, ErrLockUnsupported }
+func acquireStoreLock(string) (*serviceLock, error) { return nil, ErrLockUnsupported }
 
-func (*storeLock) Close() error { return nil }
+func (*serviceLock) Close() error { return nil }

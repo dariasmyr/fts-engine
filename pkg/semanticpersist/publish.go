@@ -16,16 +16,16 @@ type publisher struct {
 	reusable     map[uint64]semanticformat.SegmentRef
 }
 
-func (p *publisher) publish(ctx context.Context, service *semantic.Service, options Options, fullyValidateCurrent bool) (Generation, error) {
+func (p *publisher) publish(ctx context.Context, service *semantic.Service, options PublishOptions, fullyValidateCurrent bool) (Generation, error) {
 	currentGeneration, err := p.currentGeneration(ctx, options, fullyValidateCurrent)
 	if err != nil {
 		return Generation{}, err
 	}
-	if currentGeneration != options.ExpectedGeneration || currentGeneration == math.MaxUint64 {
+	if currentGeneration != options.ExpectedGeneration.ID || currentGeneration == math.MaxUint64 {
 		return Generation{}, ErrStaleGeneration
 	}
 
-	snapshot, err := captureSnapshot(ctx, service)
+	snapshot, err := buildPersistenceSnapshot(ctx, service)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -81,7 +81,7 @@ func (p *publisher) publish(ctx context.Context, service *semantic.Service, opti
 	return p.generation, nil
 }
 
-func (p *publisher) currentGeneration(ctx context.Context, options Options, fullyValidate bool) (uint64, error) {
+func (p *publisher) currentGeneration(ctx context.Context, options PublishOptions, fullyValidate bool) (uint64, error) {
 	headStore := newHeadStore(p.layout, options)
 	head, err := headStore.read(ctx)
 	if errors.Is(err, ErrCurrentMissing) {
@@ -97,9 +97,29 @@ func (p *publisher) currentGeneration(ctx context.Context, options Options, full
 		}
 		return head.GenerationID, nil
 	}
-	restorer := newRestorer(p.layout, options.Limits)
-	if _, err := restorer.openGeneration(ctx, head.GenerationID, head.ManifestHash, true, semantic.PipelineDescriptor{}); err != nil {
+	generations := newGenerationStore(p.layout, options)
+
+	persisted, err := generations.open(
+		ctx,
+		head.GenerationID,
+		&head.ManifestHash,
+	)
+	if err != nil {
 		return 0, err
 	}
+
+	objects := newObjectStore(p.layout, options)
+
+	_, err = restoreService(
+		ctx,
+		Generation{ID: head.GenerationID},
+		persisted,
+		objects,
+		semantic.PipelineDescriptor{},
+	)
+	if err != nil {
+		return 0, err
+	}
+
 	return head.GenerationID, nil
 }

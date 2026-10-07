@@ -88,7 +88,7 @@
 // or automatically promote orphan generations.
 //
 // Recovery of an explicitly selected generation is performed separately by
-// RepairCurrent.
+// OpenByGeneration.
 //
 // # Concurrency
 //

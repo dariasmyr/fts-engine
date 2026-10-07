@@ -8,15 +8,15 @@ import (
 	"syscall"
 )
 
-type storeLock struct {
+type serviceLock struct {
 	file *os.File
 }
 
-func acquireStoreLock(path string) (*storeLock, error) {
+func acquireStoreLock(path string) (*serviceLock, error) {
 	return acquireStoreLockMode(path, syscall.LOCK_EX, true)
 }
 
-func acquireStoreLockMode(path string, mode int, create bool) (*storeLock, error) {
+func acquireStoreLockMode(path string, mode int, create bool) (*serviceLock, error) {
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return nil, ErrSymlink
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -40,10 +40,10 @@ func acquireStoreLockMode(path string, mode int, create bool) (*storeLock, error
 		}
 		return nil, err
 	}
-	return &storeLock{file: file}, nil
+	return &serviceLock{file: file}, nil
 }
 
-func (l *storeLock) Close() error {
+func (l *serviceLock) Close() error {
 	if l == nil || l.file == nil {
 		return nil
 	}

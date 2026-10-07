@@ -45,8 +45,8 @@ type SegmentState struct {
 	LivenessWords []uint64
 }
 
-// ServiceState is the decoded SSTA payload required to resume semantic writes.
-type ServiceState struct {
+// ServiceSnapshot is the decoded SSTA payload required to resume semantic writes.
+type ServiceSnapshot struct {
 	Config               semantic.Config
 	Revision             uint64
 	MaxAllocatedVectorID uint64
@@ -54,7 +54,7 @@ type ServiceState struct {
 	Segments             []SegmentState
 }
 
-func EncodeState(value ServiceState, limits StateLimits) ([]byte, FileRef, error) {
+func EncodeState(value ServiceSnapshot, limits StateLimits) ([]byte, FileRef, error) {
 	if err := limits.validate(); err != nil {
 		return nil, FileRef{}, err
 	}
@@ -97,29 +97,29 @@ func EncodeState(value ServiceState, limits StateLimits) ([]byte, FileRef, error
 	return e.finish()
 }
 
-func DecodeState(data []byte, limits StateLimits) (ServiceState, error) {
+func DecodeState(data []byte, limits StateLimits) (ServiceSnapshot, error) {
 	if err := limits.validate(); err != nil {
-		return ServiceState{}, err
+		return ServiceSnapshot{}, err
 	}
 	d, err := newDecoder(data, "SSTA", stateVersion, limits.FileLimits)
 	if err != nil {
-		return ServiceState{}, err
+		return ServiceSnapshot{}, err
 	}
 	dimensions := int(d.readUint32())
 	metric := vector.Metric(d.readUint8())
 	normalization := vector.Normalization(d.readUint8())
 	if d.readUint16() != 0 {
-		return ServiceState{}, ErrCorrupt
+		return ServiceSnapshot{}, ErrCorrupt
 	}
 	formatVersion := d.readUint32()
 	embedding := semantic.EmbeddingDescriptor{Dimensions: dimensions, Metric: metric, VectorFormatVersion: formatVersion}
 	embedding.ProviderID, embedding.ModelID, embedding.ModelVersion, embedding.PipelineFingerprint = d.readString(), d.readString(), d.readString(), d.readString()
 	chunking := semantic.ChunkingDescriptor{ID: d.readString(), Version: d.readUint32(), Fingerprint: d.readString()}
 	config := decodeConfig(d, embedding, chunking)
-	value := ServiceState{Config: config, Revision: d.readUint64(), MaxAllocatedVectorID: d.readUint64(), NextComponentID: d.readUint64()}
+	value := ServiceSnapshot{Config: config, Revision: d.readUint64(), MaxAllocatedVectorID: d.readUint64(), NextComponentID: d.readUint64()}
 	countValue := uint64(d.readUint32())
 	if countValue > uint64(limits.MaxVectors) || countValue > uint64(d.remaining()/16) {
-		return ServiceState{}, ErrLimitExceeded
+		return ServiceSnapshot{}, ErrLimitExceeded
 	}
 	count := int(countValue)
 	value.Segments = make([]SegmentState, count)
@@ -128,7 +128,7 @@ func DecodeState(data []byte, limits StateLimits) (ServiceState, error) {
 		segment := SegmentState{ComponentID: d.readUint64()}
 		rowCountValue, wordCountValue := uint64(d.readUint32()), uint64(d.readUint32())
 		if rowCountValue > uint64(limits.MaxVectors-totalRows) || wordCountValue != (rowCountValue+63)/64 || wordCountValue > uint64(d.remaining()/8) {
-			return ServiceState{}, ErrLimitExceeded
+			return ServiceSnapshot{}, ErrLimitExceeded
 		}
 		rowCount, wordCount := int(rowCountValue), int(wordCountValue)
 		segment.LivenessWords = make([]uint64, wordCount)
@@ -136,27 +136,27 @@ func DecodeState(data []byte, limits StateLimits) (ServiceState, error) {
 			segment.LivenessWords[j] = d.readUint64()
 		}
 		if rowCount > d.remaining()/minimumRowBytes {
-			return ServiceState{}, ErrLimitExceeded
+			return ServiceSnapshot{}, ErrLimitExceeded
 		}
 		segment.Rows = make([]semantic.VectorRow, rowCount)
 		for j := range segment.Rows {
 			segment.Rows[j] = semantic.VectorRow{VectorID: d.readUint64(), Chunk: decodeRef(d)}
 			if err := d.err(); err != nil {
-				return ServiceState{}, err
+				return ServiceSnapshot{}, err
 			}
 		}
 		totalRows += rowCount
 		value.Segments[i] = segment
 	}
 	if err := d.done(); err != nil {
-		return ServiceState{}, err
+		return ServiceSnapshot{}, err
 	}
 	calculator, err := vector.NewCalculator(dimensions, metric)
 	if err != nil || calculator.Normalization() != normalization {
-		return ServiceState{}, ErrCorrupt
+		return ServiceSnapshot{}, ErrCorrupt
 	}
 	if _, err := validateStateAndSize(value, limits); err != nil {
-		return ServiceState{}, err
+		return ServiceSnapshot{}, err
 	}
 	return value, nil
 }
@@ -202,7 +202,7 @@ func decodeConfig(d *decoder, embedding semantic.EmbeddingDescriptor, chunking s
 	return c
 }
 
-func validateStateAndSize(value ServiceState, limits StateLimits) (uint64, error) {
+func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, error) {
 	if err := value.Config.Validate(); err != nil {
 		return 0, codecErrorf(ErrCorrupt, "state config is invalid: %v", err)
 	}

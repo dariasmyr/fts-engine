@@ -7,34 +7,34 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/semanticformat"
 )
 
-type snapshotSegment struct {
+type segmentSource struct {
 	data          semantic.SegmentData
 	livenessWords []uint64
 }
 
-type snapshot struct {
-	state    semanticformat.ServiceState
-	segments []snapshotSegment
+type persistenceSnapshot struct {
+	state    semanticformat.ServiceSnapshot
+	segments []segmentSource
 }
 
-func captureSnapshot(ctx context.Context, service *semantic.Service) (snapshot, error) {
+func buildPersistenceSnapshot(ctx context.Context, service *semantic.Service) (persistenceSnapshot, error) {
 	committed, err := service.CommittedState(ctx)
 	if err != nil {
-		return snapshot{}, err
+		return persistenceSnapshot{}, err
 	}
 	segments := committed.Segments()
-	result := snapshot{
-		state: semanticformat.ServiceState{
+	result := persistenceSnapshot{
+		state: semanticformat.ServiceSnapshot{
 			Config: committed.Config(), Revision: committed.Revision(),
 			MaxAllocatedVectorID: committed.MaxAllocatedVectorID(), NextComponentID: committed.NextComponentID(),
 			Segments: make([]semanticformat.SegmentState, len(segments)),
 		},
-		segments: make([]snapshotSegment, len(segments)),
+		segments: make([]segmentSource, len(segments)),
 	}
 	for i, segment := range segments {
 		data := segment.Data()
 		words := segment.LivenessWords()
-		result.segments[i] = snapshotSegment{data: data, livenessWords: words}
+		result.segments[i] = segmentSource{data: data, livenessWords: words}
 		result.state.Segments[i] = semanticformat.SegmentState{ComponentID: data.ComponentID, Rows: data.Rows, LivenessWords: words}
 	}
 	return result, nil

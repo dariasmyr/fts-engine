@@ -15,21 +15,21 @@ type persistedGeneration struct {
 	id          uint64
 	manifest    semanticformat.GenerationManifest
 	manifestRef semanticformat.FileRef
-	state       semanticformat.ServiceState
+	state       semanticformat.ServiceSnapshot
 }
 
 type generationStore struct {
 	layout     layout
 	limits     Limits
 	durability durabilityPolicy
-	hooks      Options
+	hooks      PublishOptions
 }
 
-func newGenerationStore(l layout, options Options) generationStore {
+func newGenerationStore(l layout, options PublishOptions) generationStore {
 	return generationStore{layout: l, limits: options.Limits, durability: durabilityPolicy{mode: options.Durability}, hooks: options}
 }
 
-func (s generationStore) write(ctx context.Context, id uint64, state semanticformat.ServiceState, segments []semanticformat.SegmentRef) (persistedGeneration, error) {
+func (s generationStore) write(ctx context.Context, id uint64, state semanticformat.ServiceSnapshot, segments []semanticformat.SegmentRef) (persistedGeneration, error) {
 	if id == 0 || len(state.Segments) != len(segments) {
 		return persistedGeneration{}, ErrCorrupt
 	}
@@ -113,7 +113,7 @@ func (s generationStore) write(ctx context.Context, id uint64, state semanticfor
 	return persistedGeneration{id: id, manifest: manifest, manifestRef: manifestRef, state: state}, nil
 }
 
-func (s generationStore) open(ctx context.Context, id uint64, expectedHash [sha256.Size]byte, checkHash bool) (persistedGeneration, error) {
+func (s generationStore) open(ctx context.Context, id uint64, expectedHash *[sha256.Size]byte) (persistedGeneration, error) {
 	if err := ctx.Err(); err != nil {
 		return persistedGeneration{}, err
 	}
@@ -126,7 +126,7 @@ func (s generationStore) open(ctx context.Context, id uint64, expectedHash [sha2
 		return persistedGeneration{}, err
 	}
 	hash := sha256.Sum256(manifestData)
-	if checkHash && hash != expectedHash {
+	if expectedHash == nil && hash != *expectedHash {
 		return persistedGeneration{}, ErrCorrupt
 	}
 	manifest, err := semanticformat.DecodeManifest(manifestData, manifestFormatLimits(s.limits))

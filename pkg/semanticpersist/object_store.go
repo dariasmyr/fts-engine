@@ -18,10 +18,10 @@ type objectStore struct {
 	layout     layout
 	limits     Limits
 	durability durabilityPolicy
-	hooks      Options
+	hooks      PublishOptions
 }
 
-func newObjectStore(l layout, options Options) objectStore {
+func newObjectStore(l layout, options PublishOptions) objectStore {
 	return objectStore{layout: l, limits: options.Limits, durability: durabilityPolicy{mode: options.Durability}, hooks: options}
 }
 
