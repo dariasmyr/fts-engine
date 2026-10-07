@@ -1,142 +1,63 @@
 package hnsw
 
 import (
-	"context"
-	"fmt"
-
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
 // builder constructs one HNSW graph. It is single-writer and is not searchable.
 type builder struct {
-	buildConfig  BuildConfig
-	searchConfig SearchConfig
-	buildInfo    BuildInfo
-	calculator   vector.Calculator
-	expected     int
-	present      []bool
-	graph        graphData
-	rng          levelRNG
-	neighborWork []searchCandidate
+	config     BuildConfig
+	calculator vector.Calculator
+	graph      graphData
+	rng        levelRNG
+	workspace  buildWorkspace
 }
 
-func newBuilder(buildConfig BuildConfig, searchConfig SearchConfig, vectorCount int) (*builder, error) {
-	calculator, components, err := buildConfig.validate(vectorCount)
-	if err != nil {
-		return nil, err
-	}
-	if err := searchConfig.validate(); err != nil {
-		return nil, err
-	}
+func newBuilder(config BuildConfig, calculator vector.Calculator, vectorCount, components int) *builder {
 	return &builder{
-		buildConfig: buildConfig, searchConfig: searchConfig, buildInfo: buildConfig.info(),
-		calculator: calculator, expected: vectorCount, present: make([]bool, vectorCount),
-		graph: graphData{values: make([]float32, components), nodes: make([]mutableNode, 0, vectorCount)},
-		rng:   newLevelRNG(buildConfig.Seed),
-	}, nil
+		config:     config,
+		calculator: calculator,
+		graph: graphData{
+			values: make([]float32, components),
+			nodes:  make([]mutableNode, 0, vectorCount),
+		},
+		rng: newLevelRNG(config.Seed),
+		workspace: buildWorkspace{
+			seenEpoch: make([]uint32, vectorCount),
+		},
+	}
 }
 
-// Add prepares value and inserts one graph node mapped to ordinal.
-func (b *builder) Add(ctx context.Context, ordinal vector.Ordinal, value []float32) (nodeOrdinal, error) {
-	if ctx == nil {
-		return 0, vector.ErrNilContext
-	}
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-	if len(b.graph.nodes) >= b.expected {
-		return 0, errCapacityExceeded
-	}
-	if uint64(ordinal) >= uint64(b.expected) {
-		return 0, fmt.Errorf("%w: %d", vector.ErrOrdinalOutOfRange, ordinal)
-	}
-	if b.present[ordinal] {
-		return 0, fmt.Errorf("%w: %d", errDuplicateOrdinal, ordinal)
-	}
-	prepared, err := b.calculator.Prepare(value)
-	if err != nil {
-		return 0, err
-	}
-	return b.addPreparedTrusted(ordinal, prepared)
-}
-
-// addPrepared validates and copies an already prepared row without normalizing
-// it again. This preserves source float32 bits exactly.
-func (b *builder) addPrepared(ordinal vector.Ordinal, prepared []float32) (nodeOrdinal, error) {
+// add validates and copies the next prepared row. Its node ordinal is the
+// source row ordinal, preserving the package-wide node == vector invariant.
+func (b *builder) add(prepared []float32) error {
 	if err := validatePreparedVector(b.calculator, prepared); err != nil {
-		return 0, err
+		return err
 	}
-	return b.addPreparedTrusted(ordinal, prepared)
-}
+	if len(b.graph.nodes) >= cap(b.graph.nodes) {
+		return errCapacityExceeded
+	}
 
-func (b *builder) addPreparedTrusted(ordinal vector.Ordinal, prepared []float32) (nodeOrdinal, error) {
-	if len(b.graph.nodes) >= b.expected {
-		return 0, errCapacityExceeded
-	}
-	if uint64(ordinal) >= uint64(b.expected) {
-		return 0, fmt.Errorf("%w: %d", vector.ErrOrdinalOutOfRange, ordinal)
-	}
-	if b.present[ordinal] {
-		return 0, fmt.Errorf("%w: %d", errDuplicateOrdinal, ordinal)
-	}
-	nextRNG := b.rng
-	level := nextRNG.level(b.buildConfig.MaxNeighbors)
-	nodeID := nodeOrdinal(len(b.graph.nodes))
-	rowStart := int(ordinal) * b.calculator.Dimensions()
-	copy(b.graph.values[rowStart:rowStart+b.calculator.Dimensions()], prepared)
+	node := nodeOrdinal(len(b.graph.nodes))
+	level := b.rng.level(b.config.MaxNeighbors)
+	start := int(node) * b.calculator.Dimensions()
+	copy(b.graph.values[start:start+b.calculator.Dimensions()], prepared)
 	b.graph.nodes = append(b.graph.nodes, mutableNode{
-		vectorOrdinal: ordinal, level: level, links: make([][]nodeOrdinal, int(level)+1),
+		level: level,
+		links: make([][]nodeOrdinal, int(level)+1),
 	})
-	b.present[ordinal] = true
-	b.rng = nextRNG
 
 	if !b.graph.hasEntry {
-		b.graph.entry = nodeID
+		b.graph.entry = node
 		b.graph.hasEntry = true
-		return nodeID, nil
+		return nil
 	}
-	b.insert(nodeID)
-	return nodeID, nil
+	b.insert(node)
+	return nil
 }
 
-func (b *builder) Len() int { return len(b.graph.nodes) }
-
-// Check validates the current partial graph and reports directed reachability.
-func (b *builder) Check() (GraphStats, error) {
-	// The backing matrix includes rows for ordinals not added yet. Compact only
-	// present rows so the common validator can also check an incomplete build.
-	compact := graphData{nodes: make([]mutableNode, len(b.graph.nodes)), hasEntry: b.graph.hasEntry, entry: b.graph.entry}
-	compact.values = make([]float32, len(b.graph.nodes)*b.calculator.Dimensions())
-	seen := make([]bool, b.expected)
-	for nodeIndex, node := range b.graph.nodes {
-		if uint64(node.vectorOrdinal) >= uint64(b.expected) || seen[node.vectorOrdinal] || !b.present[node.vectorOrdinal] {
-			return GraphStats{}, errInvalidGraph
-		}
-		seen[node.vectorOrdinal] = true
-		sourceStart := int(node.vectorOrdinal) * b.calculator.Dimensions()
-		targetStart := nodeIndex * b.calculator.Dimensions()
-		copy(compact.values[targetStart:targetStart+b.calculator.Dimensions()], b.graph.values[sourceStart:sourceStart+b.calculator.Dimensions()])
-		compact.nodes[nodeIndex] = mutableNode{vectorOrdinal: vector.Ordinal(nodeIndex), level: node.level, links: make([][]nodeOrdinal, len(node.links))}
-		for level := range node.links {
-			compact.nodes[nodeIndex].links[level] = append([]nodeOrdinal(nil), node.links[level]...)
-		}
-	}
-	return validateGraphData(b.calculator, b.buildInfo, compact)
-}
-
-// Freeze validates and copies a complete graph into an immutable packed HNSW index.
-func (b *builder) Freeze(source vector.PreparedVectorStore) (*Index, error) {
-	if len(b.graph.nodes) != b.expected {
-		return nil, errBuilderIncomplete
-	}
-	for _, present := range b.present {
-		if !present {
-			return nil, errBuilderIncomplete
-		}
-	}
-	// newHNSWIndexFromGraph validates and copies every retained section, so passing
-	// the mutable graph directly avoids a redundant full graph clone.
-	return newIndexFromGraph(b.calculator, b.searchConfig, b.buildInfo, b.graph, source)
+func (b *builder) freeze(source vector.PreparedVectorStore, search SearchConfig) (*Index, error) {
+	return newBuiltIndex(b.calculator, search, b.config.info(), b.graph, source)
 }
 
 func (b *builder) insert(node nodeOrdinal) {
@@ -144,27 +65,27 @@ func (b *builder) insert(node nodeOrdinal) {
 	oldEntry := b.graph.entry
 	oldMaxLevel := int(b.graph.nodes[oldEntry].level)
 	current := oldEntry
-	// Levels above the new node are navigation-only: the node cannot own links there.
 	for level := oldMaxLevel; level > newLevel; level-- {
 		current = b.greedyBuild(node, current, level)
 	}
-	entryPoints := []nodeOrdinal{current}
-	// Every shared level gets an independent beam search over links[level]. Its
-	// candidates seed the next lower level, but links from different levels never mix.
+
+	entries := append(b.workspace.entries[:0], current)
 	for level := min(newLevel, oldMaxLevel); level >= 0; level-- {
-		candidates := b.searchLayer(node, entryPoints, b.buildConfig.EfConstruction, level)
-		selected := b.selectNeighbors(candidates, b.buildConfig.MaxNeighbors)
+		candidates := b.searchLayer(node, entries, b.config.EfConstruction, level)
+		selected := b.selectNeighbors(candidates, b.config.MaxNeighbors)
 		b.graph.nodes[node].links[level] = selected
 		for _, neighbor := range selected {
 			b.addReverseLink(neighbor, node, level)
 		}
 		if len(candidates) > 0 {
-			entryPoints = entryPoints[:0]
+			entries = entries[:0]
 			for _, candidate := range candidates {
-				entryPoints = append(entryPoints, candidate.node)
+				entries = append(entries, candidate.node)
 			}
 		}
+		b.workspace.results = candidates[:0]
 	}
+	b.workspace.entries = entries[:0]
 	if newLevel > oldMaxLevel {
 		b.graph.entry = node
 	}
@@ -191,23 +112,16 @@ func (b *builder) greedyBuild(queryNode, current nodeOrdinal, level int) nodeOrd
 }
 
 func (b *builder) searchLayer(queryNode nodeOrdinal, entryPoints []nodeOrdinal, ef, level int) []searchCandidate {
-	// ef bounds the retained multi-hop candidate set on this one level. Direct
-	// adjacency is bounded separately by MaxNeighbors above level 0 and by the
-	// derived LevelZeroMaxNeighbors on level 0.
 	capacity := min(ef, len(b.graph.nodes)-1)
-	results := newResultHeap(capacity)
-	frontier := candidateHeap{items: make([]searchCandidate, 0, min(capacity, len(entryPoints)))}
-	seen := make(map[nodeOrdinal]struct{}, min(capacity, len(b.graph.nodes)))
+	results := newResultHeapWithBuffer(capacity, b.workspace.results)
+	frontier := candidateHeap{items: resetSearchCandidates(b.workspace.frontier, min(capacity, len(entryPoints)))}
+	b.workspace.nextEpoch()
+
 	offer := func(node nodeOrdinal) {
-		if node == queryNode {
+		if node == queryNode || !b.workspace.markSeen(node) {
 			return
 		}
-		if _, exists := seen[node]; exists {
-			return
-		}
-		seen[node] = struct{}{}
-		distance := b.distanceNodes(queryNode, node)
-		candidate := searchCandidate{node: node, vectorOrdinal: vector.Ordinal(node), distance: distance, accepted: true}
+		candidate := searchCandidate{node: node, distance: b.distanceNodes(queryNode, node), accepted: true}
 		frontier.Push(candidate)
 		results.Add(candidate)
 	}
@@ -220,12 +134,10 @@ func (b *builder) searchLayer(queryNode nodeOrdinal, entryPoints []nodeOrdinal, 
 			break
 		}
 		for _, neighbor := range b.graph.nodes[candidate.node].links[level] {
-			if _, exists := seen[neighbor]; exists || neighbor == queryNode {
+			if neighbor == queryNode || !b.workspace.markSeen(neighbor) {
 				continue
 			}
-			seen[neighbor] = struct{}{}
-			distance := b.distanceNodes(queryNode, neighbor)
-			discovered := searchCandidate{node: neighbor, vectorOrdinal: vector.Ordinal(neighbor), distance: distance, accepted: true}
+			discovered := searchCandidate{node: neighbor, distance: b.distanceNodes(queryNode, neighbor), accepted: true}
 			worst, full := results.Worst()
 			if !full || results.Len() < capacity || navigationBetter(discovered, worst) {
 				frontier.Push(discovered)
@@ -233,5 +145,6 @@ func (b *builder) searchLayer(queryNode nodeOrdinal, entryPoints []nodeOrdinal, 
 			}
 		}
 	}
+	b.workspace.frontier = frontier.items[:0]
 	return results.items
 }

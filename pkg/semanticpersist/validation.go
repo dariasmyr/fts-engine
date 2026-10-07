@@ -5,7 +5,6 @@ import (
 
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/semanticformat"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 func validateSegmentData(data semantic.SegmentData, config semantic.Config, limits Limits) error {
@@ -34,7 +33,7 @@ func validateSegmentData(data semantic.SegmentData, config semantic.Config, limi
 	if search.MaxK > limits.MaxK || search.MaxEfSearch > limits.MaxEfSearch || search.MaxVisitLimit > limits.MaxVisitLimit ||
 		report.Build.MaxNeighbors != config.HNSW.MaxNeighbors || report.Build.LevelZeroMaxNeighbors != config.HNSW.MaxNeighbors*2 ||
 		report.Build.EfConstruction != config.HNSW.EfConstruction || report.Build.Seed != config.HNSW.Seed ||
-		uint64(report.Storage.DirectedLinks) > limits.MaxGraphLinks || graphFileSize(data.Index) > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
+		uint64(report.Storage.DirectedLinks) > limits.MaxGraphLinks || report.Storage.GraphFileBytes > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
 		return ErrLimitExceeded
 	}
 	return nil
@@ -71,25 +70,6 @@ func validateOpenReferences(manifestBytes uint64, value semanticformat.Generatio
 		return ErrLimitExceeded
 	}
 	return nil
-}
-
-func graphFileSize(index *hnsw.Index) uint64 {
-	if index == nil {
-		return 0
-	}
-	stats := index.Report().Storage
-	padding := uint64((4 - stats.VectorRows%4) % 4)
-	size, ok := checkedAdd64(164, stats.NodeMetadataBytes)
-	if !ok {
-		return math.MaxUint64
-	}
-	for _, part := range []uint64{padding, stats.OffsetBytes, stats.LinkBytes} {
-		size, ok = checkedAdd64(size, part)
-		if !ok {
-			return math.MaxUint64
-		}
-	}
-	return size
 }
 
 func checkedMultiply64(a, b uint64) (uint64, bool) {

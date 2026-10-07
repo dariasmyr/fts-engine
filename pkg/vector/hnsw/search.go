@@ -15,15 +15,55 @@ var errVisitLimit = errors.New("vector/hnsw: visit limit reached")
 type searchState struct {
 	ctx           context.Context
 	index         *Index
-	calculator    vector.Calculator
 	preparedQuery []float32
 	reusableQuery *vector.PreparedQuery
 	filter        vector.ResultFilter
 	visitLimit    int
-	vectorCount   int
 	workspace     *searchWorkspace
-	workItems     int
 	stats         vector.SearchStats
+}
+
+type searchRequest struct {
+	k            int
+	efSearch     int
+	visitLimit   int
+	allowedCount int
+	filter       vector.ResultFilter
+}
+
+func resolveSearchRequest(config SearchConfig, vectorCount, k int, options vector.SearchOptions) (searchRequest, error) {
+	if k <= 0 || k > config.MaxK {
+		return searchRequest{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, config.MaxK)
+	}
+	if options.EfSearch < 0 || options.VisitLimit < 0 {
+		return searchRequest{}, vector.ErrInvalidSearchOptions
+	}
+	efSearch := options.EfSearch
+	if efSearch == 0 {
+		efSearch = config.DefaultEfSearch
+	}
+	efSearch = max(k, efSearch)
+	if efSearch > config.MaxEfSearch {
+		return searchRequest{}, fmt.Errorf("%w: efSearch=%d max=%d", vector.ErrInvalidSearchOptions, efSearch, config.MaxEfSearch)
+	}
+	visitLimit := options.VisitLimit
+	if visitLimit == 0 {
+		visitLimit = config.DefaultVisitLimit
+	}
+	if visitLimit > config.MaxVisitLimit {
+		return searchRequest{}, fmt.Errorf("%w: visitLimit=%d max=%d", vector.ErrInvalidSearchOptions, visitLimit, config.MaxVisitLimit)
+	}
+	allowedCount := vectorCount
+	if options.ResultFilter != nil {
+		if options.ResultFilter.TotalOrdinalCount() != uint32(vectorCount) {
+			return searchRequest{}, fmt.Errorf("%w: got %d, want %d", vector.ErrResultFilterSizeMismatch, options.ResultFilter.TotalOrdinalCount(), vectorCount)
+		}
+		allowedCount = options.ResultFilter.AllowedOrdinalCount()
+		if allowedCount < 0 || allowedCount > vectorCount {
+			return searchRequest{}, vector.ErrInvalidSearchOptions
+		}
+	}
+	return searchRequest{k: k, efSearch: efSearch, visitLimit: visitLimit, allowedCount: allowedCount, filter: options.ResultFilter}, nil
 }
 
 func search(ctx context.Context, reader *Index, query []float32, prepared *vector.PreparedQuery, k int, options vector.SearchOptions) (vector.SearchResult, error) {
@@ -33,37 +73,15 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 	if err := ctx.Err(); err != nil {
 		return vector.SearchResult{}, err
 	}
-	if reader == nil || !reader.topology.validated {
+	if reader == nil {
 		return vector.SearchResult{}, errInvalidGraph
 	}
-	config := reader.topology.searchConfig
 	calculator := reader.topology.calculator
-	if err := config.validate(); err != nil {
+	vectorCount := reader.Len()
+	request, err := resolveSearchRequest(reader.search, vectorCount, k, options)
+	if err != nil {
 		return vector.SearchResult{}, err
 	}
-	if k <= 0 || k > config.MaxK {
-		return vector.SearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, config.MaxK)
-	}
-	if options.EfSearch < 0 || options.VisitLimit < 0 {
-		return vector.SearchResult{}, vector.ErrInvalidSearchOptions
-	}
-	efSearch := options.EfSearch
-	if efSearch == 0 {
-		efSearch = config.DefaultEfSearch
-	}
-	efSearch = max(k, efSearch)
-	if efSearch > config.MaxEfSearch {
-		return vector.SearchResult{}, fmt.Errorf("%w: efSearch=%d max=%d", vector.ErrInvalidSearchOptions, efSearch, config.MaxEfSearch)
-	}
-	visitLimit := options.VisitLimit
-	if visitLimit == 0 {
-		visitLimit = config.DefaultVisitLimit
-	}
-	if visitLimit > config.MaxVisitLimit {
-		return vector.SearchResult{}, fmt.Errorf("%w: visitLimit=%d max=%d", vector.ErrInvalidSearchOptions, visitLimit, config.MaxVisitLimit)
-	}
-	vectorCount := reader.Len()
-	nodeCount := reader.Len()
 	workspace := reader.workspaces.acquire()
 	defer reader.workspaces.release(workspace)
 	if prepared == nil {
@@ -74,57 +92,37 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 	} else if err := calculator.ValidatePreparedQuery(*prepared); err != nil {
 		return vector.SearchResult{}, err
 	}
-	filter := options.ResultFilter
-	allowedCount := vectorCount
-	if filter != nil {
-		if filter.TotalOrdinalCount() != uint32(vectorCount) {
-			return vector.SearchResult{}, fmt.Errorf("%w: got %d, want %d", vector.ErrResultFilterSizeMismatch, filter.TotalOrdinalCount(), vectorCount)
-		}
-		allowedCount = filter.AllowedOrdinalCount()
-		if allowedCount < 0 || allowedCount > vectorCount {
-			return vector.SearchResult{}, vector.ErrInvalidSearchOptions
-		}
-	}
 	complete := vector.SearchResult{Hits: []vector.Hit{}, Stats: vector.SearchStats{Termination: vector.TerminationComplete}}
-	if nodeCount == 0 || vectorCount == 0 {
-		if nodeCount != 0 || vectorCount != 0 {
-			return vector.SearchResult{}, errInvalidGraph
-		}
+	if vectorCount == 0 || request.allowedCount == 0 {
 		if err := ctx.Err(); err != nil {
 			return vector.SearchResult{}, err
 		}
 		return complete, nil
 	}
-	if allowedCount == 0 {
-		if err := ctx.Err(); err != nil {
-			return vector.SearchResult{}, err
-		}
-		return complete, nil
-	}
-	workspace.resetSearch(nodeCount, calculator.Dimensions(), visitLimit, efSearch)
+	workspace.resetSearch(vectorCount, calculator.Dimensions(), request.visitLimit, request.efSearch)
 	entry, maxLevel, ok := reader.entryPoint()
-	if !ok || maxLevel < 0 || maxLevel > MaxLevel || uint64(entry) >= uint64(nodeCount) {
+	if !ok || maxLevel < 0 || maxLevel > MaxLevel || uint64(entry) >= uint64(vectorCount) {
 		return vector.SearchResult{}, errInvalidGraph
 	}
 	state := searchState{
-		ctx: ctx, index: reader, calculator: calculator, preparedQuery: workspace.preparedQuery, filter: filter,
+		ctx: ctx, index: reader, preparedQuery: workspace.preparedQuery, filter: request.filter,
 		reusableQuery: prepared,
-		visitLimit:    visitLimit, vectorCount: vectorCount,
-		workspace: workspace,
-		stats:     vector.SearchStats{Termination: vector.TerminationComplete},
+		visitLimit:    request.visitLimit,
+		workspace:     workspace,
+		stats:         vector.SearchStats{Termination: vector.TerminationComplete},
 	}
 	entryCandidate, err := state.score(entry)
 	if err != nil {
-		return finishSearch(state, resultHeap{}, k, err)
+		return finishSearch(state, resultHeap{}, request.k, err)
 	}
 	// Sparse upper levels choose one local minimum; level 0 then widens into a beam.
 	entryCandidate, err = greedySearch(&state, entryCandidate, maxLevel)
 	if err != nil {
-		return finishSearch(state, state.acceptedResults(min(efSearch, allowedCount)), k, err)
+		return finishSearch(state, state.acceptedResults(min(request.efSearch, request.allowedCount)), request.k, err)
 	}
 	workspace.stopTrackingScored()
-	results, err := levelSearch(&state, entryCandidate, efSearch, allowedCount)
-	return finishSearch(state, results, k, err)
+	results, err := levelSearch(&state, entryCandidate, request.efSearch, request.allowedCount)
+	return finishSearch(state, results, request.k, err)
 }
 
 func greedySearch(state *searchState, current searchCandidate, maxLevel int) (searchCandidate, error) {
@@ -231,13 +229,7 @@ func (state *searchState) score(node nodeOrdinal) (searchCandidate, error) {
 	if state.stats.VisitedNodes >= state.visitLimit {
 		return searchCandidate{}, errVisitLimit
 	}
-	if uint64(node) >= uint64(len(state.index.topology.nodeToVector)) {
-		return searchCandidate{}, errInvalidGraph
-	}
-	ordinal := vector.Ordinal(state.index.topology.nodeToVector[node])
-	if uint64(ordinal) >= uint64(state.vectorCount) {
-		return searchCandidate{}, errInvalidGraph
-	}
+	ordinal := vector.Ordinal(node)
 	value := state.workspace.vector
 	if err := state.index.vectors.ReadVectorInto(state.ctx, ordinal, value); err != nil {
 		if state.ctx.Err() != nil {
@@ -247,15 +239,15 @@ func (state *searchState) score(node nodeOrdinal) (searchCandidate, error) {
 	}
 	var distance float64
 	if state.reusableQuery != nil {
-		distance = state.calculator.DistancePreparedQuery(*state.reusableQuery, value)
+		distance = state.index.topology.calculator.DistancePreparedQuery(*state.reusableQuery, value)
 	} else {
-		distance = state.calculator.DistancePrepared(state.preparedQuery, value)
+		distance = state.index.topology.calculator.DistancePrepared(state.preparedQuery, value)
 	}
 	if math.IsNaN(distance) || math.IsInf(distance, 0) {
 		return searchCandidate{}, errInvalidGraph
 	}
 	accepted := state.filter == nil || state.filter.Allows(ordinal)
-	candidate := searchCandidate{node: node, vectorOrdinal: ordinal, distance: distance, accepted: accepted}
+	candidate := searchCandidate{node: node, distance: distance, accepted: accepted}
 	state.workspace.storeCandidate(candidate)
 	state.stats.VisitedNodes++
 	state.stats.DistanceComputations++
@@ -284,7 +276,7 @@ func finishSearch(state searchState, results resultHeap, k int, err error) (vect
 	if contextErr := state.ctx.Err(); contextErr != nil {
 		return vector.SearchResult{}, contextErr
 	}
-	result := vector.SearchResult{Hits: results.Results(k), Stats: state.stats}
+	result := vector.SearchResult{Hits: results.Hits(k), Stats: state.stats}
 	if errors.Is(err, errVisitLimit) {
 		result.Incomplete = true
 		result.Stats.Termination = vector.TerminationVisitLimit

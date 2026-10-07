@@ -39,12 +39,11 @@ func TestCandidateHeapOrdersByDistanceThenNode(t *testing.T) {
 func TestResultHeapBoundsAndOrdersEqualDistances(t *testing.T) {
 	heap := newResultHeap(3)
 	for _, candidate := range []searchCandidate{
-		{node: 7, vectorOrdinal: 1, distance: 1},
-		{node: 4, vectorOrdinal: 4, distance: 2},
-		{node: 2, vectorOrdinal: 1, distance: 1},
-		{node: 9, vectorOrdinal: 0, distance: 1},
-		{node: 1, vectorOrdinal: 1, distance: 1},
-		{node: 1, vectorOrdinal: 8, distance: 4},
+		{node: 7, distance: 1},
+		{node: 4, distance: 2},
+		{node: 2, distance: 1},
+		{node: 9, distance: 1},
+		{node: 1, distance: 1},
 	} {
 		heap.Add(candidate)
 	}
@@ -53,19 +52,16 @@ func TestResultHeapBoundsAndOrdersEqualDistances(t *testing.T) {
 		t.Fatalf("Len() = %d, want 3", heap.Len())
 	}
 	worst, ok := heap.Worst()
-	if !ok || worst.node != 2 || worst.vectorOrdinal != 1 || worst.distance != 1 {
-		t.Fatalf("Worst() = (%+v, %t), want node 2, ordinal 1, distance 1", worst, ok)
+	if !ok || worst.node != 7 || worst.distance != 1 {
+		t.Fatalf("Worst() = (%+v, %t), want node 7, distance 1", worst, ok)
 	}
 	want := []vector.Hit{
-		{Ordinal: 0, Distance: 1},
 		{Ordinal: 1, Distance: 1},
-		{Ordinal: 1, Distance: 1},
+		{Ordinal: 2, Distance: 1},
+		{Ordinal: 7, Distance: 1},
 	}
-	if got := heap.Results(10); !slices.Equal(got, want) {
-		t.Fatalf("Results() = %+v, want %+v", got, want)
-	}
-	if got := heap.Results(2); !slices.Equal(got, want[:2]) {
-		t.Fatalf("Results(2) = %+v, want %+v", got, want[:2])
+	if got := heap.Hits(10); !slices.Equal(got, want) {
+		t.Fatalf("Hits() = %+v, want %+v", got, want)
 	}
 }
 
@@ -85,21 +81,17 @@ func TestResultHeapIgnoresZeroCapacityAndInvalidDistances(t *testing.T) {
 	}
 }
 
-func TestResultHeapResultsPreservesHeapInvariants(t *testing.T) {
+func TestResultHeapHitsSortsInPlace(t *testing.T) {
 	heap := newResultHeap(3)
-	heap.Add(searchCandidate{node: 1, vectorOrdinal: 1, distance: 1})
-	heap.Add(searchCandidate{node: 2, vectorOrdinal: 2, distance: 2})
-	heap.Add(searchCandidate{node: 3, vectorOrdinal: 3, distance: 3})
+	heap.Add(searchCandidate{node: 1, distance: 1})
+	heap.Add(searchCandidate{node: 2, distance: 2})
+	heap.Add(searchCandidate{node: 3, distance: 3})
 
-	heap.Results(2)
-	worst, ok := heap.Worst()
-	if !ok || worst.distance != 3 {
-		t.Fatalf("Worst() after Results() = (%+v, %t), want distance 3", worst, ok)
+	if got := heap.Hits(2); !slices.Equal(got, []vector.Hit{{Ordinal: 1, Distance: 1}, {Ordinal: 2, Distance: 2}}) {
+		t.Fatalf("Hits() = %+v", got)
 	}
-	heap.Add(searchCandidate{node: 0, vectorOrdinal: 0, distance: 0})
-	worst, ok = heap.Worst()
-	if !ok || worst.distance != 2 {
-		t.Fatalf("Worst() after Results()/Add() = (%+v, %t), want distance 2", worst, ok)
+	if heap.items[0].node != 1 || heap.items[1].node != 2 || heap.items[2].node != 3 {
+		t.Fatalf("heap buffer was not sorted in place: %+v", heap.items)
 	}
 }
 

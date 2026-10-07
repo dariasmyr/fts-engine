@@ -64,11 +64,3 @@ func (s *Service) SearchDocumentsWithOptions(ctx context.Context, encoder Encode
 	}
 	return s.index.Search(ctx, queries, maxResultCount, options)
 }
-
-func (s *Service) searchEncodedDocuments(ctx context.Context, query []float32, k int) (DocumentSearchResult, error) {
-	return s.searchEncodedDocumentsWithOptions(ctx, query, k, SearchOptions{})
-}
-
-func (s *Service) searchEncodedDocumentsWithOptions(ctx context.Context, query []float32, k int, options SearchOptions) (DocumentSearchResult, error) {
-	return s.index.Search(ctx, []EncodedChunk{{Vector: query}}, k, options)
-}

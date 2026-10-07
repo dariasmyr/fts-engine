@@ -48,6 +48,9 @@ func TestGraphFormatRoundTripExactTopologyAndSearch(t *testing.T) {
 	if firstMetadata.Size != uint64(len(first)) || firstMetadata.CRC32 != crc32.ChecksumIEEE(first[:len(first)-graphFormatFooterSize]) || firstMetadata.SHA256 != sha256.Sum256(first) {
 		t.Fatalf("metadata = %+v", firstMetadata)
 	}
+	if got := original.Report().Storage.GraphFileBytes; got != uint64(len(first)) {
+		t.Fatalf("reported graph bytes = %d, encoded bytes = %d", got, len(first))
+	}
 
 	opened, openedMetadata, err := openGraph(bytes.NewReader(first), original.vectors, reference, DefaultGraphLimits())
 	if err != nil {
@@ -56,7 +59,7 @@ func TestGraphFormatRoundTripExactTopologyAndSearch(t *testing.T) {
 	if openedMetadata != firstMetadata || !reflect.DeepEqual(opened.Report(), original.Report()) {
 		t.Fatalf("opened metadata/configuration differ: metadata=%+v report=%+v", openedMetadata, opened.Report())
 	}
-	if !slices.Equal(opened.topology.nodeToVector, original.topology.nodeToVector) || !slices.Equal(opened.topology.levels, original.topology.levels) ||
+	if !slices.Equal(opened.topology.levels, original.topology.levels) ||
 		!slices.Equal(opened.topology.level0Offsets, original.topology.level0Offsets) || !slices.Equal(opened.topology.level0Neighbors, original.topology.level0Neighbors) ||
 		!slices.Equal(opened.topology.upperNodeOffsets, original.topology.upperNodeOffsets) || !slices.Equal(opened.topology.upperLinkOffsets, original.topology.upperLinkOffsets) ||
 		!slices.Equal(opened.topology.upperNeighbors, original.topology.upperNeighbors) {
@@ -232,6 +235,12 @@ func TestGraphFormatRejectsMalformedPackedTopologyAndCanonicalBytes(t *testing.T
 		{"mapping duplicate", func(data []byte) {
 			copy(data[sections.mapping+4:sections.mapping+8], data[sections.mapping:sections.mapping+4])
 		}},
+		{"mapping non-identity permutation", func(data []byte) {
+			first := binary.LittleEndian.Uint32(data[sections.mapping : sections.mapping+4])
+			second := binary.LittleEndian.Uint32(data[sections.mapping+4 : sections.mapping+8])
+			binary.LittleEndian.PutUint32(data[sections.mapping:sections.mapping+4], second)
+			binary.LittleEndian.PutUint32(data[sections.mapping+4:sections.mapping+8], first)
+		}},
 		{"level too high", func(data []byte) { data[sections.levels] = MaxLevel + 1 }},
 		{"level-0 offsets", func(data []byte) {
 			binary.LittleEndian.PutUint32(data[sections.level0Offsets:sections.level0Offsets+4], 1)
@@ -340,15 +349,15 @@ func TestWriteGraphContextCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := WriteGraph(ctx, io.Discard, index, testVectorFileReference()); !errors.Is(err, context.Canceled) || source.reads != 1 {
-		t.Fatalf("source-cancelled write error/reads = %v/%d, want canceled/1", err, source.reads)
+	if _, err := WriteGraph(ctx, io.Discard, index, testVectorFileReference()); err != nil || source.reads != 0 {
+		t.Fatalf("trusted write error/reads = %v/%d, want nil/0", err, source.reads)
 	}
 	if _, err := WriteGraph(nil, io.Discard, index, testVectorFileReference()); !errors.Is(err, vector.ErrNilContext) {
 		t.Fatalf("nil context write error = %v", err)
 	}
 }
 
-func TestWriteGraphValidatesVectorRows(t *testing.T) {
+func TestWriteGraphDoesNotReadVectorRows(t *testing.T) {
 	space := readerTestSpace(t, 2, vector.MetricL2Squared)
 	graph := readerTestGraph()
 	source := &graphPreparedSource{
@@ -360,8 +369,9 @@ func TestWriteGraphValidatesVectorRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	source.values[2][0] = float32(math.NaN())
-	if _, err := WriteGraph(context.Background(), io.Discard, index, testVectorFileReference()); !errors.Is(err, ErrGraphVectorStore) {
-		t.Fatalf("malformed vector write error = %v", err)
+	source.reads = 0
+	if _, err := WriteGraph(context.Background(), io.Discard, index, testVectorFileReference()); err != nil || source.reads != 0 {
+		t.Fatalf("trusted write error/reads = %v/%d", err, source.reads)
 	}
 }
 
@@ -488,7 +498,7 @@ func graphFormatTestSections(data []byte) graphFormatSections {
 	upperPlacements := int(binary.LittleEndian.Uint32(data[116:120]))
 	sections := graphFormatSections{mapping: graphFormatHeaderSize}
 	sections.levels = sections.mapping + nodes*4
-	sections.level0Offsets = sections.levels + int(aligned4(uint64(nodes)))
+	sections.level0Offsets = sections.levels + int((uint64(nodes)+3)&^3)
 	sections.level0Links = sections.level0Offsets + (nodes+1)*4
 	sections.upperNodeOffsets = sections.level0Links + level0Links*4
 	sections.upperLinkOffsets = sections.upperNodeOffsets + (nodes+1)*4

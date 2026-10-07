@@ -3,6 +3,7 @@ package hnsw
 import (
 	"context"
 	"errors"
+	"math"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	vhng "github.com/dariasmyr/fts-engine/pkg/vector/hnsw/internal/format"
@@ -19,11 +20,27 @@ func graphToFormat(reader *Index, vectors VectorFileReference) vhng.Graph {
 	}
 	return vhng.Graph{
 		Dimensions: uint32(reader.Dimensions()), Metric: uint8(reader.Metric()), Normalization: uint8(reader.topology.calculator.Normalization()), HasEntry: reader.topology.hasEntry, Entry: uint32(reader.topology.entry), MaxLevel: maxLevel,
-		Search:  vhng.SearchConfig{DefaultEfSearch: uint32(reader.topology.searchConfig.DefaultEfSearch), MaxEfSearch: uint32(reader.topology.searchConfig.MaxEfSearch), DefaultVisitLimit: uint32(reader.topology.searchConfig.DefaultVisitLimit), MaxVisitLimit: uint32(reader.topology.searchConfig.MaxVisitLimit), MaxK: uint32(reader.topology.searchConfig.MaxK)},
+		Search:  vhng.SearchConfig{DefaultEfSearch: uint32(reader.search.DefaultEfSearch), MaxEfSearch: uint32(reader.search.MaxEfSearch), DefaultVisitLimit: uint32(reader.search.DefaultVisitLimit), MaxVisitLimit: uint32(reader.search.MaxVisitLimit), MaxK: uint32(reader.search.MaxK)},
 		Build:   vhng.BuildInfo{BuildVersion: reader.topology.buildInfo.BuildVersion, LevelGeneratorVersion: reader.topology.buildInfo.LevelGeneratorVersion, MaxNeighbors: uint32(reader.topology.buildInfo.MaxNeighbors), LevelZeroMaxNeighbors: uint32(reader.topology.buildInfo.LevelZeroMaxNeighbors), EfConstruction: uint32(reader.topology.buildInfo.EfConstruction), Seed: reader.topology.buildInfo.Seed},
-		Vectors: vhng.Reference{Size: vectors.Size, SHA256: vectors.SHA256}, NodeToVector: reader.topology.nodeToVector, Levels: reader.topology.levels,
+		Vectors: vhng.Reference{Size: vectors.Size, SHA256: vectors.SHA256}, NodeToVector: identityNodeMapping(reader.Len()), Levels: reader.topology.levels,
 		Level0Offsets: reader.topology.level0Offsets, Level0Links: reader.topology.level0Neighbors, UpperNodeOffsets: reader.topology.upperNodeOffsets, UpperLinkOffsets: reader.topology.upperLinkOffsets, UpperLinks: reader.topology.upperNeighbors,
 	}
+}
+
+func identityNodeMapping(count int) []uint32 {
+	mapping := make([]uint32, count)
+	for node := range mapping {
+		mapping[node] = uint32(node)
+	}
+	return mapping
+}
+
+func encodedGraphSize(index *Index) uint64 {
+	size, err := vhng.EncodedSize(graphToFormat(index, VectorFileReference{}))
+	if err != nil {
+		return math.MaxUint64
+	}
+	return size
 }
 
 func formatLimits(limits GraphLimits) vhng.Limits {
@@ -40,6 +57,11 @@ func indexFromFormat(ctx context.Context, graph vhng.Graph, vectors vector.Prepa
 	}
 	searchConfig := SearchConfig{DefaultEfSearch: int(graph.Search.DefaultEfSearch), MaxEfSearch: int(graph.Search.MaxEfSearch), DefaultVisitLimit: int(graph.Search.DefaultVisitLimit), MaxVisitLimit: int(graph.Search.MaxVisitLimit), MaxK: int(graph.Search.MaxK)}
 	buildInfo := BuildInfo{BuildVersion: graph.Build.BuildVersion, LevelGeneratorVersion: graph.Build.LevelGeneratorVersion, MaxNeighbors: int(graph.Build.MaxNeighbors), LevelZeroMaxNeighbors: int(graph.Build.LevelZeroMaxNeighbors), EfConstruction: int(graph.Build.EfConstruction), Seed: graph.Build.Seed}
+	for node, ordinal := range graph.NodeToVector {
+		if ordinal != uint32(node) {
+			return nil, ErrCorruptGraphData
+		}
+	}
 	if searchConfig.DefaultEfSearch > limits.MaxEfSearch || searchConfig.MaxEfSearch > limits.MaxEfSearch || searchConfig.DefaultVisitLimit > limits.MaxVisitLimit || searchConfig.MaxVisitLimit > limits.MaxVisitLimit || searchConfig.MaxK > limits.MaxK {
 		return nil, ErrGraphLimitExceeded
 	}
@@ -57,9 +79,9 @@ func indexFromFormat(ctx context.Context, graph vhng.Graph, vectors vector.Prepa
 	if !ok || !bytesOK || vectorBytes > limits.MaxVectorBytes {
 		return nil, ErrGraphLimitExceeded
 	}
-	reader := &Index{topology: topology{calculator: calculator, searchConfig: searchConfig, buildInfo: buildInfo, nodeToVector: graph.NodeToVector, levels: graph.Levels, level0Offsets: graph.Level0Offsets, level0Neighbors: graph.Level0Links, upperNodeOffsets: graph.UpperNodeOffsets, upperLinkOffsets: graph.UpperLinkOffsets, upperNeighbors: graph.UpperLinks}, vectors: vectors, workspaces: newSearchWorkspacePool()}
-	reader.topology.hasEntry, reader.topology.entry = graph.HasEntry, nodeOrdinal(graph.Entry)
-	stats, err := validatePackedTopologyContext(ctx, reader)
+	packed := topology{calculator: calculator, buildInfo: buildInfo, levels: graph.Levels, level0Offsets: graph.Level0Offsets, level0Neighbors: graph.Level0Links, upperNodeOffsets: graph.UpperNodeOffsets, upperLinkOffsets: graph.UpperLinkOffsets, upperNeighbors: graph.UpperLinks}
+	packed.hasEntry, packed.entry = graph.HasEntry, nodeOrdinal(graph.Entry)
+	stats, err := validatePackedTopologyContext(ctx, packed)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -72,14 +94,18 @@ func indexFromFormat(ctx context.Context, graph vhng.Graph, vectors vector.Prepa
 	if stats.MaxLevel > limits.MaxLevel {
 		return nil, ErrGraphLimitExceeded
 	}
-	if vectors.Len() != reader.Len() || vectors.Dimensions() != dimensions || vectors.Metric() != metric || vectors.Normalization() != normalization {
+	if vectors.Len() != len(packed.levels) || vectors.Dimensions() != dimensions || vectors.Metric() != metric || vectors.Normalization() != normalization {
 		return nil, ErrGraphVectorStore
 	}
-	if err := validateIndexVectorsContext(ctx, reader); err != nil {
+	if err := validatePreparedVectorStoreContext(ctx, vectors, calculator, len(packed.levels)); err != nil {
 		return nil, err
 	}
-	reader.topology.stats, reader.topology.validated = cloneGraphStats(stats), true
-	return reader, nil
+	packed.stats = cloneGraphStats(stats)
+	index, err := newIndex(packed, vectors, searchConfig)
+	if err != nil {
+		return nil, ErrGraphVectorStore
+	}
+	return index, nil
 }
 
 func mapFormatError(err error) error {
@@ -90,8 +116,6 @@ func mapFormatError(err error) error {
 		return ErrUnsupportedGraphVersion
 	case errors.Is(err, vhng.ErrLimitExceeded):
 		return ErrGraphLimitExceeded
-	case errors.Is(err, vhng.ErrReferenceMismatch):
-		return ErrVectorFileRefMismatch
 	default:
 		return err
 	}

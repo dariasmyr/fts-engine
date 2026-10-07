@@ -116,14 +116,11 @@ func (c Config) hnswOptions() (hnsw.BuildOptions, bool) {
 	}
 	return hnsw.BuildOptions{
 		Build: hnsw.BuildConfig{
-			Dimensions:     c.Schema.Embedding.Dimensions,
-			Metric:         c.Schema.Embedding.Metric,
-			MaxVectors:     c.Limits.MaxLiveVectors,
-			MaxVectorBytes: maxVectors * dimensions * 4,
 			MaxNeighbors:   c.HNSW.MaxNeighbors,
 			EfConstruction: c.HNSW.EfConstruction,
 			Seed:           c.HNSW.Seed,
 		},
+		Limits: hnsw.BuildLimits{MaxVectors: c.Limits.MaxLiveVectors, MaxVectorBytes: maxVectors * dimensions * 4},
 		Search: hnsw.SearchConfig{
 			DefaultEfSearch:   c.HNSW.DefaultEfSearch,
 			MaxEfSearch:       c.HNSW.MaxEfSearch,

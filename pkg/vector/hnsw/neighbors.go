@@ -11,8 +11,7 @@ func (b *builder) distanceNodes(a, c nodeOrdinal) float64 {
 }
 
 func (b *builder) vectorByNode(node nodeOrdinal) []float32 {
-	ordinal := b.graph.nodes[node].vectorOrdinal
-	start := int(ordinal) * b.calculator.Dimensions()
+	start := int(node) * b.calculator.Dimensions()
 	return b.graph.values[start : start+b.calculator.Dimensions()]
 }
 
@@ -59,12 +58,12 @@ func (b *builder) orderNeighbors(candidates []searchCandidate) {
 
 func (b *builder) addReverseLink(owner, neighbor nodeOrdinal, level int) {
 	links := b.graph.nodes[owner].links[level]
-	candidates := resetSearchCandidates(b.neighborWork, len(links)+1)
+	candidates := resetSearchCandidates(b.workspace.neighbors, len(links)+1)
 	for _, link := range links {
 		candidates = append(candidates, searchCandidate{node: link, distance: b.distanceNodes(owner, link)})
 	}
 	candidates = append(candidates, searchCandidate{node: neighbor, distance: b.distanceNodes(owner, neighbor)})
-	limit := b.buildInfo.neighborLimit(level)
+	limit := b.config.info().neighborLimit(level)
 	// Reverse insertion can overflow an existing node even though the new node
 	// selected only MaxNeighbors links, so prune relative to the existing owner.
 	if len(candidates) > limit {
@@ -81,5 +80,5 @@ func (b *builder) addReverseLink(owner, neighbor nodeOrdinal, level int) {
 		}
 	}
 	b.graph.nodes[owner].links[level] = links
-	b.neighborWork = candidates[:0]
+	b.workspace.neighbors = candidates[:0]
 }

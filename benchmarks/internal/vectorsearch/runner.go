@@ -135,9 +135,7 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 		DefaultVisitLimit: config.VisitLimit, MaxVisitLimit: config.VisitLimit, MaxK: config.K,
 	}
 	buildConfig := hnsw.BuildConfig{
-		Dimensions: config.Dimensions, Metric: metric, MaxVectors: config.VectorCount,
-		MaxVectorBytes: uint64(config.VectorCount) * uint64(config.Dimensions) * 4,
-		MaxNeighbors:   maxNeighbors, EfConstruction: efConstruction, Seed: seed,
+		MaxNeighbors: maxNeighbors, EfConstruction: efConstruction, Seed: seed,
 	}
 	progress := Progress{
 		Dataset: dataset.Config.Kind, Metric: metric.String(), Build: buildNumber, Builds: builds,
@@ -181,8 +179,14 @@ func buildReader(ctx context.Context, oracle *exact.Oracle, order BuildOrder, bu
 	if order.Name != "ascending" {
 		err = fmt.Errorf("vectorsearch: unknown build order %q", order.Name)
 	} else {
+		store := oracle.Store()
 		reader, err = hnsw.Build(ctx, oracle.Store(), hnsw.BuildOptions{
-			Build: buildConfig, Search: searchConfig, Progress: reportProgress,
+			Build: buildConfig,
+			Limits: hnsw.BuildLimits{
+				MaxVectors:     max(1, store.Len()),
+				MaxVectorBytes: uint64(max(1, store.Len()*store.Dimensions()*4)),
+			},
+			Search: searchConfig, Progress: reportProgress,
 		})
 	}
 	wallDuration := time.Since(started)
@@ -251,8 +255,8 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 		BuildOrder: order,
 		BuildPath:  buildPath,
 		BuildParameters: BuildParameters{
-			Dimensions: buildConfig.Dimensions, Metric: buildConfig.Metric.String(), MaxVectors: buildConfig.MaxVectors,
-			MaxVectorBytes: buildConfig.MaxVectorBytes, MaxNeighbors: buildConfig.MaxNeighbors,
+			Dimensions: dataset.Config.Dimensions, Metric: metric.String(), MaxVectors: config.VectorCount,
+			MaxVectorBytes: uint64(config.VectorCount) * uint64(dataset.Config.Dimensions) * 4, MaxNeighbors: buildConfig.MaxNeighbors,
 			EfConstruction: buildConfig.EfConstruction, Seed: buildConfig.Seed,
 		},
 		BuildInfo: BuildInfoReport{
@@ -276,7 +280,7 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 		StorageStats: StorageStatsReport{
 			VectorRows: storage.VectorRows, GraphNodes: storage.GraphNodes, LevelPlacements: storage.LevelPlacements,
 			DirectedLinks: storage.DirectedLinks, VectorBytes: storage.VectorBytes, NodeMetadataBytes: storage.NodeMetadataBytes,
-			OffsetBytes: storage.OffsetBytes, LinkBytes: storage.LinkBytes, TotalBytes: storage.TotalBytes,
+			OffsetBytes: storage.OffsetBytes, LinkBytes: storage.LinkBytes, GraphFileBytes: storage.GraphFileBytes, TotalBytes: storage.TotalBytes,
 		},
 		BuildDurationNS: timing.Duration.Nanoseconds(), BuildWallDurationNS: timing.WallDuration.Nanoseconds(),
 		ProgressCallbackDurationNS: timing.ProgressDuration.Nanoseconds(),

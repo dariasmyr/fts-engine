@@ -8,9 +8,8 @@ import (
 )
 
 type mutableNode struct {
-	vectorOrdinal vector.Ordinal
-	level         uint8
-	links         [][]nodeOrdinal
+	level uint8
+	links [][]nodeOrdinal
 }
 
 type graphData struct {
@@ -61,13 +60,12 @@ func validateGraphData(calculator vector.Calculator, info BuildInfo, graph graph
 		return GraphStats{}, errInvalidGraph
 	}
 
-	seenOrdinals := make([]bool, vectorCount)
 	maxLevel := 0
 	var totalLinks uint64
 	marks := make([]uint32, vectorCount)
 	var epoch uint32
 	for nodeOrdinal, node := range graph.nodes {
-		if err := validateGraphNode(calculator, graph, nodeOrdinal, seenOrdinals); err != nil {
+		if err := validateGraphNode(calculator, graph, nodeOrdinal); err != nil {
 			return GraphStats{}, err
 		}
 		if err := validateNodeLinks(info, graph, nodeOrdinal, &totalLinks, marks, &epoch); err != nil {
@@ -93,15 +91,13 @@ func validateGraphShape(calculator vector.Calculator, graph graphData) (int, err
 	return vectorCount, nil
 }
 
-func validateGraphNode(calculator vector.Calculator, graph graphData, nodeOrdinal int, seenOrdinals []bool) error {
+func validateGraphNode(calculator vector.Calculator, graph graphData, nodeOrdinal int) error {
 	node := graph.nodes[nodeOrdinal]
-	if int(node.level) > MaxLevel || len(node.links) != int(node.level)+1 ||
-		uint64(node.vectorOrdinal) >= uint64(len(seenOrdinals)) || seenOrdinals[node.vectorOrdinal] {
+	if int(node.level) > MaxLevel || len(node.links) != int(node.level)+1 {
 		return fmt.Errorf("%w: node %d metadata", errInvalidGraph, nodeOrdinal)
 	}
-	seenOrdinals[node.vectorOrdinal] = true
 	dimensions := calculator.Dimensions()
-	rowStart := int(node.vectorOrdinal) * dimensions
+	rowStart := nodeOrdinal * dimensions
 	if err := calculator.ValidatePrepared(graph.values[rowStart : rowStart+dimensions]); err != nil {
 		return fmt.Errorf("%w: node %d vector: %v", errInvalidGraph, nodeOrdinal, err)
 	}
@@ -170,18 +166,4 @@ func graphStatistics(graph graphData, maxLevel int) GraphStats {
 	}
 	stats.UnreachableNodes = len(graph.nodes) - stats.ReachableNodes
 	return stats
-}
-
-func cloneGraphData(graph graphData) graphData {
-	cloned := graphData{
-		values: append([]float32(nil), graph.values...), entry: graph.entry, hasEntry: graph.hasEntry,
-		nodes: make([]mutableNode, len(graph.nodes)),
-	}
-	for i, node := range graph.nodes {
-		cloned.nodes[i] = mutableNode{vectorOrdinal: node.vectorOrdinal, level: node.level, links: make([][]nodeOrdinal, len(node.links))}
-		for level := range node.links {
-			cloned.nodes[i].links[level] = append([]nodeOrdinal(nil), node.links[level]...)
-		}
-	}
-	return cloned
 }

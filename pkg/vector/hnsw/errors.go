@@ -8,8 +8,6 @@ var (
 	ErrBuildSourceMismatch = errors.New("vector/hnsw: build source metadata mismatch")
 	errInvalidGraph        = errors.New("vector/hnsw: invalid graph")
 	errCapacityExceeded    = errors.New("vector/hnsw: builder capacity exceeded")
-	errDuplicateOrdinal    = errors.New("vector/hnsw: vector ordinal already added")
-	errBuilderIncomplete   = errors.New("vector/hnsw: builder does not contain every vector ordinal")
 )
 
 // MaxLevel is the largest level accepted by the search primitives.

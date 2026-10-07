@@ -18,9 +18,6 @@ func resultBetter(a, b searchCandidate) bool {
 	if a.distance != b.distance {
 		return a.distance < b.distance
 	}
-	if a.vectorOrdinal != b.vectorOrdinal {
-		return a.vectorOrdinal < b.vectorOrdinal
-	}
 	return a.node < b.node
 }
 
@@ -116,21 +113,14 @@ func (h *resultHeap) Add(value searchCandidate) {
 	}
 }
 
-func (h *resultHeap) Results(k int) []vector.Hit {
-	items := append([]searchCandidate(nil), h.items...)
-	slices.SortFunc(items, compareResults)
-	items = items[:min(k, len(items))]
+func (h *resultHeap) Hits(k int) []vector.Hit {
+	slices.SortFunc(h.items, compareResults)
+	items := h.items[:min(k, len(h.items))]
 	hits := make([]vector.Hit, len(items))
 	for i, item := range items {
-		hits[i] = vector.Hit{Ordinal: item.vectorOrdinal, Distance: item.distance}
+		hits[i] = vector.Hit{Ordinal: vector.Ordinal(item.node), Distance: item.distance}
 	}
 	return hits
-}
-
-func (h *resultHeap) Candidates() []searchCandidate {
-	items := append([]searchCandidate(nil), h.items...)
-	slices.SortFunc(items, compareResults)
-	return items
 }
 
 func compareResults(a, b searchCandidate) int {

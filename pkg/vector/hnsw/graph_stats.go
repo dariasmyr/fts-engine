@@ -23,7 +23,8 @@ type GraphStats struct {
 	ZeroDegreeNodes  int
 }
 
-// StorageStats reports logical in-memory cardinalities and packed byte counts.
+// StorageStats reports in-memory cardinalities and byte counts, plus the exact
+// size of the canonical graph file.
 type StorageStats struct {
 	VectorRows        int
 	GraphNodes        int
@@ -33,6 +34,7 @@ type StorageStats struct {
 	NodeMetadataBytes uint64
 	OffsetBytes       uint64
 	LinkBytes         uint64
+	GraphFileBytes    uint64
 	TotalBytes        uint64
 }
 

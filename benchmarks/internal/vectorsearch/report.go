@@ -124,6 +124,7 @@ type StorageStatsReport struct {
 	NodeMetadataBytes uint64 `json:"node_metadata_bytes"`
 	OffsetBytes       uint64 `json:"offset_bytes"`
 	LinkBytes         uint64 `json:"link_bytes"`
+	GraphFileBytes    uint64 `json:"graph_file_bytes"`
 	TotalBytes        uint64 `json:"total_bytes"`
 }
 

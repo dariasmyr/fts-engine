@@ -26,7 +26,11 @@ func BenchmarkBuildPreparedSource(b *testing.B) {
 				}
 			}
 			oracle := benchmarkExactOracle(b, values, vector.MetricL2Squared)
-			options := hnsw.BuildOptions{Build: benchmarkBuildConfig(dimensions, rows, vector.MetricL2Squared), Search: benchmarkSearchConfig(rows)}
+			options := hnsw.BuildOptions{
+				Build:  benchmarkBuildConfig(dimensions, rows, vector.MetricL2Squared),
+				Limits: hnsw.BuildLimits{MaxVectors: rows, MaxVectorBytes: uint64(rows * dimensions * 4)},
+				Search: benchmarkSearchConfig(rows),
+			}
 			b.ReportAllocs()
 			b.SetBytes(int64(rows * dimensions * 4))
 			b.ResetTimer()
@@ -114,7 +118,6 @@ func BenchmarkANNAndExactReference(b *testing.B) {
 
 func benchmarkBuildConfig(dimensions, count int, metric vector.Metric) hnsw.BuildConfig {
 	return hnsw.BuildConfig{
-		Dimensions: dimensions, Metric: metric, MaxVectors: max(1, count), MaxVectorBytes: uint64(max(1, dimensions*count*4)),
 		MaxNeighbors: 4, EfConstruction: 32, Seed: 17,
 	}
 }
@@ -139,7 +142,9 @@ func benchmarkExactOracle(t testing.TB, values [][]float32, metric vector.Metric
 func benchmarkBuild(t testing.TB, source vector.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.Index {
 	t.Helper()
 	reader, err := hnsw.Build(context.Background(), source, hnsw.BuildOptions{
-		Build: benchmarkBuildConfig(dimensions, count, metric), Search: benchmarkSearchConfig(count),
+		Build:  benchmarkBuildConfig(dimensions, count, metric),
+		Limits: hnsw.BuildLimits{MaxVectors: max(1, count), MaxVectorBytes: uint64(max(1, dimensions*count*4))},
+		Search: benchmarkSearchConfig(count),
 	})
 	if err != nil {
 		t.Fatal(err)

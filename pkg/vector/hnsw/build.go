@@ -23,18 +23,25 @@ func Build(ctx context.Context, source vector.PreparedVectorStore, options Build
 	}
 	total := source.Len()
 	reportBuildProgress(options.Progress, BuildPhasePreflight, 0, total)
-	builder, err := newBuilder(options.Build, options.Search, total)
+	calculator, err := vector.NewCalculator(source.Dimensions(), source.Metric())
 	if err != nil {
 		return nil, err
 	}
-	dimensions := source.Dimensions()
-	metric := source.Metric()
-	normalization := source.Normalization()
-	if dimensions != builder.calculator.Dimensions() || metric != builder.calculator.Metric() || normalization != builder.calculator.Normalization() {
-		return nil, fmt.Errorf("%w: source dimensions=%d metric=%s normalization=%s, build dimensions=%d metric=%s normalization=%s",
-			ErrBuildSourceMismatch, dimensions, metric, normalization,
-			builder.calculator.Dimensions(), builder.calculator.Metric(), builder.calculator.Normalization())
+	if calculator.Normalization() != source.Normalization() {
+		return nil, fmt.Errorf("%w: source normalization=%s, calculator normalization=%s",
+			ErrBuildSourceMismatch, source.Normalization(), calculator.Normalization())
 	}
+	components, err := options.Limits.validateVectorAllocation(total, calculator.Dimensions())
+	if err != nil {
+		return nil, err
+	}
+	if err := options.Build.validate(); err != nil {
+		return nil, err
+	}
+	if err := options.Search.validate(); err != nil {
+		return nil, err
+	}
+	builder := newBuilder(options.Build, calculator, total, components)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -57,7 +64,7 @@ func Build(ctx context.Context, source vector.PreparedVectorStore, options Build
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if _, err := builder.addPrepared(ordinal, scratch); err != nil {
+		if err := builder.add(scratch); err != nil {
 			return nil, fmt.Errorf("vector/hnsw: add source row %d: %w", ordinal, err)
 		}
 		if err := ctx.Err(); err != nil {
@@ -70,7 +77,7 @@ func Build(ctx context.Context, source vector.PreparedVectorStore, options Build
 	}
 
 	reportBuildProgress(options.Progress, BuildPhaseFreeze, total, total)
-	index, err := builder.Freeze(source)
+	index, err := builder.freeze(source, options.Search)
 	if err != nil {
 		return nil, err
 	}

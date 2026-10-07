@@ -2,6 +2,11 @@ package hnsw
 
 import "testing"
 
+func (w *searchWorkspace) reset(nodeCount, dimensions, visitLimit, efSearch int) {
+	w.prepareQuery(dimensions)
+	w.resetSearch(nodeCount, dimensions, visitLimit, efSearch)
+}
+
 func TestSearchWorkspaceDenseEpochReset(t *testing.T) {
 	workspace := &searchWorkspace{}
 	workspace.reset(16, 4, 16, 8)
@@ -26,7 +31,7 @@ func TestSearchWorkspaceDenseEpochReset(t *testing.T) {
 func TestSearchWorkspaceUsesSparseStateForLargeIndexes(t *testing.T) {
 	workspace := &searchWorkspace{}
 	workspace.reset(maxDenseSearchNodes+1, 4, 1_000, 64)
-	if workspace.dense {
+	if workspace.nodes.dense {
 		t.Fatal("large workspace used dense node state")
 	}
 	candidate := searchCandidate{node: maxDenseSearchNodes, distance: 1}
@@ -42,7 +47,7 @@ func TestSearchWorkspaceUsesSparseStateForLargeIndexes(t *testing.T) {
 func TestSearchWorkspaceUsesSparseStateForSmallVisitBudget(t *testing.T) {
 	workspace := &searchWorkspace{}
 	workspace.reset(100_000, 4, 100, 64)
-	if workspace.dense {
+	if workspace.nodes.dense {
 		t.Fatal("workspace used dense state for a small touched-row budget")
 	}
 }
@@ -63,7 +68,7 @@ func TestSparseSearchWorkspaceRejectsOversizedHeapBuffers(t *testing.T) {
 
 func TestSearchWorkspaceRejectsOversizedVectorBuffers(t *testing.T) {
 	workspace := &searchWorkspace{
-		dense:         true,
+		nodes:         nodeSearchState{dense: true},
 		preparedQuery: make([]float32, 0, maxPooledSearchDimensions+1),
 	}
 	if workspace.retainable() {
@@ -79,15 +84,15 @@ func TestSearchWorkspaceRejectsOversizedVectorBuffers(t *testing.T) {
 func TestSearchWorkspaceDropsInactiveRepresentations(t *testing.T) {
 	workspace := &searchWorkspace{}
 	workspace.reset(16, 4, 16, 8)
-	if workspace.candidates == nil {
+	if workspace.nodes.candidates == nil {
 		t.Fatal("dense workspace has no dense candidate storage")
 	}
 	workspace.reset(maxDenseSearchNodes+1, 4, 100, 8)
-	if workspace.candidates != nil || workspace.candidateEpoch != nil || workspace.seenEpoch != nil {
+	if workspace.nodes.candidates != nil || workspace.nodes.candidateEpoch != nil || workspace.nodes.seenEpoch != nil {
 		t.Fatal("sparse workspace retained inactive dense storage")
 	}
 	workspace.reset(16, 4, 16, 8)
-	if workspace.sparseCandidates != nil || workspace.sparseSeen != nil {
+	if workspace.nodes.sparseCandidates != nil || workspace.nodes.sparseSeen != nil {
 		t.Fatal("dense workspace retained inactive sparse storage")
 	}
 }
@@ -102,7 +107,7 @@ func TestSearchWorkspaceDropsOversizedSparseMaps(t *testing.T) {
 	}
 
 	workspace.prepareForPool()
-	if workspace.sparseCandidates != nil || workspace.sparseSeen != nil {
+	if workspace.nodes.sparseCandidates != nil || workspace.nodes.sparseSeen != nil {
 		t.Fatal("oversized sparse maps were retained")
 	}
 }
@@ -112,14 +117,14 @@ func TestSearchWorkspaceRetainsBoundedSparseMaps(t *testing.T) {
 	workspace.reset(maxDenseSearchNodes+1, 4, 100, 8)
 	workspace.storeCandidate(searchCandidate{node: 1})
 	workspace.markSeen(1)
-	candidates := workspace.sparseCandidates
-	seen := workspace.sparseSeen
+	candidates := workspace.nodes.sparseCandidates
+	seen := workspace.nodes.sparseSeen
 
 	workspace.prepareForPool()
-	if candidates == nil || seen == nil || workspace.sparseCandidates == nil || workspace.sparseSeen == nil {
+	if candidates == nil || seen == nil || workspace.nodes.sparseCandidates == nil || workspace.nodes.sparseSeen == nil {
 		t.Fatal("bounded sparse maps were dropped")
 	}
-	if len(workspace.sparseCandidates) != 0 || len(workspace.sparseSeen) != 0 {
+	if len(workspace.nodes.sparseCandidates) != 0 || len(workspace.nodes.sparseSeen) != 0 {
 		t.Fatal("bounded sparse maps were not cleared")
 	}
 }

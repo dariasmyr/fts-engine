@@ -3,7 +3,6 @@ package hnsw
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 
 	"github.com/dariasmyr/fts-engine/pkg/vector"
@@ -25,8 +24,10 @@ var (
 	ErrGraphVectorStore        = errors.New("vector/hnsw: graph vector store mismatch")
 )
 
-// GraphLimits bounds both graph decoding and the prepared vector matrix copied
-// into an opened HNSW index. Zero fields select the corresponding default.
+// GraphLimits bounds graph decoding and validation of the referenced prepared
+// vectors. The v1 search-policy limits remain here because OpenGraph has no
+// separate caller-supplied runtime policy; decoded policy is owned by Index.
+// Zero fields select the corresponding default.
 type GraphLimits struct {
 	MaxDimensions     int
 	MaxVectors        int
@@ -70,31 +71,11 @@ func WriteGraph(ctx context.Context, writer io.Writer, index *Index, vectors Vec
 	if err := ctx.Err(); err != nil {
 		return FileMetadata{}, err
 	}
-	if writer == nil || index == nil || !index.topology.validated || !validVectorFileReference(vectors) {
+	if writer == nil || index == nil || !validVectorFileReference(vectors) {
 		return FileMetadata{}, ErrCorruptGraphData
-	}
-	if err := index.topology.searchConfig.validate(); err != nil {
-		return FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptGraphData, err)
-	}
-	if err := validatePersistedBuildInfo(index.topology.buildInfo); err != nil {
-		return FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptGraphData, err)
 	}
 	if !indexConfigEncodable(index) {
 		return FileMetadata{}, ErrGraphLimitExceeded
-	}
-	if index.vectors == nil || isNilPreparedVectorStore(index.vectors) || index.vectors.Len() != index.Len() ||
-		index.vectors.Dimensions() != index.Dimensions() || index.vectors.Metric() != index.Metric() ||
-		index.vectors.Normalization() != index.topology.calculator.Normalization() {
-		return FileMetadata{}, ErrGraphVectorStore
-	}
-	if _, err := validatePackedTopologyContext(ctx, index); err != nil {
-		if ctx.Err() != nil {
-			return FileMetadata{}, ctx.Err()
-		}
-		return FileMetadata{}, fmt.Errorf("%w: %v", ErrCorruptGraphData, err)
-	}
-	if err := validateIndexVectorsContext(ctx, index); err != nil {
-		return FileMetadata{}, err
 	}
 	return writeValidatedGraph(ctx, writer, index, vectors)
 }

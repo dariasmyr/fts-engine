@@ -67,8 +67,8 @@ func TestSearchGreedyUpperLevelStopsAtLocalMinimum(t *testing.T) {
 		values: []float32{10, 4, 6},
 		nodes: []mutableNode{
 			{level: 1, links: [][]nodeOrdinal{{}, {1}}},
-			{vectorOrdinal: 1, level: 1, links: [][]nodeOrdinal{{}, {2}}},
-			{vectorOrdinal: 2, level: 1, links: [][]nodeOrdinal{{}, {}}},
+			{level: 1, links: [][]nodeOrdinal{{}, {2}}},
+			{level: 1, links: [][]nodeOrdinal{{}, {}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -93,7 +93,7 @@ func TestSearchPreparedReusesQueryAcrossCompatibleIndexes(t *testing.T) {
 		values: []float32{3, 1},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{0}}},
+			{links: [][]nodeOrdinal{{0}}},
 		},
 		hasEntry: true,
 	}
@@ -129,8 +129,8 @@ func TestSearchLevelZeroBeamEscapesLocalMinimumOverDirectedLinks(t *testing.T) {
 		values: []float32{2, 3, 1},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{2}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -162,8 +162,8 @@ func TestSearchExpandsEqualDistanceRouteToCloserNode(t *testing.T) {
 		values: []float32{1, -1, 0},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{2}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -181,8 +181,8 @@ func TestSearchGreedyDoesNotMoveAcrossEqualDistancePlateau(t *testing.T) {
 		values: []float32{-1, 1, 0},
 		nodes: []mutableNode{
 			{level: 1, links: [][]nodeOrdinal{{}, {}}},
-			{vectorOrdinal: 1, level: 1, links: [][]nodeOrdinal{{2}, {0}}},
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
+			{level: 1, links: [][]nodeOrdinal{{2}, {0}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 1, hasEntry: true,
 	})
@@ -202,9 +202,9 @@ func TestSearchScoresMultiplyReachableNodeOnce(t *testing.T) {
 		values: []float32{4, 3, 2, 1},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1, 2}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{3}}},
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{3}}},
-			{vectorOrdinal: 3, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{3}}},
+			{links: [][]nodeOrdinal{{3}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -237,7 +237,7 @@ func TestSearchAllocationBudget(t *testing.T) {
 	nodes := make([]mutableNode, nodeCount)
 	for node := range nodeCount {
 		values[node] = float32(nodeCount - node)
-		nodes[node] = mutableNode{vectorOrdinal: vector.Ordinal(node), links: [][]nodeOrdinal{{}}}
+		nodes[node] = mutableNode{links: [][]nodeOrdinal{{}}}
 		if node+1 < nodeCount {
 			nodes[node].links[0] = []nodeOrdinal{nodeOrdinal(node + 1)}
 		}
@@ -270,8 +270,8 @@ func TestSearchUsesRejectedNodesAsRoutesButNeverReturnsThem(t *testing.T) {
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{2}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -297,8 +297,8 @@ func TestSearchSelectiveFilterCompletesBeforeVisitLimit(t *testing.T) {
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{2}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -330,8 +330,8 @@ func TestSearchIgnoresResultFilterDuringUpperLevelNavigation(t *testing.T) {
 		values: []float32{10, 5, 1},
 		nodes: []mutableNode{
 			{level: 1, links: [][]nodeOrdinal{{}, {1}}},
-			{vectorOrdinal: 1, level: 1, links: [][]nodeOrdinal{{2}, {}}},
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
+			{level: 1, links: [][]nodeOrdinal{{2}, {}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -355,8 +355,8 @@ func TestSearchDeterministicEqualDistanceTies(t *testing.T) {
 	reader := newTestReader(t, space, testSearchConfig(), graphData{
 		values: []float32{-1, 1, 2},
 		nodes: []mutableNode{
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{2, 1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{2, 1}}},
+			{links: [][]nodeOrdinal{{}}},
 			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
@@ -383,8 +383,8 @@ func TestSearchVisitLimitReturnsPartialResultAndCounters(t *testing.T) {
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{2}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -409,8 +409,8 @@ func TestSearchUpperLevelVisitLimitReturnsAcceptedPartialHits(t *testing.T) {
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
 			{level: 1, links: [][]nodeOrdinal{{}, {1, 2}}},
-			{vectorOrdinal: 1, level: 1, links: [][]nodeOrdinal{{}, {}}},
-			{vectorOrdinal: 2, level: 1, links: [][]nodeOrdinal{{}, {}}},
+			{level: 1, links: [][]nodeOrdinal{{}, {}}},
+			{level: 1, links: [][]nodeOrdinal{{}, {}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -440,8 +440,8 @@ func TestSearchDefaultsAndRequestedLimits(t *testing.T) {
 		values: []float32{2, 3, 1},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{2}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -508,8 +508,8 @@ func TestSearchNilPreCancelledAndMidSearchCancellation(t *testing.T) {
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{2}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -538,7 +538,7 @@ func TestSearchNilPreCancelledAndMidSearchCancellation(t *testing.T) {
 	neighbors := make([]nodeOrdinal, neighborCount)
 	for i := range nodes {
 		values[i] = float32(i + 1)
-		nodes[i] = mutableNode{vectorOrdinal: vector.Ordinal(i), links: [][]nodeOrdinal{{}}}
+		nodes[i] = mutableNode{links: [][]nodeOrdinal{{}}}
 		if i > 0 {
 			neighbors[i-1] = nodeOrdinal(i)
 		}
@@ -600,22 +600,6 @@ func TestSearchRejectsInvalidKOptionsConfigFilterAndReader(t *testing.T) {
 		})
 	}
 
-	invalidConfigs := []SearchConfig{
-		{},
-		{DefaultEfSearch: 2, MaxEfSearch: 1, DefaultVisitLimit: 1, MaxVisitLimit: 1, MaxK: 1},
-		{DefaultEfSearch: 1, MaxEfSearch: 1, DefaultVisitLimit: 0, MaxVisitLimit: 1, MaxK: 1},
-		{DefaultEfSearch: 1, MaxEfSearch: 1, DefaultVisitLimit: 2, MaxVisitLimit: 1, MaxK: 1},
-		{DefaultEfSearch: 1, MaxEfSearch: 1, DefaultVisitLimit: 1, MaxVisitLimit: 1, MaxK: 0},
-		{DefaultEfSearch: 1, MaxEfSearch: 1, DefaultVisitLimit: 1, MaxVisitLimit: 1, MaxK: 2},
-	}
-	for i, invalid := range invalidConfigs {
-		invalidReader := *reader
-		invalidReader.topology.searchConfig = invalid
-		if _, err := invalidReader.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, ErrInvalidSearchConfig) {
-			t.Errorf("invalid config %d error = %v", i, err)
-		}
-	}
-
 	wrongSize := vector.NewFullBitSet(2)
 	if _, err := reader.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{ResultFilter: wrongSize}); !errors.Is(err, vector.ErrResultFilterSizeMismatch) {
 		t.Fatalf("wrong filter size error = %v", err)
@@ -627,11 +611,6 @@ func TestSearchRejectsInvalidKOptionsConfigFilterAndReader(t *testing.T) {
 		}
 	}
 
-	unvalidated := *reader
-	unvalidated.topology.validated = false
-	if _, err := unvalidated.Search(context.Background(), []float32{0}, 1, vector.SearchOptions{}); !errors.Is(err, errInvalidGraph) {
-		t.Fatalf("unvalidated reader error = %v", err)
-	}
 	badLevel := *reader
 	badLevel.topology.levels = append([]uint8(nil), reader.topology.levels...)
 	badLevel.topology.levels[0] = MaxLevel + 1
@@ -642,7 +621,7 @@ func TestSearchRejectsInvalidKOptionsConfigFilterAndReader(t *testing.T) {
 		values: []float32{2, 1},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -723,7 +702,7 @@ func TestSearchEmptyReaderCancellationAndZeroAllowedFilter(t *testing.T) {
 		values: []float32{1, 2},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})
@@ -745,8 +724,8 @@ func TestSearchConcurrentReaderUseHasRequestLocalState(t *testing.T) {
 		values: []float32{3, 2, 1},
 		nodes: []mutableNode{
 			{links: [][]nodeOrdinal{{1}}},
-			{vectorOrdinal: 1, links: [][]nodeOrdinal{{2}}},
-			{vectorOrdinal: 2, links: [][]nodeOrdinal{{}}},
+			{links: [][]nodeOrdinal{{2}}},
+			{links: [][]nodeOrdinal{{}}},
 		},
 		entry: 0, hasEntry: true,
 	})

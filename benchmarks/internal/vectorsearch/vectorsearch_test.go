@@ -306,7 +306,6 @@ func TestBuildReaderRejectsUnsupportedOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildConfig := hnsw.BuildConfig{
-		Dimensions: 3, Metric: vector.MetricL2Squared, MaxVectors: 24, MaxVectorBytes: 24 * 3 * 4,
 		MaxNeighbors: 2, EfConstruction: 8, Seed: 4,
 	}
 	searchConfig := hnsw.SearchConfig{DefaultEfSearch: 3, MaxEfSearch: 8, DefaultVisitLimit: 24, MaxVisitLimit: 24, MaxK: 3}
@@ -329,7 +328,6 @@ func TestBuildTimingSeparatesProgressCallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildConfig := hnsw.BuildConfig{
-		Dimensions: 2, Metric: vector.MetricL2Squared, MaxVectors: 8, MaxVectorBytes: 8 * 2 * 4,
 		MaxNeighbors: 2, EfConstruction: 4, Seed: 1,
 	}
 	searchConfig := hnsw.SearchConfig{DefaultEfSearch: 1, MaxEfSearch: 1, DefaultVisitLimit: 8, MaxVisitLimit: 8, MaxK: 1}

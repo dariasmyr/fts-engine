@@ -2,18 +2,10 @@ package hnsw
 
 import (
 	"math"
-
-	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
 // BuildConfig controls deterministic single-writer graph construction.
 type BuildConfig struct {
-	// Dimensions and Metric define the vector space shared by stored vectors and queries.
-	Dimensions int
-	Metric     vector.Metric
-	// MaxVectors and MaxVectorBytes bound the preallocated vector matrix.
-	MaxVectors     int
-	MaxVectorBytes uint64
 	// MaxNeighbors is the standard HNSW M parameter. A new node selects at
 	// most this many neighbors per level; level-0 reverse lists may grow to twice it.
 	MaxNeighbors int
@@ -22,6 +14,12 @@ type BuildConfig struct {
 	EfConstruction int
 	// Seed makes level assignment deterministic for a fixed insertion order.
 	Seed uint64
+}
+
+// BuildLimits bounds source cardinality and the builder's prepared-vector copy.
+type BuildLimits struct {
+	MaxVectors     int
+	MaxVectorBytes uint64
 }
 
 type BuildPhase string
@@ -43,38 +41,29 @@ type BuildProgress struct {
 // invoked synchronously by Build and must return before the build continues.
 type BuildOptions struct {
 	Build    BuildConfig
+	Limits   BuildLimits
 	Search   SearchConfig
 	Progress func(BuildProgress)
 }
 
-// Validate checks a complete build configuration for vectorCount source rows.
+// Validate checks graph/search parameters and row-count limits. Build validates
+// the byte limit after deriving dimensions from its PreparedVectorStore.
 func (o BuildOptions) Validate(vectorCount int) error {
-	if _, _, err := o.Build.validate(vectorCount); err != nil {
+	if err := o.Build.validate(); err != nil {
+		return err
+	}
+	if err := o.Limits.validateCount(vectorCount); err != nil {
 		return err
 	}
 	return o.Search.validate()
 }
 
-func (c BuildConfig) validate(vectorCount int) (vector.Calculator, int, error) {
-	calculator, err := vector.NewCalculator(c.Dimensions, c.Metric)
-	if err != nil {
-		return vector.Calculator{}, 0, err
-	}
-	if err := c.validateCapacity(vectorCount); err != nil {
-		return vector.Calculator{}, 0, err
-	}
-	if err := c.validateConstructionParameters(); err != nil {
-		return vector.Calculator{}, 0, err
-	}
-	components, err := c.validateVectorAllocation(vectorCount)
-	if err != nil {
-		return vector.Calculator{}, 0, err
-	}
-	return calculator, components, nil
+func (c BuildConfig) validate() error {
+	return c.validateConstructionParameters()
 }
 
-func (c BuildConfig) validateCapacity(vectorCount int) error {
-	if c.MaxVectors <= 0 || uint64(c.MaxVectors) >= math.MaxUint32 || vectorCount < 0 || vectorCount > c.MaxVectors {
+func (l BuildLimits) validateCount(vectorCount int) error {
+	if l.MaxVectors <= 0 || uint64(l.MaxVectors) >= math.MaxUint32 || vectorCount < 0 || vectorCount > l.MaxVectors || l.MaxVectorBytes == 0 {
 		return ErrInvalidBuildConfig
 	}
 	return nil
@@ -90,14 +79,14 @@ func (c BuildConfig) validateConstructionParameters() error {
 	return nil
 }
 
-func (c BuildConfig) validateVectorAllocation(vectorCount int) (int, error) {
-	if c.MaxVectorBytes == 0 {
+func (l BuildLimits) validateVectorAllocation(vectorCount, dimensions int) (int, error) {
+	if err := l.validateCount(vectorCount); err != nil || dimensions <= 0 {
 		return 0, ErrInvalidBuildConfig
 	}
-	components, componentsOK := checkedMultiply(uint64(vectorCount), uint64(c.Dimensions))
+	components, componentsOK := checkedMultiply(uint64(vectorCount), uint64(dimensions))
 	vectorBytes, bytesOK := checkedMultiply(components, 4)
 	if !componentsOK || !bytesOK || components > uint64(math.MaxInt) ||
-		vectorBytes > uint64(math.MaxInt) || vectorBytes > c.MaxVectorBytes {
+		vectorBytes > uint64(math.MaxInt) || vectorBytes > l.MaxVectorBytes {
 		return 0, ErrInvalidBuildConfig
 	}
 	return int(components), nil

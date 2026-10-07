@@ -7,19 +7,14 @@ import (
 	"math/rand/v2"
 	"reflect"
 	"slices"
-	"strconv"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
-func builderTestConfig(seed uint64, maxVectors int) BuildConfig {
+func builderTestConfig(seed uint64, _ int) BuildConfig {
 	return BuildConfig{
-		Dimensions:     2,
-		Metric:         vector.MetricL2Squared,
-		MaxVectors:     maxVectors,
-		MaxVectorBytes: 1 << 20,
 		MaxNeighbors:   2,
 		EfConstruction: 8,
 		Seed:           seed,
@@ -28,20 +23,23 @@ func builderTestConfig(seed uint64, maxVectors int) BuildConfig {
 
 func newTestBuilder(t *testing.T, seed uint64, count int) *builder {
 	t.Helper()
-	builder, err := newBuilder(builderTestConfig(seed, max(1, count)), readerTestSearchConfig(), count)
+	calculator, err := vector.NewCalculator(2, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return builder
+	return newBuilder(builderTestConfig(seed, count), calculator, count, count*2)
 }
 
 func addTestVector(t *testing.T, builder *builder, ordinal vector.Ordinal, value []float32) nodeOrdinal {
 	t.Helper()
-	node, err := builder.Add(context.Background(), ordinal, value)
-	if err != nil {
-		t.Fatalf("Add(%d, %v): %v", ordinal, value, err)
+	if ordinal != vector.Ordinal(len(builder.graph.nodes)) {
+		t.Fatalf("non-sequential ordinal %d at node %d", ordinal, len(builder.graph.nodes))
 	}
-	return node
+	err := builder.add(value)
+	if err != nil {
+		t.Fatalf("add(%d, %v): %v", ordinal, value, err)
+	}
+	return nodeOrdinal(ordinal)
 }
 
 func freezeTestBuilder(t testing.TB, builder *builder) (*Index, error) {
@@ -50,7 +48,25 @@ func freezeTestBuilder(t testing.TB, builder *builder) (*Index, error) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return builder.Freeze(source)
+	return builder.freeze(source, readerTestSearchConfig())
+}
+
+func checkBuilder(builder *builder) (GraphStats, error) {
+	graph := cloneGraphData(builder.graph)
+	graph.values = graph.values[:len(graph.nodes)*builder.calculator.Dimensions()]
+	return validateGraphData(builder.calculator, builder.config.info(), graph)
+}
+
+func cloneGraphData(graph graphData) graphData {
+	clone := graphData{values: append([]float32(nil), graph.values...), entry: graph.entry, hasEntry: graph.hasEntry}
+	clone.nodes = make([]mutableNode, len(graph.nodes))
+	for nodeIndex, node := range graph.nodes {
+		clone.nodes[nodeIndex] = mutableNode{level: node.level, links: make([][]nodeOrdinal, len(node.links))}
+		for level, links := range node.links {
+			clone.nodes[nodeIndex].links[level] = append([]nodeOrdinal(nil), links...)
+		}
+	}
+	return clone
 }
 
 func readerTopology(t *testing.T, reader *Index) [][][]nodeOrdinal {
@@ -74,16 +90,12 @@ func readerTopology(t *testing.T, reader *Index) [][][]nodeOrdinal {
 }
 
 func TestBuildConfigValidation(t *testing.T) {
-	valid := []struct {
-		config BuildConfig
-		count  int
-	}{
-		{builderTestConfig(0, 1), 0},
-		{builderTestConfig(0, 1), 1},
-		{BuildConfig{Dimensions: 1, Metric: vector.MetricCosine, MaxVectors: 1, MaxVectorBytes: 4, MaxNeighbors: MaxSupportedNeighbors, EfConstruction: MaxEfConstruction}, 1},
+	valid := []BuildConfig{
+		builderTestConfig(0, 1),
+		{MaxNeighbors: MaxSupportedNeighbors, EfConstruction: MaxEfConstruction},
 	}
-	for i, test := range valid {
-		if _, err := newBuilder(test.config, readerTestSearchConfig(), test.count); err != nil {
+	for i, config := range valid {
+		if err := config.validate(); err != nil {
 			t.Errorf("valid config %d: %v", i, err)
 		}
 	}
@@ -91,42 +103,31 @@ func TestBuildConfigValidation(t *testing.T) {
 	invalid := []struct {
 		name   string
 		config BuildConfig
-		count  int
 		want   error
 	}{
-		{"dimensions", BuildConfig{Metric: vector.MetricL2Squared, MaxVectors: 1, MaxNeighbors: 2, EfConstruction: 2}, 0, vector.ErrInvalidDimensions},
-		{"metric", BuildConfig{Dimensions: 1, MaxVectors: 1, MaxNeighbors: 2, EfConstruction: 2}, 0, vector.ErrUnsupportedMetric},
-		{"max vectors zero", BuildConfig{Dimensions: 1, Metric: vector.MetricL2Squared, MaxNeighbors: 2, EfConstruction: 2}, 0, ErrInvalidBuildConfig},
-		{"negative count", BuildConfig{Dimensions: 1, Metric: vector.MetricL2Squared, MaxVectors: 1, MaxNeighbors: 2, EfConstruction: 2}, -1, ErrInvalidBuildConfig},
-		{"count above max", BuildConfig{Dimensions: 1, Metric: vector.MetricL2Squared, MaxVectors: 1, MaxNeighbors: 2, EfConstruction: 2}, 2, ErrInvalidBuildConfig},
-		{"max neighbors below minimum", BuildConfig{Dimensions: 1, Metric: vector.MetricL2Squared, MaxVectors: 1, MaxNeighbors: 1, EfConstruction: 2}, 0, ErrInvalidBuildConfig},
-		{"max neighbors above maximum", BuildConfig{Dimensions: 1, Metric: vector.MetricL2Squared, MaxVectors: 1, MaxNeighbors: MaxSupportedNeighbors + 1, EfConstruction: MaxSupportedNeighbors + 1}, 0, ErrInvalidBuildConfig},
-		{"ef below max neighbors", BuildConfig{Dimensions: 1, Metric: vector.MetricL2Squared, MaxVectors: 1, MaxNeighbors: 3, EfConstruction: 2}, 0, ErrInvalidBuildConfig},
-		{"ef above maximum", BuildConfig{Dimensions: 1, Metric: vector.MetricL2Squared, MaxVectors: 1, MaxNeighbors: 2, EfConstruction: MaxEfConstruction + 1}, 0, ErrInvalidBuildConfig},
-		{"allocation overflow", BuildConfig{Dimensions: math.MaxInt, Metric: vector.MetricL2Squared, MaxVectors: 2, MaxNeighbors: 2, EfConstruction: 2}, 2, ErrInvalidBuildConfig},
-		{"byte allocation limit", BuildConfig{Dimensions: 2, Metric: vector.MetricL2Squared, MaxVectors: 1, MaxVectorBytes: 7, MaxNeighbors: 2, EfConstruction: 2}, 1, ErrInvalidBuildConfig},
-		{"addressable byte overflow", BuildConfig{Dimensions: math.MaxInt/4 + 1, Metric: vector.MetricL2Squared, MaxVectors: 1, MaxVectorBytes: math.MaxUint64, MaxNeighbors: 2, EfConstruction: 2}, 1, ErrInvalidBuildConfig},
-	}
-	if strconv.IntSize == 64 {
-		maxUint32 := uint64(math.MaxUint32)
-		invalid = append(invalid, struct {
-			name   string
-			config BuildConfig
-			count  int
-			want   error
-		}{"max vectors uint32", BuildConfig{Dimensions: 1, Metric: vector.MetricL2Squared, MaxVectors: int(maxUint32), MaxNeighbors: 2, EfConstruction: 2}, 0, ErrInvalidBuildConfig})
+		{"max neighbors below minimum", BuildConfig{MaxNeighbors: 1, EfConstruction: 2}, ErrInvalidBuildConfig},
+		{"max neighbors above maximum", BuildConfig{MaxNeighbors: MaxSupportedNeighbors + 1, EfConstruction: MaxSupportedNeighbors + 1}, ErrInvalidBuildConfig},
+		{"ef below max neighbors", BuildConfig{MaxNeighbors: 3, EfConstruction: 2}, ErrInvalidBuildConfig},
+		{"ef above maximum", BuildConfig{MaxNeighbors: 2, EfConstruction: MaxEfConstruction + 1}, ErrInvalidBuildConfig},
 	}
 	for _, test := range invalid {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := newBuilder(test.config, readerTestSearchConfig(), test.count)
+			err := test.config.validate()
 			if !errors.Is(err, test.want) {
 				t.Fatalf("error = %v, want %v", err, test.want)
 			}
 		})
 	}
 
-	if _, err := newBuilder(builderTestConfig(0, 1), SearchConfig{}, 1); !errors.Is(err, ErrInvalidSearchConfig) {
-		t.Fatalf("invalid search config error = %v", err)
+	limits := BuildLimits{MaxVectors: 2, MaxVectorBytes: 8}
+	if _, err := limits.validateVectorAllocation(2, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (BuildLimits{MaxVectors: 1, MaxVectorBytes: 4}).validateVectorAllocation(2, 1); !errors.Is(err, ErrInvalidBuildConfig) {
+		t.Fatalf("count limit error = %v", err)
+	}
+	if _, err := limits.validateVectorAllocation(2, math.MaxInt); !errors.Is(err, ErrInvalidBuildConfig) {
+		t.Fatalf("allocation overflow error = %v", err)
 	}
 }
 
@@ -144,7 +145,7 @@ func TestBuilderCheckAfterEveryInsertionAndEntryTransitions(t *testing.T) {
 		if builder.graph.nodes[node].level != wantLevels[i] || builder.graph.entry != wantEntries[i] {
 			t.Fatalf("insertion %d level/entry = %d/%d, want %d/%d", i, builder.graph.nodes[node].level, builder.graph.entry, wantLevels[i], wantEntries[i])
 		}
-		stats, err := builder.Check()
+		stats, err := checkBuilder(builder)
 		if err != nil {
 			t.Fatalf("Check after insertion %d: %v", i, err)
 		}
@@ -154,25 +155,16 @@ func TestBuilderCheckAfterEveryInsertionAndEntryTransitions(t *testing.T) {
 	}
 }
 
-func TestBuilderCompleteAndIncompleteFreeze(t *testing.T) {
-	incomplete := newTestBuilder(t, 11, 2)
-	addTestVector(t, incomplete, 0, []float32{1, 2})
-	if reader, err := freezeTestBuilder(t, incomplete); reader != nil || !errors.Is(err, errBuilderIncomplete) {
-		t.Fatalf("incomplete Freeze = (%v, %v), want (nil, ErrBuilderIncomplete)", reader, err)
-	}
-	if stats, err := incomplete.Check(); err != nil || stats.NodeCount != 1 {
-		t.Fatalf("incomplete Check = (%+v, %v)", stats, err)
-	}
-
+func TestBuilderCompleteFreeze(t *testing.T) {
 	builder := newTestBuilder(t, 11, 3)
-	addTestVector(t, builder, 2, []float32{2, 20})
 	addTestVector(t, builder, 0, []float32{0, 10})
 	addTestVector(t, builder, 1, []float32{1, 15})
+	addTestVector(t, builder, 2, []float32{2, 20})
 	reader, err := freezeTestBuilder(t, builder)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reader.Len() != 3 || reader.Report().Build != builder.buildInfo || reader.Dimensions() != 2 || reader.Metric() != vector.MetricL2Squared {
+	if reader.Len() != 3 || reader.Report().Build != builder.config.info() || reader.Dimensions() != 2 || reader.Metric() != vector.MetricL2Squared {
 		t.Fatalf("complete reader metadata = len:%d info:%+v dimensions:%d metric:%v", reader.Len(), reader.Report().Build, reader.Dimensions(), reader.Metric())
 	}
 	wantInfo := BuildInfo{BuildVersion: 1, LevelGeneratorVersion: 1, MaxNeighbors: 2, LevelZeroMaxNeighbors: 4, EfConstruction: 8, Seed: 11}
@@ -190,40 +182,31 @@ func TestBuilderCompleteAndIncompleteFreeze(t *testing.T) {
 	}
 }
 
-func TestBuilderInvalidAddIsAtomic(t *testing.T) {
+func TestBuilderInvalidSequentialAddIsAtomic(t *testing.T) {
 	builder := newTestBuilder(t, 0, 3)
 	control := newTestBuilder(t, 0, 3)
 	addTestVector(t, builder, 0, []float32{0, 0})
 	addTestVector(t, control, 0, []float32{0, 0})
 
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
 	tests := []struct {
-		name    string
-		ctx     context.Context
-		ordinal vector.Ordinal
-		value   []float32
-		want    error
+		name  string
+		value []float32
+		want  error
 	}{
-		{"nil context", nil, 1, []float32{1, 0}, vector.ErrNilContext},
-		{"cancelled context", cancelled, 1, []float32{1, 0}, context.Canceled},
-		{"duplicate ordinal", context.Background(), 0, []float32{9, 9}, errDuplicateOrdinal},
-		{"ordinal out of range", context.Background(), 3, []float32{1, 0}, vector.ErrOrdinalOutOfRange},
-		{"dimension mismatch", context.Background(), 1, []float32{1}, vector.ErrDimensionMismatch},
-		{"nan vector", context.Background(), 1, []float32{float32(math.NaN()), 0}, vector.ErrNonFiniteVector},
-		{"infinite vector", context.Background(), 1, []float32{float32(math.Inf(1)), 0}, vector.ErrNonFiniteVector},
+		{"dimension mismatch", []float32{1}, vector.ErrDimensionMismatch},
+		{"nan vector", []float32{float32(math.NaN()), 0}, vector.ErrNonFiniteVector},
+		{"infinite vector", []float32{float32(math.Inf(1)), 0}, vector.ErrNonFiniteVector},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			beforeGraph := cloneGraphData(builder.graph)
-			beforePresent := append([]bool(nil), builder.present...)
 			beforeRNG := builder.rng
-			node, err := builder.Add(test.ctx, test.ordinal, test.value)
-			if node != 0 || !errors.Is(err, test.want) {
-				t.Fatalf("Add = (%d, %v), want (0, %v)", node, err, test.want)
+			err := builder.add(test.value)
+			if !errors.Is(err, test.want) {
+				t.Fatalf("add error = %v, want %v", err, test.want)
 			}
-			if !reflect.DeepEqual(builder.graph, beforeGraph) || !slices.Equal(builder.present, beforePresent) || builder.rng != beforeRNG {
-				t.Fatalf("failed Add mutated builder: graph=%+v present=%v rng=%+v", builder.graph, builder.present, builder.rng)
+			if !reflect.DeepEqual(builder.graph, beforeGraph) || builder.rng != beforeRNG {
+				t.Fatalf("failed add mutated builder: graph=%+v rng=%+v", builder.graph, builder.rng)
 			}
 		})
 	}
@@ -246,8 +229,8 @@ func TestBuilderInvalidAddIsAtomic(t *testing.T) {
 
 	beforeGraph := cloneGraphData(builder.graph)
 	beforeRNG := builder.rng
-	if _, err := builder.Add(context.Background(), 0, []float32{0, 0}); !errors.Is(err, errCapacityExceeded) {
-		t.Fatalf("full Add error = %v, want ErrCapacityExceeded", err)
+	if err := builder.add([]float32{0, 0}); !errors.Is(err, errCapacityExceeded) {
+		t.Fatalf("full add error = %v, want ErrCapacityExceeded", err)
 	}
 	if !reflect.DeepEqual(builder.graph, beforeGraph) || builder.rng != beforeRNG {
 		t.Fatal("capacity failure mutated builder")
@@ -259,7 +242,7 @@ func TestBuilderMaxDegreesDuplicatesAndClusteredVectors(t *testing.T) {
 	for i := 0; i < 48; i++ {
 		value := []float32{float32(i % 4), float32((i / 4) % 3)}
 		addTestVector(t, builder, vector.Ordinal(i), value)
-		if _, err := builder.Check(); err != nil {
+		if _, err := checkBuilder(builder); err != nil {
 			t.Fatalf("Check after duplicate/clustered insertion %d: %v", i, err)
 		}
 	}
@@ -316,40 +299,33 @@ func TestBuilderFixedSeedTopologyDeterminism(t *testing.T) {
 
 	first := build()
 	second := build()
-	if first.topology.entry != second.topology.entry || !slices.Equal(first.topology.levels, second.topology.levels) || !slices.Equal(first.topology.nodeToVector, second.topology.nodeToVector) || !reflect.DeepEqual(readerTopology(t, first), readerTopology(t, second)) {
+	if first.topology.entry != second.topology.entry || !slices.Equal(first.topology.levels, second.topology.levels) || !reflect.DeepEqual(readerTopology(t, first), readerTopology(t, second)) {
 		t.Fatal("same seed and insertion order produced different topology")
 	}
 }
 
-func TestBuilderSeedAndOrderPermutationsRemainValid(t *testing.T) {
+func TestBuilderSeedPermutationsRemainValid(t *testing.T) {
 	values := [][]float32{{0, 0}, {1, 0}, {0, 1}, {1, 1}, {2, 0}, {0, 2}, {2, 2}, {1, 2}}
-	orders := [][]vector.Ordinal{
-		{0, 1, 2, 3, 4, 5, 6, 7},
-		{7, 6, 5, 4, 3, 2, 1, 0},
-		{3, 0, 6, 1, 7, 2, 5, 4},
-	}
 	for _, seed := range []uint64{0, 1, math.MaxUint64} {
-		for orderIndex, order := range orders {
-			builder := newTestBuilder(t, seed, len(values))
-			for insertion, ordinal := range order {
-				addTestVector(t, builder, ordinal, values[ordinal])
-				stats, err := builder.Check()
-				if err != nil || stats.NodeCount != insertion+1 || stats.UnreachableNodes != 0 {
-					t.Fatalf("seed %d order %d insertion %d Check = (%+v, %v)", seed, orderIndex, insertion, stats, err)
-				}
+		builder := newTestBuilder(t, seed, len(values))
+		for ordinal, value := range values {
+			addTestVector(t, builder, vector.Ordinal(ordinal), value)
+			stats, err := checkBuilder(builder)
+			if err != nil || stats.NodeCount != ordinal+1 || stats.UnreachableNodes != 0 {
+				t.Fatalf("seed %d insertion %d Check = (%+v, %v)", seed, ordinal, stats, err)
 			}
-			reader, err := freezeTestBuilder(t, builder)
-			if err != nil {
-				t.Fatalf("seed %d order %d Freeze: %v", seed, orderIndex, err)
-			}
-			if stats := reader.Report().Graph; stats.NodeCount != len(values) || stats.UnreachableNodes != 0 {
-				t.Fatalf("seed %d order %d stats = %+v", seed, orderIndex, stats)
-			}
-			for ordinal, want := range values {
-				got, ok := readPreparedVector(reader.vectors, vector.Ordinal(ordinal))
-				if !ok || !slices.Equal(got, want) {
-					t.Fatalf("seed %d order %d Vector(%d) = (%v, %v), want %v", seed, orderIndex, ordinal, got, ok, want)
-				}
+		}
+		reader, err := freezeTestBuilder(t, builder)
+		if err != nil {
+			t.Fatalf("seed %d Freeze: %v", seed, err)
+		}
+		if stats := reader.Report().Graph; stats.NodeCount != len(values) || stats.UnreachableNodes != 0 {
+			t.Fatalf("seed %d stats = %+v", seed, stats)
+		}
+		for ordinal, want := range values {
+			got, ok := readPreparedVector(reader.vectors, vector.Ordinal(ordinal))
+			if !ok || !slices.Equal(got, want) {
+				t.Fatalf("seed %d Vector(%d) = (%v, %v), want %v", seed, ordinal, got, ok, want)
 			}
 		}
 	}
@@ -427,7 +403,7 @@ func TestBuilderOwnerRelativePruningCanBeAsymmetric(t *testing.T) {
 	if slices.Contains(builder.graph.nodes[0].links[1], nodeOrdinal(1)) || !slices.Contains(builder.graph.nodes[1].links[1], nodeOrdinal(0)) {
 		t.Fatalf("expected asymmetric owner-relative links: 0=%v 1=%v", builder.graph.nodes[0].links[1], builder.graph.nodes[1].links[1])
 	}
-	if _, err := builder.Check(); err != nil {
+	if _, err := checkBuilder(builder); err != nil {
 		t.Fatalf("asymmetric pruned graph is invalid: %v", err)
 	}
 }
@@ -470,12 +446,12 @@ func TestBuilderFreezeProducesSearchableReader(t *testing.T) {
 }
 
 func TestBuilderFreezeReaderSearchEdgeCases(t *testing.T) {
-	searchConfig := readerTestSearchConfig()
 	emptyConfig := builderTestConfig(1, 1)
-	empty, err := newBuilder(emptyConfig, searchConfig, 0)
+	l2, err := vector.NewCalculator(2, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
+	empty := newBuilder(emptyConfig, l2, 0, 0)
 	emptyReader, err := freezeTestBuilder(t, empty)
 	if err != nil {
 		t.Fatal(err)
@@ -486,12 +462,12 @@ func TestBuilderFreezeReaderSearchEdgeCases(t *testing.T) {
 	}
 
 	cosineConfig := builderTestConfig(2, 1)
-	cosineConfig.Metric = vector.MetricCosine
-	cosine, err := newBuilder(cosineConfig, searchConfig, 1)
+	cosineCalculator, err := vector.NewCalculator(2, vector.MetricCosine)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cosine.Add(context.Background(), 0, []float32{10, 0}); err != nil {
+	cosine := newBuilder(cosineConfig, cosineCalculator, 1, 2)
+	if err := cosine.add([]float32{1, 0}); err != nil {
 		t.Fatal(err)
 	}
 	cosineReader, err := freezeTestBuilder(t, cosine)
@@ -513,7 +489,7 @@ func TestBuilderRandomizedCheckAfterEveryInsertion(t *testing.T) {
 		for ordinal := range count {
 			value := []float32{rng.Float32()*20 - 10, rng.Float32()*20 - 10}
 			addTestVector(t, builder, vector.Ordinal(ordinal), value)
-			stats, err := builder.Check()
+			stats, err := checkBuilder(builder)
 			if err != nil {
 				t.Fatalf("seed %d insertion %d: %v", seed, ordinal, err)
 			}
@@ -535,16 +511,17 @@ func FuzzBuilderInsertFreeze(f *testing.F) {
 		if count == 0 {
 			return
 		}
-		builder, err := newBuilder(builderTestConfig(uint64(data[0]), count), readerTestSearchConfig(), count)
+		calculator, err := vector.NewCalculator(2, vector.MetricL2Squared)
 		if err != nil {
 			t.Fatal(err)
 		}
+		builder := newBuilder(builderTestConfig(uint64(data[0]), count), calculator, count, count*2)
 		for ordinal := range count {
 			value := []float32{float32(int8(data[ordinal*2])), float32(int8(data[ordinal*2+1]))}
-			if _, err := builder.Add(context.Background(), vector.Ordinal(ordinal), value); err != nil {
+			if err := builder.add(value); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := builder.Check(); err != nil {
+			if _, err := checkBuilder(builder); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -565,12 +542,13 @@ func FuzzBuilderFloatInputs(f *testing.F) {
 	f.Add(math.Float32bits(float32(math.NaN())))
 	f.Fuzz(func(t *testing.T, bits uint32) {
 		config := builderTestConfig(1, 1)
-		builder, err := newBuilder(config, readerTestSearchConfig(), 1)
+		calculator, err := vector.NewCalculator(2, vector.MetricL2Squared)
 		if err != nil {
 			t.Fatal(err)
 		}
+		builder := newBuilder(config, calculator, 1, 2)
 		value := math.Float32frombits(bits)
-		_, err = builder.Add(context.Background(), 0, []float32{value, 0})
+		err = builder.add([]float32{value, 0})
 		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
 			if !errors.Is(err, vector.ErrNonFiniteVector) {
 				t.Fatalf("non-finite value %08x error = %v", bits, err)
@@ -580,7 +558,7 @@ func FuzzBuilderFloatInputs(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := builder.Check(); err != nil {
+		if _, err := checkBuilder(builder); err != nil {
 			t.Fatal(err)
 		}
 		reader, err := freezeTestBuilder(t, builder)

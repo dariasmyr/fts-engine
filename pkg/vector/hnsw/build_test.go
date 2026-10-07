@@ -1,9 +1,12 @@
 package hnsw_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"math"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -14,9 +17,12 @@ import (
 
 func testBuildConfig(dimensions, count int, metric vector.Metric) hnsw.BuildConfig {
 	return hnsw.BuildConfig{
-		Dimensions: dimensions, Metric: metric, MaxVectors: max(1, count), MaxVectorBytes: uint64(max(1, dimensions*count*4)),
 		MaxNeighbors: 4, EfConstruction: 32, Seed: 17,
 	}
+}
+
+func testBuildLimits(dimensions, count int) hnsw.BuildLimits {
+	return hnsw.BuildLimits{MaxVectors: max(1, count), MaxVectorBytes: uint64(max(1, dimensions*count*4))}
 }
 
 func testSearchConfig(count int) hnsw.SearchConfig {
@@ -43,7 +49,7 @@ func testMemoryStore(t testing.TB, values [][]float32, metric vector.Metric) *me
 func testBuild(t testing.TB, source vector.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.Index {
 	t.Helper()
 	reader, err := hnsw.Build(context.Background(), source, hnsw.BuildOptions{
-		Build: testBuildConfig(dimensions, count, metric), Search: testSearchConfig(count),
+		Build: testBuildConfig(dimensions, count, metric), Limits: testBuildLimits(dimensions, count), Search: testSearchConfig(count),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +73,7 @@ func TestBuildProgressStableOrderAndPreparedCosineBits(t *testing.T) {
 	var progress []hnsw.BuildProgress
 	reader, err := hnsw.Build(context.Background(), source, hnsw.BuildOptions{
 		Build:  testBuildConfig(2, source.Len(), vector.MetricCosine),
+		Limits: testBuildLimits(2, source.Len()),
 		Search: testSearchConfig(source.Len()),
 		Progress: func(value hnsw.BuildProgress) {
 			progress = append(progress, value)
@@ -108,6 +115,35 @@ func TestBuildTopologyUsesTheBoundSourceValues(t *testing.T) {
 		if len(result.Hits) != 1 || result.Hits[0].Ordinal != vector.Ordinal(ordinal) {
 			t.Fatalf("query %d returned %+v, want ordinal %d", ordinal, result.Hits, ordinal)
 		}
+	}
+}
+
+func TestBuildOpenSearchEquivalence(t *testing.T) {
+	values := [][]float32{{0, 0}, {1, 0}, {0, 1}, {2, 0}, {0, 2}, {2, 2}}
+	source := testMemoryStore(t, values, vector.MetricL2Squared)
+	built := testBuild(t, source, 2, len(values), vector.MetricL2Squared)
+	query := []float32{0.75, 0.25}
+	options := vector.SearchOptions{EfSearch: len(values), VisitLimit: len(values)}
+	want, err := built.Search(context.Background(), query, 4, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reference := hnsw.VectorFileReference{Size: 1, SHA256: sha256.Sum256([]byte("vectors"))}
+	var encoded bytes.Buffer
+	if _, err := hnsw.WriteGraph(context.Background(), &encoded, built, reference); err != nil {
+		t.Fatal(err)
+	}
+	opened, _, err := hnsw.OpenGraphBytes(context.Background(), encoded.Bytes(), source, reference, hnsw.DefaultGraphLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := opened.Search(context.Background(), query, 4, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("opened search = %+v, built search = %+v", got, want)
 	}
 }
 
@@ -160,8 +196,8 @@ func (s *testSource) ReadVectorInto(ctx context.Context, ordinal vector.Ordinal,
 }
 
 func TestBuildPreflightReadErrorsAndContext(t *testing.T) {
-	options := hnsw.BuildOptions{Build: testBuildConfig(2, 2, vector.MetricL2Squared), Search: testSearchConfig(2)}
-	mismatch := &testSource{values: [][]float32{{1}, {2}}, dimensions: 1, metric: vector.MetricL2Squared}
+	options := hnsw.BuildOptions{Build: testBuildConfig(2, 2, vector.MetricL2Squared), Limits: testBuildLimits(2, 2), Search: testSearchConfig(2)}
+	mismatch := &testSource{values: [][]float32{{1}, {2}}, dimensions: 1, metric: vector.MetricL2Squared, normalization: vector.NormalizationUnitLength}
 	if _, err := hnsw.Build(context.Background(), mismatch, options); !errors.Is(err, hnsw.ErrBuildSourceMismatch) {
 		t.Fatalf("metadata error = %v", err)
 	}

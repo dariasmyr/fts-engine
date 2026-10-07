@@ -29,7 +29,6 @@ var (
 	ErrCorruptData        = errors.New("vector/hnsw: corrupt graph data")
 	ErrUnsupportedVersion = errors.New("vector/hnsw: unsupported graph format version")
 	ErrLimitExceeded      = errors.New("vector/hnsw: graph data exceeds configured limit")
-	ErrReferenceMismatch  = errors.New("vector/hnsw: vector file reference mismatch")
 )
 
 // Reference identifies the authoritative vector file associated with a graph.
@@ -104,14 +103,11 @@ func Encode(writer io.Writer, graph Graph) (Metadata, error) {
 	if graph.Build.MaxNeighbors == 0 || graph.Build.LevelZeroMaxNeighbors == 0 || graph.Build.EfConstruction == 0 {
 		return Metadata{}, ErrCorruptData
 	}
-	topologyBytes, ok := topologyBytes(uint64(len(graph.NodeToVector)), uint64(len(graph.Level0Links)), uint64(len(graph.UpperLinkOffsets)-1), uint64(len(graph.UpperLinks)))
-	if !ok {
+	fileSize, err := EncodedSize(graph)
+	if err != nil {
 		return Metadata{}, ErrLimitExceeded
 	}
-	fileSize, ok := checkedAdd(HeaderSize+FooterSize, topologyBytes)
-	if !ok {
-		return Metadata{}, ErrLimitExceeded
-	}
+	topologyBytes := fileSize - HeaderSize - FooterSize
 	header := make([]byte, HeaderSize)
 	copy(header[:4], Magic)
 	binary.LittleEndian.PutUint16(header[4:6], Version)
@@ -170,12 +166,6 @@ func Encode(writer io.Writer, graph Graph) (Metadata, error) {
 	return Metadata{Size: fileSize, CRC32: checksum, SHA256: digest}, nil
 }
 
-// Decode reads and validates the VHNG container, but leaves HNSW semantic
-// validation (links, levels, and vector source rows) to the owning package.
-func Decode(source io.Reader, limits Limits) (Graph, Metadata, error) {
-	return DecodeContext(context.Background(), source, limits)
-}
-
 func DecodeContext(ctx context.Context, source io.Reader, limits Limits) (Graph, Metadata, error) {
 	if ctx == nil {
 		return Graph{}, Metadata{}, context.Canceled
@@ -198,6 +188,27 @@ func DecodeContext(ctx context.Context, source io.Reader, limits Limits) (Graph,
 		return Graph{}, Metadata{}, ErrLimitExceeded
 	}
 	return DecodeBytesContext(ctx, data, limits)
+}
+
+// EncodedSize returns the exact byte size of graph's canonical VHNG encoding.
+func EncodedSize(graph Graph) (uint64, error) {
+	if len(graph.UpperLinkOffsets) == 0 {
+		return 0, ErrCorruptData
+	}
+	topologyBytes, ok := topologyBytes(
+		uint64(len(graph.NodeToVector)),
+		uint64(len(graph.Level0Links)),
+		uint64(len(graph.UpperLinkOffsets)-1),
+		uint64(len(graph.UpperLinks)),
+	)
+	if !ok {
+		return 0, ErrLimitExceeded
+	}
+	fileSize, ok := checkedAdd(HeaderSize+FooterSize, topologyBytes)
+	if !ok {
+		return 0, ErrLimitExceeded
+	}
+	return fileSize, nil
 }
 
 // DecodeBytesContext validates an already bounded graph byte slice without

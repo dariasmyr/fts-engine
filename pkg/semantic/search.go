@@ -43,14 +43,6 @@ func resolveCandidateBudget(candidateChunks, maxCandidates int) (int, error) {
 	return min(candidateChunks, maxCandidates), nil
 }
 
-func searchSegmentsChunks(ctx context.Context, calculator vector.Calculator, views []segmentView, query []float32, k, maxResults int, searchOptions vector.SearchOptions) (chunkSearchResult, error) {
-	prepared, err := calculator.PrepareQuery(query)
-	if err != nil {
-		return chunkSearchResult{}, err
-	}
-	return searchSegmentsChunksPrepared(ctx, calculator, views, prepared, k, maxResults, searchOptions)
-}
-
 func searchSegmentsChunksPrepared(ctx context.Context, calculator vector.Calculator, views []segmentView, query vector.PreparedQuery, k, maxResults int, searchOptions vector.SearchOptions) (chunkSearchResult, error) {
 	if k <= 0 || k > maxResults {
 		return chunkSearchResult{}, fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, k, maxResults)
