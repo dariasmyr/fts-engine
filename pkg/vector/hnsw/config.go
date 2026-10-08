@@ -7,7 +7,7 @@ const (
 	maxSupportedNeighbors = 1024
 	maxEfConstruction     = 1_000_000
 
-	buildVersion          uint32 = 1
+	buildVersion          uint32 = 2
 	levelGeneratorVersion uint32 = 1
 )
 

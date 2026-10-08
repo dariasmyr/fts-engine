@@ -164,40 +164,61 @@ func greedySearch(state *searchState, current searchCandidate, maxLevel int) (se
 	return current, nil
 }
 
-func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCount int) (results resultHeap, err error) {
+func levelSearch(
+	state *searchState,
+	entry searchCandidate,
+	efSearch, allowedCount int,
+) (results resultHeap, err error) {
 	resultCapacity := min(efSearch, allowedCount)
-	results = newResultHeapWithBuffer(resultCapacity, state.workspace.results)
-	frontier := candidateHeap{items: state.workspace.frontier}
+
+	results = newResultHeapWithBuffer(
+		resultCapacity,
+		state.workspace.results,
+	)
+
+	candidates := candidateHeap{
+		items: state.workspace.frontier,
+	}
+
 	defer func() {
 		state.workspace.results = results.items[:0]
-		state.workspace.frontier = frontier.items[:0]
+		state.workspace.frontier = candidates.items[:0]
 	}()
+
 	state.workspace.markSeen(entry.node)
-	frontier.Push(entry)
+	candidates.Push(entry)
+
 	if entry.accepted {
 		results.Add(entry)
 	}
 
-	for frontier.Len() > 0 {
+	for candidates.Len() > 0 {
 		if err := state.ctx.Err(); err != nil {
 			return results, err
 		}
-		candidate, _ := frontier.Pop()
 
-		// We do not stop the search when the result heap is full, because we need to continue expanding the frontier to ensure that we have found the best candidates.
-		// However, we can stop expanding the frontier if the candidate's distance is greater than the worst distance in the results heap and we have already filled the results heap to capacity.
-		if results.Len() >= resultCapacity {
+		candidate, _ := candidates.Pop()
+
+		// Все разрешённые вершины уже найдены.
+		if results.Len() == allowedCount {
+			break
+		}
+
+		// Эвристическая остановка Beam Search.
+		if results.Len() >= efSearch {
 			worst, _ := results.Worst()
 
 			if candidate.distance > worst.distance {
 				break
 			}
 		}
-		if worst, ok := results.Worst(); ok && results.Len() >= efSearch && candidate.distance > worst.distance {
-			break
-		}
+
 		state.stats.ExpandedNodes++
-		neighbors, ok := state.index.neighborView(candidate.node, 0)
+
+		neighbors, ok := state.index.neighborView(
+			candidate.node,
+			0,
+		)
 		if !ok {
 			return results, errInvalidGraph
 		}
@@ -206,33 +227,41 @@ func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCou
 			if err := periodicContextError(state.ctx, i); err != nil {
 				return results, err
 			}
+
 			if uint64(neighbor) >= uint64(state.index.Len()) {
 				return results, errInvalidGraph
 			}
+
 			if !state.workspace.markSeen(neighbor) {
 				continue
 			}
+
 			discovered, err := state.score(neighbor)
 			if err != nil {
 				return results, err
 			}
+
 			if discovered.accepted {
 				results.Add(discovered)
 			}
 
-			if results.Len() >= resultCapacity {
-				worst, _ := results.Worst()
-				if discovered.distance > worst.distance {
-					continue
-				}
+			// All living (allowed by the result filter)
+			// vectors have been found, no need to continue searching.
+			if results.Len() == allowedCount {
+				continue
 			}
 
+			// Add the discovered node to the search frontier if it is not worse than the worst result.
 			worst, full := results.Worst()
-			if !full || results.Len() < efSearch || discovered.distance <= worst.distance {
-				frontier.Push(discovered)
+
+			if !full ||
+				results.Len() < efSearch ||
+				discovered.distance <= worst.distance {
+				candidates.Push(discovered)
 			}
 		}
 	}
+
 	return results, nil
 }
 

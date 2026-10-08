@@ -21,6 +21,7 @@ func (b *builder) selectNeighbors(ctx context.Context, candidates []searchCandid
 		return nil, err
 	}
 	selected := make([]nodeOrdinal, 0, min(limit, len(candidates)))
+	rejected := make([]nodeOrdinal, 0, min(limit, len(candidates)))
 	// Reject candidates already represented by a selected, closer neighbor. This
 	// preserves links into different regions instead of only the nearest cluster.
 	work := 0
@@ -43,9 +44,22 @@ func (b *builder) selectNeighbors(ctx context.Context, candidates []searchCandid
 		if diverse {
 			selected = append(selected, candidate.node)
 			if len(selected) == limit {
-				break
+				return selected, ctx.Err()
 			}
+		} else {
+			rejected = append(rejected, candidate.node)
 		}
+	}
+	// Fill unused slots only after choosing diverse neighbors. This may
+	// increase graph degree and recall, at the cost of more traversed links.
+	for i, node := range rejected {
+		if err := periodicContextError(ctx, i); err != nil {
+			return nil, err
+		}
+		if len(selected) == limit {
+			break
+		}
+		selected = append(selected, node)
 	}
 	return selected, ctx.Err()
 }

@@ -18,6 +18,8 @@ type SearchOptions struct {
 type SearchStats struct {
 	VisitedNodes         int
 	ExpandedNodes        int
+	UpperExpandedNodes   int
+	Level0ExpandedNodes  int
 	DistanceComputations int
 	RejectedNodes        int
 	Termination          string
