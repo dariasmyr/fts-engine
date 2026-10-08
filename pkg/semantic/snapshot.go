@@ -3,6 +3,7 @@ package semantic
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/dariasmyr/fts-engine/internal/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
@@ -23,6 +24,8 @@ type Snapshot struct {
 	maxCandidates           int
 	maxChunksPerDocumentHit int
 	maxQueryChunks          int
+	maxEfSearch             int
+	maxVisitLimit           int
 	searchConfig            hnsw.SearchConfig
 	calculator              vector.Calculator
 }
@@ -40,7 +43,8 @@ func (v *Snapshot) validateSearchLimits(ctx context.Context, maxResultCount int,
 	if _, err := resolveCandidateBudget(options.CandidateChunks, v.maxCandidates); err != nil {
 		return err
 	}
-	if options.EfSearch < 0 || options.VisitLimit < 0 {
+	if options.EfSearch < 0 || options.EfSearch > v.maxEfSearch ||
+		options.VisitLimit < 0 || options.VisitLimit > v.maxVisitLimit {
 		return ErrInvalidSearchOptions
 	}
 	return nil
@@ -48,7 +52,10 @@ func (v *Snapshot) validateSearchLimits(ctx context.Context, maxResultCount int,
 
 func (v *Snapshot) searchEncodedQueries(ctx context.Context, queries []vector.PreparedQuery, k int, options SearchOptions) (DocumentSearchResult, error) {
 	if v.liveCount == 0 {
-		return DocumentSearchResult{Hits: []DocumentHit{}}, nil
+		return DocumentSearchResult{
+			Hits:  []DocumentHit{},
+			Stats: hnsw.SearchStats{Termination: hnsw.TerminationComplete},
+		}, nil
 	}
 
 	candidates, result, err := v.collectChunkCandidates(ctx, queries, options)
@@ -71,39 +78,171 @@ func (v *Snapshot) searchEncodedQueries(ctx context.Context, queries []vector.Pr
 // collectChunkCandidates is the ANN retrieval layer. It knows nothing about
 // document grouping: it only spends request-wide ANN budgets and returns chunk hits.
 func (v *Snapshot) collectChunkCandidates(ctx context.Context, queries []vector.PreparedQuery, options SearchOptions) ([]ChunkHit, DocumentSearchResult, error) {
-	var candidates []ChunkHit
-	var result DocumentSearchResult
+	type chunkKey struct {
+		documentID fts.DocID
+		chunkID    chunk.ID
+	}
+
+	result := DocumentSearchResult{Stats: hnsw.SearchStats{Termination: hnsw.TerminationComplete}}
 	candidateBudget, _ := resolveCandidateBudget(options.CandidateChunks, v.maxCandidates)
 	visitBudget := options.VisitLimit
 	if visitBudget == 0 {
 		visitBudget = v.searchConfig.VisitLimit
 	}
+	efSearch := options.EfSearch
+	if efSearch == 0 {
+		efSearch = v.searchConfig.EfSearch
+	}
 
-	for _, query := range queries {
-		if err := ctx.Err(); err != nil {
+	active := make([]segmentView, 0, len(v.segments))
+	for i, view := range v.segments {
+		if err := contextcheck.PeriodicError(ctx, i); err != nil {
 			return nil, DocumentSearchResult{}, err
 		}
-
-		remainingCandidates := candidateBudget - result.CandidateChunks
-		remainingVisits := visitBudget - result.Stats.VisitedNodes
-		if remainingCandidates <= 0 || remainingVisits <= 0 {
-			result.GroupingIncomplete = true
+		if view.liveness.AllowedOrdinalCount() > 0 {
+			active = append(active, view)
+		}
+	}
+	visitShares := make([][]int, len(queries))
+	for queryIndex := range queries {
+		visitShares[queryIndex] = make([]int, len(active))
+	}
+	type searchTask struct {
+		queryIndex   int
+		segmentIndex int
+	}
+	tasks := make([]searchTask, 0)
+	capacities := make([]int, 0)
+	work := 0
+	for segmentRound := range active {
+		for queryIndex := range queries {
+			if err := contextcheck.PeriodicError(ctx, work); err != nil {
+				return nil, DocumentSearchResult{}, err
+			}
+			work++
+			segmentIndex := (segmentRound + queryIndex) % len(active)
+			tasks = append(tasks, searchTask{
+				queryIndex:   queryIndex,
+				segmentIndex: segmentIndex,
+			})
+			capacities = append(capacities, active[segmentIndex].segment.len())
+		}
+	}
+	// Water-fill each task up to its physical segment size, redistributing work
+	// that small segments cannot use while preserving diagonal remainder order.
+	if err := ctx.Err(); err != nil {
+		return nil, DocumentSearchResult{}, err
+	}
+	slices.Sort(capacities)
+	if err := ctx.Err(); err != nil {
+		return nil, DocumentSearchResult{}, err
+	}
+	level, remaining, remainingTasks := 0, visitBudget, len(tasks)
+	for i, capacity := range capacities {
+		if err := contextcheck.PeriodicError(ctx, i); err != nil {
+			return nil, DocumentSearchResult{}, err
+		}
+		if capacity > level {
+			delta := capacity - level
+			if delta > remaining/remainingTasks {
+				level += remaining / remainingTasks
+				remaining %= remainingTasks
+				break
+			}
+			remaining -= delta * remainingTasks
+			level = capacity
+		}
+		remainingTasks--
+		if remainingTasks == 0 {
+			remaining = 0
 			break
 		}
-
-		budget := min(v.liveCount, remainingCandidates)
-		partial, err := searchSegmentsChunksPrepared(ctx, v.calculator, v.segments, query, budget, candidateBudget, hnsw.SearchOptions{
-			EfSearch:   options.EfSearch,
-			VisitLimit: remainingVisits,
-		})
-		if err != nil {
+	}
+	for i, task := range tasks {
+		if err := contextcheck.PeriodicError(ctx, i); err != nil {
 			return nil, DocumentSearchResult{}, err
 		}
+		visitShares[task.queryIndex][task.segmentIndex] = min(level, active[task.segmentIndex].segment.len())
+	}
+	for i, task := range tasks {
+		if err := contextcheck.PeriodicError(ctx, i); err != nil {
+			return nil, DocumentSearchResult{}, err
+		}
+		if remaining == 0 {
+			break
+		}
+		if visitShares[task.queryIndex][task.segmentIndex] < active[task.segmentIndex].segment.len() {
+			visitShares[task.queryIndex][task.segmentIndex]++
+			remaining--
+		}
+	}
 
-		candidates = append(candidates, partial.Hits...)
-		result.CandidateChunks += len(partial.Hits)
-		mergeSearchStats(&result.Stats, partial.Stats)
-		result.GroupingIncomplete = result.GroupingIncomplete || budget < v.liveCount || partial.Incomplete
+	merged := make(map[chunkKey]ChunkHit, v.liveCount)
+	visitLimited := false
+	mergedHits := 0
+	for queryIndex, query := range queries {
+		for segmentIndex, view := range active {
+			if err := ctx.Err(); err != nil {
+				return nil, DocumentSearchResult{}, err
+			}
+			share := visitShares[queryIndex][segmentIndex]
+			if share == 0 {
+				visitLimited = true
+				continue
+			}
+			partial, err := searchSegmentChunksPrepared(ctx, v.calculator, view, query,
+				min(candidateBudget, view.liveness.AllowedOrdinalCount()), hnsw.SearchOptions{
+					EfSearch: efSearch, VisitLimit: share,
+				})
+			if err != nil {
+				return nil, DocumentSearchResult{}, err
+			}
+			mergeSearchStats(&result.Stats, partial.Stats)
+			visitLimited = visitLimited || partial.Incomplete
+			for _, hit := range partial.Hits {
+				if err := contextcheck.PeriodicError(ctx, mergedHits); err != nil {
+					return nil, DocumentSearchResult{}, err
+				}
+				mergedHits++
+				key := chunkKey{documentID: hit.Ref.DocID, chunkID: hit.Ref.ID}
+				previous, exists := merged[key]
+				if !exists || compareChunkHits(hit, previous) < 0 {
+					merged[key] = hit
+				}
+			}
+		}
+	}
+
+	candidates := make([]ChunkHit, 0, len(merged))
+	i := 0
+	for _, hit := range merged {
+		if err := contextcheck.PeriodicError(ctx, i); err != nil {
+			return nil, DocumentSearchResult{}, err
+		}
+		candidates = append(candidates, hit)
+		i++
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, DocumentSearchResult{}, err
+	}
+	slices.SortFunc(candidates, compareChunkHits)
+	if err := ctx.Err(); err != nil {
+		return nil, DocumentSearchResult{}, err
+	}
+	candidateLimited := candidateBudget < v.liveCount
+	if len(candidates) > candidateBudget {
+		candidates = candidates[:candidateBudget]
+		candidateLimited = true
+	}
+	result.CandidateChunks = len(candidates)
+	result.GroupingIncomplete = visitLimited || candidateLimited
+	switch {
+	case visitLimited:
+		result.Stats.Termination = hnsw.TerminationVisitLimit
+	case candidateLimited:
+		result.Stats.Termination = "candidate_limit"
+	default:
+		result.Stats.Termination = hnsw.TerminationComplete
 	}
 	return candidates, result, nil
 }
@@ -142,6 +281,7 @@ func newTrustedSnapshot(ctx context.Context, revision Revision, segments []segme
 		segments: segments, revision: revision,
 		schema: schema, maxDocumentsPerSearch: policy.MaxDocumentsPerSearch, maxCandidates: policy.MaxChunkCandidates,
 		maxChunksPerDocumentHit: policy.MaxChunksPerDocumentHit, maxQueryChunks: policy.MaxQueryChunks,
+		maxEfSearch: policy.MaxEfSearch, maxVisitLimit: policy.MaxVisitLimit,
 		searchConfig: search, calculator: calculator,
 	}
 	for i, segment := range view.segments {

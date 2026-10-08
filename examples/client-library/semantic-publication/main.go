@@ -31,7 +31,13 @@ func main() {
 	})
 	must(err)
 	embedding, chunking := service.Embedding(), service.Chunking()
-	encoder, err := semanticencode.New(nil, publicationEmbedder{}, embedding, chunking)
+	encoder, err := semanticencode.New(semanticencode.Config{
+		Schema:   semantic.Schema{Embedding: embedding, Chunking: chunking},
+		Embedder: publicationEmbedder{},
+		Limits: semanticencode.Limits{
+			MaxFields: 10, MaxSourceBytes: 1 << 20, MaxChunks: 10, MaxEmbeddingBytes: 1 << 20,
+		},
+	})
 	must(err)
 
 	// Expected: no hits. The initial published index is empty.

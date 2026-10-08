@@ -183,8 +183,15 @@ func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCou
 			return results, err
 		}
 		candidate, _ := frontier.Pop()
-		if results.Len() == allowedCount {
-			break
+
+		// We do not stop the search when the result heap is full, because we need to continue expanding the frontier to ensure that we have found the best candidates.
+		// However, we can stop expanding the frontier if the candidate's distance is greater than the worst distance in the results heap and we have already filled the results heap to capacity.
+		if results.Len() >= resultCapacity {
+			worst, _ := results.Worst()
+
+			if candidate.distance > worst.distance {
+				break
+			}
 		}
 		if worst, ok := results.Worst(); ok && results.Len() >= efSearch && candidate.distance > worst.distance {
 			break
@@ -194,6 +201,7 @@ func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCou
 		if !ok {
 			return results, errInvalidGraph
 		}
+
 		for i, neighbor := range neighbors {
 			if err := periodicContextError(state.ctx, i); err != nil {
 				return results, err
@@ -211,9 +219,14 @@ func levelSearch(state *searchState, entry searchCandidate, efSearch, allowedCou
 			if discovered.accepted {
 				results.Add(discovered)
 			}
-			if results.Len() == allowedCount {
-				continue
+
+			if results.Len() >= resultCapacity {
+				worst, _ := results.Worst()
+				if discovered.distance > worst.distance {
+					continue
+				}
 			}
+
 			worst, full := results.Worst()
 			if !full || results.Len() < efSearch || discovered.distance <= worst.distance {
 				frontier.Push(discovered)

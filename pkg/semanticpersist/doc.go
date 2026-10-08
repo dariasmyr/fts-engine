@@ -99,6 +99,11 @@
 // Publication through an opened Store is additionally serialized within the
 // process.
 //
+// Prune acquires the same exclusive filesystem lock. It retains CURRENT and
+// the requested number of valid committed generations, then removes only
+// recognized unreachable storage entries. Unknown entries and symlinks are
+// left untouched.
+//
 // # Durability
 //
 // Synchronous durability fsyncs published files and affected directories

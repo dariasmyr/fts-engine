@@ -122,6 +122,12 @@ func validateDecodedGraph(
 	vectors vector.PreparedVectorStore,
 	limits Limits,
 ) (hnswmodel.Snapshot, error) {
+	if ctx == nil {
+		return hnswmodel.Snapshot{}, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return hnswmodel.Snapshot{}, err
+	}
 	calculator, err := vector.NewCalculator(int(graph.Dimensions), vector.Metric(graph.Metric))
 	if err != nil || calculator.Normalization() != vector.Normalization(graph.Normalization) {
 		return hnswmodel.Snapshot{}, ErrCorrupt
@@ -175,16 +181,29 @@ func validateDecodedGraph(
 }
 
 func validateDecodedTopology(ctx context.Context, graph semanticformat.Graph) error {
+	if ctx == nil {
+		return vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	nodes := len(graph.Levels)
 	if len(graph.Level0Offsets) != nodes+1 || len(graph.UpperNodeOffsets) != nodes+1 ||
 		len(graph.UpperLinkOffsets) == 0 {
 		return ErrCorrupt
 	}
 	if nodes == 0 {
-		if graph.HasEntry || graph.Entry != 0 || graph.MaxLevel != 0xff ||
-			!validOffsets(ctx, graph.Level0Offsets, 0) || !validOffsets(ctx, graph.UpperNodeOffsets, 0) ||
-			!validOffsets(ctx, graph.UpperLinkOffsets, 0) {
+		if graph.HasEntry || graph.Entry != 0 || graph.MaxLevel != 0xff {
 			return ErrCorrupt
+		}
+		if err := validateOffsets(ctx, graph.Level0Offsets, 0); err != nil {
+			return err
+		}
+		if err := validateOffsets(ctx, graph.UpperNodeOffsets, 0); err != nil {
+			return err
+		}
+		if err := validateOffsets(ctx, graph.UpperLinkOffsets, 0); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -211,17 +230,22 @@ func validateDecodedTopology(ctx context.Context, graph semanticformat.Graph) er
 	}
 	if uint64(graph.UpperNodeOffsets[nodes]) != placements ||
 		placements != uint64(len(graph.UpperLinkOffsets)-1) ||
-		graph.Levels[graph.Entry] != maxLevel || graph.MaxLevel != maxLevel ||
-		!validOffsets(ctx, graph.Level0Offsets, len(graph.Level0Links)) ||
-		!validOffsets(ctx, graph.UpperLinkOffsets, len(graph.UpperLinks)) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+		graph.Levels[graph.Entry] != maxLevel || graph.MaxLevel != maxLevel {
 		return ErrCorrupt
 	}
+	if err := validateOffsets(ctx, graph.Level0Offsets, len(graph.Level0Links)); err != nil {
+		return err
+	}
+	if err := validateOffsets(ctx, graph.UpperLinkOffsets, len(graph.UpperLinks)); err != nil {
+		return err
+	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	marks := make([]uint64, nodes)
 	var epoch uint64
+	validated := 0
 	for node, levelCount := range graph.Levels {
 		for level := 0; level <= int(levelCount); level++ {
 			neighbors := graphNeighbors(graph, node, level)
@@ -242,6 +266,40 @@ func validateDecodedTopology(ctx context.Context, graph semanticformat.Graph) er
 			}
 		}
 	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	reachable := make([]bool, nodes)
+	reachable[graph.Entry] = true
+	queue := make([]uint32, 1, nodes)
+	queue[0] = graph.Entry
+	visited := 0
+	for len(queue) > 0 {
+		node := queue[0]
+		queue = queue[1:]
+		visited++
+		if visited&0x3fff == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		for _, neighbor := range graphNeighbors(graph, int(node), 0) {
+			validated++
+			if validated&0x3fff == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			if !reachable[neighbor] {
+				reachable[neighbor] = true
+				queue = append(queue, neighbor)
+			}
+		}
+	}
+	if visited != nodes {
+		return ErrCorrupt
+	}
 	return ctx.Err()
 }
 
@@ -253,19 +311,21 @@ func graphNeighbors(graph semanticformat.Graph, node, level int) []uint32 {
 	return graph.UpperLinks[graph.UpperLinkOffsets[placement]:graph.UpperLinkOffsets[placement+1]]
 }
 
-func validOffsets(ctx context.Context, offsets []uint32, values int) bool {
+func validateOffsets(ctx context.Context, offsets []uint32, values int) error {
 	if len(offsets) == 0 || offsets[0] != 0 || uint64(offsets[len(offsets)-1]) != uint64(values) {
-		return false
+		return ErrCorrupt
 	}
 	for i := 1; i < len(offsets); i++ {
-		if i&0x3fff == 0 && ctx.Err() != nil {
-			return false
+		if i&0x3fff == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 		}
 		if offsets[i] < offsets[i-1] || uint64(offsets[i]) > uint64(values) {
-			return false
+			return ErrCorrupt
 		}
 	}
-	return true
+	return ctx.Err()
 }
 
 func validGraphReference(reference semanticformat.FileRef) bool {

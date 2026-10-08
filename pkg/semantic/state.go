@@ -120,6 +120,9 @@ func Open(ctx context.Context, state State) (*Index, error) {
 	if state.NextSegmentID == 0 {
 		return nil, ErrInternalState
 	}
+	if len(state.Segments) > config.Limits.MaxSegments {
+		return nil, ErrCapacityExceeded
+	}
 
 	views := make([]segmentView, len(state.Segments))
 	locations := make(map[VectorID]vectorLocation)
@@ -200,6 +203,13 @@ func Open(ctx context.Context, state State) (*Index, error) {
 		return nil, err
 	}
 	if snapshot.liveCount > config.Limits.MaxLiveVectors {
+		return nil, ErrCapacityExceeded
+	}
+	staleCount := 0
+	for _, view := range views {
+		staleCount += view.segment.len() - view.liveness.AllowedOrdinalCount()
+	}
+	if staleCount > config.Limits.MaxStaleVectors {
 		return nil, ErrCapacityExceeded
 	}
 	for _, version := range documents {

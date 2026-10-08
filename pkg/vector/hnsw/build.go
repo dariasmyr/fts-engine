@@ -59,7 +59,7 @@ func Build(
 		if err := source.ReadVectorInto(ctx, ordinal, scratch); err != nil {
 			return nil, fmt.Errorf("vector/hnsw: read source row %d: %w", ordinal, err)
 		}
-		if err := builder.add(scratch); err != nil {
+		if err := builder.add(ctx, scratch); err != nil {
 			return nil, fmt.Errorf("vector/hnsw: add source row %d: %w", ordinal, err)
 		}
 	}

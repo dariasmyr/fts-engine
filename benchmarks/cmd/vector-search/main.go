@@ -15,7 +15,6 @@ import (
 
 	vectorann "github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
 func main() {
@@ -34,23 +33,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	config, format, output, err := parseFlags(args, stderr)
 	if err != nil {
 		return err
-	}
-	lastProgress := make(map[int]string)
-	config.Progress = func(progress vectorann.Progress) {
-		production := progress.BuildProgress
-		bucket := 0
-		if production.Total > 0 {
-			bucket = production.Completed * 10 / production.Total
-		}
-		state := fmt.Sprintf("%s/%d", production.Phase, bucket)
-		if lastProgress[progress.Build] == state && production.Phase == hnsw.BuildPhaseVectors {
-			return
-		}
-		lastProgress[progress.Build] = state
-		fmt.Fprintf(stderr, "build %d/%d dataset=%s metric=%s order=%s path=%s M=%d efC=%d seed=%d phase=%s %d/%d\n",
-			progress.Build, progress.Builds, progress.Dataset, progress.Metric, progress.Order.Name,
-			progress.BuildPath, progress.MaxNeighbors, progress.EfConstruction, progress.Seed,
-			production.Phase, production.Completed, production.Total)
 	}
 
 	report, err := vectorann.Run(ctx, config)

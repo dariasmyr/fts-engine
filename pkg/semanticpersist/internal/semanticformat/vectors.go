@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 
+	"github.com/dariasmyr/fts-engine/internal/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
@@ -145,7 +146,13 @@ func WriteVectorFile(
 }
 
 // DecodeVectorFile validates and decodes one complete SVEC file.
-func DecodeVectorFile(data []byte, limits VectorLimits) (DecodedVectors, VectorFileMetadata, error) {
+func DecodeVectorFile(ctx context.Context, data []byte, limits VectorLimits) (DecodedVectors, VectorFileMetadata, error) {
+	if ctx == nil {
+		return DecodedVectors{}, VectorFileMetadata{}, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return DecodedVectors{}, VectorFileMetadata{}, err
+	}
 	if err := limits.validate(); err != nil {
 		return DecodedVectors{}, VectorFileMetadata{}, err
 	}
@@ -164,7 +171,11 @@ func DecodeVectorFile(data []byte, limits VectorLimits) (DecodedVectors, VectorF
 	body := data[:len(data)-vectorFooterSize]
 	footer := data[len(data)-vectorFooterSize:]
 	checksum := binary.LittleEndian.Uint32(footer)
-	if crc32.ChecksumIEEE(body) != checksum {
+	actualChecksum, identity, err := vectorFileHashes(ctx, body, footer)
+	if err != nil {
+		return DecodedVectors{}, VectorFileMetadata{}, err
+	}
+	if actualChecksum != checksum {
 		return DecodedVectors{}, VectorFileMetadata{}, ErrCorrupt
 	}
 
@@ -208,6 +219,9 @@ func DecodeVectorFile(data []byte, limits VectorLimits) (DecodedVectors, VectorF
 	values := make([]float32, int(expectedComponents))
 	payload := data[vectorHeaderSize : len(data)-vectorFooterSize]
 	for i := range values {
+		if err := contextcheck.PeriodicError(ctx, i); err != nil {
+			return DecodedVectors{}, VectorFileMetadata{}, err
+		}
 		bits := binary.LittleEndian.Uint32(payload[i*float32ByteSize : (i+1)*float32ByteSize])
 		if bits == negativeZeroBits {
 			return DecodedVectors{}, VectorFileMetadata{}, ErrCorrupt
@@ -215,6 +229,9 @@ func DecodeVectorFile(data []byte, limits VectorLimits) (DecodedVectors, VectorF
 		values[i] = math.Float32frombits(bits)
 	}
 	for row := 0; row < int(count); row++ {
+		if err := contextcheck.PeriodicError(ctx, row); err != nil {
+			return DecodedVectors{}, VectorFileMetadata{}, err
+		}
 		start := row * dimensions
 		if err := validatePreparedRow(calculator, values[start:start+dimensions]); err != nil {
 			return DecodedVectors{}, VectorFileMetadata{}, codecErrorf(ErrCorrupt, "vector row %d is invalid: %v", row, err)
@@ -222,10 +239,35 @@ func DecodeVectorFile(data []byte, limits VectorLimits) (DecodedVectors, VectorF
 	}
 
 	metadata := VectorFileMetadata{
-		FileRef: FileRef{Size: uint64(len(data)), SHA256: sha256.Sum256(data)},
+		FileRef: FileRef{Size: uint64(len(data)), SHA256: identity},
 		CRC32:   checksum,
 	}
+	if err := ctx.Err(); err != nil {
+		return DecodedVectors{}, VectorFileMetadata{}, err
+	}
 	return DecodedVectors{Calculator: calculator, Values: values}, metadata, nil
+}
+
+func vectorFileHashes(ctx context.Context, body, footer []byte) (uint32, [sha256.Size]byte, error) {
+	const chunkSize = 64 << 10
+
+	crc := crc32.NewIEEE()
+	identity := sha256.New()
+	for offset := 0; offset < len(body); offset += chunkSize {
+		if err := ctx.Err(); err != nil {
+			return 0, [sha256.Size]byte{}, err
+		}
+		end := min(offset+chunkSize, len(body))
+		_, _ = crc.Write(body[offset:end])
+		_, _ = identity.Write(body[offset:end])
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, [sha256.Size]byte{}, err
+	}
+	_, _ = identity.Write(footer)
+	var digest [sha256.Size]byte
+	copy(digest[:], identity.Sum(nil))
+	return crc.Sum32(), digest, ctx.Err()
 }
 
 func writeAll(writer io.Writer, data []byte) error {

@@ -54,12 +54,13 @@ func main() {
 	})
 	must(err)
 
-	encoder, err := semanticencode.New(
-		nil,
-		persistenceEmbedder{},
-		embedding,
-		chunking,
-	)
+	encoder, err := semanticencode.New(semanticencode.Config{
+		Schema:   schema,
+		Embedder: persistenceEmbedder{},
+		Limits: semanticencode.Limits{
+			MaxFields: 10, MaxSourceBytes: 1 << 20, MaxChunks: 10, MaxEmbeddingBytes: 1 << 20,
+		},
+	})
 	must(err)
 
 	addDocument(

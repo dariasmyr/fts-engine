@@ -71,6 +71,8 @@ func publishSnapshot(ctx context.Context, base *Snapshot, locations map[VectorID
 			MaxChunkCandidates:      base.maxCandidates,
 			MaxChunksPerDocumentHit: base.maxChunksPerDocumentHit,
 			MaxQueryChunks:          base.maxQueryChunks,
+			MaxEfSearch:             base.maxEfSearch,
+			MaxVisitLimit:           base.maxVisitLimit,
 		},
 		base.searchConfig,
 		base.calculator,

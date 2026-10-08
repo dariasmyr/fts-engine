@@ -17,6 +17,9 @@ type publisher struct {
 }
 
 func (p *publisher) publish(ctx context.Context, index *semantic.Index, options PublishOptions, fullyValidateCurrent bool) (Generation, error) {
+	if options.ExpectedGeneration == nil {
+		return Generation{}, ErrExpectedGenerationRequired
+	}
 	currentGeneration, err := p.currentGeneration(ctx, options, fullyValidateCurrent)
 	if err != nil {
 		return Generation{}, err
@@ -122,7 +125,7 @@ func (p *publisher) currentGeneration(ctx context.Context, options PublishOption
 		semantic.Schema{},
 	)
 	if err != nil {
-		return 0, err
+		return 0, corruptMissingReference(err)
 	}
 
 	return head.GenerationID, nil

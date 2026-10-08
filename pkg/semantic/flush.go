@@ -46,7 +46,7 @@ func (i *Index) flushPending(ctx context.Context) error {
 	if len(state.pending.additions) > 0 && state.componentID == SegmentID(math.MaxUint64) {
 		return ErrComponentIDExhausted
 	}
-	segment, err := buildPendingSegment(ctx, state.componentID, state.pending.additions, state.config)
+	pendingSegment, err := buildPendingSegment(ctx, state.componentID, state.pending.additions, state.config)
 	if err != nil {
 		return err
 	}
@@ -55,14 +55,34 @@ func (i *Index) flushPending(ctx context.Context) error {
 		state.base,
 		state.locations,
 		state.pending.removals,
-		segment,
+		pendingSegment,
 		state.componentID,
 		state.revision,
 	)
 	if err != nil {
 		return err
 	}
-	return i.commitFlush(ctx, state, snapshot, locations, segment != nil)
+	allocatedComponent := pendingSegment != nil
+	if exceedsLifecycleBounds(snapshot, state.config.Limits) {
+		if snapshot.liveCount > 0 && state.componentID == SegmentID(math.MaxUint64) {
+			return ErrComponentIDExhausted
+		}
+		snapshot, locations, allocatedComponent, err = compactSnapshot(
+			ctx, snapshot, state.componentID, state.config,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return i.commitFlush(ctx, state, snapshot, locations, allocatedComponent)
+}
+
+func exceedsLifecycleBounds(snapshot *Snapshot, limits Limits) bool {
+	stale := 0
+	for _, view := range snapshot.segments {
+		stale += view.segment.len() - view.liveness.AllowedOrdinalCount()
+	}
+	return stale > limits.MaxStaleVectors || len(snapshot.segments) > limits.MaxSegments
 }
 
 func (i *Index) captureFlushState(ctx context.Context) (flushState, error) {

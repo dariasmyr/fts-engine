@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"context"
+	"slices"
 
 	"github.com/dariasmyr/fts-engine/internal/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
@@ -33,7 +34,11 @@ func (s *Snapshot) SearchEncoded(ctx context.Context, queries []EncodedChunk, k 
 	if len(queries) == 0 || len(queries) > s.maxQueryChunks {
 		return DocumentSearchResult{}, ErrInvalidQuery
 	}
-	prepared := make([]vector.PreparedQuery, len(queries))
+	type preparedInput struct {
+		query vector.PreparedQuery
+		key   []float32
+	}
+	inputs := make([]preparedInput, len(queries))
 	for n, item := range queries {
 		if err := contextcheck.PeriodicError(ctx, n); err != nil {
 			return DocumentSearchResult{}, err
@@ -42,7 +47,32 @@ func (s *Snapshot) SearchEncoded(ctx context.Context, queries []EncodedChunk, k 
 		if err != nil {
 			return DocumentSearchResult{}, err
 		}
-		prepared[n] = query
+		key, err := s.calculator.Prepare(item.Vector)
+		if err != nil {
+			return DocumentSearchResult{}, err
+		}
+		inputs[n] = preparedInput{query: query, key: key}
+	}
+	if err := ctx.Err(); err != nil {
+		return DocumentSearchResult{}, err
+	}
+	slices.SortFunc(inputs, func(a, b preparedInput) int {
+		for i := range a.key {
+			if a.key[i] < b.key[i] {
+				return -1
+			}
+			if a.key[i] > b.key[i] {
+				return 1
+			}
+		}
+		return 0
+	})
+	if err := ctx.Err(); err != nil {
+		return DocumentSearchResult{}, err
+	}
+	prepared := make([]vector.PreparedQuery, len(inputs))
+	for n := range inputs {
+		prepared[n] = inputs[n].query
 	}
 	return s.searchEncodedQueries(ctx, prepared, k, options)
 }

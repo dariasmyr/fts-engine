@@ -1,6 +1,8 @@
 package hnsw
 
 import (
+	"context"
+
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
@@ -30,7 +32,10 @@ func newBuilder(config BuildConfig, calculator vector.Calculator, vectorCount, c
 
 // add validates and copies the next prepared row. Its node ordinal is the
 // source row ordinal, preserving the package-wide node == vector invariant.
-func (b *builder) add(prepared []float32) error {
+func (b *builder) add(ctx context.Context, prepared []float32) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := b.calculator.ValidatePrepared(prepared); err != nil {
 		return err
 	}
@@ -52,8 +57,7 @@ func (b *builder) add(prepared []float32) error {
 		b.graph.hasEntry = true
 		return nil
 	}
-	b.insert(node)
-	return nil
+	return b.insert(ctx, node)
 }
 
 func (b *builder) freeze(source vector.PreparedVectorStore, search SearchConfig) (*Index, error) {
@@ -64,22 +68,40 @@ func (b *builder) freeze(source vector.PreparedVectorStore, search SearchConfig)
 	return newIndex(topology, source, search)
 }
 
-func (b *builder) insert(node nodeOrdinal) {
+func (b *builder) insert(ctx context.Context, node nodeOrdinal) error {
 	newLevel := int(b.graph.nodes[node].level)
 	oldEntry := b.graph.entry
 	oldMaxLevel := int(b.graph.nodes[oldEntry].level)
 	current := oldEntry
 	for level := oldMaxLevel; level > newLevel; level-- {
-		current = b.greedyBuild(node, current, level)
+		var err error
+		current, err = b.greedyBuild(ctx, node, current, level)
+		if err != nil {
+			return err
+		}
 	}
 
 	entries := append(b.workspace.entries[:0], current)
 	for level := min(newLevel, oldMaxLevel); level >= 0; level-- {
-		candidates := b.searchLayer(node, entries, b.config.EfConstruction, level)
-		selected := b.selectNeighbors(candidates, b.config.MaxNeighbors)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		candidates, err := b.searchLayer(ctx, node, entries, b.config.EfConstruction, level)
+		if err != nil {
+			return err
+		}
+		selected, err := b.selectNeighbors(ctx, candidates, b.config.MaxNeighbors)
+		if err != nil {
+			return err
+		}
 		b.graph.nodes[node].links[level] = selected
-		for _, neighbor := range selected {
-			b.addReverseLink(neighbor, node, level)
+		for i, neighbor := range selected {
+			if err := periodicContextError(ctx, i); err != nil {
+				return err
+			}
+			if err := b.addReverseLink(ctx, neighbor, node, level); err != nil {
+				return err
+			}
 		}
 		if len(candidates) > 0 {
 			entries = entries[:0]
@@ -93,14 +115,24 @@ func (b *builder) insert(node nodeOrdinal) {
 	if newLevel > oldMaxLevel {
 		b.graph.entry = node
 	}
+	return ctx.Err()
 }
 
-func (b *builder) greedyBuild(queryNode, current nodeOrdinal, level int) nodeOrdinal {
+func (b *builder) greedyBuild(ctx context.Context, queryNode, current nodeOrdinal, level int) (nodeOrdinal, error) {
 	currentDistance := b.distanceNodes(queryNode, current)
+	work := 0
 	for {
+		if err := periodicContextError(ctx, work); err != nil {
+			return 0, err
+		}
+		work++
 		best := current
 		bestDistance := currentDistance
 		for _, neighbor := range b.graph.nodes[current].links[level] {
+			if err := periodicContextError(ctx, work); err != nil {
+				return 0, err
+			}
+			work++
 			distance := b.distanceNodes(queryNode, neighbor)
 			if distance < currentDistance && (distance < bestDistance || distance == bestDistance && neighbor < best) {
 				best = neighbor
@@ -108,14 +140,14 @@ func (b *builder) greedyBuild(queryNode, current nodeOrdinal, level int) nodeOrd
 			}
 		}
 		if best == current {
-			return current
+			return current, nil
 		}
 		current = best
 		currentDistance = bestDistance
 	}
 }
 
-func (b *builder) searchLayer(queryNode nodeOrdinal, entryPoints []nodeOrdinal, ef, level int) []searchCandidate {
+func (b *builder) searchLayer(ctx context.Context, queryNode nodeOrdinal, entryPoints []nodeOrdinal, ef, level int) ([]searchCandidate, error) {
 	capacity := min(ef, len(b.graph.nodes)-1)
 	results := newResultHeapWithBuffer(capacity, b.workspace.results)
 	frontier := candidateHeap{items: resetSearchCandidates(b.workspace.frontier, min(capacity, len(entryPoints)))}
@@ -129,15 +161,28 @@ func (b *builder) searchLayer(queryNode nodeOrdinal, entryPoints []nodeOrdinal, 
 		frontier.Push(candidate)
 		results.Add(candidate)
 	}
+	work := 0
 	for _, entry := range entryPoints {
+		if err := periodicContextError(ctx, work); err != nil {
+			return nil, err
+		}
+		work++
 		offer(entry)
 	}
 	for frontier.Len() > 0 {
+		if err := periodicContextError(ctx, work); err != nil {
+			return nil, err
+		}
+		work++
 		candidate, _ := frontier.Pop()
 		if worst, ok := results.Worst(); ok && results.Len() >= capacity && navigationBetter(worst, candidate) {
 			break
 		}
 		for _, neighbor := range b.graph.nodes[candidate.node].links[level] {
+			if err := periodicContextError(ctx, work); err != nil {
+				return nil, err
+			}
+			work++
 			if neighbor == queryNode || !b.workspace.markSeen(neighbor) {
 				continue
 			}
@@ -150,5 +195,5 @@ func (b *builder) searchLayer(queryNode nodeOrdinal, entryPoints []nodeOrdinal, 
 		}
 	}
 	b.workspace.frontier = frontier.items[:0]
-	return results.items
+	return results.items, ctx.Err()
 }

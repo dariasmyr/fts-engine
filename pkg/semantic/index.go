@@ -64,6 +64,10 @@ func (i *Index) Add(ctx context.Context, docID fts.DocID, batch []EncodedChunk) 
 	if err != nil {
 		return err
 	}
+	if err := i.lockPublication(ctx); err != nil {
+		return err
+	}
+	defer i.unlockPublication()
 	if err := i.lockState(ctx); err != nil {
 		return err
 	}
@@ -84,6 +88,10 @@ func (i *Index) Replace(ctx context.Context, docID fts.DocID, batch []EncodedChu
 	if err != nil {
 		return err
 	}
+	if err := i.lockPublication(ctx); err != nil {
+		return err
+	}
+	defer i.unlockPublication()
 	if err := i.lockState(ctx); err != nil {
 		return err
 	}
@@ -109,6 +117,10 @@ func (i *Index) Delete(ctx context.Context, docID fts.DocID) error {
 	if docID == "" {
 		return chunk.ErrInvalidDocID
 	}
+	if err := i.lockPublication(ctx); err != nil {
+		return err
+	}
+	defer i.unlockPublication()
 	if err := i.lockState(ctx); err != nil {
 		return err
 	}

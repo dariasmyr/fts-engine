@@ -29,6 +29,9 @@ func Publish(ctx context.Context, root string, index *semantic.Index, options Pu
 	if index == nil || root == "" {
 		return Generation{}, ErrCorrupt
 	}
+	if options.ExpectedGeneration == nil {
+		return Generation{}, ErrExpectedGenerationRequired
+	}
 	if err := normalizeOptions(&options); err != nil {
 		return Generation{}, err
 	}
@@ -104,7 +107,7 @@ func Open(ctx context.Context, root string, options OpenOptions) (*PersistentSer
 	)
 	if err != nil {
 		_ = lock.Close()
-		return nil, err
+		return nil, corruptMissingReference(err)
 	}
 
 	objects := newObjectStore(l, PublishOptions{
@@ -121,7 +124,7 @@ func Open(ctx context.Context, root string, options OpenOptions) (*PersistentSer
 	)
 	if err != nil {
 		_ = lock.Close()
-		return nil, err
+		return nil, corruptMissingReference(err)
 	}
 
 	return &PersistentService{

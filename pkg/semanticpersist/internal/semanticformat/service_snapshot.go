@@ -2,6 +2,7 @@ package semanticformat
 
 import (
 	"math"
+	"math/bits"
 	"unicode/utf8"
 
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
@@ -11,14 +12,14 @@ import (
 )
 
 // SSTA wire-format version.
-const stateVersion = uint16(8)
+const stateVersion = uint16(9)
 
 // Conservative decoder bound before reading a variable-size row.
 const minimumRowBytes = wireUint64Size + 3*wireStringLengthPrefixSize + wireUint32Size + 2*wireUint64Size
 
 const (
-	// Five service limits and six HNSW integer settings.
-	stateConfigUint32FieldCount = 11
+	// Seven service limits and six HNSW integer settings.
+	stateConfigUint32FieldCount = 13
 	// Revision, max allocated vector ID, and next component ID.
 	stateUint64MetadataFieldCount = 3
 
@@ -164,6 +165,8 @@ func DecodeState(data []byte, limits StateLimits) (ServiceSnapshot, error) {
 func encodeConfig(e *encoder, c semantic.Config) {
 	values := []int{
 		c.Limits.MaxLiveVectors,
+		c.Limits.MaxStaleVectors,
+		c.Limits.MaxSegments,
 		c.Limits.MaxChunksPerDocument,
 		c.Limits.MaxDocumentsPerSearch,
 		c.Limits.MaxChunkCandidates,
@@ -186,6 +189,8 @@ func decodeConfig(d *decoder, embedding semantic.EmbeddingDescriptor, chunking s
 	c := semantic.Config{Schema: schema, Embedding: embedding, Chunking: chunking}
 	c.Limits = semantic.Limits{
 		MaxLiveVectors:          int(d.readUint32()),
+		MaxStaleVectors:         int(d.readUint32()),
+		MaxSegments:             int(d.readUint32()),
 		MaxChunksPerDocument:    int(d.readUint32()),
 		MaxDocumentsPerSearch:   int(d.readUint32()),
 		MaxChunkCandidates:      int(d.readUint32()),
@@ -214,6 +219,9 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 		return 0, codecErrorf(ErrLimitExceeded, "state segment count %d exceeds limit %d", len(value.Segments), limits.MaxSegments)
 	}
 	c := value.Config
+	if len(value.Segments) > c.Limits.MaxSegments {
+		return 0, codecErrorf(ErrLimitExceeded, "state segment count %d exceeds configured limit %d", len(value.Segments), c.Limits.MaxSegments)
+	}
 	size := uint64(stateFixedEncodedSize)
 	for _, descriptor := range []string{c.Embedding.ProviderID, c.Embedding.ModelID, c.Embedding.ModelVersion, c.Embedding.PipelineFingerprint, c.Chunking.ID, c.Chunking.Fingerprint} {
 		if !utf8.ValidString(descriptor) || len(descriptor) > limits.MaxStringBytes || !addEncodedStringSize(&size, descriptor) {
@@ -225,6 +233,8 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 		value int
 	}{
 		{name: "max live vectors", value: c.Limits.MaxLiveVectors},
+		{name: "max stale vectors", value: c.Limits.MaxStaleVectors},
+		{name: "max segments", value: c.Limits.MaxSegments},
 		{name: "max chunks per document", value: c.Limits.MaxChunksPerDocument},
 		{name: "max documents per search", value: c.Limits.MaxDocumentsPerSearch},
 		{name: "max chunk candidates", value: c.Limits.MaxChunkCandidates},
@@ -250,6 +260,12 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 	if c.Limits.MaxLiveVectors > limits.MaxVectors {
 		return 0, codecErrorf(ErrLimitExceeded, "state max live vectors %d exceed limit %d", c.Limits.MaxLiveVectors, limits.MaxVectors)
 	}
+	if c.Limits.MaxStaleVectors > limits.MaxVectors-c.Limits.MaxLiveVectors {
+		return 0, codecErrorf(ErrLimitExceeded, "state physical vector limit exceeds %d", limits.MaxVectors)
+	}
+	if c.Limits.MaxSegments > limits.MaxSegments {
+		return 0, codecErrorf(ErrLimitExceeded, "state max segments %d exceed limit %d", c.Limits.MaxSegments, limits.MaxSegments)
+	}
 	if c.Limits.MaxChunksPerDocument > limits.MaxChunksPerDocument {
 		return 0, codecErrorf(ErrLimitExceeded, "state max chunks per document %d exceed limit %d", c.Limits.MaxChunksPerDocument, limits.MaxChunksPerDocument)
 	}
@@ -260,11 +276,11 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 		return 0, codecErrorf(ErrLimitExceeded, "state max chunk candidates %d exceed limit %d", c.Limits.MaxChunkCandidates, limits.MaxK)
 	}
 	dimensions := uint64(c.Embedding.Dimensions)
-	maxLiveVectors := uint64(c.Limits.MaxLiveVectors)
-	if dimensions > math.MaxUint64/4 || maxLiveVectors > math.MaxUint64/(dimensions*4) {
+	maxPhysicalVectors := uint64(c.Limits.MaxLiveVectors + c.Limits.MaxStaleVectors)
+	if dimensions > math.MaxUint64/4 || maxPhysicalVectors > math.MaxUint64/(dimensions*4) {
 		return 0, codecErrorf(ErrLimitExceeded, "state maximum vector bytes overflow uint64")
 	}
-	vectorBytes := maxLiveVectors * dimensions * 4
+	vectorBytes := maxPhysicalVectors * dimensions * 4
 	if vectorBytes > limits.MaxVectorBytes {
 		return 0, codecErrorf(ErrLimitExceeded, "state maximum vector bytes %d exceed limit %d", vectorBytes, limits.MaxVectorBytes)
 	}
@@ -275,6 +291,7 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 		return 0, codecErrorf(ErrLimitExceeded, "state HNSW max visit limit %d exceeds limit %d", c.HNSW.MaxVisitLimit, limits.MaxVisitLimit)
 	}
 	totalRows := 0
+	liveRows := 0
 	documents := make(map[fts.DocID]struct{})
 	for segmentIndex, segment := range value.Segments {
 		documentChunks := make(map[fts.DocID]int)
@@ -296,6 +313,9 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 		}
 		if len(segment.LivenessWords) > 0 && len(segment.Rows)%64 != 0 && segment.LivenessWords[len(segment.LivenessWords)-1]>>uint(len(segment.Rows)%64) != 0 {
 			return 0, codecErrorf(ErrCorrupt, "state segment %d has non-zero liveness bits beyond row count %d", segmentIndex, len(segment.Rows))
+		}
+		for _, word := range segment.LivenessWords {
+			liveRows += bits.OnesCount64(word)
 		}
 		for rowIndex, row := range segment.Rows {
 			if !addEncodedSize(&size, stateRowFixedSize) {
@@ -339,6 +359,9 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 			}
 		}
 		totalRows += len(segment.Rows)
+	}
+	if liveRows > c.Limits.MaxLiveVectors || totalRows-liveRows > c.Limits.MaxStaleVectors {
+		return 0, codecErrorf(ErrLimitExceeded, "state lifecycle vector bounds exceeded")
 	}
 	if size > limits.MaxFileBytes {
 		return 0, ErrLimitExceeded

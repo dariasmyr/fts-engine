@@ -46,47 +46,11 @@ func (i *Index) Compact(ctx context.Context) error {
 		}
 	}
 
-	var compacted *segment
-	if snapshot.liveCount > 0 {
-		if componentID == SegmentID(math.MaxUint64) {
-			return ErrComponentIDExhausted
-		}
-		var err error
-		compacted, err = buildCompactedSegment(ctx, snapshot, componentID, config)
-		if err != nil {
-			return err
-		}
+	if snapshot.liveCount > 0 && componentID == SegmentID(math.MaxUint64) {
+		return ErrComponentIDExhausted
 	}
-
-	locations := make(map[VectorID]vectorLocation, snapshot.liveCount)
-	if compacted != nil {
-		for ordinal, row := range compacted.rows {
-			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
-				return err
-			}
-			locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
-		}
-	}
-
-	segments := []segmentView(nil)
-	if compacted != nil {
-		segments = []segmentView{{
-			segment:  compacted,
-			liveness: vector.NewFullBitSet(uint32(compacted.len())),
-		}}
-	}
-	searchConfig, ok := config.hnswSearchConfig()
-	if !ok {
-		return ErrInvalidConfig
-	}
-	compactedSnapshot, err := newTrustedSnapshot(
-		ctx,
-		revision,
-		segments,
-		snapshot.schema,
-		config.searchPolicy(),
-		searchConfig,
-		snapshot.calculator,
+	compactedSnapshot, locations, allocatedComponent, err := compactSnapshot(
+		ctx, snapshot, componentID, config,
 	)
 	if err != nil {
 		return err
@@ -104,10 +68,56 @@ func (i *Index) Compact(ctx context.Context) error {
 	}
 	i.snapshot = compactedSnapshot
 	i.state.locations = locations
-	if compacted != nil {
+	if allocatedComponent {
 		i.state.nextComponentID++
 	}
 	return nil
+}
+
+func compactSnapshot(ctx context.Context, snapshot *Snapshot, componentID SegmentID, config Config) (*Snapshot, map[VectorID]vectorLocation, bool, error) {
+	var compacted *segment
+	if snapshot.liveCount > 0 {
+		var err error
+		compacted, err = buildCompactedSegment(ctx, snapshot, componentID, config)
+		if err != nil {
+			return nil, nil, false, err
+		}
+	}
+
+	locations := make(map[VectorID]vectorLocation, snapshot.liveCount)
+	if compacted != nil {
+		for ordinal, row := range compacted.rows {
+			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
+				return nil, nil, false, err
+			}
+			locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
+		}
+	}
+
+	var segments []segmentView
+	if compacted != nil {
+		segments = []segmentView{{
+			segment:  compacted,
+			liveness: vector.NewFullBitSet(uint32(compacted.len())),
+		}}
+	}
+	searchConfig, ok := config.hnswSearchConfig()
+	if !ok {
+		return nil, nil, false, ErrInvalidConfig
+	}
+	compactedSnapshot, err := newTrustedSnapshot(
+		ctx,
+		snapshot.revision,
+		segments,
+		snapshot.schema,
+		config.searchPolicy(),
+		searchConfig,
+		snapshot.calculator,
+	)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return compactedSnapshot, locations, compacted != nil, nil
 }
 
 func buildCompactedSegment(ctx context.Context, snapshot *Snapshot, componentID SegmentID, config Config) (*segment, error) {

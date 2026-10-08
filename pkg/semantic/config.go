@@ -6,6 +6,11 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
 
+const (
+	maxHNSWNeighbors      = 1024
+	maxHNSWEfConstruction = 1_000_000
+)
+
 // Config defines the semantic pipeline, service limits, and optional HNSW
 // tuning. New derives vector-space and allocation settings from these values.
 type Config struct {
@@ -26,6 +31,11 @@ type Limits struct {
 	// MaxLiveVectors bounds visible vectors. Stale physical rows remain until
 	// compaction.
 	MaxLiveVectors int
+	// MaxStaleVectors bounds superseded physical rows between compactions. Zero
+	// defaults to MaxLiveVectors.
+	MaxStaleVectors int
+	// MaxSegments bounds committed immutable segments. Zero defaults to 16.
+	MaxSegments int
 	// MaxChunksPerDocument bounds one encoded document mutation or query.
 	MaxChunksPerDocument int
 	// MaxDocumentsPerSearch bounds the public document result count.
@@ -68,8 +78,17 @@ func (c Config) normalized() (Config, error) {
 	c.Chunking = schema.Chunking
 
 	limits := c.Limits
+	if limits.MaxStaleVectors == 0 {
+		limits.MaxStaleVectors = limits.MaxLiveVectors
+	}
+	if limits.MaxSegments == 0 {
+		limits.MaxSegments = 16
+	}
+	c.Limits = limits
 	if !schema.IsValid() ||
 		limits.MaxLiveVectors <= 0 ||
+		limits.MaxStaleVectors < 0 ||
+		limits.MaxSegments <= 0 ||
 		limits.MaxChunksPerDocument <= 0 ||
 		limits.MaxDocumentsPerSearch <= 0 ||
 		limits.MaxChunkCandidates < limits.MaxDocumentsPerSearch ||
@@ -81,6 +100,11 @@ func (c Config) normalized() (Config, error) {
 	}
 
 	c.HNSW = normalizeHNSWTuning(c.HNSW, limits)
+	if c.HNSW.MaxEfSearch <= 0 || c.HNSW.MaxVisitLimit <= 0 ||
+		c.HNSW.DefaultEfSearch > c.HNSW.MaxEfSearch ||
+		c.HNSW.DefaultVisitLimit > c.HNSW.MaxVisitLimit {
+		return Config{}, ErrInvalidConfig
+	}
 
 	buildConfig, ok := c.hnswBuildConfig()
 	if !ok {
@@ -100,10 +124,9 @@ func (c Config) normalized() (Config, error) {
 		return Config{}, ErrInvalidConfig
 	}
 
-	if !validVectorCapacity(
-		c.Schema.Embedding.Dimensions,
-		limits.MaxLiveVectors,
-	) {
+	maxInt := int(^uint(0) >> 1)
+	if limits.MaxLiveVectors > maxInt-limits.MaxStaleVectors ||
+		!validVectorCapacity(c.Schema.Embedding.Dimensions, limits.MaxLiveVectors+limits.MaxStaleVectors) {
 		return Config{}, ErrInvalidConfig
 	}
 
@@ -119,12 +142,18 @@ func normalizeHNSWTuning(tuning HNSWTuning, limits Limits) HNSWTuning {
 	}
 	if tuning.DefaultEfSearch == 0 {
 		tuning.DefaultEfSearch = max(limits.MaxDocumentsPerSearch, min(limits.MaxChunkCandidates, 64))
+		if tuning.MaxEfSearch > 0 {
+			tuning.DefaultEfSearch = min(tuning.DefaultEfSearch, tuning.MaxEfSearch)
+		}
 	}
 	if tuning.MaxEfSearch == 0 {
 		tuning.MaxEfSearch = max(limits.MaxChunkCandidates, tuning.DefaultEfSearch)
 	}
 	if tuning.DefaultVisitLimit == 0 {
 		tuning.DefaultVisitLimit = limits.MaxLiveVectors
+		if tuning.MaxVisitLimit > 0 {
+			tuning.DefaultVisitLimit = min(tuning.DefaultVisitLimit, tuning.MaxVisitLimit)
+		}
 	}
 	if tuning.MaxVisitLimit == 0 {
 		tuning.MaxVisitLimit = limits.MaxLiveVectors
@@ -158,11 +187,11 @@ func (c Config) hnswSearchConfig() (hnsw.SearchConfig, bool) {
 }
 
 func validateHNSWBuildConfig(c hnsw.BuildConfig) error {
-	if c.MaxNeighbors < 2 {
+	if c.MaxNeighbors < 2 || c.MaxNeighbors > maxHNSWNeighbors {
 		return ErrInvalidConfig
 	}
 
-	if c.EfConstruction < c.MaxNeighbors {
+	if c.EfConstruction < c.MaxNeighbors || c.EfConstruction > maxHNSWEfConstruction {
 		return ErrInvalidConfig
 	}
 
@@ -222,6 +251,8 @@ func (c Config) searchPolicy() searchPolicy {
 		MaxChunkCandidates:      c.Limits.MaxChunkCandidates,
 		MaxChunksPerDocumentHit: c.Limits.MaxChunksPerDocumentHit,
 		MaxQueryChunks:          c.Limits.MaxChunksPerDocument,
+		MaxEfSearch:             c.HNSW.MaxEfSearch,
+		MaxVisitLimit:           c.HNSW.MaxVisitLimit,
 	}
 }
 
@@ -232,11 +263,14 @@ type searchPolicy struct {
 	MaxChunkCandidates      int
 	MaxChunksPerDocumentHit int
 	MaxQueryChunks          int
+	MaxEfSearch             int
+	MaxVisitLimit           int
 }
 
 func (p searchPolicy) validate() error {
 	if p.MaxDocumentsPerSearch <= 0 || p.MaxChunkCandidates < p.MaxDocumentsPerSearch ||
-		p.MaxChunksPerDocumentHit <= 0 || p.MaxQueryChunks <= 0 {
+		p.MaxChunksPerDocumentHit <= 0 || p.MaxQueryChunks <= 0 ||
+		p.MaxEfSearch <= 0 || p.MaxVisitLimit <= 0 {
 		return ErrInvalidConfig
 	}
 	return nil

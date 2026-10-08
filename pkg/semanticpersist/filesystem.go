@@ -119,7 +119,7 @@ func readReferencedFileData(path string, ref semanticformat.FileRef, limit uint6
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return nil, err
+		return nil, corruptMissingReference(err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		return nil, ErrSymlink
@@ -129,7 +129,7 @@ func readReferencedFileData(path string, ref semanticformat.FileRef, limit uint6
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, corruptMissingReference(err)
 	}
 	defer file.Close()
 	data, err := io.ReadAll(io.LimitReader(file, int64(ref.Size)+1))
@@ -148,7 +148,7 @@ func verifyReferencedFile(path string, ref semanticformat.FileRef, limit uint64,
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return err
+		return corruptMissingReference(err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		return ErrSymlink
@@ -158,7 +158,7 @@ func verifyReferencedFile(path string, ref semanticformat.FileRef, limit uint64,
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return err
+		return corruptMissingReference(err)
 	}
 	hash := sha256.New()
 	buffer := make([]byte, 64<<10)
@@ -174,6 +174,13 @@ func verifyReferencedFile(path string, ref semanticformat.FileRef, limit uint64,
 		return copyErr
 	}
 	return closeErr
+}
+
+func corruptMissingReference(err error) error {
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrCorrupt
+	}
+	return err
 }
 
 func equalSHA256(sum []byte, expected [sha256.Size]byte) bool {

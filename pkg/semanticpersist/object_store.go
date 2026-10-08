@@ -163,7 +163,7 @@ func (s objectStore) verify(ref semanticformat.SegmentRef) error {
 		return err
 	}
 	if err := validateDirectory(path); err != nil {
-		return err
+		return corruptMissingReference(err)
 	}
 	if err := verifyReferencedFile(filepath.Join(path, vectorsFileName), ref.Vectors, min(s.limits.MaxFileBytes, s.limits.MaxVectorBytes+128), s.durability.synchronous()); err != nil {
 		return err
@@ -183,13 +183,13 @@ func (s objectStore) open(ctx context.Context, ref semanticformat.SegmentRef, co
 		return semantic.SegmentData{}, err
 	}
 	if err := validateDirectory(path); err != nil {
-		return semantic.SegmentData{}, err
+		return semantic.SegmentData{}, corruptMissingReference(err)
 	}
 	vectorsData, err := readReferencedFileWithoutHash(filepath.Join(path, vectorsFileName), ref.Vectors, min(s.limits.MaxFileBytes, s.limits.MaxVectorBytes+128))
 	if err != nil {
 		return semantic.SegmentData{}, err
 	}
-	decoded, metadata, err := semanticformat.DecodeVectorFile(vectorsData, vectorFormatLimits(s.limits))
+	decoded, metadata, err := semanticformat.DecodeVectorFile(ctx, vectorsData, vectorFormatLimits(s.limits))
 	if err != nil {
 		return semantic.SegmentData{}, mapFormatError(err)
 	}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"slices"
 
+	"github.com/dariasmyr/fts-engine/internal/contextcheck"
 	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
 type documentAccumulator struct {
@@ -17,12 +19,16 @@ type documentAccumulator struct {
 // identities across query chunks, groups candidates by document and applies the
 // document-level result limits independently of ANN retrieval.
 func groupDocumentHits(ctx context.Context, candidates []ChunkHit, k, maxChunksPerDocument int) ([]DocumentHit, int, error) {
+	if ctx == nil {
+		return nil, 0, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 	merged := make(map[fts.DocID]*documentAccumulator)
 	for n, hit := range candidates {
-		if n%256 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, 0, err
-			}
+		if err := contextcheck.PeriodicError(ctx, n); err != nil {
+			return nil, 0, err
 		}
 		current := merged[hit.Ref.DocID]
 		if current == nil {
@@ -39,14 +45,17 @@ func groupDocumentHits(ctx context.Context, candidates []ChunkHit, k, maxChunksP
 	hits := make([]DocumentHit, 0, len(merged))
 	n := 0
 	for docID, accumulated := range merged {
-		if n%256 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, 0, err
-			}
+		if err := contextcheck.PeriodicError(ctx, n); err != nil {
+			return nil, 0, err
 		}
 		chunks := make([]ChunkHit, 0, len(accumulated.chunks))
+		chunkIndex := 0
 		for _, hit := range accumulated.chunks {
+			if err := contextcheck.PeriodicError(ctx, chunkIndex); err != nil {
+				return nil, 0, err
+			}
 			chunks = append(chunks, hit)
+			chunkIndex++
 		}
 		slices.SortFunc(chunks, compareChunkHits)
 		if len(chunks) > maxChunksPerDocument {
@@ -56,6 +65,9 @@ func groupDocumentHits(ctx context.Context, candidates []ChunkHit, k, maxChunksP
 		n++
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 	slices.SortFunc(hits, compareDocumentHits)
 	if len(hits) > k {
 		hits = hits[:k]

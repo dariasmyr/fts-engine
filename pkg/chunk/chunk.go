@@ -1,14 +1,33 @@
 package chunk
 
 import (
+	"fmt"
 	"unicode/utf8"
 
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 )
 
+// Range identifies a half-open byte interval in a source string.
+type Range struct {
+	StartByte int
+	EndByte   int
+}
+
 type Chunk struct {
 	Ref  Ref
 	Text string
+}
+
+// Validate checks the reference against its complete source field and requires
+// Text to exactly equal the referenced half-open byte range.
+func (c Chunk) Validate(fieldValue string) error {
+	if err := c.Ref.Validate(fieldValue); err != nil {
+		return err
+	}
+	if c.Ref.StartByte == c.Ref.EndByte || c.Text != fieldValue[int(c.Ref.StartByte):int(c.Ref.EndByte)] {
+		return fmt.Errorf("%w: [%d,%d)", ErrTextMismatch, c.Ref.StartByte, c.Ref.EndByte)
+	}
+	return nil
 }
 
 // Whole returns one semantic unit for a complete field value.

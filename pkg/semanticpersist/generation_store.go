@@ -119,14 +119,20 @@ func (s generationStore) open(ctx context.Context, id uint64, expectedHash *[sha
 	}
 	generationPath := s.layout.generation(id)
 	if err := validateDirectory(generationPath); err != nil {
+		if expectedHash != nil {
+			err = corruptMissingReference(err)
+		}
 		return persistedGeneration{}, err
 	}
 	manifestData, err := readRegularFile(s.layout.manifest(id), s.limits.MaxFileBytes)
 	if err != nil {
+		if expectedHash != nil {
+			err = corruptMissingReference(err)
+		}
 		return persistedGeneration{}, err
 	}
 	hash := sha256.Sum256(manifestData)
-	if expectedHash == nil && hash != *expectedHash {
+	if expectedHash != nil && hash != *expectedHash {
 		return persistedGeneration{}, ErrCorrupt
 	}
 	manifest, err := semanticformat.DecodeManifest(manifestData, manifestFormatLimits(s.limits))
@@ -161,10 +167,16 @@ func (s generationStore) openManifest(ctx context.Context, id uint64, expectedHa
 		return semanticformat.GenerationManifest{}, semanticformat.FileRef{}, err
 	}
 	if err := validateDirectory(s.layout.generation(id)); err != nil {
+		if checkHash {
+			err = corruptMissingReference(err)
+		}
 		return semanticformat.GenerationManifest{}, semanticformat.FileRef{}, err
 	}
 	data, err := readRegularFile(s.layout.manifest(id), s.limits.MaxFileBytes)
 	if err != nil {
+		if checkHash {
+			err = corruptMissingReference(err)
+		}
 		return semanticformat.GenerationManifest{}, semanticformat.FileRef{}, err
 	}
 	hash := sha256.Sum256(data)
