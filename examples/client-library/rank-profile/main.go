@@ -13,16 +13,16 @@ func main() {
 	docs := []fts.Document{
 		{
 			ID: "doc-title",
-			Fields: map[string]fts.Field{
-				"title":    {Value: "postgres backup"},
-				"abstract": {Value: "short guide"},
+			Fields: map[string]fts.FieldData{
+				"title":    {Text: "postgres backup"},
+				"abstract": {Text: "short guide"},
 			},
 		},
 		{
 			ID: "doc-abstract",
-			Fields: map[string]fts.Field{
-				"title":    {Value: "database guide"},
-				"abstract": {Value: "postgres backup postgres backup postgres backup"},
+			Fields: map[string]fts.FieldData{
+				"title":    {Text: "database guide"},
+				"abstract": {Text: "postgres backup postgres backup postgres backup"},
 			},
 		},
 	}

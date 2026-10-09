@@ -312,9 +312,9 @@ func TestSaveLoadMultiIndexSnapshotRoundTrip(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-1", Fields: map[string]Field{
-		"title": {Value: "rosa barge"},
-		"body":  {Value: "french canal"},
+	if err := svc.Index(ctx, Document{ID: "doc-1", Fields: map[string]FieldData{
+		"title": {Text: "rosa barge"},
+		"body":  {Text: "french canal"},
 	}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
@@ -390,14 +390,14 @@ func TestSaveLoadMultiIndexSnapshotWithCollectionStatsRoundTrip(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-1", Fields: map[string]Field{
-		"title": {Value: "rosa barge"},
-		"body":  {Value: "french canal"},
+	if err := svc.Index(ctx, Document{ID: "doc-1", Fields: map[string]FieldData{
+		"title": {Text: "rosa barge"},
+		"body":  {Text: "french canal"},
 	}}); err != nil {
 		t.Fatalf("Index(doc-1) error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-2", Fields: map[string]Field{
-		"title": {Value: "barge"},
+	if err := svc.Index(ctx, Document{ID: "doc-2", Fields: map[string]FieldData{
+		"title": {Text: "barge"},
 	}}); err != nil {
 		t.Fatalf("Index(doc-2) error = %v", err)
 	}

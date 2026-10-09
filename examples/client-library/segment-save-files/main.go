@@ -35,7 +35,7 @@ func main() {
 
 	// Enable scorer so collection stats are populated and can be persisted with the segment manifest.
 	svc := fts.New(idx, fts.WordKeys, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
-	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "snapshot with bloom filter"}}}); err != nil {
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "snapshot with bloom filter"}}}); err != nil {
 		panic(err)
 	}
 

@@ -9,6 +9,8 @@ It provides:
 - query-string, phrase, boolean, field-scoped, and prefix search
 - optional pipelines, stemming, and language presets via `pkg/textproc` and `pkg/ftspreset`
 - mutable snapshots and sealed read-only segments via `pkg/ftspersist`
+- chunk-aware dense-vector search via `pkg/vector` and `pkg/semantic`
+- immutable semantic generations via `pkg/semanticpersist`
 - per-request diagnostics and aggregated search stats via `pkg/ftsstats`
 
 ## Public API Surface
@@ -27,6 +29,10 @@ For external integrations, prefer these public packages:
 - `pkg/ftspreset` - ready-to-use pipeline presets
 - `pkg/filter` - bloom, cuckoo, and ribbon filters
 - `pkg/ftsstats` - aggregated search observability
+- `pkg/vector` - dense-vector metrics, search contracts, and immutable result filters
+- `pkg/vector/hnsw` - deterministic HNSW construction and immutable approximate search
+- `pkg/semantic` - chunk-aware semantic document search with caller-provided vectors
+- `pkg/semanticpersist` - generation-based persistence for semantic checkpoints
 
 `cmd/*`, `internal/*`, and `benchmarks/*` are repository-owned tooling, not the main library surface.
 
@@ -77,6 +83,97 @@ Notes:
 - in practice that means the regular single-field index uses the field name `_default`
 - if you do not set a pipeline, the default behavior is alphanumeric tokenization plus lowercasing
 - add `fts.WithScorer(fts.BM25())` or `fts.WithScorer(fts.TFIDF())` when you want score-based ranking
+
+## Semantic Search
+
+`pkg/semantic` provides chunk-aware document search over caller-provided
+embeddings. It does not call an embedding model itself. The caller supplies an
+`semantic.Encoder`, usually built with `pkg/semanticencode`.
+
+Create a service with an embedding and chunking contract:
+
+```go
+embedding, err := semantic.NewEmbeddingDescriptor(
+	"my-provider", "my-model", "v1", "my-pipeline-v1",
+	768, vector.MetricCosine, 1,
+)
+if err != nil {
+	return err
+}
+
+service, err := semantic.New(semantic.Config{
+	Embedding: embedding,
+	Chunking:  semantic.ChunkingDescriptor{ID: "chunks-v1", Version: 1, Fingerprint: "chunks-v1"},
+	Limits: semantic.Limits{
+		MaxLiveVectors:          1_000_000,
+		MaxChunksPerDocument:    64,
+		MaxDocumentsPerSearch:   20,
+		MaxChunkCandidates:      200,
+		MaxChunksPerDocumentHit: 3,
+	},
+})
+if err != nil {
+	return err
+}
+```
+
+The encoder owns chunking and embedding. `semanticencode.New` can adapt an
+application embedder to the `semantic.Encoder` interface:
+
+```go
+encoder, err := semanticencode.New(nil, embedder, service.Embedding(), service.Chunking())
+if err != nil {
+	return err
+}
+```
+
+Index documents, publish pending vectors, and search them:
+
+```go
+ctx := context.Background()
+
+if err := service.AddDocument(ctx, encoder, semantic.Document{
+	ID: "doc-1", Fields: map[string]string{"body": "French hotel on a river"},
+}); err != nil {
+	return err
+}
+if err := service.AddDocument(ctx, encoder, semantic.Document{
+	ID: "doc-2", Fields: map[string]string{"body": "Boat operations in France"},
+}); err != nil {
+	return err
+}
+
+// Flush builds and publishes immutable in-memory HNSW segments.
+if err := service.Flush(ctx); err != nil {
+	return err
+}
+
+result, err := service.SearchDocumentsWithOptions(ctx, encoder, semantic.Document{
+	ID: "query", Fields: map[string]string{"body": "French hotel"},
+}, 10, semantic.SearchOptions{
+	EfSearch:       64,
+	VisitLimit:     10_000,
+	CandidateChunks: 200,
+})
+if err != nil {
+	return err
+}
+for _, hit := range result.Hits {
+	fmt.Printf("doc=%s distance=%.4f\n", hit.DocID, hit.Distance)
+}
+```
+
+`AddDocument`, `ReplaceDocument`, and `DeleteDocument` queue mutations. They
+become visible to the published read view after `Flush`. Replacement and
+deletion keep old physical rows as stale rows; search excludes them through
+liveness filters. Call `service.Compact(ctx)` to rebuild the in-memory HNSW
+segments using only live rows and reclaim stale capacity.
+
+The runtime is HNSW-first. It does not run an exact fallback when recall is
+low. Increase `EfSearch`, `VisitLimit`, or `CandidateChunks` for a more
+expensive search, and compact when stale-row accumulation becomes significant.
+
+See the runnable [`semantic-publication` example](examples/client-library/semantic-publication/main.go).
 
 ## Choosing an Index
 
@@ -282,6 +379,52 @@ engine := fts.NewMultiField(
 )
 ```
 
+## HNSW Vector Index
+
+`pkg/vector/hnsw` provides observable deterministic construction, an immutable
+packed HNSW index, and a binary graph format bound to a separate authoritative vector
+file. Production search is HNSW-only; the independent exact oracle lives in the
+benchmark module.
+
+`pkg/semantic` uses immutable HNSW segments and an explicit flush lifecycle.
+Ordinary semantic search is in-memory and does not require disk persistence.
+
+```go
+build := hnsw.BuildConfig{
+	Dimensions:     3,
+	Metric:         vector.MetricCosine,
+	MaxVectors:     len(values),
+	MaxVectorBytes: uint64(len(values) * 3 * 4),
+	MaxNeighbors:   8,
+	EfConstruction: 64,
+	Seed:           1,
+}
+search := hnsw.SearchConfig{
+	DefaultEfSearch:   32,
+	MaxEfSearch:       256,
+	DefaultVisitLimit: 10_000,
+	MaxVisitLimit:     100_000,
+	MaxK:              100,
+}
+
+index, err := hnsw.Build(ctx, preparedVectors, hnsw.BuildOptions{
+	Build:  build,
+	Search: search,
+	Progress: func(progress hnsw.BuildProgress) {
+		fmt.Printf("phase=%s vectors=%d/%d\n", progress.Phase, progress.Completed, progress.Total)
+	},
+})
+if err != nil {
+	return err
+}
+result, err := index.Search(ctx, query, 10, vector.SearchOptions{EfSearch: 64})
+```
+
+`hnsw.Build` reads prepared rows in stable dense ordinal order and hides manual
+graph construction. Use `index.Report()` to inspect build provenance, search
+limits, graph structure, and packed storage. See the runnable [`hnsw-build`](examples/client-library/hnsw-build/main.go)
+example and run parameter sweeps with `go run ./cmd/vector-search` from `benchmarks/`.
+
 ## Score Explanation
 
 Use `Explain(...)` to inspect why a specific document received its score for a
@@ -313,7 +456,11 @@ and the applied field and query type weights.
 
 ## Persistence
 
-The recommended persistence surface for library consumers is `pkg/ftspersist`.
+Lexical and semantic search use separate persistence APIs. Use `pkg/ftspersist`
+for `pkg/fts` snapshots and sealed segments, and `pkg/semanticpersist` for
+immutable semantic generations.
+
+### Lexical Persistence
 
 | Mode | Writable after load | Recommended API | Notes |
 | --- | --- | --- | --- |
@@ -364,11 +511,65 @@ Current working persistence examples:
 - `examples/client-library/snapshot-load-files-low-level/main.go`
 - `examples/client-library/segment-save-files/main.go`
 - `examples/client-library/segment-load-files/main.go`
-- `examples/client-library/segment-load-files-low-level/main.go`
 - `examples/client-library/segment-load-mmap/main.go`
 - `examples/client-library/segment-bundle/main.go`
 
 See `examples/client-library/README.md` for the exact run order. The load examples expect artifacts created by the corresponding save examples.
+
+### Semantic Persistence
+
+`pkg/semantic` accepts embeddings produced by your application or an external
+model; it does not call an embedding model itself. Call `service.Flush(ctx)` to
+publish immutable in-memory HNSW segments. `Compact` only operates on committed
+state, so pending mutations must be flushed first:
+
+```go
+if err := service.Flush(ctx); err != nil {
+	return err
+}
+if err := service.Compact(ctx); err != nil {
+	return err
+}
+generation, err := semanticpersist.Publish(ctx, "./data/semantic", service,
+	semanticpersist.Options{
+		ExpectedGeneration: 0,
+		Durability:         semanticpersist.DurabilitySynchronous,
+	})
+if err != nil {
+	return err
+}
+```
+
+`Publish` writes the complete ordered segment set, lifecycle state, and ID
+watermarks as an immutable generation. `semanticpersist.Open` returns a locked
+store handle whose `Service()` is immediately searchable and writable. Publish
+later generations with `store.Publish(ctx, options)` and release the lifetime
+writer lock with `store.Close()`.
+See the runnable
+[`semantic-persistence` example](examples/client-library/semantic-persistence/main.go)
+for the complete publish and open flow.
+
+Replacement and deletion leave stale physical vectors in the service until
+`service.Compact(ctx)` is called. Compaction preserves stable `VectorID` values
+and removes stale rows from the newly published in-memory view. Persistence does
+not delete old on-disk generations; retention and garbage collection are
+separate operations.
+
+`CURRENT` is the only commit point. `ExpectedGeneration` rejects stale detached
+writers. `Open` holds an exclusive OS file lock until `Store.Close`; publication
+from that service goes through `Store.Publish`. Synchronous durability uses file and directory
+`fsync`, while asynchronous durability guarantees atomic process-visible
+publication but not survival of sudden power loss.
+Writable store locking is supported on Linux, macOS, and FreeBSD.
+
+Intermediate single-segment semantic formats are rejected rather than migrated.
+Semantic runtime uses HNSW-only immutable segments; exact comparison remains a
+benchmark-owned oracle and is not a production fallback.
+
+See the detailed
+[`semantic persistence guide`](docs/semantic-persistence-format.md) for the store
+layout, locking, checksums, failure handling, and explicit `RepairCurrent`
+recovery flow.
 
 ### Stream Bundles
 
@@ -437,10 +638,23 @@ Runtime diagnostics are separate from `textproc.ObservabilityPipeline()`.
 - `flat-observability` - flat index with technical-token analysis
 - `segment-analyzer-compatibility` - analyzer-compatible sealed segment restore
 - `rank-profile` - multi-field ranking with weighted field scoring
+- `hnsw-build` - observable HNSW build, graph inspection, persistence, and reopen
+- `semantic-publication` - mutable document search with explicit publication visibility
+- `semantic-persistence` - durable writable restart and republish
 - `snapshot-*` - mutable snapshot save and restore
 - `segment-*` - sealed segment save and restore, including `mmap`
 
 All of these examples currently build and run from repository root.
+
+## Semantic Documentation
+
+- [`docs/mermaid-diagram.md`](docs/mermaid-diagram.md) describes the implemented
+  package boundaries, lifecycle, compaction, persistence, and writable restart.
+- [`docs/semantic-persistence-format.md`](docs/semantic-persistence-format.md)
+  defines the generation layout, format versions, commit point, locking, and
+  recovery contract.
+- [`docs/semantic-hnsw-redesign.md`](docs/semantic-hnsw-redesign.md) records the
+  staged redesign decisions, measurements, and verification history.
 
 ## Repository Tooling
 

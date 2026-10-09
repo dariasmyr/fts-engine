@@ -15,7 +15,7 @@ import (
 )
 
 func indexTestDocument(ctx context.Context, svc *fts.Service, docID, content string) error {
-	return svc.Index(ctx, fts.Document{ID: fts.DocID(docID), Fields: map[string]fts.Field{fts.DefaultField: {Value: content}}})
+	return svc.Index(ctx, fts.Document{ID: fts.DocID(docID), Fields: map[string]fts.FieldData{fts.DefaultField: {Text: content}}})
 }
 
 func TestServiceAdapterObservesSearchDiagnostics(t *testing.T) {
@@ -114,8 +114,8 @@ func TestServiceAdapterSearchQueryStringProjectsScoreExplanation(t *testing.T) {
 		FieldWeights: fts.FieldWeights{"title": 3},
 	}))
 	ctx := context.Background()
-	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.Field{
-		"title": {Value: "alpha"},
+	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.FieldData{
+		"title": {Text: "alpha"},
 	}}); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
@@ -159,8 +159,8 @@ func TestBuildServiceUsesConfiguredRankProfile(t *testing.T) {
 		return slicedradix.New(), nil
 	}, fts.WordKeys, opt)
 	ctx := context.Background()
-	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.Field{
-		"title": {Value: "alpha beta"},
+	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.FieldData{
+		"title": {Text: "alpha beta"},
 	}}); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
