@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/dariasmyr/fts-engine/internal/contextcheck"
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
@@ -96,10 +95,6 @@ func (i *Index) State(ctx context.Context) (*State, error) {
 	}, nil
 }
 
-func (s *Service) State(ctx context.Context) (*State, error) {
-	return s.index.State(ctx)
-}
-
 // Open validates persisted committed state and reconstructs a writable Index
 // with an empty pending batch.
 func Open(ctx context.Context, state State) (*Index, error) {
@@ -129,7 +124,7 @@ func Open(ctx context.Context, state State) (*Index, error) {
 	documents := make(map[fts.DocID]documentVectors)
 	type chunkKey struct {
 		documentID fts.DocID
-		chunkID    chunk.ID
+		chunkID    ChunkID
 	}
 	liveChunks := make(map[chunkKey]struct{})
 	var maxVectorID VectorID

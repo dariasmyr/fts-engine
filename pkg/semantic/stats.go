@@ -1,7 +1,5 @@
 package semantic
 
-import "github.com/dariasmyr/fts-engine/pkg/chunk"
-
 type Statistics struct {
 	Documents       int
 	PhysicalVectors int
@@ -18,5 +16,5 @@ type Statistics struct {
 // changing which document chunk it represents.
 type VectorRow struct {
 	VectorID VectorID
-	Chunk    chunk.Ref
+	Chunk    Ref
 }

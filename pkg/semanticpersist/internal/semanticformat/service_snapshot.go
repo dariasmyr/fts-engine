@@ -5,7 +5,6 @@ import (
 	"math/bits"
 	"unicode/utf8"
 
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
@@ -64,20 +63,20 @@ func EncodeState(value ServiceSnapshot, limits StateLimits) ([]byte, FileRef, er
 		return nil, FileRef{}, err
 	}
 	c := value.Config
-	calculator, _ := c.Embedding.Calculator()
+	calculator, _ := c.Schema.Embedding.Calculator()
 	e := newEncoder("SSTA", stateVersion, expectedSize, limits.FileLimits)
-	e.writeUint32(uint32(c.Embedding.Dimensions))
-	e.writeUint8(uint8(c.Embedding.Metric))
+	e.writeUint32(uint32(c.Schema.Embedding.Dimensions))
+	e.writeUint8(uint8(c.Schema.Embedding.Metric))
 	e.writeUint8(uint8(calculator.Normalization()))
 	e.writeUint16(0)
-	e.writeUint32(c.Embedding.VectorFormatVersion)
-	e.writeString(c.Embedding.ProviderID, limits.MaxStringBytes)
-	e.writeString(c.Embedding.ModelID, limits.MaxStringBytes)
-	e.writeString(c.Embedding.ModelVersion, limits.MaxStringBytes)
-	e.writeString(c.Embedding.PipelineFingerprint, limits.MaxStringBytes)
-	e.writeString(c.Chunking.ID, limits.MaxStringBytes)
-	e.writeUint32(c.Chunking.Version)
-	e.writeString(c.Chunking.Fingerprint, limits.MaxStringBytes)
+	e.writeUint32(c.Schema.Embedding.VectorFormatVersion)
+	e.writeString(c.Schema.Embedding.ProviderID, limits.MaxStringBytes)
+	e.writeString(c.Schema.Embedding.ModelID, limits.MaxStringBytes)
+	e.writeString(c.Schema.Embedding.ModelVersion, limits.MaxStringBytes)
+	e.writeString(c.Schema.Embedding.PipelineFingerprint, limits.MaxStringBytes)
+	e.writeString(c.Schema.Chunking.ID, limits.MaxStringBytes)
+	e.writeUint32(c.Schema.Chunking.Version)
+	e.writeString(c.Schema.Chunking.Fingerprint, limits.MaxStringBytes)
 	encodeConfig(e, c)
 	e.writeUint64(uint64(value.Revision))
 	e.writeUint64(uint64(value.MaxAllocatedVectorID))
@@ -186,7 +185,7 @@ func encodeConfig(e *encoder, c semantic.Config) {
 
 func decodeConfig(d *decoder, embedding semantic.EmbeddingDescriptor, chunking semantic.ChunkingDescriptor) semantic.Config {
 	schema := semantic.Schema{Embedding: embedding, Chunking: chunking}
-	c := semantic.Config{Schema: schema, Embedding: embedding, Chunking: chunking}
+	c := semantic.Config{Schema: schema}
 	c.Limits = semantic.Limits{
 		MaxLiveVectors:          int(d.readUint32()),
 		MaxStaleVectors:         int(d.readUint32()),
@@ -223,7 +222,7 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 		return 0, codecErrorf(ErrLimitExceeded, "state segment count %d exceeds configured limit %d", len(value.Segments), c.Limits.MaxSegments)
 	}
 	size := uint64(stateFixedEncodedSize)
-	for _, descriptor := range []string{c.Embedding.ProviderID, c.Embedding.ModelID, c.Embedding.ModelVersion, c.Embedding.PipelineFingerprint, c.Chunking.ID, c.Chunking.Fingerprint} {
+	for _, descriptor := range []string{c.Schema.Embedding.ProviderID, c.Schema.Embedding.ModelID, c.Schema.Embedding.ModelVersion, c.Schema.Embedding.PipelineFingerprint, c.Schema.Chunking.ID, c.Schema.Chunking.Fingerprint} {
 		if !utf8.ValidString(descriptor) || len(descriptor) > limits.MaxStringBytes || !addEncodedStringSize(&size, descriptor) {
 			return 0, ErrLimitExceeded
 		}
@@ -254,8 +253,8 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 			return 0, codecErrorf(ErrLimitExceeded, "state config %s value %d exceeds uint32", field.name, field.value)
 		}
 	}
-	if c.Embedding.Dimensions > limits.MaxDimensions {
-		return 0, codecErrorf(ErrLimitExceeded, "state dimensions %d exceed limit %d", c.Embedding.Dimensions, limits.MaxDimensions)
+	if c.Schema.Embedding.Dimensions > limits.MaxDimensions {
+		return 0, codecErrorf(ErrLimitExceeded, "state dimensions %d exceed limit %d", c.Schema.Embedding.Dimensions, limits.MaxDimensions)
 	}
 	if c.Limits.MaxLiveVectors > limits.MaxVectors {
 		return 0, codecErrorf(ErrLimitExceeded, "state max live vectors %d exceed limit %d", c.Limits.MaxLiveVectors, limits.MaxVectors)
@@ -275,7 +274,7 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 	if c.Limits.MaxChunkCandidates > limits.MaxK {
 		return 0, codecErrorf(ErrLimitExceeded, "state max chunk candidates %d exceed limit %d", c.Limits.MaxChunkCandidates, limits.MaxK)
 	}
-	dimensions := uint64(c.Embedding.Dimensions)
+	dimensions := uint64(c.Schema.Embedding.Dimensions)
 	maxPhysicalVectors := uint64(c.Limits.MaxLiveVectors + c.Limits.MaxStaleVectors)
 	if dimensions > math.MaxUint64/4 || maxPhysicalVectors > math.MaxUint64/(dimensions*4) {
 		return 0, codecErrorf(ErrLimitExceeded, "state maximum vector bytes overflow uint64")
@@ -369,7 +368,7 @@ func validateStateAndSize(value ServiceSnapshot, limits StateLimits) (uint64, er
 	return size, nil
 }
 
-func encodeRef(e *encoder, ref chunk.Ref, maxString int) {
+func encodeRef(e *encoder, ref semantic.Ref, maxString int) {
 	e.writeString(string(ref.ID), maxString)
 	e.writeString(string(ref.DocID), maxString)
 	e.writeString(ref.Field, maxString)
@@ -378,6 +377,6 @@ func encodeRef(e *encoder, ref chunk.Ref, maxString int) {
 	e.writeUint64(ref.EndByte)
 }
 
-func decodeRef(d *decoder) chunk.Ref {
-	return chunk.Ref{ID: chunk.ID(d.readString()), DocID: fts.DocID(d.readString()), Field: d.readString(), Ordinal: d.readUint32(), StartByte: d.readUint64(), EndByte: d.readUint64()}
+func decodeRef(d *decoder) semantic.Ref {
+	return semantic.Ref{ID: semantic.ChunkID(d.readString()), DocID: fts.DocID(d.readString()), Field: d.readString(), Ordinal: d.readUint32(), StartByte: d.readUint64(), EndByte: d.readUint64()}
 }

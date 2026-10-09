@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/dariasmyr/fts-engine/internal/contextcheck"
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
@@ -143,7 +142,7 @@ func validateSegmentRowsContext(ctx context.Context, rows []VectorRow) error {
 	}
 	type chunkKey struct {
 		documentID fts.DocID
-		chunkID    chunk.ID
+		chunkID    ChunkID
 	}
 	seenChunks := make(map[chunkKey]struct{}, len(rows))
 	for i, row := range rows {

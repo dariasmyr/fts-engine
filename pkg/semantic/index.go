@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/dariasmyr/fts-engine/internal/contextcheck"
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
@@ -115,7 +114,7 @@ func (i *Index) Delete(ctx context.Context, docID fts.DocID) error {
 		return err
 	}
 	if docID == "" {
-		return chunk.ErrInvalidDocID
+		return ErrInvalidDocID
 	}
 	if err := i.lockPublication(ctx); err != nil {
 		return err
@@ -162,9 +161,9 @@ func (i *Index) prepareBatch(ctx context.Context, docID fts.DocID, batch []Encod
 		return nil, ErrInvalidBatch
 	}
 	if docID == "" {
-		return nil, chunk.ErrInvalidDocID
+		return nil, ErrInvalidDocID
 	}
-	seenChunks := make(map[chunk.ID]struct{}, len(batch))
+	seenChunks := make(map[ChunkID]struct{}, len(batch))
 	prepared := make([]EncodedChunk, len(batch))
 	for n, item := range batch {
 		if err := contextcheck.PeriodicError(ctx, n); err != nil {
@@ -251,3 +250,21 @@ func (i *Index) lockPublication(ctx context.Context) error {
 }
 
 func (i *Index) unlockPublication() { <-i.publishGate }
+
+func (i *Index) Search(
+	ctx context.Context,
+	queries []EncodedChunk,
+	k int,
+	options SearchOptions,
+) (DocumentSearchResult, error) {
+	if ctx == nil {
+		return DocumentSearchResult{}, vector.ErrNilContext
+	}
+
+	snapshot, err := i.snapshotForRead(ctx)
+	if err != nil {
+		return DocumentSearchResult{}, err
+	}
+
+	return snapshot.SearchEncoded(ctx, queries, k, options)
+}

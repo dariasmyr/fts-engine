@@ -3,13 +3,12 @@ package semantic
 import (
 	"context"
 
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 )
 
 // EncodedChunk couples source-chunk metadata with its prepared embedding.
 type EncodedChunk struct {
-	Ref    chunk.Ref
+	Ref    Ref
 	Vector []float32
 }
 

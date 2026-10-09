@@ -1,7 +1,6 @@
 package semantic
 
 import (
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
 )
@@ -9,7 +8,7 @@ import (
 // ChunkHit identifies one matching source chunk and its vector distance from
 // the query. Smaller distances are better.
 type ChunkHit struct {
-	Ref      chunk.Ref
+	Ref      Ref
 	Distance float64
 }
 

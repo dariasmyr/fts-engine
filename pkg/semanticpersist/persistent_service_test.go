@@ -58,7 +58,7 @@ func TestPublishOpenRestoresHNSWSearch(t *testing.T) {
 		{docID: "far", vector: []float32{10, 0}},
 	} {
 		err := index.Add(ctx, item.docID, []semantic.EncodedChunk{{
-			Ref: chunk.Ref{
+			Ref: semantic.Ref{
 				ID:      chunk.ID(item.docID + "-chunk"),
 				DocID:   item.docID,
 				Field:   fts.DefaultField,

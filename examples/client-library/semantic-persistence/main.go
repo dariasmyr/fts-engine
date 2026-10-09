@@ -54,7 +54,15 @@ func main() {
 	})
 	must(err)
 
+	splitter, err := chunk.NewSplitter(chunk.Descriptor{
+		TargetBytes:  512,
+		MaxBytes:     768,
+		OverlapBytes: 64,
+	})
+	must(err)
+
 	encoder, err := semanticencode.New(semanticencode.Config{
+		Chunker:  splitter,
 		Schema:   schema,
 		Embedder: persistenceEmbedder{},
 		Limits: semanticencode.Limits{
@@ -245,7 +253,7 @@ type persistenceEmbedder struct{}
 
 func (persistenceEmbedder) Embed(
 	_ context.Context,
-	chunks []chunk.Chunk,
+	chunks []semanticencode.EmbeddingInput,
 ) ([][]float32, error) {
 	result := make([][]float32, len(chunks))
 

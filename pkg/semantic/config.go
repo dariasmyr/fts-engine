@@ -17,11 +17,6 @@ type Config struct {
 	// Schema is the canonical compatibility contract of the semantic index.
 	Schema Schema
 
-	// Embedding and Chunking are retained for source compatibility. normalized
-	// canonicalizes them with Schema; new code should populate Schema instead.
-	Embedding EmbeddingDescriptor
-	Chunking  ChunkingDescriptor
-
 	Limits Limits
 	HNSW   HNSWTuning
 }
@@ -68,15 +63,6 @@ func (c Config) Validate() error {
 }
 
 func (c Config) normalized() (Config, error) {
-	schema, err := c.resolvedSchema()
-	if err != nil {
-		return Config{}, err
-	}
-
-	c.Schema = schema
-	c.Embedding = schema.Embedding
-	c.Chunking = schema.Chunking
-
 	limits := c.Limits
 	if limits.MaxStaleVectors == 0 {
 		limits.MaxStaleVectors = limits.MaxLiveVectors
@@ -85,7 +71,7 @@ func (c Config) normalized() (Config, error) {
 		limits.MaxSegments = 16
 	}
 	c.Limits = limits
-	if !schema.IsValid() ||
+	if !c.Schema.IsValid() ||
 		limits.MaxLiveVectors <= 0 ||
 		limits.MaxStaleVectors < 0 ||
 		limits.MaxSegments <= 0 ||
@@ -223,26 +209,6 @@ func validVectorCapacity(dimensions, maxVectors int) bool {
 
 func (c Config) schema() Schema {
 	return c.Schema
-}
-
-func (c Config) resolvedSchema() (Schema, error) {
-	legacy := Schema{Embedding: c.Embedding, Chunking: c.Chunking}
-	hasSchema := c.Schema.Embedding != (EmbeddingDescriptor{}) || c.Schema.Chunking != (ChunkingDescriptor{})
-	hasLegacy := c.Embedding != (EmbeddingDescriptor{}) || c.Chunking != (ChunkingDescriptor{})
-
-	switch {
-	case hasSchema && hasLegacy:
-		if c.Schema != legacy {
-			return Schema{}, ErrInvalidConfig
-		}
-		return c.Schema, nil
-	case hasSchema:
-		return c.Schema, nil
-	case hasLegacy:
-		return legacy, nil
-	default:
-		return Schema{}, ErrInvalidConfig
-	}
 }
 
 func (c Config) searchPolicy() searchPolicy {

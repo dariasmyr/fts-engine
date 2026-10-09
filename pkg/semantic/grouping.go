@@ -5,14 +5,13 @@ import (
 	"slices"
 
 	"github.com/dariasmyr/fts-engine/internal/contextcheck"
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/pkg/fts"
 	"github.com/dariasmyr/fts-engine/pkg/vector"
 )
 
 type documentAccumulator struct {
 	distance float64
-	chunks   map[chunk.ID]ChunkHit
+	chunks   map[ChunkID]ChunkHit
 }
 
 // groupDocumentHits is the semantic grouping layer. It deduplicates chunk
@@ -32,7 +31,7 @@ func groupDocumentHits(ctx context.Context, candidates []ChunkHit, k, maxChunksP
 		}
 		current := merged[hit.Ref.DocID]
 		if current == nil {
-			current = &documentAccumulator{distance: hit.Distance, chunks: make(map[chunk.ID]ChunkHit)}
+			current = &documentAccumulator{distance: hit.Distance, chunks: make(map[ChunkID]ChunkHit)}
 			merged[hit.Ref.DocID] = current
 		}
 		current.distance = min(current.distance, hit.Distance)

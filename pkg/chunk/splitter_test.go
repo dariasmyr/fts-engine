@@ -5,115 +5,98 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/dariasmyr/fts-engine/pkg/fts"
 )
 
-func TestWholeUsesStableFieldAwareID(t *testing.T) {
-	whole, err := Whole("doc-1", fts.DefaultField, "hello")
-	if err != nil {
-		t.Fatal(err)
+func TestWhole(t *testing.T) {
+	got, err := Whole("hello")
+	if err != nil || got != (Range{0, 5}) {
+		t.Fatalf("got %v, %v", got, err)
 	}
-	if whole.Ref.ID != WholeID || whole.Ref.EndByte != 5 || whole.Text != "hello" {
-		t.Fatalf("whole = %+v", whole)
-	}
-	title, err := Whole("doc-1", "title", "hello")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if title.Ref.ID != "_whole/title" {
-		t.Fatalf("title ID = %q", title.Ref.ID)
+	if _, err := Whole(""); !errors.Is(err, ErrInvalidRange) {
+		t.Fatalf("empty: %v", err)
 	}
 }
 
-func TestSplitterOffsetsOverlapUTF8AndStableIDs(t *testing.T) {
-	splitter, err := NewSplitter(Descriptor{ID: "paragraph-v1", TargetBytes: 18, MaxBytes: 28, OverlapBytes: 5})
+func TestSplitterOffsetsOverlapUTF8AndDeterminism(t *testing.T) {
+	splitter, err := NewSplitter(Descriptor{TargetBytes: 18, MaxBytes: 28, OverlapBytes: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := "Первый абзац.\n\nSecond paragraph.\n\nТретий."
-	first, err := splitter.Split("doc-1", fts.DefaultField, text)
+	first, err := splitter.Split(text)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := splitter.Split("doc-1", fts.DefaultField, text)
+	second, err := splitter.Split(text)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first) < 2 || len(first) != len(second) {
-		t.Fatalf("chunk counts = %d and %d", len(first), len(second))
+	if len(first) < 2 || !slices.Equal(first, second) {
+		t.Fatalf("ranges: %v, %v", first, second)
 	}
-	if !strings.HasSuffix(first[0].Text, "\n\n") {
-		t.Fatalf("first chunk did not use the nearby paragraph boundary: %q", first[0].Text)
+	if !strings.HasSuffix(text[first[0].StartByte:first[0].EndByte], "\n\n") {
+		t.Fatalf("boundary: %v", first[0])
 	}
-	for i, item := range first {
-		if err := item.Ref.Validate(text); err != nil {
-			t.Fatalf("chunk %d ref: %v", i, err)
+	for i, r := range first {
+		if err := r.Validate(text); err != nil {
+			t.Fatalf("range %d: %v", i, err)
 		}
-		if item.Text != text[item.Ref.StartByte:item.Ref.EndByte] {
-			t.Fatalf("chunk %d text does not match byte range", i)
-		}
-		if item.Ref.ID != second[i].Ref.ID || item.Ref.StartByte != second[i].Ref.StartByte || item.Ref.EndByte != second[i].Ref.EndByte {
-			t.Fatalf("chunk %d is not stable", i)
-		}
-		if i > 0 && item.Ref.StartByte >= first[i-1].Ref.EndByte {
-			t.Fatalf("chunks %d and %d do not overlap", i-1, i)
+		if i > 0 && r.StartByte >= first[i-1].EndByte {
+			t.Fatalf("ranges %d and %d do not overlap", i-1, i)
 		}
 	}
 }
 
 func TestSplitterEmptyShortAndTinyUTF8Window(t *testing.T) {
-	splitter, err := NewSplitter(Descriptor{ID: "tiny", TargetBytes: 1, MaxBytes: 4})
+	splitter, err := NewSplitter(Descriptor{TargetBytes: 1, MaxBytes: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	empty, err := splitter.Split("doc", fts.DefaultField, "")
+	empty, err := splitter.Split("")
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("empty = %v, %v", empty, err)
 	}
-	chunks, err := splitter.Split("doc", fts.DefaultField, "🙂🙂")
+	text := "🙂🙂"
+	ranges, err := splitter.Split(text)
 	if err != nil {
 		t.Fatal(err)
 	}
-	texts := make([]string, len(chunks))
-	for i, item := range chunks {
-		texts[i] = item.Text
-		if err := item.Ref.Validate("🙂🙂"); err != nil {
+	var parts []string
+	for _, r := range ranges {
+		if err := r.Validate(text); err != nil {
 			t.Fatal(err)
 		}
+		parts = append(parts, text[r.StartByte:r.EndByte])
 	}
-	if !slices.Equal(texts, []string{"🙂", "🙂"}) {
-		t.Fatalf("texts = %q", texts)
+	if !slices.Equal(parts, []string{"🙂", "🙂"}) {
+		t.Fatalf("parts = %v", parts)
 	}
 }
 
 func TestUTF8BoundaryDirectionAndProgress(t *testing.T) {
-	if got := utf8Boundary("ascii", 2, 0); got != 2 {
-		t.Fatalf("ASCII boundary = %d, want 2", got)
+	cases := []struct {
+		text                 string
+		desired, start, want int
+	}{
+		{"ascii", 2, 0, 2}, {"a🙂b", 2, 0, 1},
+		{"🙂b", 1, 0, len("🙂")}, {"text", 4, 0, 4},
 	}
-	if got := utf8Boundary("a🙂b", 2, 0); got != 1 {
-		t.Fatalf("boundary inside a later rune = %d, want backward boundary 1", got)
-	}
-	if got := utf8Boundary("🙂b", 1, 0); got != len("🙂") {
-		t.Fatalf("boundary inside the first rune = %d, want forward boundary %d", got, len("🙂"))
-	}
-	if got := utf8Boundary("text", len("text"), 0); got != len("text") {
-		t.Fatalf("end boundary = %d, want %d", got, len("text"))
+	for _, c := range cases {
+		if got := utf8Boundary(c.text, c.desired, c.start); got != c.want {
+			t.Errorf("%q: got %d want %d", c.text, got, c.want)
+		}
 	}
 }
 
 func TestSplitterRejectsInvalidConfigurationAndInput(t *testing.T) {
-	if _, err := NewSplitter(Descriptor{ID: "bad", TargetBytes: 10, MaxBytes: 5}); !errors.Is(err, ErrInvalidSplitConfig) {
-		t.Fatalf("config error = %v", err)
+	if _, err := NewSplitter(Descriptor{TargetBytes: 10, MaxBytes: 5}); !errors.Is(err, ErrInvalidSplitConfig) {
+		t.Fatal(err)
 	}
-	splitter, _ := NewSplitter(Descriptor{ID: "ok", TargetBytes: 10, MaxBytes: 20})
-	if _, err := splitter.Split("", fts.DefaultField, "text"); !errors.Is(err, ErrInvalidDocID) {
-		t.Fatalf("doc error = %v", err)
+	splitter, err := NewSplitter(Descriptor{TargetBytes: 10, MaxBytes: 20})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := splitter.Split("doc", "", "text"); !errors.Is(err, ErrInvalidField) {
-		t.Fatalf("field error = %v", err)
-	}
-	if _, err := splitter.Split("doc", fts.DefaultField, string([]byte{0xff})); !errors.Is(err, ErrInvalidUTF8) {
-		t.Fatalf("UTF-8 error = %v", err)
+	if _, err := splitter.Split(string([]byte{0xff})); !errors.Is(err, ErrInvalidUTF8) {
+		t.Fatal(err)
 	}
 }
