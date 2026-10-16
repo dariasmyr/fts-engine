@@ -117,7 +117,7 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 		serviceOpts = append(serviceOpts, pkgfts.WithFilter(searchFilter))
 	}
 
-	svc := pkgfts.NewMultiField(func(string) (pkgfts.Index, error) {
+	svc := pkgfts.NewMultiField(func(string) (pkgfts.MutableIndex, error) {
 		return selectIndex(cfg.FTS.Index)
 	}, keyGen, serviceOpts...)
 	return svc, false, nil
@@ -132,7 +132,7 @@ func selectKeyGenerator(kind string) (pkgfts.KeyGenerator, error) {
 	}
 }
 
-func selectIndex(name string) (pkgfts.Index, error) {
+func selectIndex(name string) (pkgfts.MutableIndex, error) {
 	return ftsbuiltin.BuildIndex(name)
 }
 

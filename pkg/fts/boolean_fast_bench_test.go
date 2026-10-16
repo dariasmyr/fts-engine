@@ -40,17 +40,17 @@ func BenchmarkPostingIntersection(b *testing.B) {
 func BenchmarkGallopPostingLowerBound(b *testing.B) {
 	postings := make([]Posting, 8192)
 	for i := range postings {
-		postings[i].Seq = uint32(i * 2)
+		postings[i].Ord = DocOrd(i * 2)
 	}
 
 	for _, benchmark := range []struct {
 		name   string
 		from   int
-		target uint32
+		target DocOrd
 	}{
-		{name: "current", from: 100, target: postings[100].Seq},
-		{name: "next", from: 100, target: postings[101].Seq},
-		{name: "distant", from: 100, target: postings[4196].Seq},
+		{name: "current", from: 100, target: postings[100].Ord},
+		{name: "next", from: 100, target: postings[101].Ord},
+		{name: "distant", from: 100, target: postings[4196].Ord},
 	} {
 		b.Run(benchmark.name, func(b *testing.B) {
 			b.ReportAllocs()
@@ -97,6 +97,7 @@ func BenchmarkBooleanAndSortMergeRange(b *testing.B) {
 					nil,
 					nil,
 					context.Background(),
+					nil,
 					queryFieldScope{},
 				)
 				if err != nil {
@@ -111,8 +112,8 @@ func BenchmarkBooleanAndSortMergeRange(b *testing.B) {
 func benchmarkFastMust(start uint32, size int, step uint32) fastMust {
 	docs := make([]Posting, size)
 	for i := range docs {
-		seq := start + uint32(i)*step
-		docs[i] = Posting{Ord: DocOrd(seq), Count: 1, Seq: seq}
+		ord := start + uint32(i)*step
+		docs[i] = Posting{Ord: DocOrd(ord), Count: 1}
 	}
 	return fastMust{
 		expansions: []termExpansion{{field: DefaultField, docs: docs}},
@@ -124,21 +125,21 @@ func makePostingIntersectionBenchmarkData(shortSize, ratio, overlapPercent int) 
 	longSize := shortSize * ratio
 	long := make([]Posting, longSize)
 	for i := range long {
-		long[i].Seq = uint32(i * 2)
+		long[i].Ord = DocOrd(i * 2)
 	}
 
 	short := make([]Posting, shortSize)
 	want := 0
 	for i := range short {
 		longIndex := i * ratio
-		seq := uint32(longIndex * 2)
+		ord := DocOrd(longIndex * 2)
 		matches := overlapPercent == 100 || overlapPercent > 0 && i%(100/overlapPercent) == 0
 		if matches {
 			want++
 		} else {
-			seq++
+			ord++
 		}
-		short[i].Seq = seq
+		short[i].Ord = ord
 	}
 	return short, long, want
 }
@@ -147,9 +148,9 @@ func intersectPostingsTwoPointer(left, right []Posting) int {
 	i, j, matches := 0, 0, 0
 	for i < len(left) && j < len(right) {
 		switch {
-		case left[i].Seq < right[j].Seq:
+		case left[i].Ord < right[j].Ord:
 			i++
-		case left[i].Seq > right[j].Seq:
+		case left[i].Ord > right[j].Ord:
 			j++
 		default:
 			matches++
@@ -168,11 +169,11 @@ func intersectPostingsGalloping(short, long []Posting) int {
 	longIndex := 0
 	matches := 0
 	for _, posting := range short {
-		longIndex = gallopPostingLowerBound(long, longIndex, posting.Seq)
+		longIndex = gallopPostingLowerBound(long, longIndex, posting.Ord)
 		if longIndex == len(long) {
 			break
 		}
-		if long[longIndex].Seq == posting.Seq {
+		if long[longIndex].Ord == posting.Ord {
 			matches++
 			longIndex++
 		}

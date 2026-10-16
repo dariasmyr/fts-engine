@@ -44,7 +44,11 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 		return fmt.Errorf("fts: index document %q: %w", docID, err)
 	}
 
-	positional, supportsPositions := index.(PositionalIndex)
+	positional, supportsPositions := index.(MutablePositionalIndex)
+	mutable, supportsInsert := index.(MutableIndex)
+	if !supportsPositions && !supportsInsert {
+		return fmt.Errorf("fts: index document %q: field %q index is read-only", docID, name)
+	}
 	tokens := pipeline.Process(field.Value)
 	ord := s.registry.GetOrAssign(docID)
 	if s.scorer != nil {
@@ -72,7 +76,7 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 				}
 				continue
 			}
-			if err := index.Insert(key, ord); err != nil {
+			if err := mutable.Insert(key, ord); err != nil {
 				return fmt.Errorf("fts: index document %q field %q: insert: %w", docID, name, err)
 			}
 		}
@@ -129,71 +133,6 @@ func (s *Service) getOrCreateIndex(name string) (Index, error) {
 
 	s.indexes[name] = idx
 	return idx, nil
-}
-
-func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string, phrase string, maxResults int) (*SearchResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	ctx, exec := ensureDiagnosticsContext(ctx)
-	exec.setQueryTypeIfEmpty("phrase")
-
-	start := exec.startTimer()
-
-	preStart := exec.startTimer()
-	fields = newQueryFieldScope(fields).fields
-	groups, err := s.processFields(fields, phrase)
-	if err != nil {
-		return nil, err
-	}
-	exec.observePreprocess(preStart)
-	exec.addFields(len(fields))
-	exec.addTokens(processedTokenCount(groups))
-	exec.setStrategy(strategyPhraseExact)
-
-	searchStart := exec.startTimer()
-	hits, err := s.evalProcessedPhraseHits(ctx, groups, QueryTypePhrase, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	exec.observeSearchTokens(searchStart)
-	exec.observeTotal(start)
-	return attachDiagnostics(ctx, searchResultFromOrdHits(hits, maxResults, s.scorer != nil, s.registry)), nil
-}
-
-func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []string, phrase string, distance int, maxResults int) (*SearchResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	ctx, exec := ensureDiagnosticsContext(ctx)
-	exec.setQueryTypeIfEmpty("phrase_near")
-	if distance < 0 {
-		return nil, fmt.Errorf("fts: phrase near search: negative distance %d", distance)
-	}
-
-	start := exec.startTimer()
-
-	preStart := exec.startTimer()
-	fields = newQueryFieldScope(fields).fields
-	groups, err := s.processFields(fields, phrase)
-	if err != nil {
-		return nil, err
-	}
-	exec.observePreprocess(preStart)
-	exec.addFields(len(fields))
-	exec.addTokens(processedTokenCount(groups))
-	exec.setStrategy(strategyPhraseNear)
-
-	searchStart := exec.startTimer()
-	hits, err := s.evalProcessedPhraseHits(ctx, groups, QueryTypeNearPhrase, uint32(distance))
-	if err != nil {
-		return nil, err
-	}
-
-	exec.observeSearchTokens(searchStart)
-	exec.observeTotal(start)
-	return attachDiagnostics(ctx, searchResultFromOrdHits(hits, maxResults, s.scorer != nil, s.registry)), nil
 }
 
 func (s *Service) SnapshotFields() (map[string]Index, Filter) {

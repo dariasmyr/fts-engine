@@ -25,7 +25,7 @@ func main() {
 		}
 	}()
 
-	res, err := loaded.Service.SearchDocuments(context.Background(), "snapshot", 10)
+	res, err := loaded.Service.SearchText(context.Background(), "snapshot", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		panic(err)
 	}

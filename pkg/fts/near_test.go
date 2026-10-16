@@ -2,10 +2,11 @@ package fts
 
 import (
 	"context"
+	"math"
 	"testing"
 )
 
-func TestSearchPhraseNearMatchesOrderedWindow(t *testing.T) {
+func TestSearchQueryNearPhraseMatchesOrderedWindow(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
@@ -21,9 +22,9 @@ func TestSearchPhraseNearMatchesOrderedWindow(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "james doe", 1, 10)
+	res, err := svc.SearchQuery(ctx, NearPhraseQuery{Phrase: "james doe", Distance: 1}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhraseNear() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 
 	hits := map[DocID]int{}
@@ -48,7 +49,7 @@ func TestSearchPhraseNearMatchesOrderedWindow(t *testing.T) {
 	}
 }
 
-func TestSearchPhraseNearDistanceZeroMatchesAdjacency(t *testing.T) {
+func TestSearchQueryNearPhraseDistanceZeroMatchesAdjacency(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
@@ -56,26 +57,47 @@ func TestSearchPhraseNearDistanceZeroMatchesAdjacency(t *testing.T) {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "james doe", 0, 10)
+	res, err := svc.SearchQuery(ctx, NearPhraseQuery{Phrase: "james doe", Distance: 0}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhraseNear() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 	if len(res.Results) != 1 || res.Results[0].TotalMatches != 1 {
 		t.Fatalf("unexpected phrase near results: %+v", res.Results)
 	}
 }
 
-func TestSearchPhraseNearRejectsNegativeDistance(t *testing.T) {
+func TestSearchQueryNearPhraseRejectsNegativeDistance(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
-	_, err := svc.SearchPhraseNear(ctx, "james doe", -1, 10)
+	_, err := svc.SearchQuery(ctx, NearPhraseQuery{Phrase: "james doe", Distance: -1}, SearchOptions{MaxResults: 10})
 	if err == nil {
 		t.Fatalf("expected negative distance error")
 	}
 }
 
-func TestSearchPhraseNearSkipsNonPositionalIndexes(t *testing.T) {
+func TestPhraseNearAlignDoesNotOverflowAtMaximumPosition(t *testing.T) {
+	postings := []map[DocOrd][]uint32{
+		{0: {math.MaxUint32 - 1}},
+		{0: {math.MaxUint32}},
+	}
+	if got := phraseNearAlign(postings, 0, math.MaxUint32); got != 1 {
+		t.Fatalf("phraseNearAlign() = %d, want 1", got)
+	}
+}
+
+func TestNearPhraseGapSaturatesLargeDistance(t *testing.T) {
+	distance := int(math.MaxInt)
+	want := uint32(distance)
+	if uint64(distance) > math.MaxUint32 {
+		want = math.MaxUint32
+	}
+	if got := nearPhraseGap(distance); got != want {
+		t.Fatalf("nearPhraseGap(MaxInt) = %d, want %d", got, want)
+	}
+}
+
+func TestSearchQueryNearPhraseSkipsNonPositionalIndexes(t *testing.T) {
 	svc := New(newMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
@@ -83,16 +105,16 @@ func TestSearchPhraseNearSkipsNonPositionalIndexes(t *testing.T) {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "james doe", 1, 10)
+	res, err := svc.SearchQuery(ctx, NearPhraseQuery{Phrase: "james doe", Distance: 1}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhraseNear() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 	if len(res.Results) != 0 {
 		t.Fatalf("len(Results) = %d, want 0", len(res.Results))
 	}
 }
 
-func TestSearchPhraseNearMergesMultipleKeys(t *testing.T) {
+func TestSearchQueryNearPhraseMergesMultipleKeys(t *testing.T) {
 	keyGen := func(token string) ([]string, error) {
 		return []string{token, token + "-alt"}, nil
 	}
@@ -103,16 +125,16 @@ func TestSearchPhraseNearMergesMultipleKeys(t *testing.T) {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "james doe", 1, 10)
+	res, err := svc.SearchQuery(ctx, NearPhraseQuery{Phrase: "james doe", Distance: 1}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhraseNear() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 	if len(res.Results) != 1 || res.Results[0].TotalMatches != 1 {
 		t.Fatalf("unexpected phrase near results: %+v", res.Results)
 	}
 }
 
-func TestSearchPhraseNearMatchesThreeTokenWindow(t *testing.T) {
+func TestSearchQueryNearPhraseMatchesThreeTokenWindow(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
@@ -129,9 +151,9 @@ func TestSearchPhraseNearMatchesThreeTokenWindow(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "james doe speech", 1, 10)
+	res, err := svc.SearchQuery(ctx, NearPhraseQuery{Phrase: "james doe speech", Distance: 1}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhraseNear() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 
 	hits := map[DocID]int{}
@@ -159,7 +181,7 @@ func TestSearchPhraseNearMatchesThreeTokenWindow(t *testing.T) {
 	}
 }
 
-func TestSearchPhraseNearDistanceZeroMatchesExactPhrase(t *testing.T) {
+func TestSearchQueryNearPhraseDistanceZeroMatchesExactPhrase(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
@@ -167,16 +189,16 @@ func TestSearchPhraseNearDistanceZeroMatchesExactPhrase(t *testing.T) {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "james doe speech", 0, 10)
+	res, err := svc.SearchQuery(ctx, NearPhraseQuery{Phrase: "james doe speech", Distance: 0}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhraseNear() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 	if len(res.Results) != 1 || res.Results[0].TotalMatches != 1 {
 		t.Fatalf("unexpected phrase near results: %+v", res.Results)
 	}
 }
 
-func TestSearchPhraseNearSingleTokenFallsBackToSearch(t *testing.T) {
+func TestSearchQueryNearPhraseSingleTokenFallsBackToSearch(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
@@ -184,9 +206,9 @@ func TestSearchPhraseNearSingleTokenFallsBackToSearch(t *testing.T) {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhraseNear(ctx, "hello", 3, 10)
+	res, err := svc.SearchQuery(ctx, NearPhraseQuery{Phrase: "hello", Distance: 3}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhraseNear() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 	if len(res.Results) != 1 || res.Results[0].ID != "doc-a" || res.Results[0].TotalMatches != 2 {
 		t.Fatalf("unexpected phrase near results: %+v", res.Results)

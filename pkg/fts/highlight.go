@@ -188,6 +188,14 @@ func collectHighlightTerms(q Query, pipeline Pipeline, keyGen KeyGenerator, plan
 		if query != nil && !exclude {
 			addExactTextKeys(query.Phrase, pipeline, keyGen, plan.exactKeys)
 		}
+	case NearPhraseQuery:
+		if !exclude {
+			addExactTextKeys(query.Phrase, pipeline, keyGen, plan.exactKeys)
+		}
+	case *NearPhraseQuery:
+		if query != nil && !exclude {
+			addExactTextKeys(query.Phrase, pipeline, keyGen, plan.exactKeys)
+		}
 	case PrefixQuery:
 		if !exclude {
 			addPrefixes(query.Prefix, pipeline, plan)

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
 func TestLoadBundleRejectsLegacyPipelineMetadata(t *testing.T) {
@@ -60,7 +60,7 @@ func TestSaveBundleRejectsLegacyPipelineMetadata(t *testing.T) {
 	legacy := fts.PipelineDescriptor{
 		Name: "default", Fingerprint: legacyBundleFingerprint("default", 1),
 	}
-	err := SaveMultiFieldBundle(&bytes.Buffer{}, map[string]segment.Source{fts.DefaultField: nil}, nil, nil, nil, BundleSaveOptions{
+	err := SaveMultiFieldBundle(&bytes.Buffer{}, map[string]posting.Exporter{fts.DefaultField: nil}, nil, nil, nil, BundleSaveOptions{
 		Pipelines: map[string]fts.PipelineDescriptor{fts.DefaultField: legacy},
 	})
 	if err == nil || !errors.Is(err, fts.ErrPersistenceRebuildRequired) {

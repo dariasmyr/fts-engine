@@ -61,7 +61,7 @@ func (s *Service) Explain(ctx context.Context, query string, docID DocID) (*Scor
 	collector := &explanationCollector{target: ord}
 	ctx = context.WithValue(ctx, explanationContextKey{}, collector)
 
-	hits, err := s.executeQuery(ctx, parsed, 0, queryFieldScope{})
+	hits, err := s.executeQuery(ctx, nil, parsed, 0, queryFieldScope{})
 	if err != nil {
 		return nil, err
 	}

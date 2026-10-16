@@ -16,7 +16,7 @@ import (
 	"sync"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
 const (
@@ -159,7 +159,7 @@ func (idx *Index) insert(token string, ord fts.DocOrd, hasPosition bool, positio
 			head = -1
 		}
 		idx.entries = append(idx.entries, entry{
-			first:    fts.Posting{Ord: ord, Count: 1, Seq: uint32(ord)},
+			first:    fts.Posting{Ord: ord, Count: 1},
 			tokenOff: off, tokenLen: uint32(len(token)), next: head,
 		})
 		if hasPosition {
@@ -183,7 +183,7 @@ func (idx *Index) addPosting(entryIndex int32, ord fts.DocOrd, hasPosition bool,
 		return idx.incrementPosting(entryIndex, e, total-1, last, hasPosition, position)
 	}
 	if ord > last.Ord {
-		e.rest = append(e.rest, fts.Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
+		e.rest = append(e.rest, fts.Posting{Ord: ord, Count: 1})
 		if len(idx.entryPositions(entryIndex)) > 0 || hasPosition {
 			idx.growPositions(entryIndex, total)
 			var positions []uint32
@@ -205,7 +205,7 @@ func (idx *Index) addPosting(entryIndex int32, ord fts.DocOrd, hasPosition bool,
 		}
 	}
 
-	posting := fts.Posting{Ord: ord, Count: 1, Seq: uint32(ord)}
+	posting := fts.Posting{Ord: ord, Count: 1}
 	if postingIndex == 0 {
 		e.rest = slices.Insert(e.rest, 0, e.first)
 		e.first = posting
@@ -341,7 +341,7 @@ func (idx *Index) SearchPrefix(prefix string) ([]fts.Posting, error) {
 		out = append(out, posting)
 	}
 	slices.SortFunc(out, func(a, b fts.Posting) int {
-		return cmp.Compare(a.Seq, b.Seq)
+		return cmp.Compare(a.Ord, b.Ord)
 	})
 	return out, nil
 }
@@ -371,8 +371,8 @@ func (idx *Index) lockTermOrder() {
 	}
 }
 
-// ExportSegmentTerms implements segment.Source.
-func (idx *Index) ExportSegmentTerms(yield func(segment.TermPostings) error) error {
+// ExportPostings implements posting.Exporter.
+func (idx *Index) ExportPostings(yield func(posting.TermData) error) error {
 	if yield == nil {
 		return errors.New("flat: nil segment callback")
 	}
@@ -380,7 +380,7 @@ func (idx *Index) ExportSegmentTerms(yield func(segment.TermPostings) error) err
 	defer idx.mu.RUnlock()
 	for _, entryIndex := range idx.termOrder {
 		e := &idx.entries[entryIndex]
-		if err := yield(segment.TermPostings{
+		if err := yield(posting.TermData{
 			Term:      string(idx.tokenBytes(entryIndex)),
 			Postings:  idx.postings(e),
 			Positions: clonePositions(idx.entryPositions(entryIndex)),
@@ -501,7 +501,7 @@ func Load(r io.Reader) (fts.Index, error) {
 				return nil, errors.New("flat: load: invalid posting")
 			}
 			ord += fts.DocOrd(delta)
-			postings = append(postings, fts.Posting{Ord: ord, Count: uint32(count), Seq: uint32(ord)})
+			postings = append(postings, fts.Posting{Ord: ord, Count: uint32(count)})
 			if hasPositions {
 				positionCount, positionCountErr := take()
 				if positionCountErr != nil || positionCount > uint64(len(data)) {
@@ -582,9 +582,11 @@ func (idx *Index) addLoaded(token string, postings []fts.Posting, positions [][]
 }
 
 var (
-	_ fts.Index           = (*Index)(nil)
-	_ fts.PrefixIndex     = (*Index)(nil)
-	_ fts.PositionalIndex = (*Index)(nil)
-	_ fts.Serializable    = (*Index)(nil)
-	_ segment.Source      = (*Index)(nil)
+	_ fts.Index                  = (*Index)(nil)
+	_ fts.MutableIndex           = (*Index)(nil)
+	_ fts.PrefixIndex            = (*Index)(nil)
+	_ fts.PositionalIndex        = (*Index)(nil)
+	_ fts.MutablePositionalIndex = (*Index)(nil)
+	_ fts.Serializable           = (*Index)(nil)
+	_ posting.Exporter           = (*Index)(nil)
 )

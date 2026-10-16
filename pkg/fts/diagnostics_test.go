@@ -28,7 +28,7 @@ func requireDiagnostics(t *testing.T, res *SearchResult) *QueryDiagnostics {
 func TestSearchDiagnosticsTermStrategy(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(diagnosticsContext(), TermQuery{Term: "james"}, 10)
+	res, err := svc.SearchQuery(diagnosticsContext(), TermQuery{Term: "james"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestSearchDiagnosticsTermStrategy(t *testing.T) {
 func TestSearchDiagnosticsPrefixStrategy(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(diagnosticsContext(), PrefixQuery{Field: "title", Prefix: "ba"}, 10)
+	res, err := svc.SearchQuery(diagnosticsContext(), PrefixQuery{Field: "title", Prefix: "ba"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -77,7 +77,7 @@ func TestSearchDiagnosticsPrefixStrategy(t *testing.T) {
 
 func TestSearchDiagnosticsCountsPipelineProcessingPerFieldGroup(t *testing.T) {
 	svc := NewMultiField(
-		func(string) (Index, error) { return newMemoryIndex(), nil },
+		func(string) (MutableIndex, error) { return newMemoryIndex(), nil },
 		WordKeys,
 		WithFieldPipelines(map[string]Pipeline{"title": uppercasePipeline{}}),
 	)
@@ -88,7 +88,7 @@ func TestSearchDiagnosticsCountsPipelineProcessingPerFieldGroup(t *testing.T) {
 		t.Fatalf("Index() error = %v", err)
 	}
 
-	res, err := svc.Search(diagnosticsContext(), TermQuery{Term: "alpha"}, 10)
+	res, err := svc.SearchQuery(diagnosticsContext(), TermQuery{Term: "alpha"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -125,7 +125,7 @@ func TestSearchDiagnosticsBooleanOrWandStrategy(t *testing.T) {
 		ShouldClause(TermQuery{Term: "gamma"}),
 	}}
 
-	res, err := svc.Search(diagnosticsContext(), q, 2)
+	res, err := svc.SearchQuery(diagnosticsContext(), q, SearchOptions{MaxResults: 2})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -168,7 +168,7 @@ func TestSearchDiagnosticsBooleanOrWandStrategy(t *testing.T) {
 func TestSearchDiagnosticsPhraseStrategy(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(diagnosticsContext(), PhraseQuery{Phrase: "james doe"}, 10)
+	res, err := svc.SearchQuery(diagnosticsContext(), PhraseQuery{Phrase: "james doe"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -192,7 +192,7 @@ func TestSearchDiagnosticsBooleanFallbackStrategy(t *testing.T) {
 		ShouldClause(TermQuery{Term: "banana"}),
 	}}
 
-	res, err := svc.Search(diagnosticsContext(), q, 10)
+	res, err := svc.SearchQuery(diagnosticsContext(), q, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -215,7 +215,7 @@ func TestSearchDiagnosticsBooleanAndFastStrategy(t *testing.T) {
 		MustClause(TermQuery{Field: "body", Term: "mars"}),
 	}}
 
-	res, err := svc.Search(diagnosticsContext(), q, 10)
+	res, err := svc.SearchQuery(diagnosticsContext(), q, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -252,8 +252,8 @@ func TestSearchDiagnosticsBooleanAndFastDriverInstrumentation(t *testing.T) {
 	for i := 0; i < 60; i++ {
 		id := DocID(fmt.Sprintf("doc-%d", i))
 		ord := registry.GetOrAssign(id)
-		alphaDocs = append(alphaDocs, Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
-		betaDocs = append(betaDocs, Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
+		alphaDocs = append(alphaDocs, Posting{Ord: ord, Count: 1})
+		betaDocs = append(betaDocs, Posting{Ord: ord, Count: 1})
 	}
 	title.entries["alpha"] = alphaDocs
 	body.entries["beta"] = betaDocs
@@ -268,7 +268,7 @@ func TestSearchDiagnosticsBooleanAndFastDriverInstrumentation(t *testing.T) {
 		MustClause(TermQuery{Field: "body", Term: "beta"}),
 	}}
 
-	res, err := svc.Search(diagnosticsContext(), q, 10)
+	res, err := svc.SearchQuery(diagnosticsContext(), q, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -304,7 +304,7 @@ func TestSearchDiagnosticsWandSkipReasonWithoutScorer(t *testing.T) {
 		ShouldClause(TermQuery{Term: "beta"}),
 	}}
 
-	res, err := svc.Search(diagnosticsContext(), q, 1)
+	res, err := svc.SearchQuery(diagnosticsContext(), q, SearchOptions{MaxResults: 1})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -332,12 +332,12 @@ func TestSearchDiagnosticsWandSkipReasonWithoutScorer(t *testing.T) {
 	}
 }
 
-func TestSearchDocumentsDiagnosticsNonNil(t *testing.T) {
+func TestSearchTextDiagnosticsNonNil(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.SearchDocuments(diagnosticsContext(), "james", 10)
+	res, err := svc.SearchText(diagnosticsContext(), "james", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 	d := requireDiagnostics(t, res)
 	if d.LogicalQueryType != "term" {
@@ -348,26 +348,23 @@ func TestSearchDocumentsDiagnosticsNonNil(t *testing.T) {
 	}
 }
 
-func TestSearchFieldClausesDiagnosticsNonNil(t *testing.T) {
+func TestTypedBooleanDiagnosticsNonNil(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.SearchFieldClauses(diagnosticsContext(), []FieldQueryClause{
-		MustFieldQuery("title", "james"),
-		MustNotFieldQuery("body", "australia"),
-	}, 10)
+	res, err := svc.SearchQuery(diagnosticsContext(), &BooleanQuery{Clauses: []BoolClause{
+		MustClause(TermQuery{Field: "title", Term: "james"}),
+		MustNotClause(TermQuery{Field: "body", Term: "australia"}),
+	}}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchFieldClauses() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 	d := requireDiagnostics(t, res)
 	if d.LogicalQueryType == "" || d.ExecutionStrategy == "" {
 		t.Fatalf("expected non-empty diagnostics labels, got %+v", *d)
 	}
-	if d.Timings.Preprocess <= 0 {
-		t.Fatalf("expected preprocess timing > 0, got %+v", d.Timings)
-	}
 }
 
-func TestSearchPhrasePublicMethodsDiagnosticsNonNil(t *testing.T) {
+func TestSearchQueryPhraseScopeDiagnosticsNonNil(t *testing.T) {
 	svc := buildExecService(t)
 	ctx := diagnosticsContext()
 
@@ -375,14 +372,14 @@ func TestSearchPhrasePublicMethodsDiagnosticsNonNil(t *testing.T) {
 		name string
 		run  func() (*SearchResult, error)
 	}{
-		{name: "SearchPhrase", run: func() (*SearchResult, error) {
-			return svc.SearchPhrase(ctx, "james doe", 10)
+		{name: "unscoped", run: func() (*SearchResult, error) {
+			return svc.SearchQuery(ctx, PhraseQuery{Phrase: "james doe"}, SearchOptions{MaxResults: 10})
 		}},
-		{name: "SearchPhraseField", run: func() (*SearchResult, error) {
-			return svc.SearchPhraseField(ctx, "title", "james doe", 10)
+		{name: "explicit field", run: func() (*SearchResult, error) {
+			return svc.SearchQuery(ctx, PhraseQuery{Field: "title", Phrase: "james doe"}, SearchOptions{MaxResults: 10})
 		}},
-		{name: "SearchPhraseFields", run: func() (*SearchResult, error) {
-			return svc.SearchPhraseFields(ctx, []string{"title", "body"}, "james doe", 10)
+		{name: "field subset", run: func() (*SearchResult, error) {
+			return svc.SearchQuery(ctx, PhraseQuery{Phrase: "james doe"}, SearchOptions{Fields: []string{"title", "body"}, MaxResults: 10})
 		}},
 	}
 
@@ -398,7 +395,7 @@ func TestSearchPhrasePublicMethodsDiagnosticsNonNil(t *testing.T) {
 	}
 }
 
-func TestSearchPhraseNearPublicMethodsDiagnosticsNonNil(t *testing.T) {
+func TestSearchQueryNearPhraseScopeDiagnosticsNonNil(t *testing.T) {
 	svc := buildExecService(t)
 	ctx := diagnosticsContext()
 
@@ -406,14 +403,14 @@ func TestSearchPhraseNearPublicMethodsDiagnosticsNonNil(t *testing.T) {
 		name string
 		run  func() (*SearchResult, error)
 	}{
-		{name: "SearchPhraseNear", run: func() (*SearchResult, error) {
-			return svc.SearchPhraseNear(ctx, "james doe", 1, 10)
+		{name: "unscoped", run: func() (*SearchResult, error) {
+			return svc.SearchQuery(ctx, NearPhraseQuery{Phrase: "james doe", Distance: 1}, SearchOptions{MaxResults: 10})
 		}},
-		{name: "SearchPhraseNearField", run: func() (*SearchResult, error) {
-			return svc.SearchPhraseNearField(ctx, "title", "james doe", 1, 10)
+		{name: "explicit field", run: func() (*SearchResult, error) {
+			return svc.SearchQuery(ctx, NearPhraseQuery{Field: "title", Phrase: "james doe", Distance: 1}, SearchOptions{MaxResults: 10})
 		}},
-		{name: "SearchPhraseNearFields", run: func() (*SearchResult, error) {
-			return svc.SearchPhraseNearFields(ctx, []string{"title", "body"}, "james doe", 1, 10)
+		{name: "field subset", run: func() (*SearchResult, error) {
+			return svc.SearchQuery(ctx, NearPhraseQuery{Phrase: "james doe", Distance: 1}, SearchOptions{Fields: []string{"title", "body"}, MaxResults: 10})
 		}},
 	}
 

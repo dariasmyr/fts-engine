@@ -110,10 +110,10 @@ func parseFastOrClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, bool, strin
 	return shouldTerms, mustNots, true, ""
 }
 
-func (s *Service) buildExcludeSet(ctx context.Context, clauses []BoolClause, scope queryFieldScope) (map[DocOrd]struct{}, error) {
+func (s *Service) buildExcludeSet(ctx context.Context, candidates *candidateSet, clauses []BoolClause, scope queryFieldScope) (map[DocOrd]struct{}, error) {
 	exclude := make(map[DocOrd]struct{})
 	for _, clause := range clauses {
-		child, err := s.executeQuery(ctx, clause.Query, 0, scope)
+		child, err := s.executeQuery(ctx, candidates, clause.Query, 0, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -124,13 +124,13 @@ func (s *Service) buildExcludeSet(ctx context.Context, clauses []BoolClause, sco
 	return exclude, nil
 }
 
-func (s *Service) collectFastMustGroups(ctx context.Context, terms []TermQuery, scope queryFieldScope) ([]fastMust, bool, error) {
+func (s *Service) collectFastMustGroups(ctx context.Context, candidates *candidateSet, terms []TermQuery, scope queryFieldScope) ([]fastMust, bool, error) {
 	groups := make([]fastMust, 0, len(terms))
 	for _, term := range terms {
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		group, err := s.collectTermPostings(ctx, term, scope)
+		group, err := s.collectTermPostings(ctx, candidates, term, scope)
 		if err != nil {
 			return nil, false, err
 		}
@@ -142,9 +142,9 @@ func (s *Service) collectFastMustGroups(ctx context.Context, terms []TermQuery, 
 	return groups, false, nil
 }
 
-func (s *Service) applyShouldClauseBoosts(ctx context.Context, combined map[DocOrd]docAccum, shoulds []BoolClause, scope queryFieldScope) error {
+func (s *Service) applyShouldClauseBoosts(ctx context.Context, candidates *candidateSet, combined map[DocOrd]docAccum, shoulds []BoolClause, scope queryFieldScope) error {
 	for _, clause := range shoulds {
-		child, err := s.executeQuery(ctx, clause.Query, 0, scope)
+		child, err := s.executeQuery(ctx, candidates, clause.Query, 0, scope)
 		if err != nil {
 			return err
 		}
@@ -157,7 +157,7 @@ func (s *Service) applyShouldClauseBoosts(ctx context.Context, combined map[DocO
 	return nil
 }
 
-func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
+func (s *Service) tryExecBooleanAndFast(ctx context.Context, candidates *candidateSet, q *BooleanQuery, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
 	mustTerms, shoulds, mustNots, ok, reason := parseFastAndClauses(q)
 	if !ok {
 		if exec := diagnosticsFromContext(ctx); exec != nil {
@@ -174,7 +174,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 		})
 	}
 
-	mustGroups, exhausted, err := s.collectFastMustGroups(ctx, mustTerms, scope)
+	mustGroups, exhausted, err := s.collectFastMustGroups(ctx, candidates, mustTerms, scope)
 	if err != nil {
 		return nil, false, err
 	}
@@ -182,14 +182,14 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 		return map[DocOrd]docAccum{}, true, nil
 	}
 
-	exclude, err := s.buildExcludeSet(ctx, mustNots, scope)
+	exclude, err := s.buildExcludeSet(ctx, candidates, mustNots, scope)
 	if err != nil {
 		return nil, false, err
 	}
 
 	sort.Slice(mustGroups, func(i, j int) bool { return mustGroups[i].totalDocs < mustGroups[j].totalDocs })
 	if allSingleExpansionInSameField(mustGroups) {
-		// Fast path: Seq ordinals are only comparable within one field index.
+		// Fast path: document ordinals are only comparable within one field index.
 		if exec := diagnosticsFromContext(ctx); exec != nil {
 			exec.setStrategy(strategyBoolAndFastSortMerge)
 			exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
@@ -199,7 +199,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 				b.AndFast.OtherGroupCount = len(mustGroups) - 1
 			})
 		}
-		return s.execBooleanAndSortMerge(mustGroups, shoulds, exclude, ctx, scope)
+		return s.execBooleanAndSortMerge(mustGroups, shoulds, exclude, ctx, candidates, scope)
 	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.setStrategy(strategyBoolAndFastDriver)
@@ -287,7 +287,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 		}
 	}
 
-	if err := s.applyShouldClauseBoosts(ctx, combined, shoulds, scope); err != nil {
+	if err := s.applyShouldClauseBoosts(ctx, candidates, combined, shoulds, scope); err != nil {
 		return nil, false, err
 	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
@@ -299,7 +299,7 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, q *BooleanQuery, sc
 	return combined, true, nil
 }
 
-func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
+func (s *Service) tryExecBooleanOrFast(ctx context.Context, candidates *candidateSet, q *BooleanQuery, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
 	shouldTerms, mustNots, ok, reason := parseFastOrClauses(q)
 	if !ok {
 		if exec := diagnosticsFromContext(ctx); exec != nil {
@@ -311,7 +311,7 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, sco
 		exec.setStrategy(strategyBoolOrFast)
 	}
 
-	exclude, err := s.buildExcludeSet(ctx, mustNots, scope)
+	exclude, err := s.buildExcludeSet(ctx, candidates, mustNots, scope)
 	if err != nil {
 		return nil, false, err
 	}
@@ -322,7 +322,7 @@ func (s *Service) tryExecBooleanOrFast(ctx context.Context, q *BooleanQuery, sco
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		group, err := s.collectTermPostings(ctx, term, scope)
+		group, err := s.collectTermPostings(ctx, candidates, term, scope)
 		if err != nil {
 			return nil, false, err
 		}
@@ -388,11 +388,12 @@ func allSingleExpansionInSameField(musts []fastMust) bool {
 	return true
 }
 
-func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause, exclude map[DocOrd]struct{}, ctx context.Context, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
+func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause, exclude map[DocOrd]struct{}, ctx context.Context, candidates *candidateSet, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
 	listCount := len(musts)
 	expansions := make([]*termExpansion, listCount)
-	// mark the common range of Seq ordinals across all MUST clauses, so we can skip any candidates outside that range.
-	var commonStart, commonEnd uint32
+	// Mark the common ordinal range across all MUST clauses so candidates
+	// outside that range can be skipped.
+	var commonStart, commonEnd DocOrd
 	var gallopMinLen int
 	// MUST lists are length-sorted, so one boundary separates sequential and galloping scans.
 	gallopStart := listCount
@@ -403,19 +404,19 @@ func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause
 			// One empty MUST list makes the whole AND empty.
 			return map[DocOrd]docAccum{}, true, nil
 		}
-		// mark the first and last Seq ordinals in this MUST list
-		firstSeq := expansions[listIndex].docs[0].Seq
-		lastSeq := expansions[listIndex].docs[len(expansions[listIndex].docs)-1].Seq
+		// Mark the first and last ordinal in this MUST list.
+		firstOrd := expansions[listIndex].docs[0].Ord
+		lastOrd := expansions[listIndex].docs[len(expansions[listIndex].docs)-1].Ord
 		if listIndex == 0 {
 			// first MUST list sets the initial common range
-			commonStart = firstSeq
-			commonEnd = lastSeq
+			commonStart = firstOrd
+			commonEnd = lastOrd
 			gallopMinLen = len(expansions[listIndex].docs) * postingGallopRatio
 			continue
 		}
 		// subsequent MUST lists narrow the common range
-		commonStart = max(commonStart, firstSeq)
-		commonEnd = min(commonEnd, lastSeq)
+		commonStart = max(commonStart, firstOrd)
+		commonEnd = min(commonEnd, lastOrd)
 		if gallopStart == listCount && len(expansions[listIndex].docs) >= gallopMinLen {
 			gallopStart = listIndex
 		}
@@ -427,7 +428,7 @@ func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause
 
 	positions := make([]int, listCount)
 	combined := make(map[DocOrd]docAccum, len(expansions[0].docs))
-	candidateSeq := commonStart
+	candidateOrd := commonStart
 
 alignmentLoop:
 	for {
@@ -435,20 +436,20 @@ alignmentLoop:
 		for listIndex := range listCount {
 			postings := expansions[listIndex].docs
 			if listIndex >= gallopStart {
-				positions[listIndex] = gallopPostingLowerBound(postings, positions[listIndex], candidateSeq)
+				positions[listIndex] = gallopPostingLowerBound(postings, positions[listIndex], candidateOrd)
 			} else {
 				// Sequential scans are faster while posting-list sizes remain comparable.
-				for positions[listIndex] < len(postings) && postings[positions[listIndex]].Seq < candidateSeq {
+				for positions[listIndex] < len(postings) && postings[positions[listIndex]].Ord < candidateOrd {
 					positions[listIndex]++
 				}
 			}
 			if positions[listIndex] >= len(postings) {
 				break alignmentLoop
 			}
-			if postings[positions[listIndex]].Seq > candidateSeq {
+			if postings[positions[listIndex]].Ord > candidateOrd {
 				// Earlier lists were checked against the old candidate. Restart
 				// alignment so every list catches up to the new candidate.
-				candidateSeq = postings[positions[listIndex]].Seq
+				candidateOrd = postings[positions[listIndex]].Ord
 				allListsAligned = false
 				break
 			}
@@ -457,7 +458,7 @@ alignmentLoop:
 			continue
 		}
 
-		// All MUST lists are aligned on the same Seq, so we found an intersection hit.
+		// All MUST lists are aligned on the same ordinal, so we found an intersection hit.
 		docOrd := expansions[0].docs[positions[0]].Ord
 		if _, skip := exclude[docOrd]; !skip {
 			var accum docAccum
@@ -478,11 +479,11 @@ alignmentLoop:
 				break alignmentLoop
 			}
 		}
-		// Start from the next Seq in the first list; the other lists will catch up or move the candidate higher.
-		candidateSeq = expansions[0].docs[positions[0]].Seq
+		// Start from the next ordinal in the first list; the other lists will catch up or move the candidate higher.
+		candidateOrd = expansions[0].docs[positions[0]].Ord
 	}
 
-	if err := s.applyShouldClauseBoosts(ctx, combined, shoulds, scope); err != nil {
+	if err := s.applyShouldClauseBoosts(ctx, candidates, combined, shoulds, scope); err != nil {
 		return nil, false, err
 	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
@@ -494,24 +495,24 @@ alignmentLoop:
 	return combined, true, nil
 }
 
-func gallopPostingLowerBound(postings []Posting, from int, target uint32) int {
+func gallopPostingLowerBound(postings []Posting, from int, target DocOrd) int {
 	n := len(postings)
 	if from >= n {
 		return n
 	}
-	if postings[from].Seq >= target {
+	if postings[from].Ord >= target {
 		return from
 	}
 	if from+1 >= n {
 		return n
 	}
-	if postings[from+1].Seq >= target {
+	if postings[from+1].Ord >= target {
 		return from + 1
 	}
 
-	// Find an exponential range that may contain the first Seq >= target.
+	// Find an exponential range that may contain the first ordinal >= target.
 	step := 2
-	for step < n-from && postings[from+step].Seq < target {
+	for step < n-from && postings[from+step].Ord < target {
 		step *= 2
 	}
 
@@ -523,7 +524,7 @@ func gallopPostingLowerBound(postings []Posting, from int, target uint32) int {
 	// Find the lower bound within [left, right) using binary search.
 	for left < right {
 		mid := left + (right-left)/2
-		if postings[mid].Seq < target {
+		if postings[mid].Ord < target {
 			left = mid + 1
 		} else {
 			right = mid
@@ -532,7 +533,7 @@ func gallopPostingLowerBound(postings []Posting, from int, target uint32) int {
 	return left
 }
 
-func (s *Service) collectTermPostings(ctx context.Context, q TermQuery, scope queryFieldScope) (fastMust, error) {
+func (s *Service) collectTermPostings(ctx context.Context, candidates *candidateSet, q TermQuery, scope queryFieldScope) (fastMust, error) {
 	var out fastMust
 	if q.Term == "" {
 		return out, nil
@@ -563,7 +564,7 @@ func (s *Service) collectTermPostings(ctx context.Context, q TermQuery, scope qu
 					continue
 				}
 
-				res, err := s.searchKeysInField(ctx, field, index, token, keys)
+				res, err := s.searchKeysInField(ctx, candidates, field, index, token, keys)
 				if err != nil {
 					return fastMust{}, err
 				}

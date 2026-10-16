@@ -6,6 +6,13 @@ type queryFieldScope struct {
 	allowed map[string]struct{}
 }
 
+func optionalQueryFieldScope(fields []string) queryFieldScope {
+	if fields == nil {
+		return queryFieldScope{}
+	}
+	return newQueryFieldScope(fields)
+}
+
 func newQueryFieldScope(fields []string) queryFieldScope {
 	scope := queryFieldScope{active: true}
 	if len(fields) == 0 {

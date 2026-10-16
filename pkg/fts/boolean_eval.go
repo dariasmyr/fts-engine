@@ -5,7 +5,7 @@ import (
 	"sort"
 )
 
-func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocOrd]docAccum, error) {
+func (s *Service) execBoolean(ctx context.Context, candidates *candidateSet, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocOrd]docAccum, error) {
 	if q == nil || len(q.Clauses) == 0 {
 		if exec := diagnosticsFromContext(ctx); exec != nil {
 			exec.setStrategy(strategyEmpty)
@@ -13,19 +13,19 @@ func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLim
 		return map[DocOrd]docAccum{}, nil
 	}
 
-	if res, ok, err := s.tryExecBooleanAndFast(ctx, q, scope); err != nil {
+	if res, ok, err := s.tryExecBooleanAndFast(ctx, candidates, q, scope); err != nil {
 		return nil, err
 	} else if ok {
 		return res, nil
 	}
 
-	if res, ok, err := s.tryExecBooleanOrWand(ctx, q, candidateLimit, scope); err != nil {
+	if res, ok, err := s.tryExecBooleanOrWand(ctx, candidates, q, candidateLimit, scope); err != nil {
 		return nil, err
 	} else if ok {
 		return res, nil
 	}
 
-	if res, ok, err := s.tryExecBooleanOrFast(ctx, q, scope); err != nil {
+	if res, ok, err := s.tryExecBooleanOrFast(ctx, candidates, q, scope); err != nil {
 		return nil, err
 	} else if ok {
 		return res, nil
@@ -45,7 +45,7 @@ func (s *Service) execBoolean(ctx context.Context, q *BooleanQuery, candidateLim
 		if clause.Query == nil {
 			continue
 		}
-		childHits, err := s.executeQuery(ctx, clause.Query, 0, scope)
+		childHits, err := s.executeQuery(ctx, candidates, clause.Query, 0, scope)
 		if err != nil {
 			return nil, err
 		}

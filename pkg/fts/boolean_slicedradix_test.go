@@ -20,7 +20,7 @@ func TestSearchBooleanMustNotExcludes(t *testing.T) {
 				fts.MustNotClause(fts.TermQuery{Term: "australia"}),
 			}}
 
-			res, err := svc.Search(context.Background(), q, 10)
+			res, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 10})
 			if err != nil {
 				t.Fatalf("Search() error = %v", err)
 			}
@@ -42,11 +42,11 @@ func TestSearchBooleanWandTopKMatchesFullResult(t *testing.T) {
 				fts.ShouldClause(fts.TermQuery{Term: "doe"}),
 			}}
 
-			full, err := svc.Search(context.Background(), q, 100)
+			full, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 100})
 			if err != nil {
 				t.Fatalf("full Search() error = %v", err)
 			}
-			top, err := svc.Search(context.Background(), q, 2)
+			top, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 2})
 			if err != nil {
 				t.Fatalf("top Search() error = %v", err)
 			}

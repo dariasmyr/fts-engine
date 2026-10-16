@@ -36,9 +36,9 @@ func TestBuiltInIndexesSupportPrefixSearch(t *testing.T) {
 				t.Fatalf("Index(doc-c) error = %v", err)
 			}
 
-			res, err := svc.SearchDocuments(ctx, "bar*", 10)
+			res, err := svc.SearchText(ctx, "bar*", fts.SearchOptions{MaxResults: 10})
 			if err != nil {
-				t.Fatalf("SearchDocuments() error = %v", err)
+				t.Fatalf("SearchText() error = %v", err)
 			}
 			if len(res.Results) != 2 {
 				t.Fatalf("expected 2 prefix hits, got %+v", res.Results)

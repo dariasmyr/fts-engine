@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftse"
 )
 
 func TestIndexInsertSearchAndCounts(t *testing.T) {
@@ -27,9 +27,9 @@ func TestIndexInsertSearchAndCounts(t *testing.T) {
 		t.Fatalf("Search() error = %v", err)
 	}
 	want := []fts.Posting{
-		{Ord: 1, Count: 2, Seq: 1},
-		{Ord: 3, Count: 1, Seq: 3},
-		{Ord: 5, Count: 2, Seq: 5},
+		{Ord: 1, Count: 2},
+		{Ord: 3, Count: 1},
+		{Ord: 5, Count: 2},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Search() = %+v, want %+v", got, want)
@@ -96,8 +96,8 @@ func TestLoadVersionOneSnapshot(t *testing.T) {
 		t.Fatalf("Search() error = %v", err)
 	}
 	want := []fts.Posting{
-		{Ord: 1, Count: 2, Seq: 1},
-		{Ord: 5, Count: 1, Seq: 5},
+		{Ord: 1, Count: 2},
+		{Ord: 5, Count: 1},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Search() = %+v, want %+v", got, want)
@@ -119,11 +119,11 @@ func TestBuildSealedSegmentFromFlatIndex(t *testing.T) {
 		}
 	}
 
-	data, err := segment.BuildFromSource(idx)
+	data, err := ftse.BuildFromSource(idx)
 	if err != nil {
 		t.Fatalf("BuildFromSource() error = %v", err)
 	}
-	sealed, err := segment.Open(data)
+	sealed, err := ftse.Open(data)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -208,19 +208,19 @@ func TestPhraseSearchWithFlat(t *testing.T) {
 		}
 	}
 
-	result, err := svc.SearchPhrase(ctx, "hotel barge", 10)
+	result, err := svc.SearchQuery(ctx, fts.PhraseQuery{Phrase: "hotel barge"}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhrase() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 	hits := make(map[fts.DocID]int)
 	for _, hit := range result.Results {
 		hits[hit.ID] = hit.TotalMatches
 	}
 	if hits["doc-a"] != 1 || hits["doc-c"] != 2 {
-		t.Fatalf("SearchPhrase() hits = %+v, want doc-a=1 and doc-c=2", hits)
+		t.Fatalf("SearchQuery() hits = %+v, want doc-a=1 and doc-c=2", hits)
 	}
 	if _, ok := hits["doc-b"]; ok {
-		t.Fatalf("SearchPhrase() hits = %+v, doc-b must not match", hits)
+		t.Fatalf("SearchQuery() hits = %+v, doc-b must not match", hits)
 	}
 }
 
@@ -247,9 +247,9 @@ func TestSearchPrefix(t *testing.T) {
 		t.Fatalf("SearchPrefix() error = %v", err)
 	}
 	want := []fts.Posting{
-		{Ord: 0, Count: 2, Seq: 0},
-		{Ord: 1, Count: 1, Seq: 1},
-		{Ord: 2, Count: 1, Seq: 2},
+		{Ord: 0, Count: 2},
+		{Ord: 1, Count: 1},
+		{Ord: 2, Count: 1},
 	}
 	if !reflect.DeepEqual(refs, want) {
 		t.Fatalf("SearchPrefix() = %+v, want %+v", refs, want)
@@ -356,11 +356,11 @@ func TestPositionalSnapshotAndSegmentRoundTrip(t *testing.T) {
 		t.Fatalf("loaded SearchPositional() = %+v", refs)
 	}
 
-	data, err := segment.BuildFromSource(loaded.(*Index))
+	data, err := ftse.BuildFromSource(loaded.(*Index))
 	if err != nil {
 		t.Fatalf("BuildFromSource() error = %v", err)
 	}
-	sealed, err := segment.Open(data)
+	sealed, err := ftse.Open(data)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}

@@ -151,7 +151,7 @@ func main() {
 			return
 		}
 
-		if err := savePersistenceIfEnabled(log, cfg, ftsEngine.service, registry); err != nil {
+		if err := savePersistenceIfEnabled(ctx, log, cfg, ftsEngine.service, registry); err != nil {
 			log.Error("Failed to persist state", "error", sl.Err(err))
 			return
 		}

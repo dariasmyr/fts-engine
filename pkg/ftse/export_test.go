@@ -1,12 +1,13 @@
-package segment_test
+package ftse_test
 
 import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftse"
 	"github.com/dariasmyr/fts-engine/v2/pkg/index/hamt"
 	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
 func TestBuildFromSourceRoundTripSlicedRadix(t *testing.T) {
@@ -21,15 +22,15 @@ func TestBuildFromSourceRoundTripHamt(t *testing.T) {
 	testBuildFromSourceRoundTrip(t, idx)
 }
 
-func testBuildFromSourceRoundTrip(t *testing.T, source segment.Source) {
+func testBuildFromSourceRoundTrip(t *testing.T, source posting.Exporter) {
 	t.Helper()
 
-	data, err := segment.BuildFromSource(source)
+	data, err := ftse.BuildFromSource(source)
 	if err != nil {
 		t.Fatalf("BuildFromSource() error = %v", err)
 	}
 
-	r, err := segment.Open(data)
+	r, err := ftse.Open(data)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -62,7 +63,7 @@ func testBuildFromSourceRoundTrip(t *testing.T, source segment.Source) {
 	}
 }
 
-func seedSegmentSource(t *testing.T, idx fts.PositionalIndex) {
+func seedSegmentSource(t *testing.T, idx fts.MutablePositionalIndex) {
 	t.Helper()
 
 	for _, tc := range []struct {

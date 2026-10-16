@@ -33,7 +33,7 @@ func main() {
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Search with custom index"}}})
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Another searchable document"}}})
 
-	res, err := engine.SearchDocuments(context.Background(), "searchable", 5)
+	res, err := engine.SearchText(context.Background(), "searchable", fts.SearchOptions{MaxResults: 5})
 	if err != nil {
 		panic(err)
 	}

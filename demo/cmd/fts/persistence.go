@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -36,7 +37,7 @@ func tryLoadPersistence(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyG
 		}
 		loaded, err := ftspersist.LoadSnapshot(ftspersist.SnapshotPaths{IndexPath: indexPath, FilterPath: filterPath}, keyGen, ftspersist.SnapshotLoadOptions{
 			Registry: registry,
-			IndexFactory: func(string) (pkgfts.Index, error) {
+			IndexFactory: func(string) (pkgfts.MutableIndex, error) {
 				return selectIndex(cfg.FTS.Index)
 			},
 		}, serviceOpts...)
@@ -89,7 +90,7 @@ func tryLoadPersistence(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyG
 	}
 }
 
-func savePersistenceIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.Service, registry *pkgfts.SnapshotRegistry) error {
+func savePersistenceIfEnabled(ctx context.Context, log *slog.Logger, cfg *config.Config, svc *pkgfts.Service, registry *pkgfts.SnapshotRegistry) error {
 	if cfg == nil || svc == nil {
 		return nil
 	}
@@ -119,7 +120,7 @@ func savePersistenceIfEnabled(log *slog.Logger, cfg *config.Config, svc *pkgfts.
 		log.Info("FTS snapshot persisted", "index_path", indexPath, "filter_path", filterPath)
 		return nil
 	case "segment":
-		if err := ftspersist.SaveSegment(ftspersist.SegmentPaths{Dir: cfg.FTS.Persistence.Path}, svc, filterName, opts); err != nil {
+		if err := ftspersist.SaveSegment(ctx, ftspersist.SegmentPaths{Dir: cfg.FTS.Persistence.Path}, svc, filterName, opts); err != nil {
 			return err
 		}
 		log.Info("FTS segment persisted", "dir_path", cfg.FTS.Persistence.Path)

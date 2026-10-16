@@ -7,7 +7,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 	"github.com/dariasmyr/fts-engine/v2/pkg/segmentbundle"
 	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 )
@@ -37,9 +37,9 @@ func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 
 	var bundleBytes bytes.Buffer
 	index, _ := svc.SnapshotComponents()
-	source, ok := index.(segment.Source)
+	source, ok := index.(posting.Exporter)
 	if !ok {
-		t.Fatal("snapshot index does not implement segment.Source")
+		t.Fatal("snapshot index does not implement posting.Exporter")
 	}
 	keyGenerator := fts.NewKeyGeneratorDescriptor("word-keys", 1)
 	if err := segmentbundle.SaveBundle(&bundleBytes, source, svc.SnapshotCollectionStats(), svc.SnapshotRegistry(), svc.SnapshotTombstones(), segmentbundle.BundleSaveOptions{Pipelines: descriptors, KeyGenerator: &keyGenerator}); err != nil {
@@ -65,9 +65,9 @@ func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 		t.Fatalf("RestoreService() error = %v", err)
 	}
 
-	res, err := restored.SearchDocuments(ctx, "alpha", 10)
+	res, err := restored.SearchText(ctx, "alpha", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(alpha) error = %v", err)
+		t.Fatalf("SearchText(alpha) error = %v", err)
 	}
 	if got, want := res.TotalResultsCount, 1; got != want {
 		t.Fatalf("TotalResultsCount = %d, want %d", got, want)
@@ -96,9 +96,9 @@ func TestBundleRestoreServiceRoundTripEmptyIndex(t *testing.T) {
 		t.Fatalf("RestoreService() error = %v", err)
 	}
 
-	res, err := restored.SearchDocuments(context.Background(), "missing", 10)
+	res, err := restored.SearchText(context.Background(), "missing", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 	if res.TotalResultsCount != 0 {
 		t.Fatalf("TotalResultsCount = %d, want 0", res.TotalResultsCount)
@@ -106,7 +106,7 @@ func TestBundleRestoreServiceRoundTripEmptyIndex(t *testing.T) {
 }
 
 func TestBundleRestoreServiceRoundTripEmptyMultiField(t *testing.T) {
-	svc := fts.NewMultiField(func(string) (fts.Index, error) {
+	svc := fts.NewMultiField(func(string) (fts.MutableIndex, error) {
 		return slicedradix.New(), nil
 	}, fts.WordKeys)
 
@@ -131,7 +131,7 @@ func TestBundleRestoreServiceRoundTripEmptyMultiField(t *testing.T) {
 }
 
 func TestBundleRestoreServicePreservesMultiFieldModeWithDefaultFieldOnly(t *testing.T) {
-	svc := fts.NewMultiField(func(string) (fts.Index, error) {
+	svc := fts.NewMultiField(func(string) (fts.MutableIndex, error) {
 		return slicedradix.New(), nil
 	}, fts.WordKeys)
 	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
@@ -204,7 +204,7 @@ func TestSaveServiceStoresPipelineIdentity(t *testing.T) {
 }
 
 func TestMultiFieldBundleRestoreServiceRoundTrip(t *testing.T) {
-	factory := func(name string) (fts.Index, error) { return slicedradix.New(), nil }
+	factory := func(name string) (fts.MutableIndex, error) { return slicedradix.New(), nil }
 	pipeline := textproc.ObservabilityPipeline()
 	svc := fts.NewMultiField(factory, fts.WordKeys, fts.WithPipeline(pipeline), fts.WithScorer(fts.BM25()))
 	ctx := context.Background()
@@ -230,11 +230,11 @@ func TestMultiFieldBundleRestoreServiceRoundTrip(t *testing.T) {
 	}
 
 	fields, _ := svc.SnapshotFields()
-	sources := make(map[string]segment.Source, len(fields))
+	sources := make(map[string]posting.Exporter, len(fields))
 	for fieldName, index := range fields {
-		source, ok := index.(segment.Source)
+		source, ok := index.(posting.Exporter)
 		if !ok {
-			t.Fatalf("field %q does not implement segment.Source", fieldName)
+			t.Fatalf("field %q does not implement posting.Exporter", fieldName)
 		}
 		sources[fieldName] = source
 	}
@@ -265,7 +265,7 @@ func TestMultiFieldBundleRestoreServiceRoundTrip(t *testing.T) {
 		t.Fatalf("RestoreService() error = %v", err)
 	}
 
-	titleRes, err := restored.Search(ctx, fts.TermQuery{Field: "title", Term: "alpha"}, 10)
+	titleRes, err := restored.SearchQuery(ctx, fts.TermQuery{Field: "title", Term: "alpha"}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(title:alpha) error = %v", err)
 	}
@@ -273,7 +273,7 @@ func TestMultiFieldBundleRestoreServiceRoundTrip(t *testing.T) {
 		t.Fatalf("title results = %+v, want no tombstoned doc", titleRes.Results)
 	}
 
-	bodyRes, err := restored.Search(ctx, fts.TermQuery{Field: "body", Term: "alpha"}, 10)
+	bodyRes, err := restored.SearchQuery(ctx, fts.TermQuery{Field: "body", Term: "alpha"}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(body:alpha) error = %v", err)
 	}
@@ -286,7 +286,7 @@ func TestMultiFieldBundleRestoreServiceRoundTrip(t *testing.T) {
 }
 
 func TestMultiFieldBundleStoresPerFieldPipelineIdentity(t *testing.T) {
-	factory := func(name string) (fts.Index, error) { return slicedradix.New(), nil }
+	factory := func(name string) (fts.MutableIndex, error) { return slicedradix.New(), nil }
 	english := textproc.DefaultEnglishPipeline()
 	russian := textproc.DefaultRussianPipeline()
 	svc := fts.NewMultiField(factory, fts.WordKeys,
@@ -328,7 +328,7 @@ func TestMultiFieldBundleStoresPerFieldPipelineIdentity(t *testing.T) {
 		{Field: "title", Term: "run"},
 		{Field: "body", Term: "машина"},
 	} {
-		res, err := restored.Search(ctx, query, 10)
+		res, err := restored.SearchQuery(ctx, query, fts.SearchOptions{MaxResults: 10})
 		if err != nil {
 			t.Fatalf("Search(%s:%s) error = %v", query.Field, query.Term, err)
 		}

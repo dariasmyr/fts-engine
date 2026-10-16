@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+type ordinalBoostScorer struct{}
+
+func (ordinalBoostScorer) Score(_ TermStats, doc DocStats, _ FieldStats) float64 {
+	if doc.Ord == 1 {
+		return 100
+	}
+	return 1
+}
+
 func scoredResultsFromHits(hits map[DocOrd]docAccum, registry *DocRegistry) []Result {
 	results := make([]Result, 0, len(hits))
 	for ord, h := range hits {
@@ -47,6 +56,34 @@ func requireSameScoredResults(t *testing.T, got, want []Result) {
 	}
 }
 
+func TestWANDFallsBackForScorerWithoutSafeUpperBound(t *testing.T) {
+	svc := New(newOrdAwareMemoryIndex(), WordKeys, WithScorer(ordinalBoostScorer{}))
+	ctx := context.Background()
+	if err := indexDefaultDoc(ctx, svc, "doc-a", "alpha beta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := indexDefaultDoc(ctx, svc, "doc-b", "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	query := &BooleanQuery{Clauses: []BoolClause{
+		ShouldClause(TermQuery{Term: "alpha"}),
+		ShouldClause(TermQuery{Term: "beta"}),
+	}}
+
+	if _, used, err := svc.tryExecBooleanOrWand(ctx, nil, query, 1, queryFieldScope{}); err != nil {
+		t.Fatal(err)
+	} else if used {
+		t.Fatal("WAND used an unsupported custom scorer")
+	}
+	result, err := svc.SearchQuery(ctx, query, SearchOptions{MaxResults: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Results) != 1 || result.Results[0].ID != "doc-b" {
+		t.Fatalf("results = %+v, want doc-b", result.Results)
+	}
+}
+
 func observeDefaultFieldLengths(svc *Service, lengths map[DocID]uint32) {
 	for id, length := range lengths {
 		svc.collection.observe(DefaultField, svc.registry.GetOrAssign(id), length)
@@ -74,7 +111,7 @@ func TestTryExecBooleanOrWandMatchesFullScoringCandidateLimit(t *testing.T) {
 		ShouldClause(TermQuery{Term: "gamma"}),
 	}}
 
-	wandHits, ok, err := svc.tryExecBooleanOrWand(context.Background(), q, 2, queryFieldScope{})
+	wandHits, ok, err := svc.tryExecBooleanOrWand(context.Background(), nil, q, 2, queryFieldScope{})
 	if err != nil {
 		t.Fatalf("tryExecBooleanOrWand() error = %v", err)
 	}
@@ -82,7 +119,7 @@ func TestTryExecBooleanOrWandMatchesFullScoringCandidateLimit(t *testing.T) {
 		t.Fatal("tryExecBooleanOrWand() did not activate")
 	}
 
-	fullHits, err := svc.executeQuery(context.Background(), q, 0, queryFieldScope{})
+	fullHits, err := svc.executeQuery(context.Background(), nil, q, 0, queryFieldScope{})
 	if err != nil {
 		t.Fatalf("executeQuery() error = %v", err)
 	}
@@ -101,7 +138,7 @@ func TestTryExecBooleanOrWandPreservesTieBreakers(t *testing.T) {
 
 	q := &BooleanQuery{Clauses: []BoolClause{ShouldClause(TermQuery{Term: "alpha"})}}
 
-	wandHits, ok, err := svc.tryExecBooleanOrWand(context.Background(), q, 1, queryFieldScope{})
+	wandHits, ok, err := svc.tryExecBooleanOrWand(context.Background(), nil, q, 1, queryFieldScope{})
 	if err != nil {
 		t.Fatalf("tryExecBooleanOrWand() error = %v", err)
 	}
@@ -109,7 +146,7 @@ func TestTryExecBooleanOrWandPreservesTieBreakers(t *testing.T) {
 		t.Fatal("tryExecBooleanOrWand() did not activate")
 	}
 
-	fullHits, err := svc.executeQuery(context.Background(), q, 0, queryFieldScope{})
+	fullHits, err := svc.executeQuery(context.Background(), nil, q, 0, queryFieldScope{})
 	if err != nil {
 		t.Fatalf("executeQuery() error = %v", err)
 	}
@@ -127,7 +164,7 @@ func TestTryExecBooleanOrWandSkipsWithoutCandidateLimit(t *testing.T) {
 	observeDefaultFieldLengths(svc, map[DocID]uint32{"doc-a": 1})
 
 	q := &BooleanQuery{Clauses: []BoolClause{ShouldClause(TermQuery{Term: "alpha"})}}
-	_, ok, err := svc.tryExecBooleanOrWand(context.Background(), q, 0, queryFieldScope{})
+	_, ok, err := svc.tryExecBooleanOrWand(context.Background(), nil, q, 0, queryFieldScope{})
 	if err != nil {
 		t.Fatalf("tryExecBooleanOrWand() error = %v", err)
 	}
@@ -142,7 +179,7 @@ func TestTryExecBooleanOrWandSkipsWithoutScorer(t *testing.T) {
 	svc := New(idx, WordKeys)
 	idx.entries["alpha"] = refsForIDs(svc.registry, namedPosting{"doc-a", 1})
 	q := &BooleanQuery{Clauses: []BoolClause{ShouldClause(TermQuery{Term: "alpha"})}}
-	_, ok, err := svc.tryExecBooleanOrWand(context.Background(), q, 1, queryFieldScope{})
+	_, ok, err := svc.tryExecBooleanOrWand(context.Background(), nil, q, 1, queryFieldScope{})
 	if err != nil {
 		t.Fatalf("tryExecBooleanOrWand() error = %v", err)
 	}
@@ -163,7 +200,7 @@ func TestTryExecBooleanOrWandSkipsMultiExpansionClause(t *testing.T) {
 	observeDefaultFieldLengths(svc, map[DocID]uint32{"doc-a": 1})
 
 	q := &BooleanQuery{Clauses: []BoolClause{ShouldClause(TermQuery{Term: "alpha"})}}
-	_, ok, err := svc.tryExecBooleanOrWand(context.Background(), q, 1, queryFieldScope{})
+	_, ok, err := svc.tryExecBooleanOrWand(context.Background(), nil, q, 1, queryFieldScope{})
 	if err != nil {
 		t.Fatalf("tryExecBooleanOrWand() error = %v", err)
 	}
@@ -190,7 +227,7 @@ func TestTryExecBooleanOrWandSkipsCrossFieldPlan(t *testing.T) {
 		ShouldClause(TermQuery{Field: "title", Term: "alpha"}),
 		ShouldClause(TermQuery{Field: "body", Term: "beta"}),
 	}}
-	_, ok, err := svc.tryExecBooleanOrWand(context.Background(), q, 2, queryFieldScope{})
+	_, ok, err := svc.tryExecBooleanOrWand(context.Background(), nil, q, 2, queryFieldScope{})
 	if err != nil {
 		t.Fatalf("tryExecBooleanOrWand() error = %v", err)
 	}
@@ -218,7 +255,7 @@ func TestTryExecBooleanOrWandSupportsMustNot(t *testing.T) {
 		MustNotClause(TermQuery{Term: "blocked"}),
 	}}
 
-	wandHits, ok, err := svc.tryExecBooleanOrWand(context.Background(), q, 2, queryFieldScope{})
+	wandHits, ok, err := svc.tryExecBooleanOrWand(context.Background(), nil, q, 2, queryFieldScope{})
 	if err != nil {
 		t.Fatalf("tryExecBooleanOrWand() error = %v", err)
 	}
@@ -226,7 +263,7 @@ func TestTryExecBooleanOrWandSupportsMustNot(t *testing.T) {
 		t.Fatal("tryExecBooleanOrWand() did not activate with MUST NOT")
 	}
 
-	fullHits, err := svc.executeQuery(context.Background(), q, 0, queryFieldScope{})
+	fullHits, err := svc.executeQuery(context.Background(), nil, q, 0, queryFieldScope{})
 	if err != nil {
 		t.Fatalf("executeQuery() error = %v", err)
 	}

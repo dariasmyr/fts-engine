@@ -43,7 +43,7 @@ func (p *positionalMemoryIndex) bumpCount(key string, ord DocOrd) {
 			return
 		}
 	}
-	p.postings[key] = append(entries, Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
+	p.postings[key] = append(entries, Posting{Ord: ord, Count: 1})
 }
 
 func (p *positionalMemoryIndex) Search(key string) ([]Posting, error) {
@@ -62,7 +62,7 @@ func (p *positionalMemoryIndex) SearchPositional(key string) ([]PositionalPostin
 	return out, nil
 }
 
-func TestSearchPhraseMatchesExactOrder(t *testing.T) {
+func TestSearchQueryPhraseMatchesExactOrder(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
@@ -77,9 +77,9 @@ func TestSearchPhraseMatchesExactOrder(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchPhrase(ctx, "james doe", 10)
+	res, err := svc.SearchQuery(ctx, PhraseQuery{Phrase: "james doe"}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhrase() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 
 	hits := map[DocID]int{}
@@ -98,7 +98,7 @@ func TestSearchPhraseMatchesExactOrder(t *testing.T) {
 	}
 }
 
-func TestSearchPhraseSingleTokenFallsBackToSearch(t *testing.T) {
+func TestSearchQueryPhraseSingleTokenFallsBackToSearch(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
@@ -106,31 +106,31 @@ func TestSearchPhraseSingleTokenFallsBackToSearch(t *testing.T) {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhrase(ctx, "hello", 10)
+	res, err := svc.SearchQuery(ctx, PhraseQuery{Phrase: "hello"}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhrase() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 	if len(res.Results) != 1 || res.Results[0].ID != "doc-a" {
 		t.Fatalf("unexpected phrase results: %+v", res.Results)
 	}
 }
 
-func TestSearchPhraseEmptyQuery(t *testing.T) {
+func TestSearchQueryPhraseEmptyQuery(t *testing.T) {
 	svc := New(newPositionalMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
 	_ = indexDefaultDoc(ctx, svc, "doc-a", "hello world")
 
-	res, err := svc.SearchPhrase(ctx, "   ", 10)
+	res, err := svc.SearchQuery(ctx, PhraseQuery{Phrase: "   "}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhrase() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 	if len(res.Results) != 0 {
 		t.Fatalf("len(Results) = %d, want 0", len(res.Results))
 	}
 }
 
-func TestSearchPhraseSkipsNonPositionalIndexes(t *testing.T) {
+func TestSearchQueryPhraseSkipsNonPositionalIndexes(t *testing.T) {
 	svc := New(newMemoryIndex(), WordKeys)
 
 	ctx := context.Background()
@@ -138,16 +138,16 @@ func TestSearchPhraseSkipsNonPositionalIndexes(t *testing.T) {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhrase(ctx, "james doe", 10)
+	res, err := svc.SearchQuery(ctx, PhraseQuery{Phrase: "james doe"}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhrase() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 	if len(res.Results) != 0 {
 		t.Fatalf("len(Results) = %d, want 0", len(res.Results))
 	}
 }
 
-func TestSearchPhraseMergesMultipleKeys(t *testing.T) {
+func TestSearchQueryPhraseMergesMultipleKeys(t *testing.T) {
 	keyGen := func(token string) ([]string, error) {
 		return []string{token, token + "-alt"}, nil
 	}
@@ -158,9 +158,9 @@ func TestSearchPhraseMergesMultipleKeys(t *testing.T) {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchPhrase(ctx, "james doe", 10)
+	res, err := svc.SearchQuery(ctx, PhraseQuery{Phrase: "james doe"}, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhrase() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 	if len(res.Results) != 1 {
 		t.Fatalf("len(Results) = %d, want 1", len(res.Results))

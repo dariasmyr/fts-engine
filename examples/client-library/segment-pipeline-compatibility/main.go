@@ -36,7 +36,7 @@ func main() {
 	}
 
 	paths := ftspersist.SegmentPaths{Dir: dir}
-	if err := ftspersist.SaveSegment(paths, engine, "", ftspersist.SaveOptions{Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(ctx, paths, engine, "", ftspersist.SaveOptions{Registry: registry}); err != nil {
 		panic(err)
 	}
 
@@ -56,7 +56,7 @@ func main() {
 		}
 	}()
 
-	res, err := loaded.Service.SearchPlainText(ctx, "io.EOF", 10)
+	res, err := loaded.Service.SearchQuery(ctx, fts.TermQuery{Term: "io.EOF"}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		panic(err)
 	}

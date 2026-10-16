@@ -24,7 +24,7 @@ func main() {
 		}
 	}
 
-	res, err := engine.SearchPlainText(ctx, "io.EOF", 10)
+	res, err := engine.SearchQuery(ctx, fts.TermQuery{Term: "io.EOF"}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		panic(err)
 	}

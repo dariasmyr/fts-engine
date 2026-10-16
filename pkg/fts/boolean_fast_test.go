@@ -8,11 +8,11 @@ import (
 )
 
 func TestGallopPostingLowerBound(t *testing.T) {
-	postings := []Posting{{Seq: 2}, {Seq: 5}, {Seq: 9}, {Seq: 14}, {Seq: 20}, {Seq: 27}}
+	postings := []Posting{{Ord: 2}, {Ord: 5}, {Ord: 9}, {Ord: 14}, {Ord: 20}, {Ord: 27}}
 	tests := []struct {
 		name   string
 		from   int
-		target uint32
+		target DocOrd
 		want   int
 	}{
 		{name: "before first", target: 1, want: 0},
@@ -34,11 +34,11 @@ func TestGallopPostingLowerBound(t *testing.T) {
 }
 
 func TestGallopPostingLowerBoundExhaustive(t *testing.T) {
-	postings := []Posting{{Seq: 2}, {Seq: 5}, {Seq: 9}, {Seq: 14}, {Seq: 20}, {Seq: 27}}
+	postings := []Posting{{Ord: 2}, {Ord: 5}, {Ord: 9}, {Ord: 14}, {Ord: 20}, {Ord: 27}}
 	for from := 0; from <= len(postings); from++ {
-		for target := uint32(0); target <= 30; target++ {
+		for target := DocOrd(0); target <= 30; target++ {
 			want := from + sort.Search(len(postings)-from, func(i int) bool {
-				return postings[from+i].Seq >= target
+				return postings[from+i].Ord >= target
 			})
 			if got := gallopPostingLowerBound(postings, from, target); got != want {
 				t.Fatalf("gallopPostingLowerBound(from=%d, target=%d) = %d, want %d", from, target, got, want)
@@ -56,33 +56,33 @@ func TestExecBooleanAndSortMergeRanges(t *testing.T) {
 		{
 			name: "disjoint ranges",
 			musts: []fastMust{
-				fastMustForSeqs(10, 11),
-				fastMustForSeqs(1, 2, 3, 4),
+				fastMustForOrds(10, 11),
+				fastMustForOrds(1, 2, 3, 4),
 			},
 			want: []DocOrd{},
 		},
 		{
-			name: "overlap starts after shortest first seq",
+			name: "overlap starts after shortest first ordinal",
 			musts: []fastMust{
-				fastMustForSeqs(1, 5, 9),
-				fastMustForSeqs(5, 7, 9, 11),
+				fastMustForOrds(1, 5, 9),
+				fastMustForOrds(5, 7, 9, 11),
 			},
 			want: []DocOrd{5, 9},
 		},
 		{
 			name: "ranges touch at boundary",
 			musts: []fastMust{
-				fastMustForSeqs(1, 5),
-				fastMustForSeqs(5, 9, 13),
+				fastMustForOrds(1, 5),
+				fastMustForOrds(5, 9, 13),
 			},
 			want: []DocOrd{5},
 		},
 		{
 			name: "three lists",
 			musts: []fastMust{
-				fastMustForSeqs(1, 5, 9),
-				fastMustForSeqs(3, 5, 7, 9),
-				fastMustForSeqs(5, 6, 8, 9, 10),
+				fastMustForOrds(1, 5, 9),
+				fastMustForOrds(3, 5, 7, 9),
+				fastMustForOrds(5, 6, 8, 9, 10),
 			},
 			want: []DocOrd{5, 9},
 		},
@@ -96,6 +96,7 @@ func TestExecBooleanAndSortMergeRanges(t *testing.T) {
 				nil,
 				nil,
 				context.Background(),
+				nil,
 				queryFieldScope{},
 			)
 			if err != nil {
@@ -116,10 +117,10 @@ func TestExecBooleanAndSortMergeRanges(t *testing.T) {
 	}
 }
 
-func fastMustForSeqs(seqs ...uint32) fastMust {
-	docs := make([]Posting, len(seqs))
-	for i, seq := range seqs {
-		docs[i] = Posting{Ord: DocOrd(seq), Count: 1, Seq: seq}
+func fastMustForOrds(ords ...DocOrd) fastMust {
+	docs := make([]Posting, len(ords))
+	for i, ord := range ords {
+		docs[i] = Posting{Ord: ord, Count: 1}
 	}
 	return fastMust{
 		expansions: []termExpansion{{field: DefaultField, docs: docs}},

@@ -35,7 +35,7 @@ func main() {
 		panic(err)
 	}
 
-	res, err := restored.SearchDocuments(context.Background(), "snapshot", 10)
+	res, err := restored.SearchText(context.Background(), "snapshot", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		panic(err)
 	}

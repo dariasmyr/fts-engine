@@ -47,6 +47,12 @@ func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
 	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "bloom", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
 		t.Fatalf("SaveSnapshot() error = %v", err)
 	}
+	if _, err := os.Stat(paths.FilterPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("separate filter snapshot exists after bundled save: %v", err)
+	}
+	if err := os.WriteFile(paths.FilterPath, []byte("stale legacy filter"), 0o600); err != nil {
+		t.Fatalf("WriteFile(stale filter) error = %v", err)
+	}
 
 	loaded, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, ftspersist.SnapshotLoadOptions{Registry: registry}, fts.WithScorer(fts.BM25()))
 	if err != nil {
@@ -65,9 +71,9 @@ func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
 		t.Fatalf("FilterName = %q, want bloom", loaded.FilterName)
 	}
 
-	res, err := loaded.Service.SearchDocuments(context.Background(), "snapshot", 10)
+	res, err := loaded.Service.SearchText(context.Background(), "snapshot", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(snapshot) error = %v", err)
+		t.Fatalf("SearchText(snapshot) error = %v", err)
 	}
 	if got, want := res.TotalResultsCount, 1; got != want {
 		t.Fatalf("TotalResultsCount = %d, want %d", got, want)
@@ -77,12 +83,55 @@ func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
 		t.Fatalf("Index(doc-2) after restore error = %v", err)
 	}
 
-	res, err = loaded.Service.SearchDocuments(context.Background(), "writable", 10)
+	res, err = loaded.Service.SearchText(context.Background(), "writable", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(writable) error = %v", err)
+		t.Fatalf("SearchText(writable) error = %v", err)
 	}
 	if got, want := res.TotalResultsCount, 1; got != want {
 		t.Fatalf("TotalResultsCount after restore write = %d, want %d", got, want)
+	}
+}
+
+func TestSaveSnapshotRejectsSameIndexAndFilterPathBeforeWrite(t *testing.T) {
+	registry := fts.NewSnapshotRegistry()
+	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
+		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
+	}
+	svc := fts.New(slicedradix.New(), fts.WordKeys)
+	path := filepath.Join(t.TempDir(), "snapshot.fidx")
+	if err := os.WriteFile(path, []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := ftspersist.SaveSnapshot(
+		ftspersist.SnapshotPaths{IndexPath: path, FilterPath: path},
+		svc,
+		"slicedradix",
+		"",
+		ftspersist.SaveOptions{Registry: registry},
+	)
+	if err == nil {
+		t.Fatal("SaveSnapshot() error = nil")
+	}
+	payload, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(payload) != "existing" {
+		t.Fatalf("snapshot path changed on validation error: %q", payload)
+	}
+}
+
+func TestLoadSnapshotDataHonorsMaxBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized.fidx")
+	if err := os.WriteFile(path, []byte("too large"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ftspersist.LoadSnapshotData(
+		ftspersist.SnapshotPaths{IndexPath: path},
+		ftspersist.SnapshotLoadOptions{Registry: fts.NewSnapshotRegistry(), MaxBytes: 4},
+	)
+	if err == nil {
+		t.Fatal("LoadSnapshotData() error = nil")
 	}
 }
 
@@ -111,9 +160,9 @@ func TestSaveLoadSnapshotRoundTripEmptyIndex(t *testing.T) {
 		}
 	}()
 
-	res, err := loaded.Service.SearchDocuments(context.Background(), "missing", 10)
+	res, err := loaded.Service.SearchText(context.Background(), "missing", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 	if res.TotalResultsCount != 0 {
 		t.Fatalf("TotalResultsCount = %d, want 0", res.TotalResultsCount)
@@ -125,7 +174,7 @@ func TestSaveLoadSnapshotRoundTripEmptyMultiField(t *testing.T) {
 	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
 		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
 	}
-	svc := fts.NewMultiField(func(string) (fts.Index, error) {
+	svc := fts.NewMultiField(func(string) (fts.MutableIndex, error) {
 		return slicedradix.New(), nil
 	}, fts.WordKeys)
 
@@ -135,7 +184,7 @@ func TestSaveLoadSnapshotRoundTripEmptyMultiField(t *testing.T) {
 	}
 	loaded, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, ftspersist.SnapshotLoadOptions{
 		Registry: registry,
-		IndexFactory: func(string) (fts.Index, error) {
+		IndexFactory: func(string) (fts.MutableIndex, error) {
 			return slicedradix.New(), nil
 		},
 	})
@@ -211,9 +260,9 @@ func TestLoadSnapshotDataAllowsExplicitRestore(t *testing.T) {
 		fts.WithTombstonesSnapshot(loaded.Tombstones),
 	)
 
-	res, err := restored.SearchDocuments(context.Background(), "explicit", 10)
+	res, err := restored.SearchText(context.Background(), "explicit", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(explicit) error = %v", err)
+		t.Fatalf("SearchText(explicit) error = %v", err)
 	}
 	if got, want := res.TotalResultsCount, 1; got != want {
 		t.Fatalf("TotalResultsCount = %d, want %d", got, want)
@@ -226,7 +275,7 @@ func TestSaveLoadSnapshotRoundTripMultiField(t *testing.T) {
 		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
 	}
 
-	factory := func(name string) (fts.Index, error) { return slicedradix.New(), nil }
+	factory := func(name string) (fts.MutableIndex, error) { return slicedradix.New(), nil }
 	svc := fts.NewMultiField(factory, fts.WordKeys, fts.WithScorer(fts.BM25()))
 	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
 		"title": {Value: "alpha title"},
@@ -253,7 +302,7 @@ func TestSaveLoadSnapshotRoundTripMultiField(t *testing.T) {
 		t.Fatalf("len(FieldIndexNames) = %d, want %d", got, want)
 	}
 
-	res, err := loaded.Service.Search(context.Background(), fts.TermQuery{Field: "title", Term: "alpha"}, 10)
+	res, err := loaded.Service.SearchQuery(context.Background(), fts.TermQuery{Field: "title", Term: "alpha"}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(title:alpha) error = %v", err)
 	}
@@ -269,7 +318,7 @@ func TestSnapshotValidatesPerFieldPipelines(t *testing.T) {
 	}
 	english := textproc.DefaultEnglishPipeline()
 	russian := textproc.DefaultRussianPipeline()
-	factory := func(string) (fts.Index, error) { return slicedradix.New(), nil }
+	factory := func(string) (fts.MutableIndex, error) { return slicedradix.New(), nil }
 	svc := fts.NewMultiField(factory, fts.WordKeys,
 		fts.WithPipeline(english),
 		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
@@ -293,7 +342,7 @@ func TestSnapshotValidatesPerFieldPipelines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSnapshot(matching pipelines) error = %v", err)
 	}
-	res, err := loaded.Service.Search(context.Background(), fts.TermQuery{Field: "body", Term: "машина"}, 10)
+	res, err := loaded.Service.SearchQuery(context.Background(), fts.TermQuery{Field: "body", Term: "машина"}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(body:машина) error = %v", err)
 	}

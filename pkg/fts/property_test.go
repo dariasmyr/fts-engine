@@ -31,7 +31,7 @@ func TestPropertyAndFastPathMatchesSetSemantics(t *testing.T) {
 					fts.MustClause(fts.TermQuery{Term: a}),
 					fts.MustClause(fts.TermQuery{Term: b}),
 				}}
-				res, err := svc.Search(context.Background(), q, 1000)
+				res, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 1000})
 				if err != nil {
 					t.Fatalf("iter=%d seed=%d Search() error = %v", i, seed, err)
 				}
@@ -68,7 +68,7 @@ func TestPropertyOrFastPathMatchesSetSemantics(t *testing.T) {
 					fts.ShouldClause(fts.TermQuery{Term: a}),
 					fts.ShouldClause(fts.TermQuery{Term: b}),
 				}}
-				res, err := svc.Search(context.Background(), q, 10000)
+				res, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 10000})
 				if err != nil {
 					t.Fatalf("iter=%d seed=%d Search() error = %v", i, seed, err)
 				}
@@ -106,13 +106,13 @@ func TestPropertyWandSubsetOfFullOr(t *testing.T) {
 					fts.ShouldClause(fts.TermQuery{Term: b}),
 				}}
 
-				full, err := svc.Search(context.Background(), q, 10000)
+				full, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 10000})
 				if err != nil {
 					t.Fatalf("iter=%d seed=%d full Search() error = %v", i, seed, err)
 				}
 				fullSet := propertyIDSet(full)
 
-				top, err := svc.Search(context.Background(), q, 5)
+				top, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 5})
 				if err != nil {
 					t.Fatalf("iter=%d seed=%d top Search() error = %v", i, seed, err)
 				}

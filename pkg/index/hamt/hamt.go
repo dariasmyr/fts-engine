@@ -4,8 +4,6 @@ package hamt
 import (
 	"encoding/gob"
 	"fmt"
-	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
 	"io"
 	"math/bits"
 	"slices"
@@ -14,6 +12,8 @@ import (
 	"sync"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/fnv"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
 const (
@@ -35,7 +35,7 @@ func (d documents) Add(ord fts.DocOrd, positions [][]uint32, hasPos bool, pos ui
 		return d, positions
 	}
 	if last < 0 || ord > d[last].Ord {
-		d = append(d, fts.Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
+		d = append(d, fts.Posting{Ord: ord, Count: 1})
 		if hasPos {
 			positions = growPositions(positions, len(d))
 			positions[len(d)-1] = []uint32{pos}
@@ -54,7 +54,7 @@ func (d documents) Add(ord fts.DocOrd, positions [][]uint32, hasPos bool, pos ui
 	}
 	d = append(d, fts.Posting{})
 	copy(d[i+1:], d[i:])
-	d[i] = fts.Posting{Ord: ord, Count: 1, Seq: uint32(ord)}
+	d[i] = fts.Posting{Ord: ord, Count: 1}
 	if hasPos || i < len(positions) {
 		positions = growPositions(positions, len(d))
 		copy(positions[i+1:], positions[i:])
@@ -72,6 +72,12 @@ type entry struct {
 	positions [][]uint32
 }
 
+type exportTermRef struct {
+	key      string
+	terminal int
+	entry    int
+}
+
 type nodeptr = uint32
 
 type terminal struct {
@@ -86,7 +92,7 @@ func (t *terminal) Append(word string, ord fts.DocOrd, hasPos bool, pos uint32) 
 	}
 	t.entries = append(t.entries, entry{})
 	copy(t.entries[i+1:], t.entries[i:])
-	e := entry{key: word, docs: documents{{Ord: ord, Count: 1, Seq: uint32(ord)}}}
+	e := entry{key: word, docs: documents{{Ord: ord, Count: 1}}}
 	if hasPos {
 		e.positions = [][]uint32{{pos}}
 	}
@@ -246,7 +252,7 @@ func (t *Index) Search(key string) ([]fts.Posting, error) {
 	}
 
 	out := append([]fts.Posting(nil), docs...)
-	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
 	return out, nil
 }
 
@@ -289,7 +295,7 @@ func (t *Index) SearchPrefix(prefix string) ([]fts.Posting, error) {
 				continue
 			}
 			for _, doc := range entry.docs {
-				addMergedDoc(merged, doc.Ord, doc.Count, doc.Seq)
+				addMergedDoc(merged, doc.Ord, doc.Count)
 			}
 		}
 	}
@@ -297,23 +303,36 @@ func (t *Index) SearchPrefix(prefix string) ([]fts.Posting, error) {
 	return mergedDocsSlice(merged), nil
 }
 
-func (t *Index) ExportSegmentTerms(yield func(segment.TermPostings) error) error {
+func (t *Index) ExportPostings(yield func(posting.TermData) error) error {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
+	termCount := 0
+	for i := range t.terms {
+		termCount += len(t.terms[i].entries)
+	}
+	terms := make([]exportTermRef, 0, termCount)
 	for i := range t.terms {
 		entries := t.terms[i].entries
 		for j := range entries {
-			if err := yield(segment.TermPostings{
-				Term:      entries[j].key,
-				Postings:  append([]fts.Posting(nil), entries[j].docs...),
-				Positions: clonePositions(entries[j].positions),
-			}); err != nil {
-				return err
-			}
+			terms = append(terms, exportTermRef{
+				key:      entries[j].key,
+				terminal: i,
+				entry:    j,
+			})
 		}
 	}
-
+	slices.SortFunc(terms, func(a, b exportTermRef) int { return strings.Compare(a.key, b.key) })
+	for _, ref := range terms {
+		entry := &t.terms[ref.terminal].entries[ref.entry]
+		if err := yield(posting.TermData{
+			Term:      ref.key,
+			Postings:  []posting.Posting(entry.docs),
+			Positions: entry.positions,
+		}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -382,10 +401,10 @@ func collectPositionalDocs(docs []fts.Posting, positions [][]uint32) []fts.Posit
 	return out
 }
 
-func addMergedDoc(merged map[fts.DocOrd]fts.Posting, ord fts.DocOrd, count, seq uint32) {
+func addMergedDoc(merged map[fts.DocOrd]fts.Posting, ord fts.DocOrd, count uint32) {
 	ref, ok := merged[ord]
 	if !ok {
-		merged[ord] = fts.Posting{Ord: ord, Count: count, Seq: seq}
+		merged[ord] = fts.Posting{Ord: ord, Count: count}
 		return
 	}
 	ref.Count += count
@@ -397,7 +416,7 @@ func mergedDocsSlice(merged map[fts.DocOrd]fts.Posting) []fts.Posting {
 	for _, doc := range merged {
 		out = append(out, doc)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
 	return out
 }
 
@@ -422,6 +441,8 @@ func (t *Index) nextNode(n nodeptr, hash uint32) (nodeptr, bool) {
 }
 
 var _ fts.Index = (*Index)(nil)
+var _ fts.MutableIndex = (*Index)(nil)
 var _ fts.PrefixIndex = (*Index)(nil)
 var _ fts.PositionalIndex = (*Index)(nil)
-var _ segment.Source = (*Index)(nil)
+var _ fts.MutablePositionalIndex = (*Index)(nil)
+var _ posting.Exporter = (*Index)(nil)

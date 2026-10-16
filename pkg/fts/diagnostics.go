@@ -15,6 +15,8 @@ type QueryDiagnostics struct {
 	StrategySkipReason string
 	// Boolean stores strategy-specific diagnostics for boolean execution paths.
 	Boolean *BooleanDiagnostics
+	// PostingAccess records how exact-term posting lists were read.
+	PostingAccess PostingAccessDiagnostics
 
 	// ProcessedTokens is the total number of tokens processed across the executed query path.
 	ProcessedTokens int
@@ -104,6 +106,12 @@ type BooleanDiagnostics struct {
 	FastPathSkipReasons []string
 	WAND                WANDDiagnostics
 	AndFast             AndFastDiagnostics
+}
+
+// PostingAccessDiagnostics counts exact-term posting lists by access method.
+type PostingAccessDiagnostics struct {
+	MaterializedPostingLists int
+	CursorPostingLists       int
 }
 
 type WANDDiagnostics struct {
@@ -277,6 +285,24 @@ func (q *queryExecContext) addPostingsRead(n int) {
 	q.mu.Unlock()
 }
 
+func (q *queryExecContext) recordMaterializedPostingList() {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	q.d.PostingAccess.MaterializedPostingLists++
+	q.mu.Unlock()
+}
+
+func (q *queryExecContext) recordCursorPostingList() {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	q.d.PostingAccess.CursorPostingLists++
+	q.mu.Unlock()
+}
+
 func (q *queryExecContext) setCandidateDocs(n int) {
 	if q == nil {
 		return
@@ -391,6 +417,8 @@ func queryTypeOf(q Query) string {
 		return "term"
 	case PhraseQuery, *PhraseQuery:
 		return "phrase"
+	case NearPhraseQuery, *NearPhraseQuery:
+		return "phrase_near"
 	case PrefixQuery, *PrefixQuery:
 		return "prefix"
 	case *BooleanQuery:

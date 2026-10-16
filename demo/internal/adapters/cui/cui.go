@@ -14,12 +14,12 @@ type SearchEngine interface {
 	Fields() []string
 	HighlightPlainText(query string, text string) string
 	HighlightQueryString(query string, text string) string
-	SearchPlainText(
+	SearchTerm(
 		ctx context.Context,
 		query string,
 		maxResults int,
 	) (*models.SearchResult, error)
-	SearchQueryString(
+	SearchText(
 		ctx context.Context,
 		query string,
 		maxResults int,

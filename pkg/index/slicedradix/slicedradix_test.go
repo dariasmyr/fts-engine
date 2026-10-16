@@ -81,11 +81,11 @@ func TestIndexInsertOutOfOrderKeepsPostingsSorted(t *testing.T) {
 		t.Fatalf("Search() error = %v", err)
 	}
 	want := []fts.Posting{
-		{Ord: 1, Count: 1, Seq: 1},
-		{Ord: 3, Count: 2, Seq: 3},
-		{Ord: 5, Count: 1, Seq: 5},
-		{Ord: 7, Count: 1, Seq: 7},
-		{Ord: 9, Count: 1, Seq: 9},
+		{Ord: 1, Count: 1},
+		{Ord: 3, Count: 2},
+		{Ord: 5, Count: 1},
+		{Ord: 7, Count: 1},
+		{Ord: 9, Count: 1},
 	}
 	if len(docs) != len(want) {
 		t.Fatalf("docs = %+v, want %+v", docs, want)
@@ -186,7 +186,7 @@ func TestIndexInsertAtOutOfOrderKeepsPositionsAligned(t *testing.T) {
 	}
 }
 
-func TestIndexSearchReturnsSeqOrder(t *testing.T) {
+func TestIndexSearchReturnsOrdOrder(t *testing.T) {
 	idx := New()
 
 	insertOrd(t, idx, "hotel", "doc-z", 0)
@@ -199,11 +199,11 @@ func TestIndexSearchReturnsSeqOrder(t *testing.T) {
 	if len(docs) != 2 {
 		t.Fatalf("len(docs) = %d, want 2", len(docs))
 	}
-	if docs[0].Ord != 0 || docs[0].Seq != 0 {
-		t.Fatalf("docs[0] = %+v, want ord=0 seq=0", docs[0])
+	if docs[0].Ord != 0 {
+		t.Fatalf("docs[0] = %+v, want ord=0", docs[0])
 	}
-	if docs[1].Ord != 1 || docs[1].Seq != 1 {
-		t.Fatalf("docs[1] = %+v, want ord=1 seq=1", docs[1])
+	if docs[1].Ord != 1 {
+		t.Fatalf("docs[1] = %+v, want ord=1", docs[1])
 	}
 }
 

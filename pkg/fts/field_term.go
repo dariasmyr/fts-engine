@@ -12,7 +12,7 @@ type termFieldDocsResult struct {
 	err        error
 }
 
-func (s *Service) collectTermFieldExpansions(ctx context.Context, fields []string, term string, keys []string) ([]termExpansion, int, error) {
+func (s *Service) collectTermFieldExpansions(ctx context.Context, candidates *candidateSet, fields []string, term string, keys []string) ([]termExpansion, int, error) {
 	expansions := make([]termExpansion, 0, len(fields)*len(keys))
 	totalDocs := 0
 	if len(fields) <= 1 {
@@ -22,7 +22,7 @@ func (s *Service) collectTermFieldExpansions(ctx context.Context, fields []strin
 				continue
 			}
 
-			res, err := s.searchKeysInField(ctx, field, index, term, keys)
+			res, err := s.searchKeysInField(ctx, candidates, field, index, term, keys)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -41,7 +41,7 @@ func (s *Service) collectTermFieldExpansions(ctx context.Context, fields []strin
 		}
 
 		wg.Go(func() {
-			res, err := s.searchKeysInField(ctx, field, index, term, keys)
+			res, err := s.searchKeysInField(ctx, candidates, field, index, term, keys)
 			if err != nil {
 				results <- termFieldDocsResult{err: err}
 				return
@@ -63,9 +63,12 @@ func (s *Service) collectTermFieldExpansions(ctx context.Context, fields []strin
 	return expansions, totalDocs, nil
 }
 
-func (s *Service) searchKeysInField(ctx context.Context, field string, index Index, term string, keys []string) (termFieldDocsResult, error) {
+func (s *Service) searchKeysInField(ctx context.Context, candidates *candidateSet, field string, index Index, term string, keys []string) (termFieldDocsResult, error) {
 	if err := ctx.Err(); err != nil {
 		return termFieldDocsResult{}, err
+	}
+	if candidates.empty() {
+		return termFieldDocsResult{}, nil
 	}
 
 	res := termFieldDocsResult{expansions: make([]termExpansion, 0, len(keys))}
@@ -82,44 +85,31 @@ func (s *Service) searchKeysInField(ctx context.Context, field string, index Ind
 	}()
 	for _, key := range keys {
 		if s.filter != nil {
-			miss := !s.filter.Contains([]byte(key))
 			filterChecks++
-			if miss {
+			if !s.filter.Contains([]byte(key)) {
 				filterRejects++
-			}
-			if miss {
 				continue
 			}
 		}
 
 		indexLookups++
-		docs, err := index.Search(key)
+		lookup, err := s.lookupTermPostings(ctx, candidates, index, key)
 		if err != nil {
-			return termFieldDocsResult{}, fmt.Errorf("fts: term query field %q: index search: %w", field, err)
+			return termFieldDocsResult{}, fmt.Errorf("fts: term query field %q: %w", field, err)
 		}
-		if s.tombstones != nil && s.tombstones.Any() {
-			liveDocs := make([]Posting, 0, len(docs))
-			for _, doc := range docs {
-				if s.tombstones.IsSet(doc.Ord) {
-					continue
-				}
-				liveDocs = append(liveDocs, doc)
-			}
-			docs = liveDocs
-		}
-		postingsRead += len(docs)
-		if len(docs) == 0 {
+		postingsRead += len(lookup.docs)
+		if len(lookup.docs) == 0 {
 			continue
 		}
 
 		res.expansions = append(res.expansions, termExpansion{
 			field:      field,
 			term:       term,
-			df:         uint32(len(docs)),
+			df:         lookup.documentFrequency,
 			fieldStats: fieldStats,
-			docs:       docs,
+			docs:       lookup.docs,
 		})
-		res.totalDocs += len(docs)
+		res.totalDocs += len(lookup.docs)
 	}
 	return res, nil
 }

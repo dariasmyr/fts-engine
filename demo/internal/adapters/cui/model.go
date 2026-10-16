@@ -35,12 +35,12 @@ type searchDoneMsg struct {
 }
 
 type keyMap struct {
-	Tab         key.Binding
-	Search      key.Binding
-	ToggleMode  key.Binding
-	ScrollUp    key.Binding
-	ScrollDown  key.Binding
-	Quit        key.Binding
+	Tab        key.Binding
+	Search     key.Binding
+	ToggleMode key.Binding
+	ScrollUp   key.Binding
+	ScrollDown key.Binding
+	Quit       key.Binding
 }
 
 var keys = keyMap{
@@ -301,9 +301,9 @@ func (m model) runSearch(query string) tea.Cmd {
 			err          error
 		)
 		if mode == searchModeSyntax {
-			searchResult, err = engine.SearchQueryString(ctx, query, maxResults)
+			searchResult, err = engine.SearchText(ctx, query, maxResults)
 		} else {
-			searchResult, err = engine.SearchPlainText(ctx, query, maxResults)
+			searchResult, err = engine.SearchTerm(ctx, query, maxResults)
 		}
 
 		if err != nil {
