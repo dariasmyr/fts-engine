@@ -14,7 +14,7 @@ import (
 
 func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 	idx := slicedradix.New()
-	pipeline, err := textproc.NewNamedPipeline("bundle-test", 1, textproc.AlnumTokenizer{}, textproc.LowercaseFilter{})
+	pipeline, err := textproc.NewNamedPipeline("bundle-test", textproc.AlnumTokenizer{}, textproc.LowercaseFilter{})
 	if err != nil {
 		t.Fatalf("NewNamedPipeline() error = %v", err)
 	}
@@ -108,6 +108,18 @@ func TestSaveServiceStoresAnalyzerIdentity(t *testing.T) {
 	}
 	if _, err := segmentbundle.RestoreService(loaded, fts.WordKeys, fts.WithPipeline(textproc.DefaultEnglishPipeline())); err == nil {
 		t.Fatal("RestoreService() with mismatched pipeline error = nil, want analyzer mismatch")
+	}
+	changed, err := textproc.NewNamedPipeline("observability",
+		textproc.ObservabilityTokenizer{},
+		textproc.LowercaseFilter{},
+		textproc.MinLengthOrNumericFilter{MinLength: 3},
+		textproc.UniqueFilter{},
+	)
+	if err != nil {
+		t.Fatalf("NewNamedPipeline() error = %v", err)
+	}
+	if _, err := segmentbundle.RestoreService(loaded, fts.WordKeys, fts.WithPipeline(changed)); err == nil {
+		t.Fatal("RestoreService() with changed configuration error = nil")
 	}
 	if _, err := segmentbundle.RestoreService(loaded, fts.WordKeys, fts.WithPipeline(pipeline)); err != nil {
 		t.Fatalf("RestoreService() with matching pipeline error = %v", err)

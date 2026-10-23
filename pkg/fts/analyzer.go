@@ -1,46 +1,73 @@
 package fts
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
+const AnalyzerFingerprintSchemeV1 uint32 = 1
+
 // AnalyzerDescriptor identifies the tokenization compatibility contract
-// persisted into an index. Fingerprint is derived from Name and Version; it is
-// not a hash of runtime pipeline output. Version must change whenever
-// identical input can produce different tokens.
+// persisted into an index. Fingerprint is supplied by the pipeline and must
+// identify its complete declared configuration.
 type AnalyzerDescriptor struct {
-	Name        string
-	Version     uint32
-	Fingerprint string
+	Name              string
+	Fingerprint       string
+	FingerprintScheme uint32
 }
 
-func NewAnalyzerDescriptor(name string, version uint32) (AnalyzerDescriptor, error) {
-	if name == "" {
-		return AnalyzerDescriptor{}, fmt.Errorf("fts: analyzer name is empty")
+// NewAnalyzerDescriptor constructs a descriptor from a pipeline-supplied
+// configuration fingerprint and scheme. Name is diagnostic metadata only.
+func NewAnalyzerDescriptor(name, fingerprint string, fingerprintScheme uint32) (AnalyzerDescriptor, error) {
+	descriptor := AnalyzerDescriptor{Name: name, Fingerprint: fingerprint, FingerprintScheme: fingerprintScheme}
+	if err := descriptor.Validate(); err != nil {
+		return AnalyzerDescriptor{}, err
 	}
-	if version == 0 {
-		return AnalyzerDescriptor{}, fmt.Errorf("fts: analyzer %q: version must be greater than zero", name)
-	}
-
-	spec := fmt.Sprintf("%s@%d", name, version)
-	sum := sha256.Sum256([]byte(spec))
-	return AnalyzerDescriptor{Name: name, Version: version, Fingerprint: hex.EncodeToString(sum[:])}, nil
+	return descriptor, nil
 }
 
 func ValidateAnalyzerDescriptor(descriptor AnalyzerDescriptor) error {
-	canonical, err := NewAnalyzerDescriptor(descriptor.Name, descriptor.Version)
-	if err != nil {
-		return err
+	return descriptor.Validate()
+}
+
+func (descriptor AnalyzerDescriptor) Validate() error {
+	if !validAnalyzerName(descriptor.Name) {
+		return fmt.Errorf("fts: invalid analyzer name %q", descriptor.Name)
 	}
 	if descriptor.Fingerprint == "" {
-		return fmt.Errorf("fts: analyzer %q version %d: fingerprint is empty", descriptor.Name, descriptor.Version)
+		return fmt.Errorf("fts: analyzer %q: fingerprint is empty", descriptor.Name)
 	}
-	if descriptor.Fingerprint != canonical.Fingerprint {
-		return fmt.Errorf("fts: analyzer %q version %d: fingerprint %q does not match canonical fingerprint %q", descriptor.Name, descriptor.Version, descriptor.Fingerprint, canonical.Fingerprint)
+	if descriptor.FingerprintScheme == 0 {
+		return fmt.Errorf("fts: analyzer %q uses a legacy name/version fingerprint; rebuild persisted data", descriptor.Name)
+	}
+	if descriptor.FingerprintScheme != AnalyzerFingerprintSchemeV1 {
+		return fmt.Errorf("fts: analyzer %q: unsupported fingerprint scheme %d", descriptor.Name, descriptor.FingerprintScheme)
+	}
+	if len(descriptor.Fingerprint) != 64 {
+		return fmt.Errorf("fts: analyzer %q: fingerprint must contain 64 hexadecimal characters", descriptor.Name)
+	}
+	if descriptor.Fingerprint != strings.ToLower(descriptor.Fingerprint) {
+		return fmt.Errorf("fts: analyzer %q: fingerprint must use lowercase hexadecimal", descriptor.Name)
+	}
+	if _, err := hex.DecodeString(descriptor.Fingerprint); err != nil {
+		return fmt.Errorf("fts: analyzer %q: invalid fingerprint: %w", descriptor.Name, err)
 	}
 	return nil
+}
+
+func validAnalyzerName(name string) bool {
+	if name == "" || !utf8.ValidString(name) || strings.TrimSpace(name) != name {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidateAnalyzers verifies descriptor integrity and exact field compatibility.
@@ -67,14 +94,11 @@ func ValidateAnalyzers(expected, actual map[string]AnalyzerDescriptor) error {
 		if !ok {
 			return fmt.Errorf("fts: field %q: analyzer is missing", fieldName)
 		}
-		if got.Name != want.Name {
-			return fmt.Errorf("fts: field %q: analyzer name mismatch: got %q, want %q", fieldName, got.Name, want.Name)
-		}
-		if got.Version != want.Version {
-			return fmt.Errorf("fts: field %q: analyzer version mismatch: got %d, want %d", fieldName, got.Version, want.Version)
+		if got.FingerprintScheme != want.FingerprintScheme {
+			return fmt.Errorf("fts: field %q: analyzer fingerprint scheme mismatch: got %d (%q), want %d (%q)", fieldName, got.FingerprintScheme, got.Name, want.FingerprintScheme, want.Name)
 		}
 		if got.Fingerprint != want.Fingerprint {
-			return fmt.Errorf("fts: field %q: analyzer fingerprint mismatch: got %q, want %q", fieldName, got.Fingerprint, want.Fingerprint)
+			return fmt.Errorf("fts: field %q: analyzer fingerprint mismatch: got %q (%q), want %q (%q)", fieldName, got.Fingerprint, got.Name, want.Fingerprint, want.Name)
 		}
 	}
 	for fieldName := range actual {

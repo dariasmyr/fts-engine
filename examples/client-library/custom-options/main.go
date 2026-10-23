@@ -13,7 +13,6 @@ import (
 func main() {
 	pipe, err := textproc.NewNamedPipeline(
 		"custom-options",
-		1,
 		textproc.AlnumTokenizer{},
 		textproc.LowercaseFilter{},
 		textproc.MinLengthOrNumericFilter{MinLength: 2},

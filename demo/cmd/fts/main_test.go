@@ -180,7 +180,7 @@ func TestBuildPipelineSelectsObservabilityPreset(t *testing.T) {
 		t.Fatalf("buildPipeline() error = %v", err)
 	}
 	descriptor := pipeline.Descriptor()
-	if descriptor.Name != "observability" || descriptor.Version != 1 {
+	if descriptor.Name != "observability" || descriptor.FingerprintScheme != fts.AnalyzerFingerprintSchemeV1 {
 		t.Fatalf("Descriptor() = %+v", descriptor)
 	}
 	if got := pipeline.Process("io.EOF"); len(got) != 3 || got[0] != "io.eof" {
@@ -206,6 +206,9 @@ func TestBuildPipelineCustomDescriptorTracksConfiguration(t *testing.T) {
 	}
 	if basePipeline.Descriptor() == changedPipeline.Descriptor() {
 		t.Fatal("custom pipeline descriptors must differ when configuration changes")
+	}
+	if basePipeline.Descriptor().Name != changedPipeline.Descriptor().Name {
+		t.Fatal("custom pipeline name must remain stable across configuration changes")
 	}
 }
 

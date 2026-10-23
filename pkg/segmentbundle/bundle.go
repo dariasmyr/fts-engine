@@ -17,7 +17,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/segment"
 )
 
-const bundleVersion uint16 = 4
+const bundleVersion uint16 = 5
 
 // BundleSaveOptions controls metadata written into a new bundle.
 type BundleSaveOptions struct {
@@ -119,6 +119,9 @@ func LoadBundle(r io.Reader) (*LoadedBundle, error) {
 		return nil, fmt.Errorf("segmentbundle: load bundle: decode envelope: %w", err)
 	}
 	if envelope.Version != bundleVersion {
+		if envelope.Version == bundleVersion-1 {
+			return nil, fmt.Errorf("segmentbundle: load bundle: legacy version %d uses name/version-only analyzer fingerprints; rebuild persisted data", envelope.Version)
+		}
 		return nil, fmt.Errorf("segmentbundle: load bundle: unsupported version %d", envelope.Version)
 	}
 	fieldNames := make([]string, 0, len(envelope.Fields))

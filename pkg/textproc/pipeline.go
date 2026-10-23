@@ -14,31 +14,36 @@ import (
 
 type Filter interface {
 	Apply(tokens []string) []string
+	// Descriptor must cover every filter setting that can affect output.
+	Descriptor() ComponentDescriptor
 }
 
 type Pipeline struct {
-	tokenizer  Tokenizer
-	filters    []Filter
-	descriptor fts.AnalyzerDescriptor
+	name      string
+	tokenizer Tokenizer
+	filters   []Filter
 }
 
 type Descriptor = fts.AnalyzerDescriptor
 
-// NewNamedPipeline creates a pipeline with a caller-owned compatibility ID.
-// Increment version whenever token output can change for the same input.
-func NewNamedPipeline(name string, version uint32, tokenizer Tokenizer, filters ...Filter) (Pipeline, error) {
-	descriptor, err := fts.NewAnalyzerDescriptor(name, version)
-	if err != nil {
-		return Pipeline{}, err
-	}
+// NewNamedPipeline creates a validated pipeline whose fingerprint covers its
+// tokenizer and ordered filters. Name is diagnostic metadata only. Custom
+// components must remain consistent with their descriptors and update component
+// versions when an implementation change is not represented by parameters.
+func NewNamedPipeline(name string, tokenizer Tokenizer, filters ...Filter) (Pipeline, error) {
 	if tokenizer == nil {
 		tokenizer = AlnumTokenizer{}
 	}
+	filters = append([]Filter(nil), filters...)
+	descriptor, err := pipelineDescriptor(name, tokenizer, filters)
+	if err != nil {
+		return Pipeline{}, err
+	}
 
 	return Pipeline{
-		tokenizer:  tokenizer,
-		filters:    filters,
-		descriptor: descriptor,
+		name:      descriptor.Name,
+		tokenizer: tokenizer,
+		filters:   filters,
 	}, nil
 }
 
@@ -53,10 +58,16 @@ func (p Pipeline) Process(text string) []string {
 	return tokens
 }
 
-func (p Pipeline) Descriptor() Descriptor { return p.descriptor }
+func (p Pipeline) Descriptor() Descriptor {
+	descriptor, err := pipelineDescriptor(p.name, p.tokenizer, p.filters)
+	if err != nil {
+		return Descriptor{Name: p.name}
+	}
+	return descriptor
+}
 
 func DefaultEnglishPipeline() Pipeline {
-	return mustNewNamedPipeline("english", 1,
+	return mustNewNamedPipeline("english",
 		AlnumTokenizer{},
 		LowercaseFilter{},
 		MinLengthOrNumericFilter{MinLength: 3},
@@ -66,7 +77,7 @@ func DefaultEnglishPipeline() Pipeline {
 }
 
 func DefaultRussianPipeline() Pipeline {
-	return mustNewNamedPipeline("russian", 1,
+	return mustNewNamedPipeline("russian",
 		AlnumTokenizer{},
 		LowercaseFilter{},
 		MinLengthOrNumericFilter{MinLength: 3},
@@ -76,7 +87,7 @@ func DefaultRussianPipeline() Pipeline {
 }
 
 func DefaultMultilingualPipeline() Pipeline {
-	return mustNewNamedPipeline("multilingual", 1,
+	return mustNewNamedPipeline("multilingual",
 		AlnumTokenizer{},
 		LowercaseFilter{},
 		MinLengthOrNumericFilter{MinLength: 3},
@@ -88,7 +99,7 @@ func DefaultMultilingualPipeline() Pipeline {
 // ObservabilityPipeline preserves technical identifiers and short diagnostic
 // terms. It deliberately does not remove stopwords or stem tokens.
 func ObservabilityPipeline() Pipeline {
-	return mustNewNamedPipeline("observability", 1,
+	return mustNewNamedPipeline("observability",
 		ObservabilityTokenizer{},
 		LowercaseFilter{},
 		MinLengthOrNumericFilter{MinLength: 2},
@@ -96,8 +107,8 @@ func ObservabilityPipeline() Pipeline {
 	)
 }
 
-func mustNewNamedPipeline(name string, version uint32, tokenizer Tokenizer, filters ...Filter) Pipeline {
-	pipeline, err := NewNamedPipeline(name, version, tokenizer, filters...)
+func mustNewNamedPipeline(name string, tokenizer Tokenizer, filters ...Filter) Pipeline {
+	pipeline, err := NewNamedPipeline(name, tokenizer, filters...)
 	if err != nil {
 		panic(err)
 	}
@@ -105,6 +116,10 @@ func mustNewNamedPipeline(name string, version uint32, tokenizer Tokenizer, filt
 }
 
 type LowercaseFilter struct{}
+
+func (LowercaseFilter) Descriptor() ComponentDescriptor {
+	return component("lowercase", unicodeParams())
+}
 
 func (LowercaseFilter) Apply(tokens []string) []string {
 	if len(tokens) == 0 {
@@ -123,6 +138,10 @@ func (LowercaseFilter) Apply(tokens []string) []string {
 
 type MinLengthOrNumericFilter struct {
 	MinLength int
+}
+
+func (f MinLengthOrNumericFilter) Descriptor() ComponentDescriptor {
+	return component("min_length_or_numeric", minLengthParams(f.MinLength))
 }
 
 func (f MinLengthOrNumericFilter) Apply(tokens []string) []string {
@@ -150,6 +169,10 @@ func (f MinLengthOrNumericFilter) Apply(tokens []string) []string {
 // UniqueFilter removes duplicate tokens while preserving first-seen order.
 type UniqueFilter struct{}
 
+func (UniqueFilter) Descriptor() ComponentDescriptor {
+	return component("unique", nil)
+}
+
 func (UniqueFilter) Apply(tokens []string) []string {
 	if len(tokens) < 2 {
 		return tokens
@@ -170,6 +193,12 @@ func (UniqueFilter) Apply(tokens []string) []string {
 }
 
 type EnglishStopwordFilter struct{}
+
+func (EnglishStopwordFilter) Descriptor() ComponentDescriptor {
+	return component("english_stopwords", map[string]string{
+		"dictionary": snowballVersion + "/english-stopwords",
+	})
+}
 
 func (EnglishStopwordFilter) Apply(tokens []string) []string {
 	if len(tokens) == 0 {
@@ -195,6 +224,13 @@ func (EnglishStopwordFilter) Apply(tokens []string) []string {
 
 type EnglishStemFilter struct{}
 
+func (EnglishStemFilter) Descriptor() ComponentDescriptor {
+	return component("english_stem", map[string]string{
+		"implementation":  snowballVersion + "/english",
+		"stem_stop_words": "false",
+	})
+}
+
 func (EnglishStemFilter) Apply(tokens []string) []string {
 	if len(tokens) == 0 {
 		return tokens
@@ -215,6 +251,12 @@ func (EnglishStemFilter) Apply(tokens []string) []string {
 }
 
 type RussianStopwordFilter struct{}
+
+func (RussianStopwordFilter) Descriptor() ComponentDescriptor {
+	return component("russian_stopwords", map[string]string{
+		"dictionary": snowballVersion + "/russian-stopwords",
+	})
+}
 
 func (RussianStopwordFilter) Apply(tokens []string) []string {
 	if len(tokens) == 0 {
@@ -240,6 +282,13 @@ func (RussianStopwordFilter) Apply(tokens []string) []string {
 
 type RussianStemFilter struct{}
 
+func (RussianStemFilter) Descriptor() ComponentDescriptor {
+	return component("russian_stem", map[string]string{
+		"implementation":  snowballVersion + "/russian",
+		"stem_stop_words": "false",
+	})
+}
+
 func (RussianStemFilter) Apply(tokens []string) []string {
 	if len(tokens) == 0 {
 		return tokens
@@ -260,6 +309,14 @@ func (RussianStemFilter) Apply(tokens []string) []string {
 }
 
 type MultilingualStopwordFilter struct{}
+
+func (MultilingualStopwordFilter) Descriptor() ComponentDescriptor {
+	return component("multilingual_stopwords", map[string]string{
+		"english_dictionary": snowballVersion + "/english-stopwords",
+		"russian_dictionary": snowballVersion + "/russian-stopwords",
+		"unicode_version":    unicode.Version,
+	})
+}
 
 func (MultilingualStopwordFilter) Apply(tokens []string) []string {
 	if len(tokens) == 0 {
@@ -293,6 +350,15 @@ func (MultilingualStopwordFilter) Apply(tokens []string) []string {
 }
 
 type MultilingualStemFilter struct{}
+
+func (MultilingualStemFilter) Descriptor() ComponentDescriptor {
+	return component("multilingual_stem", map[string]string{
+		"english_implementation": snowballVersion + "/english",
+		"russian_implementation": snowballVersion + "/russian",
+		"stem_stop_words":        "false",
+		"unicode_version":        unicode.Version,
+	})
+}
 
 func (MultilingualStemFilter) Apply(tokens []string) []string {
 	if len(tokens) == 0 {

@@ -74,7 +74,7 @@ func TestSingleFieldServiceRejectsOtherFields(t *testing.T) {
 type uppercasePipeline struct{}
 
 func (uppercasePipeline) Descriptor() AnalyzerDescriptor {
-	descriptor, err := NewAnalyzerDescriptor("uppercase-test", 1)
+	descriptor, err := NewAnalyzerDescriptor("uppercase-test", testFingerprint("uppercase-test-v1"), AnalyzerFingerprintSchemeV1)
 	if err != nil {
 		panic(err)
 	}
@@ -116,8 +116,8 @@ func TestPerFieldPipelineOverridesDefault(t *testing.T) {
 }
 
 func TestIndexRejectsIncompatibleAnalyzerForExistingField(t *testing.T) {
-	first, _ := NewAnalyzerDescriptor("first", 1)
-	second, _ := NewAnalyzerDescriptor("second", 1)
+	first, _ := NewAnalyzerDescriptor("same", testFingerprint("first"), AnalyzerFingerprintSchemeV1)
+	second, _ := NewAnalyzerDescriptor("same", testFingerprint("second"), AnalyzerFingerprintSchemeV1)
 	svc := NewMultiField(func(string) (Index, error) { return newMemoryIndex(), nil }, WordKeys)
 
 	if err := svc.Index(context.Background(), Document{ID: "doc-1", Fields: map[string]Field{

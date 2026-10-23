@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -210,13 +211,14 @@ func TestSaveIndexSnapshotUnknownCodec(t *testing.T) {
 }
 
 func TestLoadIndexSnapshotRejectsInvalidAnalyzerMetadata(t *testing.T) {
-	valid, _ := NewAnalyzerDescriptor("default", 1)
+	valid, _ := NewAnalyzerDescriptor("default", testFingerprint("default"), AnalyzerFingerprintSchemeV1)
 	tests := []struct {
 		name      string
 		analyzers map[string]AnalyzerDescriptor
 	}{
 		{name: "missing", analyzers: nil},
-		{name: "malformed", analyzers: map[string]AnalyzerDescriptor{DefaultField: {Name: valid.Name, Version: valid.Version, Fingerprint: "invalid"}}},
+		{name: "malformed", analyzers: map[string]AnalyzerDescriptor{DefaultField: {Name: valid.Name, Fingerprint: "invalid", FingerprintScheme: valid.FingerprintScheme}}},
+		{name: "legacy", analyzers: map[string]AnalyzerDescriptor{DefaultField: {Name: valid.Name, Fingerprint: legacyTestFingerprint(valid.Name, 1)}}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -233,6 +235,16 @@ func TestLoadIndexSnapshotRejectsInvalidAnalyzerMetadata(t *testing.T) {
 	}
 }
 
+func TestLoadIndexSnapshotRejectsLegacyVersion(t *testing.T) {
+	var payload bytes.Buffer
+	if err := gob.NewEncoder(&payload).Encode(indexEnvelope{Version: indexSnapshotVersion - 1}); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if _, err := testSnapshotRegistry.LoadIndexSnapshot(&payload); err == nil || !strings.Contains(err.Error(), "rebuild") {
+		t.Fatalf("LoadIndexSnapshot() error = %v, want rebuild guidance", err)
+	}
+}
+
 func TestLoadMultiIndexSnapshotRejectsNoFields(t *testing.T) {
 	var payload bytes.Buffer
 	if err := gob.NewEncoder(&payload).Encode(multiIndexEnvelope{Version: multiIndexSnapshotVersion}); err != nil {
@@ -240,6 +252,31 @@ func TestLoadMultiIndexSnapshotRejectsNoFields(t *testing.T) {
 	}
 	if _, err := testSnapshotRegistry.LoadMultiIndexSnapshot(&payload); err == nil {
 		t.Fatal("LoadMultiIndexSnapshot() error = nil")
+	}
+}
+
+func TestLoadMultiIndexSnapshotRejectsLegacyAnalyzer(t *testing.T) {
+	legacy := AnalyzerDescriptor{Name: "default", Fingerprint: legacyTestFingerprint("default", 1)}
+	var payload bytes.Buffer
+	if err := gob.NewEncoder(&payload).Encode(multiIndexEnvelope{
+		Version:   multiIndexSnapshotVersion,
+		Fields:    []multiIndexField{{FieldName: DefaultField, IndexName: "unused"}},
+		Analyzers: map[string]AnalyzerDescriptor{DefaultField: legacy},
+	}); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if _, err := testSnapshotRegistry.LoadMultiIndexSnapshot(&payload); err == nil || !strings.Contains(err.Error(), "rebuild") {
+		t.Fatalf("LoadMultiIndexSnapshot() error = %v", err)
+	}
+}
+
+func TestLoadMultiIndexSnapshotRejectsLegacyVersion(t *testing.T) {
+	var payload bytes.Buffer
+	if err := gob.NewEncoder(&payload).Encode(multiIndexEnvelope{Version: multiIndexSnapshotVersion - 1}); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if _, err := testSnapshotRegistry.LoadMultiIndexSnapshot(&payload); err == nil || !strings.Contains(err.Error(), "rebuild") {
+		t.Fatalf("LoadMultiIndexSnapshot() error = %v, want rebuild guidance", err)
 	}
 }
 

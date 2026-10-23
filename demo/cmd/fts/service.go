@@ -201,14 +201,5 @@ func buildPipeline(cfg *config.Config) (textproc.Pipeline, error) {
 		filters = append(filters, textproc.RussianStemFilter{})
 	}
 
-	name := fmt.Sprintf(
-		"demo-custom/lowercase=%t/min=%d/stopwords-en=%t/stopwords-ru=%t/stem-en=%t/stem-ru=%t",
-		cfg.FTS.Pipeline.Lowercase,
-		cfg.FTS.Pipeline.MinLength,
-		cfg.FTS.Pipeline.StopwordsEN,
-		cfg.FTS.Pipeline.StopwordsRU,
-		cfg.FTS.Pipeline.StemEN,
-		cfg.FTS.Pipeline.StemRU,
-	)
-	return textproc.NewNamedPipeline(name, 1, textproc.AlnumTokenizer{}, filters...)
+	return textproc.NewNamedPipeline("demo-custom", textproc.AlnumTokenizer{}, filters...)
 }

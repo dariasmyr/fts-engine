@@ -60,5 +60,5 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("analyzer=%s@%d results=%d\n", descriptor.Name, descriptor.Version, res.TotalResultsCount)
+	fmt.Printf("analyzer=%s scheme=%d fingerprint=%s results=%d\n", descriptor.Name, descriptor.FingerprintScheme, descriptor.Fingerprint, res.TotalResultsCount)
 }

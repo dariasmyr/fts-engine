@@ -44,6 +44,7 @@ Keep the default `custom` preset for the bundled Wikipedia corpus. When changing
 the index or pipeline, use a fresh persistence path or rebuild persisted data.
 Segments and mutable snapshots validate one analyzer identity per indexed field.
 
-Demo segments created before analyzer-aware custom configuration used the generic
-identity `custom@0`. Rebuild old persistence once after this update; the demo now
-derives a distinct identity from every token-output setting.
+The demo uses `demo-custom` as a diagnostic name and derives compatibility from
+the tokenizer and selected filter configuration. Rebuild persistence created with
+legacy name/version-only analyzer fingerprints; those fingerprints cannot prove
+historical pipeline compatibility and are rejected.

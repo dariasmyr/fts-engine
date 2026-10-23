@@ -199,4 +199,18 @@ func TestSegmentAnalyzerFingerprintGate(t *testing.T) {
 	}, fts.WithPipeline(textproc.DefaultEnglishPipeline())); err == nil {
 		t.Fatal("LoadSegment(wrong analyzer) error = nil, want mismatch")
 	}
+	changed, err := textproc.NewNamedPipeline("observability",
+		textproc.ObservabilityTokenizer{},
+		textproc.LowercaseFilter{},
+		textproc.MinLengthOrNumericFilter{MinLength: 3},
+		textproc.UniqueFilter{},
+	)
+	if err != nil {
+		t.Fatalf("NewNamedPipeline() error = %v", err)
+	}
+	if _, err := ftspersist.LoadSegment(paths, fts.WordKeys, ftspersist.SegmentLoadOptions{
+		Access: ftspersist.AccessFile, Registry: registry,
+	}, fts.WithPipeline(changed)); err == nil {
+		t.Fatal("LoadSegment(changed configuration) error = nil, want mismatch")
+	}
 }

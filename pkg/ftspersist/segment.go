@@ -67,7 +67,7 @@ type filterMeta struct {
 }
 
 const (
-	segmentManifestVersion uint16 = 3
+	segmentManifestVersion uint16 = 4
 	segmentManifestFile           = "manifest.gob"
 	segmentFilterFile             = "filter.fidx"
 )
@@ -177,6 +177,9 @@ func loadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*loadedSegmen
 		return nil, fmt.Errorf("ftspersist: decode segment manifest: %w", err)
 	}
 	if manifest.Version != segmentManifestVersion {
+		if manifest.Version == segmentManifestVersion-1 {
+			return nil, fmt.Errorf("ftspersist: load segment: legacy manifest version %d uses name/version-only analyzer fingerprints; rebuild persisted data", manifest.Version)
+		}
 		return nil, fmt.Errorf("ftspersist: load segment: unsupported manifest version %d", manifest.Version)
 	}
 	if len(manifest.Fields) == 0 {
