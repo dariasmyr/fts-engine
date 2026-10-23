@@ -209,6 +209,40 @@ func TestSaveIndexSnapshotUnknownCodec(t *testing.T) {
 	}
 }
 
+func TestLoadIndexSnapshotRejectsInvalidAnalyzerMetadata(t *testing.T) {
+	valid, _ := NewAnalyzerDescriptor("default", 1)
+	tests := []struct {
+		name      string
+		analyzers map[string]AnalyzerDescriptor
+	}{
+		{name: "missing", analyzers: nil},
+		{name: "malformed", analyzers: map[string]AnalyzerDescriptor{DefaultField: {Name: valid.Name, Version: valid.Version, Fingerprint: "invalid"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var payload bytes.Buffer
+			if err := gob.NewEncoder(&payload).Encode(indexEnvelope{
+				Version: indexSnapshotVersion, IndexName: "unused", Analyzers: test.analyzers,
+			}); err != nil {
+				t.Fatalf("Encode() error = %v", err)
+			}
+			if _, err := testSnapshotRegistry.LoadIndexSnapshot(&payload); err == nil {
+				t.Fatal("LoadIndexSnapshot() error = nil")
+			}
+		})
+	}
+}
+
+func TestLoadMultiIndexSnapshotRejectsNoFields(t *testing.T) {
+	var payload bytes.Buffer
+	if err := gob.NewEncoder(&payload).Encode(multiIndexEnvelope{Version: multiIndexSnapshotVersion}); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if _, err := testSnapshotRegistry.LoadMultiIndexSnapshot(&payload); err == nil {
+		t.Fatal("LoadMultiIndexSnapshot() error = nil")
+	}
+}
+
 func TestSaveIndexSnapshotWritesPayload(t *testing.T) {
 	indexCodecName := fmt.Sprintf("test-index-%s", t.Name())
 	if err := RegisterIndexSnapshotCodec(indexCodecName,

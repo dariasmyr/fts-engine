@@ -44,10 +44,7 @@ func main() {
 	loaded, err := ftspersist.LoadSegment(
 		paths,
 		fts.WordKeys,
-		ftspersist.SegmentLoadOptions{Registry: registry,
-			Access:                      ftspersist.AccessFile,
-			ExpectedAnalyzerFingerprint: descriptor.Fingerprint,
-		},
+		ftspersist.SegmentLoadOptions{Registry: registry, Access: ftspersist.AccessFile},
 		fts.WithPipeline(pipeline),
 	)
 	if err != nil {

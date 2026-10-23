@@ -14,7 +14,10 @@ import (
 
 func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 	idx := slicedradix.New()
-	pipeline := textproc.NewNamedPipeline("bundle-test", 1, textproc.AlnumTokenizer{}, textproc.LowercaseFilter{})
+	pipeline, err := textproc.NewNamedPipeline("bundle-test", 1, textproc.AlnumTokenizer{}, textproc.LowercaseFilter{})
+	if err != nil {
+		t.Fatalf("NewNamedPipeline() error = %v", err)
+	}
 	svc := fts.New(idx, fts.WordKeys, fts.WithPipeline(pipeline), fts.WithScorer(fts.BM25()))
 	ctx := context.Background()
 
@@ -27,9 +30,9 @@ func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 	if !svc.Delete("doc-a") {
 		t.Fatal("Delete(doc-a) = false, want true")
 	}
-	descriptors, ok := svc.AnalyzerDescriptors()
-	if !ok {
-		t.Fatal("AnalyzerDescriptors() = false, want true")
+	descriptors, err := svc.AnalyzerDescriptors()
+	if err != nil {
+		t.Fatalf("AnalyzerDescriptors() error = %v", err)
 	}
 
 	var bundleBytes bytes.Buffer
@@ -132,9 +135,9 @@ func TestMultiFieldBundleRestoreServiceRoundTrip(t *testing.T) {
 	if !svc.Delete("doc-a") {
 		t.Fatal("Delete(doc-a) = false, want true")
 	}
-	descriptors, ok := svc.AnalyzerDescriptors()
-	if !ok {
-		t.Fatal("AnalyzerDescriptors() = false, want true")
+	descriptors, err := svc.AnalyzerDescriptors()
+	if err != nil {
+		t.Fatalf("AnalyzerDescriptors() error = %v", err)
 	}
 
 	fields, _ := svc.SnapshotFields()
@@ -197,7 +200,10 @@ func TestMultiFieldBundleStoresPerFieldAnalyzerIdentity(t *testing.T) {
 	factory := func(name string) (fts.Index, error) { return slicedradix.New(), nil }
 	english := textproc.DefaultEnglishPipeline()
 	russian := textproc.DefaultRussianPipeline()
-	svc := fts.NewMultiField(factory, fts.WordKeys, fts.WithPipeline(english))
+	svc := fts.NewMultiField(factory, fts.WordKeys,
+		fts.WithPipeline(english),
+		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
+	)
 	ctx := context.Background()
 	if err := svc.Index(ctx, fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
 		"title": {Value: "Hello", Pipeline: english},
@@ -206,8 +212,8 @@ func TestMultiFieldBundleStoresPerFieldAnalyzerIdentity(t *testing.T) {
 		t.Fatalf("Index() error = %v", err)
 	}
 
-	descriptors, ok := svc.AnalyzerDescriptors()
-	if !ok || descriptors["title"].Fingerprint == descriptors["body"].Fingerprint {
+	descriptors, err := svc.AnalyzerDescriptors()
+	if err != nil || descriptors["title"].Fingerprint == descriptors["body"].Fingerprint {
 		t.Fatalf("AnalyzerDescriptors() = %+v, want distinct field descriptors", descriptors)
 	}
 	var bundleBytes bytes.Buffer

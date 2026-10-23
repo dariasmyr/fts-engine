@@ -17,7 +17,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/segment"
 )
 
-const bundleVersion uint16 = 3
+const bundleVersion uint16 = 4
 
 // BundleSaveOptions controls metadata written into a new bundle.
 type BundleSaveOptions struct {
@@ -65,22 +65,15 @@ func SaveMultiFieldBundle(w io.Writer, fields map[string]segment.Source, stats *
 	if len(fields) == 0 {
 		return fmt.Errorf("segmentbundle: save bundle: no fields")
 	}
-	if len(opts.Analyzers) != len(fields) {
-		return fmt.Errorf("segmentbundle: save bundle: analyzer descriptor is required for every field")
-	}
-	if opts.KeyGenerator == nil || opts.KeyGenerator.Fingerprint == "" {
-		return fmt.Errorf("segmentbundle: save bundle: key generator descriptor is required")
-	}
-	for fieldName := range fields {
-		descriptor, ok := opts.Analyzers[fieldName]
-		if !ok || descriptor.Fingerprint == "" {
-			return fmt.Errorf("segmentbundle: save bundle: analyzer descriptor is required for field %q", fieldName)
-		}
-	}
-
 	fieldNames := make([]string, 0, len(fields))
 	for fieldName := range fields {
 		fieldNames = append(fieldNames, fieldName)
+	}
+	if err := fts.ValidateAnalyzerFields(fieldNames, opts.Analyzers); err != nil {
+		return fmt.Errorf("segmentbundle: save bundle: %w", err)
+	}
+	if opts.KeyGenerator == nil || opts.KeyGenerator.Fingerprint == "" {
+		return fmt.Errorf("segmentbundle: save bundle: key generator descriptor is required")
 	}
 	sort.Strings(fieldNames)
 
@@ -128,6 +121,17 @@ func LoadBundle(r io.Reader) (*LoadedBundle, error) {
 	if envelope.Version != bundleVersion {
 		return nil, fmt.Errorf("segmentbundle: load bundle: unsupported version %d", envelope.Version)
 	}
+	fieldNames := make([]string, 0, len(envelope.Fields))
+	if len(envelope.Fields) == 0 && len(envelope.SegmentPayload) > 0 {
+		fieldNames = append(fieldNames, fts.DefaultField)
+	} else {
+		for _, field := range envelope.Fields {
+			fieldNames = append(fieldNames, field.FieldName)
+		}
+	}
+	if err := fts.ValidateAnalyzerFields(fieldNames, envelope.Analyzers); err != nil {
+		return nil, fmt.Errorf("segmentbundle: load bundle: %w", err)
+	}
 
 	fields, err := loadBundleReaders(envelope)
 	if err != nil {
@@ -153,9 +157,9 @@ func SaveService(w io.Writer, service *fts.Service) error {
 	if service == nil {
 		return fmt.Errorf("segmentbundle: save service: nil service")
 	}
-	descriptors, ok := service.AnalyzerDescriptors()
-	if !ok {
-		return fmt.Errorf("segmentbundle: save service: analyzer descriptor is unavailable for every field")
+	descriptors, err := service.AnalyzerDescriptors()
+	if err != nil {
+		return fmt.Errorf("segmentbundle: save service: %w", err)
 	}
 	keyGenerator, ok := service.KeyGeneratorDescriptor()
 	if !ok {
@@ -227,8 +231,12 @@ func RestoreService(bundle *LoadedBundle, keyGen fts.KeyGenerator, opts ...fts.O
 		service = fts.NewMultiFieldFromIndexes(indexes, keyGen, builtOpts...)
 	}
 
-	if len(bundle.Analyzers) != len(bundle.Fields) {
-		return nil, fmt.Errorf("segmentbundle: restore service: analyzer descriptor is required for every field")
+	fieldNames := make([]string, 0, len(bundle.Fields))
+	for fieldName := range bundle.Fields {
+		fieldNames = append(fieldNames, fieldName)
+	}
+	if err := fts.ValidateAnalyzerFields(fieldNames, bundle.Analyzers); err != nil {
+		return nil, fmt.Errorf("segmentbundle: restore service: %w", err)
 	}
 	if bundle.KeyGenerator == nil {
 		return nil, fmt.Errorf("segmentbundle: restore service: key generator descriptor is unavailable")
@@ -287,6 +295,9 @@ func loadBundleReaders(envelope bundleEnvelope) (map[string]*segment.Reader, err
 	for _, field := range envelope.Fields {
 		if field.FieldName == "" {
 			return nil, fmt.Errorf("segmentbundle: load bundle: empty field name")
+		}
+		if _, exists := fields[field.FieldName]; exists {
+			return nil, fmt.Errorf("segmentbundle: load bundle: duplicate field %q", field.FieldName)
 		}
 		reader, err := segment.Open(field.Payload)
 		if err != nil {

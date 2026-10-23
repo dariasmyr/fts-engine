@@ -94,7 +94,11 @@ func main() {
 		return
 	}
 
-	pipeline := buildPipeline(cfg)
+	pipeline, err := buildPipeline(cfg)
+	if err != nil {
+		log.Error("Failed to build analyzer pipeline", "error", sl.Err(err))
+		return
+	}
 	svc, loadedFromSnapshot, err := buildService(log, cfg, keyGen, registry, pipeline)
 	if err != nil {
 		log.Error("Failed to initialize search service", "error", sl.Err(err))

@@ -108,6 +108,15 @@ func TestPipelineDescriptorStable(t *testing.T) {
 	}
 }
 
+func TestNewNamedPipelineRejectsInvalidDescriptor(t *testing.T) {
+	if _, err := NewNamedPipeline("", 1, AlnumTokenizer{}); err == nil {
+		t.Fatal("NewNamedPipeline(empty name) error = nil")
+	}
+	if _, err := NewNamedPipeline("custom", 0, AlnumTokenizer{}); err == nil {
+		t.Fatal("NewNamedPipeline(zero version) error = nil")
+	}
+}
+
 func TestRussianStopwordFilter(t *testing.T) {
 	f := RussianStopwordFilter{}
 

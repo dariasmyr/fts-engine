@@ -28,9 +28,8 @@ type SegmentPaths struct {
 }
 
 type SegmentLoadOptions struct {
-	Access                      AccessMode
-	ExpectedAnalyzerFingerprint string
-	Registry                    *fts.SnapshotRegistry
+	Access   AccessMode
+	Registry *fts.SnapshotRegistry
 }
 
 type loadedSegment struct {
@@ -41,7 +40,7 @@ type loadedSegment struct {
 	CollectionStats *fts.CollectionStatsSnapshot
 	Registry        []fts.DocID
 	Tombstones      []uint64
-	DefaultAnalyzer *fts.AnalyzerDescriptor
+	Analyzers       map[string]fts.AnalyzerDescriptor
 	KeyGenerator    *fts.KeyGeneratorDescriptor
 	Close           func() error
 }
@@ -53,7 +52,7 @@ type segmentManifest struct {
 	Registry        []fts.DocID
 	Tombstones      []uint64
 	Filter          *filterMeta
-	DefaultAnalyzer *fts.AnalyzerDescriptor
+	Analyzers       map[string]fts.AnalyzerDescriptor
 	KeyGenerator    *fts.KeyGeneratorDescriptor
 }
 
@@ -68,10 +67,9 @@ type filterMeta struct {
 }
 
 const (
-	legacySegmentManifestVersion uint16 = 1
-	segmentManifestVersion       uint16 = 2
-	segmentManifestFile                 = "manifest.gob"
-	segmentFilterFile                   = "filter.fidx"
+	segmentManifestVersion uint16 = 3
+	segmentManifestFile           = "manifest.gob"
+	segmentFilterFile             = "filter.fidx"
 )
 
 func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts SaveOptions) error {
@@ -87,6 +85,10 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 	keyGenerator, ok := svc.KeyGeneratorDescriptor()
 	if !ok {
 		return fmt.Errorf("ftspersist: save segment: key generator descriptor is unavailable")
+	}
+	analyzers, err := svc.AnalyzerDescriptors()
+	if err != nil {
+		return fmt.Errorf("ftspersist: save segment: %w", err)
 	}
 
 	fields, searchFilter := svc.SnapshotFields()
@@ -106,10 +108,8 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 		CollectionStats: svc.SnapshotCollectionStats(),
 		Registry:        append([]fts.DocID(nil), svc.SnapshotRegistry()...),
 		Tombstones:      append([]uint64(nil), svc.SnapshotTombstones()...),
+		Analyzers:       analyzers,
 		KeyGenerator:    &keyGenerator,
-	}
-	if descriptor, ok := svc.DefaultAnalyzerDescriptor(); ok {
-		manifest.DefaultAnalyzer = &descriptor
 	}
 
 	for _, fieldName := range fieldNames {
@@ -176,16 +176,8 @@ func loadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*loadedSegmen
 	if err := gob.NewDecoder(bytes.NewReader(manifestBytes)).Decode(&manifest); err != nil {
 		return nil, fmt.Errorf("ftspersist: decode segment manifest: %w", err)
 	}
-	if manifest.Version != legacySegmentManifestVersion && manifest.Version != segmentManifestVersion {
+	if manifest.Version != segmentManifestVersion {
 		return nil, fmt.Errorf("ftspersist: load segment: unsupported manifest version %d", manifest.Version)
-	}
-	if load.ExpectedAnalyzerFingerprint != "" {
-		if manifest.DefaultAnalyzer == nil || manifest.DefaultAnalyzer.Fingerprint == "" {
-			return nil, fmt.Errorf("ftspersist: load segment: analyzer fingerprint is missing")
-		}
-		if manifest.DefaultAnalyzer.Fingerprint != load.ExpectedAnalyzerFingerprint {
-			return nil, fmt.Errorf("ftspersist: load segment: analyzer fingerprint mismatch: got %q, want %q", manifest.DefaultAnalyzer.Fingerprint, load.ExpectedAnalyzerFingerprint)
-		}
 	}
 	if len(manifest.Fields) == 0 {
 		return nil, fmt.Errorf("ftspersist: load segment: manifest has no fields")
@@ -208,6 +200,13 @@ func loadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*loadedSegmen
 		}
 		seenFiles[field.FileName] = struct{}{}
 	}
+	fieldNames := make([]string, 0, len(manifest.Fields))
+	for _, field := range manifest.Fields {
+		fieldNames = append(fieldNames, field.FieldName)
+	}
+	if err := fts.ValidateAnalyzerFields(fieldNames, manifest.Analyzers); err != nil {
+		return nil, fmt.Errorf("ftspersist: load segment: %w", err)
+	}
 	if manifest.Filter != nil {
 		if manifest.Filter.FilterName == "" {
 			return nil, fmt.Errorf("ftspersist: load segment: empty filter name")
@@ -222,7 +221,7 @@ func loadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*loadedSegmen
 		CollectionStats: manifest.CollectionStats,
 		Registry:        append([]fts.DocID(nil), manifest.Registry...),
 		Tombstones:      append([]uint64(nil), manifest.Tombstones...),
-		DefaultAnalyzer: cloneAnalyzerDescriptor(manifest.DefaultAnalyzer),
+		Analyzers:       cloneAnalyzerDescriptors(manifest.Analyzers),
 		KeyGenerator:    cloneKeyGeneratorDescriptor(manifest.KeyGenerator),
 		Close:           func() error { return nil },
 	}
@@ -291,14 +290,6 @@ func loadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*loadedSegmen
 	return loaded, nil
 }
 
-func cloneAnalyzerDescriptor(descriptor *fts.AnalyzerDescriptor) *fts.AnalyzerDescriptor {
-	if descriptor == nil {
-		return nil
-	}
-	cloned := *descriptor
-	return &cloned
-}
-
 func cloneKeyGeneratorDescriptor(descriptor *fts.KeyGeneratorDescriptor) *fts.KeyGeneratorDescriptor {
 	if descriptor == nil {
 		return nil
@@ -326,6 +317,7 @@ func restoreSegmentService(loaded *loadedSegment, keyGen fts.KeyGenerator, opts 
 	}
 
 	builtOpts := append([]fts.Option(nil), opts...)
+	builtOpts = append(builtOpts, fts.WithAnalyzerDescriptors(loaded.Analyzers))
 	if loaded.Filter != nil {
 		builtOpts = append(builtOpts, fts.WithFilter(loaded.Filter))
 	}
@@ -359,11 +351,8 @@ func restoreSegmentService(loaded *loadedSegment, keyGen fts.KeyGenerator, opts 
 		}
 		service = fts.NewMultiFieldFromIndexes(indexes, keyGen, builtOpts...)
 	}
-	if loaded.DefaultAnalyzer != nil {
-		restored, ok := service.DefaultAnalyzerDescriptor()
-		if !ok || restored.Fingerprint != loaded.DefaultAnalyzer.Fingerprint {
-			return nil, fmt.Errorf("ftspersist: restore segment service: analyzer fingerprint mismatch: got %q, want %q", restored.Fingerprint, loaded.DefaultAnalyzer.Fingerprint)
-		}
+	if err := service.ValidateAnalyzerDescriptors(loaded.Analyzers); err != nil {
+		return nil, fmt.Errorf("ftspersist: restore segment service: %w", err)
 	}
 	if loaded.KeyGenerator == nil {
 		return nil, fmt.Errorf("ftspersist: restore segment service: key generator descriptor is unavailable")
@@ -373,6 +362,17 @@ func restoreSegmentService(loaded *loadedSegment, keyGen fts.KeyGenerator, opts 
 		return nil, fmt.Errorf("ftspersist: restore segment service: key generator fingerprint mismatch")
 	}
 	return service, nil
+}
+
+func cloneAnalyzerDescriptors(descriptors map[string]fts.AnalyzerDescriptor) map[string]fts.AnalyzerDescriptor {
+	if descriptors == nil {
+		return nil
+	}
+	cloned := make(map[string]fts.AnalyzerDescriptor, len(descriptors))
+	for fieldName, descriptor := range descriptors {
+		cloned[fieldName] = descriptor
+	}
+	return cloned
 }
 
 func LoadSegment(paths SegmentPaths, keyGen fts.KeyGenerator, load SegmentLoadOptions, opts ...fts.Option) (*LoadedService, error) {

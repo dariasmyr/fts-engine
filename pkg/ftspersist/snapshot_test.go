@@ -9,6 +9,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
 func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
@@ -185,5 +186,50 @@ func TestSaveLoadSnapshotRoundTripMultiField(t *testing.T) {
 	}
 	if got, want := res.TotalResultsCount, 1; got != want {
 		t.Fatalf("title TotalResultsCount = %d, want %d", got, want)
+	}
+}
+
+func TestSnapshotValidatesPerFieldAnalyzers(t *testing.T) {
+	registry := fts.NewSnapshotRegistry()
+	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
+		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
+	}
+	english := textproc.DefaultEnglishPipeline()
+	russian := textproc.DefaultRussianPipeline()
+	factory := func(string) (fts.Index, error) { return slicedradix.New(), nil }
+	svc := fts.NewMultiField(factory, fts.WordKeys,
+		fts.WithPipeline(english),
+		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
+	)
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
+		"title": {Value: "running"},
+		"body":  {Value: "машины"},
+	}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	paths := ftspersist.SnapshotPaths{IndexPath: filepath.Join(t.TempDir(), "multi.index.fidx")}
+	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "", ftspersist.SaveOptions{Registry: registry}); err != nil {
+		t.Fatalf("SaveSnapshot() error = %v", err)
+	}
+	load := ftspersist.SnapshotLoadOptions{Registry: registry}
+	if _, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, load,
+		fts.WithPipeline(english),
+		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
+	); err != nil {
+		t.Fatalf("LoadSnapshot(matching analyzers) error = %v", err)
+	}
+	if _, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, load, fts.WithPipeline(english)); err == nil {
+		t.Fatal("LoadSnapshot(mismatched analyzer name) error = nil")
+	}
+	englishV2, err := textproc.NewNamedPipeline("english", 2, textproc.AlnumTokenizer{})
+	if err != nil {
+		t.Fatalf("NewNamedPipeline() error = %v", err)
+	}
+	if _, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, load,
+		fts.WithPipeline(englishV2),
+		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
+	); err == nil {
+		t.Fatal("LoadSnapshot(mismatched analyzer version) error = nil")
 	}
 }

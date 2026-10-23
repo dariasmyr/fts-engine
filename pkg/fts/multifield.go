@@ -34,21 +34,18 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 		return fmt.Errorf("fts: index document %q: field %q is not available in single-field mode; use %q or fts.NewMultiField", docID, name, DefaultField)
 	}
 
-	index, err := s.getOrCreateIndex(name)
-	if err != nil {
-		return fmt.Errorf("fts: index document %q: %w", docID, err)
-	}
-
 	pipeline := field.Pipeline
 	if pipeline == nil {
 		s.mu.RLock()
-		pipeline = s.fieldPipelines[name]
-		if pipeline == nil {
-			pipeline = s.pipeline
-		}
+		pipeline = s.pipelineForFieldLocked(name)
 		s.mu.RUnlock()
 	}
 	if err := s.recordFieldAnalyzer(name, pipeline); err != nil {
+		return fmt.Errorf("fts: index document %q: %w", docID, err)
+	}
+
+	index, err := s.getOrCreateIndex(name)
+	if err != nil {
 		return fmt.Errorf("fts: index document %q: %w", docID, err)
 	}
 

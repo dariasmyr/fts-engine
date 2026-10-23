@@ -2,14 +2,12 @@
 package textproc
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/dariasmyr/fts-engine/pkg/fts"
 	snowballeng "github.com/kljensen/snowball/english"
 	snowballrus "github.com/kljensen/snowball/russian"
 )
@@ -21,42 +19,27 @@ type Filter interface {
 type Pipeline struct {
 	tokenizer  Tokenizer
 	filters    []Filter
-	descriptor Descriptor
+	descriptor fts.AnalyzerDescriptor
 }
 
-// Descriptor is the stable identity of an analysis contract. Persisted indexes
-// should store Fingerprint and reject or rebuild on mismatch.
-type Descriptor struct {
-	Name        string
-	Version     uint32
-	Fingerprint string
-}
-
-func NewDescriptor(name string, version uint32) Descriptor {
-	spec := fmt.Sprintf("%s@%d", name, version)
-	sum := sha256.Sum256([]byte(spec))
-	return Descriptor{Name: name, Version: version, Fingerprint: hex.EncodeToString(sum[:])}
-}
-
-func NewPipeline(tokenizer Tokenizer, filters ...Filter) Pipeline {
-	return NewNamedPipeline("custom", 0, tokenizer, filters...)
-}
+type Descriptor = fts.AnalyzerDescriptor
 
 // NewNamedPipeline creates a pipeline with a caller-owned compatibility ID.
 // Increment version whenever token output can change for the same input.
-func NewNamedPipeline(name string, version uint32, tokenizer Tokenizer, filters ...Filter) Pipeline {
+func NewNamedPipeline(name string, version uint32, tokenizer Tokenizer, filters ...Filter) (Pipeline, error) {
+	descriptor, err := fts.NewAnalyzerDescriptor(name, version)
+	if err != nil {
+		return Pipeline{}, err
+	}
 	if tokenizer == nil {
 		tokenizer = AlnumTokenizer{}
-	}
-	if name == "" {
-		name = "custom"
 	}
 
 	return Pipeline{
 		tokenizer:  tokenizer,
 		filters:    filters,
-		descriptor: NewDescriptor(name, version),
-	}
+		descriptor: descriptor,
+	}, nil
 }
 
 func (p Pipeline) Process(text string) []string {
@@ -72,14 +55,8 @@ func (p Pipeline) Process(text string) []string {
 
 func (p Pipeline) Descriptor() Descriptor { return p.descriptor }
 
-func (p Pipeline) AnalyzerName() string { return p.descriptor.Name }
-
-func (p Pipeline) AnalyzerVersion() uint32 { return p.descriptor.Version }
-
-func (p Pipeline) AnalyzerFingerprint() string { return p.descriptor.Fingerprint }
-
 func DefaultEnglishPipeline() Pipeline {
-	return NewNamedPipeline("english", 1,
+	return mustNewNamedPipeline("english", 1,
 		AlnumTokenizer{},
 		LowercaseFilter{},
 		MinLengthOrNumericFilter{MinLength: 3},
@@ -89,7 +66,7 @@ func DefaultEnglishPipeline() Pipeline {
 }
 
 func DefaultRussianPipeline() Pipeline {
-	return NewNamedPipeline("russian", 1,
+	return mustNewNamedPipeline("russian", 1,
 		AlnumTokenizer{},
 		LowercaseFilter{},
 		MinLengthOrNumericFilter{MinLength: 3},
@@ -99,7 +76,7 @@ func DefaultRussianPipeline() Pipeline {
 }
 
 func DefaultMultilingualPipeline() Pipeline {
-	return NewNamedPipeline("multilingual", 1,
+	return mustNewNamedPipeline("multilingual", 1,
 		AlnumTokenizer{},
 		LowercaseFilter{},
 		MinLengthOrNumericFilter{MinLength: 3},
@@ -111,12 +88,20 @@ func DefaultMultilingualPipeline() Pipeline {
 // ObservabilityPipeline preserves technical identifiers and short diagnostic
 // terms. It deliberately does not remove stopwords or stem tokens.
 func ObservabilityPipeline() Pipeline {
-	return NewNamedPipeline("observability", 1,
+	return mustNewNamedPipeline("observability", 1,
 		ObservabilityTokenizer{},
 		LowercaseFilter{},
 		MinLengthOrNumericFilter{MinLength: 2},
 		UniqueFilter{},
 	)
+}
+
+func mustNewNamedPipeline(name string, version uint32, tokenizer Tokenizer, filters ...Filter) Pipeline {
+	pipeline, err := NewNamedPipeline(name, version, tokenizer, filters...)
+	if err != nil {
+		panic(err)
+	}
+	return pipeline
 }
 
 type LowercaseFilter struct{}

@@ -37,6 +37,7 @@ type LoadedSnapshot struct {
 	CollectionStats *fts.CollectionStatsSnapshot
 	Registry        []fts.DocID
 	Tombstones      []uint64
+	Analyzers       map[string]fts.AnalyzerDescriptor
 	KeyGenerator    *fts.KeyGeneratorDescriptor
 	Close           func() error
 }
@@ -66,18 +67,23 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 	if !ok {
 		return fmt.Errorf("ftspersist: save snapshot: key generator descriptor is unavailable")
 	}
+	analyzers, err := svc.AnalyzerDescriptors()
+	if err != nil {
+		return fmt.Errorf("ftspersist: save snapshot: %w", err)
+	}
 
 	fields, searchFilter := svc.SnapshotFields()
 	stats := svc.SnapshotCollectionStats()
 	registry := svc.SnapshotRegistry()
 	tombstones := svc.SnapshotTombstones()
-	if len(fields) > 1 {
+	_, hasDefaultField := fields[fts.DefaultField]
+	if len(fields) != 1 || !hasDefaultField {
 		fieldCodecs := make(map[string]string, len(fields))
 		for fieldName := range fields {
 			fieldCodecs[fieldName] = indexName
 		}
 		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
-			return opts.Registry.SaveMultiIndexSnapshotWithState(w, fieldCodecs, fields, stats, registry, tombstones, &keyGenerator)
+			return opts.Registry.SaveMultiIndexSnapshotWithState(w, fieldCodecs, fields, stats, registry, tombstones, analyzers, &keyGenerator)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot: %w", err)
 		}
@@ -93,7 +99,7 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 			return fmt.Errorf("ftspersist: save snapshot: nil index")
 		}
 		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
-			return opts.Registry.SaveIndexSnapshotWithState(w, indexName, index, stats, registry, tombstones, &keyGenerator)
+			return opts.Registry.SaveIndexSnapshotWithState(w, indexName, index, stats, registry, tombstones, analyzers, &keyGenerator)
 		}); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot: %w", err)
 		}
@@ -158,6 +164,7 @@ func LoadSnapshotData(paths SnapshotPaths, opts SnapshotLoadOptions) (*LoadedSna
 		loaded.CollectionStats = loadedMulti.CollectionStats
 		loaded.Registry = append([]fts.DocID(nil), loadedMulti.Registry...)
 		loaded.Tombstones = append([]uint64(nil), loadedMulti.Tombstones...)
+		loaded.Analyzers = loadedMulti.Analyzers
 		loaded.KeyGenerator = loadedMulti.KeyGenerator
 		return loaded, nil
 	}
@@ -171,6 +178,7 @@ func LoadSnapshotData(paths SnapshotPaths, opts SnapshotLoadOptions) (*LoadedSna
 	loaded.CollectionStats = loadedIndex.CollectionStats
 	loaded.Registry = append([]fts.DocID(nil), loadedIndex.Registry...)
 	loaded.Tombstones = append([]uint64(nil), loadedIndex.Tombstones...)
+	loaded.Analyzers = loadedIndex.Analyzers
 	loaded.KeyGenerator = loadedIndex.KeyGenerator
 	return loaded, nil
 }
@@ -182,8 +190,19 @@ func RestoreSnapshotService(snapshot *LoadedSnapshot, keyGen fts.KeyGenerator, o
 	if snapshot.KeyGenerator == nil {
 		return nil, fmt.Errorf("ftspersist: restore snapshot service: key generator descriptor is unavailable")
 	}
+	fieldNames := []string{fts.DefaultField}
+	if len(snapshot.Fields) > 0 {
+		fieldNames = make([]string, 0, len(snapshot.Fields))
+		for fieldName := range snapshot.Fields {
+			fieldNames = append(fieldNames, fieldName)
+		}
+	}
+	if err := fts.ValidateAnalyzerFields(fieldNames, snapshot.Analyzers); err != nil {
+		return nil, fmt.Errorf("ftspersist: restore snapshot service: %w", err)
+	}
 
 	builtOpts := append([]fts.Option(nil), opts...)
+	builtOpts = append(builtOpts, fts.WithAnalyzerDescriptors(snapshot.Analyzers))
 	if snapshot.Filter != nil {
 		builtOpts = append(builtOpts, fts.WithFilter(snapshot.Filter))
 	}
@@ -202,6 +221,9 @@ func RestoreSnapshotService(snapshot *LoadedSnapshot, keyGen fts.KeyGenerator, o
 		if err := validateSnapshotKeyGenerator(service, snapshot.KeyGenerator); err != nil {
 			return nil, err
 		}
+		if err := service.ValidateAnalyzerDescriptors(snapshot.Analyzers); err != nil {
+			return nil, fmt.Errorf("ftspersist: restore snapshot service: %w", err)
+		}
 		return service, nil
 	}
 	if snapshot.Index == nil {
@@ -210,6 +232,9 @@ func RestoreSnapshotService(snapshot *LoadedSnapshot, keyGen fts.KeyGenerator, o
 	service := fts.New(snapshot.Index, keyGen, builtOpts...)
 	if err := validateSnapshotKeyGenerator(service, snapshot.KeyGenerator); err != nil {
 		return nil, err
+	}
+	if err := service.ValidateAnalyzerDescriptors(snapshot.Analyzers); err != nil {
+		return nil, fmt.Errorf("ftspersist: restore snapshot service: %w", err)
 	}
 	return service, nil
 }

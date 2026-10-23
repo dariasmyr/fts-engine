@@ -11,11 +11,16 @@ import (
 )
 
 func main() {
-	pipe := textproc.NewPipeline(
+	pipe, err := textproc.NewNamedPipeline(
+		"custom-options",
+		1,
 		textproc.AlnumTokenizer{},
 		textproc.LowercaseFilter{},
 		textproc.MinLengthOrNumericFilter{MinLength: 2},
 	)
+	if err != nil {
+		panic(err)
+	}
 
 	bloom := filter.NewBloomFilter(100_000, 10, 7)
 

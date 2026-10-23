@@ -175,7 +175,10 @@ func TestBuildServiceUsesConfiguredRankProfile(t *testing.T) {
 
 func TestBuildPipelineSelectsObservabilityPreset(t *testing.T) {
 	cfg := &config.Config{FTS: config.FTSConfig{Pipeline: config.PipelineConfig{Preset: "observability"}}}
-	pipeline := buildPipeline(cfg)
+	pipeline, err := buildPipeline(cfg)
+	if err != nil {
+		t.Fatalf("buildPipeline() error = %v", err)
+	}
 	descriptor := pipeline.Descriptor()
 	if descriptor.Name != "observability" || descriptor.Version != 1 {
 		t.Fatalf("Descriptor() = %+v", descriptor)
@@ -193,7 +196,15 @@ func TestBuildPipelineCustomDescriptorTracksConfiguration(t *testing.T) {
 		Preset: "custom", Lowercase: true, MinLength: 3,
 	}}}
 
-	if buildPipeline(base).Descriptor() == buildPipeline(changed).Descriptor() {
+	basePipeline, err := buildPipeline(base)
+	if err != nil {
+		t.Fatalf("buildPipeline(base) error = %v", err)
+	}
+	changedPipeline, err := buildPipeline(changed)
+	if err != nil {
+		t.Fatalf("buildPipeline(changed) error = %v", err)
+	}
+	if basePipeline.Descriptor() == changedPipeline.Descriptor() {
 		t.Fatal("custom pipeline descriptors must differ when configuration changes")
 	}
 }

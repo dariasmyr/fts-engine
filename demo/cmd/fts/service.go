@@ -170,9 +170,9 @@ func buildFilterIfNeeded(log *slog.Logger, svc *pkgfts.Service) error {
 	return nil
 }
 
-func buildPipeline(cfg *config.Config) textproc.Pipeline {
+func buildPipeline(cfg *config.Config) (textproc.Pipeline, error) {
 	if cfg.FTS.Pipeline.Preset == "observability" {
-		return textproc.ObservabilityPipeline()
+		return textproc.ObservabilityPipeline(), nil
 	}
 
 	filters := make([]textproc.Filter, 0, 4)

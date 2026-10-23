@@ -76,7 +76,13 @@ func TestSaveLoadSegmentRoundTripMultiField(t *testing.T) {
 	}
 
 	factory := func(name string) (fts.Index, error) { return slicedradix.New(), nil }
-	svc := fts.NewMultiField(factory, fts.WordKeys, fts.WithScorer(fts.BM25()))
+	english := textproc.DefaultEnglishPipeline()
+	russian := textproc.DefaultRussianPipeline()
+	svc := fts.NewMultiField(factory, fts.WordKeys,
+		fts.WithScorer(fts.BM25()),
+		fts.WithPipeline(english),
+		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
+	)
 	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
 		"title": {Value: "alpha title"},
 		"body":  {Value: "beta body"},
@@ -89,7 +95,11 @@ func TestSaveLoadSegmentRoundTripMultiField(t *testing.T) {
 		t.Fatalf("SaveSegment() error = %v", err)
 	}
 
-	restored, err := ftspersist.LoadSegment(paths, fts.WordKeys, ftspersist.SegmentLoadOptions{Access: ftspersist.AccessFile, Registry: registry}, fts.WithScorer(fts.BM25()))
+	restored, err := ftspersist.LoadSegment(paths, fts.WordKeys, ftspersist.SegmentLoadOptions{Access: ftspersist.AccessFile, Registry: registry},
+		fts.WithScorer(fts.BM25()),
+		fts.WithPipeline(english),
+		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
+	)
 	if err != nil {
 		t.Fatalf("LoadSegment() error = %v", err)
 	}
@@ -109,6 +119,12 @@ func TestSaveLoadSegmentRoundTripMultiField(t *testing.T) {
 	}
 	if got, want := res.TotalResultsCount, 1; got != want {
 		t.Fatalf("body TotalResultsCount = %d, want %d", got, want)
+	}
+
+	if _, err := ftspersist.LoadSegment(paths, fts.WordKeys, ftspersist.SegmentLoadOptions{Access: ftspersist.AccessFile, Registry: registry},
+		fts.WithPipeline(english),
+	); err == nil {
+		t.Fatal("LoadSegment() without matching body analyzer error = nil")
 	}
 }
 
@@ -167,9 +183,8 @@ func TestSegmentAnalyzerFingerprintGate(t *testing.T) {
 	if err := ftspersist.SaveSegment(paths, svc, "", ftspersist.SaveOptions{Registry: registry}); err != nil {
 		t.Fatalf("SaveSegment() error = %v", err)
 	}
-	descriptor := pipeline.Descriptor()
 	loaded, err := ftspersist.LoadSegment(paths, fts.WordKeys, ftspersist.SegmentLoadOptions{
-		Access: ftspersist.AccessFile, ExpectedAnalyzerFingerprint: descriptor.Fingerprint, Registry: registry,
+		Access: ftspersist.AccessFile, Registry: registry,
 	}, fts.WithPipeline(pipeline))
 	if err != nil {
 		t.Fatalf("LoadSegment() error = %v", err)
@@ -179,10 +194,9 @@ func TestSegmentAnalyzerFingerprintGate(t *testing.T) {
 			t.Fatalf("Close() error = %v", err)
 		}
 	}()
-	wrong := textproc.DefaultEnglishPipeline().Descriptor().Fingerprint
 	if _, err := ftspersist.LoadSegment(paths, fts.WordKeys, ftspersist.SegmentLoadOptions{
-		Access: ftspersist.AccessFile, ExpectedAnalyzerFingerprint: wrong, Registry: registry,
-	}); err == nil {
+		Access: ftspersist.AccessFile, Registry: registry,
+	}, fts.WithPipeline(textproc.DefaultEnglishPipeline())); err == nil {
 		t.Fatal("LoadSegment(wrong analyzer) error = nil, want mismatch")
 	}
 }

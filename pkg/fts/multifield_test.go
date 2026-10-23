@@ -73,6 +73,14 @@ func TestSingleFieldServiceRejectsOtherFields(t *testing.T) {
 
 type uppercasePipeline struct{}
 
+func (uppercasePipeline) Descriptor() AnalyzerDescriptor {
+	descriptor, err := NewAnalyzerDescriptor("uppercase-test", 1)
+	if err != nil {
+		panic(err)
+	}
+	return descriptor
+}
+
 func (uppercasePipeline) Process(text string) []string {
 	out := make([]rune, 0, len(text))
 	for _, r := range text {
@@ -104,6 +112,23 @@ func TestPerFieldPipelineOverridesDefault(t *testing.T) {
 
 	if len(idx.inserts) != 1 || idx.inserts[0].key != "ABC" {
 		t.Fatalf("per-field pipeline not applied: %+v", idx.inserts)
+	}
+}
+
+func TestIndexRejectsIncompatibleAnalyzerForExistingField(t *testing.T) {
+	first, _ := NewAnalyzerDescriptor("first", 1)
+	second, _ := NewAnalyzerDescriptor("second", 1)
+	svc := NewMultiField(func(string) (Index, error) { return newMemoryIndex(), nil }, WordKeys)
+
+	if err := svc.Index(context.Background(), Document{ID: "doc-1", Fields: map[string]Field{
+		"title": {Value: "alpha", Pipeline: customPipeline{descriptor: first}},
+	}}); err != nil {
+		t.Fatalf("first Index() error = %v", err)
+	}
+	if err := svc.Index(context.Background(), Document{ID: "doc-2", Fields: map[string]Field{
+		"title": {Value: "beta", Pipeline: customPipeline{descriptor: second}},
+	}}); err == nil {
+		t.Fatal("second Index() error = nil")
 	}
 }
 

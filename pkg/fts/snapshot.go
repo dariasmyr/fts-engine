@@ -9,8 +9,9 @@ import (
 	"sync"
 )
 
-const snapshotVersion uint16 = 2
-const multiIndexSnapshotVersion uint16 = 3
+const indexSnapshotVersion uint16 = 3
+const multiIndexSnapshotVersion uint16 = 4
+const filterSnapshotVersion uint16 = 2
 
 type IndexSnapshotSaver func(index Index, w io.Writer) error
 type IndexSnapshotLoader func(r io.Reader) (Index, error)
@@ -28,6 +29,7 @@ type LoadedIndexSnapshot struct {
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	Analyzers       map[string]AnalyzerDescriptor
 	KeyGenerator    *KeyGeneratorDescriptor
 }
 
@@ -36,6 +38,7 @@ type LoadedMultiIndexSnapshot struct {
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	Analyzers       map[string]AnalyzerDescriptor
 	KeyGenerator    *KeyGeneratorDescriptor
 }
 
@@ -51,6 +54,7 @@ type indexEnvelope struct {
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	Analyzers       map[string]AnalyzerDescriptor
 	KeyGenerator    *KeyGeneratorDescriptor
 }
 
@@ -66,6 +70,7 @@ type multiIndexEnvelope struct {
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	Analyzers       map[string]AnalyzerDescriptor
 	KeyGenerator    *KeyGeneratorDescriptor
 }
 
@@ -156,7 +161,7 @@ func (r *SnapshotRegistry) RegisterFilterSnapshotCodec(name string, saver Filter
 	return nil
 }
 
-func (r *SnapshotRegistry) SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64, keyGenerators ...*KeyGeneratorDescriptor) error {
+func (r *SnapshotRegistry) SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64, analyzers map[string]AnalyzerDescriptor, keyGenerator *KeyGeneratorDescriptor) error {
 	if w == nil {
 		return fmt.Errorf("fts: save index snapshot: nil writer")
 	}
@@ -165,6 +170,12 @@ func (r *SnapshotRegistry) SaveIndexSnapshotWithState(w io.Writer, indexName str
 	}
 	if indexName == "" {
 		return fmt.Errorf("fts: save index snapshot: empty index name")
+	}
+	if err := ValidateAnalyzerFields([]string{DefaultField}, analyzers); err != nil {
+		return fmt.Errorf("fts: save index snapshot: %w", err)
+	}
+	if keyGenerator == nil {
+		return fmt.Errorf("fts: save index snapshot: key generator descriptor is unavailable")
 	}
 
 	indexCodec, ok := r.indexCodecByName(indexName)
@@ -178,15 +189,14 @@ func (r *SnapshotRegistry) SaveIndexSnapshotWithState(w io.Writer, indexName str
 	}
 
 	envelope := indexEnvelope{
-		Version:         snapshotVersion,
+		Version:         indexSnapshotVersion,
 		IndexName:       indexName,
 		IndexPayload:    indexPayload.Bytes(),
 		CollectionStats: stats,
 		Registry:        append([]DocID(nil), registry...),
 		Tombstones:      append([]uint64(nil), tombstones...),
-	}
-	if len(keyGenerators) > 0 {
-		envelope.KeyGenerator = cloneKeyGeneratorDescriptor(keyGenerators[0])
+		Analyzers:       cloneAnalyzerDescriptors(analyzers),
+		KeyGenerator:    cloneKeyGeneratorDescriptor(keyGenerator),
 	}
 
 	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
@@ -209,11 +219,14 @@ func (registry *SnapshotRegistry) LoadIndexSnapshot(reader io.Reader) (*LoadedIn
 		return nil, fmt.Errorf("fts: load index snapshot: decode envelope: %w", err)
 	}
 
-	if envelope.Version != snapshotVersion {
+	if envelope.Version != indexSnapshotVersion {
 		return nil, fmt.Errorf("fts: load index snapshot: unsupported version %d", envelope.Version)
 	}
 	if envelope.IndexName == "" {
 		return nil, fmt.Errorf("fts: load index snapshot: empty index name")
+	}
+	if err := ValidateAnalyzerFields([]string{DefaultField}, envelope.Analyzers); err != nil {
+		return nil, fmt.Errorf("fts: load index snapshot: %w", err)
 	}
 
 	indexCodec, ok := registry.indexCodecByName(envelope.IndexName)
@@ -232,16 +245,20 @@ func (registry *SnapshotRegistry) LoadIndexSnapshot(reader io.Reader) (*LoadedIn
 		CollectionStats: envelope.CollectionStats,
 		Registry:        append([]DocID(nil), envelope.Registry...),
 		Tombstones:      append([]uint64(nil), envelope.Tombstones...),
+		Analyzers:       cloneAnalyzerDescriptors(envelope.Analyzers),
 		KeyGenerator:    cloneKeyGeneratorDescriptor(envelope.KeyGenerator),
 	}, nil
 }
 
-func (r *SnapshotRegistry) SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64, keyGenerators ...*KeyGeneratorDescriptor) error {
+func (r *SnapshotRegistry) SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64, analyzers map[string]AnalyzerDescriptor, keyGenerator *KeyGeneratorDescriptor) error {
 	if w == nil {
 		return fmt.Errorf("fts: save multi-index snapshot: nil writer")
 	}
 	if len(indexes) == 0 {
 		return fmt.Errorf("fts: save multi-index snapshot: no indexes")
+	}
+	if keyGenerator == nil {
+		return fmt.Errorf("fts: save multi-index snapshot: key generator descriptor is unavailable")
 	}
 
 	fieldNames := make([]string, 0, len(indexes))
@@ -249,6 +266,9 @@ func (r *SnapshotRegistry) SaveMultiIndexSnapshotWithState(w io.Writer, fieldCod
 		fieldNames = append(fieldNames, fieldName)
 	}
 	sort.Strings(fieldNames)
+	if err := ValidateAnalyzerFields(fieldNames, analyzers); err != nil {
+		return fmt.Errorf("fts: save multi-index snapshot: %w", err)
+	}
 
 	fields := make([]multiIndexField, 0, len(indexes))
 	for _, fieldName := range fieldNames {
@@ -289,9 +309,8 @@ func (r *SnapshotRegistry) SaveMultiIndexSnapshotWithState(w io.Writer, fieldCod
 		CollectionStats: stats,
 		Registry:        append([]DocID(nil), registry...),
 		Tombstones:      append([]uint64(nil), tombstones...),
-	}
-	if len(keyGenerators) > 0 {
-		envelope.KeyGenerator = cloneKeyGeneratorDescriptor(keyGenerators[0])
+		Analyzers:       cloneAnalyzerDescriptors(analyzers),
+		KeyGenerator:    cloneKeyGeneratorDescriptor(keyGenerator),
 	}
 
 	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
@@ -317,12 +336,23 @@ func (registry *SnapshotRegistry) LoadMultiIndexSnapshot(reader io.Reader) (*Loa
 	if envelope.Version != multiIndexSnapshotVersion {
 		return nil, fmt.Errorf("fts: load multi-index snapshot: unsupported version %d", envelope.Version)
 	}
+	if len(envelope.Fields) == 0 {
+		return nil, fmt.Errorf("fts: load multi-index snapshot: no fields")
+	}
+	fieldNames := make([]string, 0, len(envelope.Fields))
+	for _, field := range envelope.Fields {
+		fieldNames = append(fieldNames, field.FieldName)
+	}
+	if err := ValidateAnalyzerFields(fieldNames, envelope.Analyzers); err != nil {
+		return nil, fmt.Errorf("fts: load multi-index snapshot: %w", err)
+	}
 
 	loaded := &LoadedMultiIndexSnapshot{
 		Fields:          make(map[string]LoadedIndexSnapshot, len(envelope.Fields)),
 		CollectionStats: envelope.CollectionStats,
 		Registry:        append([]DocID(nil), envelope.Registry...),
 		Tombstones:      append([]uint64(nil), envelope.Tombstones...),
+		Analyzers:       cloneAnalyzerDescriptors(envelope.Analyzers),
 		KeyGenerator:    cloneKeyGeneratorDescriptor(envelope.KeyGenerator),
 	}
 	for _, field := range envelope.Fields {
@@ -377,7 +407,7 @@ func (r *SnapshotRegistry) SaveFilterSnapshot(w io.Writer, filterName string, fi
 	}
 
 	envelope := filterEnvelope{
-		Version:       snapshotVersion,
+		Version:       filterSnapshotVersion,
 		FilterName:    filterName,
 		FilterPayload: filterPayload.Bytes(),
 	}
@@ -402,7 +432,7 @@ func (registry *SnapshotRegistry) LoadFilterSnapshot(reader io.Reader) (*LoadedF
 		return nil, fmt.Errorf("fts: load filter snapshot: decode envelope: %w", err)
 	}
 
-	if envelope.Version != snapshotVersion {
+	if envelope.Version != filterSnapshotVersion {
 		return nil, fmt.Errorf("fts: load filter snapshot: unsupported version %d", envelope.Version)
 	}
 	if envelope.FilterName == "" {
@@ -448,4 +478,15 @@ func cloneKeyGeneratorDescriptor(descriptor *KeyGeneratorDescriptor) *KeyGenerat
 	}
 	cloned := *descriptor
 	return &cloned
+}
+
+func cloneAnalyzerDescriptors(descriptors map[string]AnalyzerDescriptor) map[string]AnalyzerDescriptor {
+	if descriptors == nil {
+		return nil
+	}
+	cloned := make(map[string]AnalyzerDescriptor, len(descriptors))
+	for fieldName, descriptor := range descriptors {
+		cloned[fieldName] = descriptor
+	}
+	return cloned
 }
