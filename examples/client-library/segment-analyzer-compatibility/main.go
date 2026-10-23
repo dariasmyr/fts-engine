@@ -44,10 +44,7 @@ func main() {
 	loaded, err := ftspersist.LoadSegment(
 		paths,
 		fts.WordKeys,
-		ftspersist.SegmentLoadOptions{Registry: registry,
-			Access:                      ftspersist.AccessFile,
-			ExpectedAnalyzerFingerprint: descriptor.Fingerprint,
-		},
+		ftspersist.SegmentLoadOptions{Registry: registry, Access: ftspersist.AccessFile},
 		fts.WithPipeline(pipeline),
 	)
 	if err != nil {
@@ -63,5 +60,5 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("analyzer=%s@%d results=%d\n", descriptor.Name, descriptor.Version, res.TotalResultsCount)
+	fmt.Printf("analyzer=%s scheme=%d fingerprint=%s results=%d\n", descriptor.Name, descriptor.FingerprintScheme, descriptor.Fingerprint, res.TotalResultsCount)
 }

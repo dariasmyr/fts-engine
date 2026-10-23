@@ -95,4 +95,4 @@ Notes:
 - snapshot restore returns a writable service
 - segment restore returns a read-only service
 - `mmap` applies only to segment loading
-- segment manifests store the default analyzer identity; restore them with the same named pipeline
+- snapshots and segment manifests store per-field configuration fingerprints; restore them with identically configured default and field pipelines

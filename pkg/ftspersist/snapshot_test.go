@@ -9,6 +9,7 @@ import (
 	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
 	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
 	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/pkg/textproc"
 )
 
 func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
@@ -185,5 +186,99 @@ func TestSaveLoadSnapshotRoundTripMultiField(t *testing.T) {
 	}
 	if got, want := res.TotalResultsCount, 1; got != want {
 		t.Fatalf("title TotalResultsCount = %d, want %d", got, want)
+	}
+}
+
+func TestSnapshotValidatesPerFieldAnalyzers(t *testing.T) {
+	registry := fts.NewSnapshotRegistry()
+	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
+		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
+	}
+	english := textproc.DefaultEnglishPipeline()
+	russian := textproc.DefaultRussianPipeline()
+	factory := func(string) (fts.Index, error) { return slicedradix.New(), nil }
+	svc := fts.NewMultiField(factory, fts.WordKeys,
+		fts.WithPipeline(english),
+		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
+	)
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
+		"title": {Value: "running"},
+		"body":  {Value: "машины"},
+	}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	paths := ftspersist.SnapshotPaths{IndexPath: filepath.Join(t.TempDir(), "multi.index.fidx")}
+	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "", ftspersist.SaveOptions{Registry: registry}); err != nil {
+		t.Fatalf("SaveSnapshot() error = %v", err)
+	}
+	load := ftspersist.SnapshotLoadOptions{Registry: registry}
+	if _, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, load,
+		fts.WithPipeline(english),
+		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
+	); err != nil {
+		t.Fatalf("LoadSnapshot(matching analyzers) error = %v", err)
+	}
+	if _, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, load, fts.WithPipeline(english)); err == nil {
+		t.Fatal("LoadSnapshot(missing field analyzer) error = nil")
+	}
+	changedEnglish, err := textproc.NewNamedPipeline("english", textproc.AlnumTokenizer{})
+	if err != nil {
+		t.Fatalf("NewNamedPipeline() error = %v", err)
+	}
+	if _, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, load,
+		fts.WithPipeline(changedEnglish),
+		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
+	); err == nil {
+		t.Fatal("LoadSnapshot(mismatched analyzer configuration) error = nil")
+	}
+}
+
+func TestSnapshotRejectsPipelineConfigurationChanges(t *testing.T) {
+	registry := fts.NewSnapshotRegistry()
+	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
+		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
+	}
+	original, err := textproc.NewNamedPipeline("persisted",
+		textproc.AlnumTokenizer{},
+		textproc.LowercaseFilter{},
+		textproc.MinLengthOrNumericFilter{MinLength: 2},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := fts.New(slicedradix.New(), fts.WordKeys, fts.WithPipeline(original))
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
+		fts.DefaultField: {Value: "Pipeline Configuration"},
+	}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+	paths := ftspersist.SnapshotPaths{IndexPath: filepath.Join(t.TempDir(), "index.fidx")}
+	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "", ftspersist.SaveOptions{Registry: registry}); err != nil {
+		t.Fatalf("SaveSnapshot() error = %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		tokenizer textproc.Tokenizer
+		filters   []textproc.Filter
+	}{
+		{name: "tokenizer", tokenizer: textproc.ObservabilityTokenizer{}, filters: []textproc.Filter{textproc.LowercaseFilter{}, textproc.MinLengthOrNumericFilter{MinLength: 2}}},
+		{name: "filter order", tokenizer: textproc.AlnumTokenizer{}, filters: []textproc.Filter{textproc.MinLengthOrNumericFilter{MinLength: 2}, textproc.LowercaseFilter{}}},
+		{name: "filter parameter", tokenizer: textproc.AlnumTokenizer{}, filters: []textproc.Filter{textproc.LowercaseFilter{}, textproc.MinLengthOrNumericFilter{MinLength: 3}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pipeline, err := textproc.NewNamedPipeline("persisted", test.tokenizer, test.filters...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ftspersist.LoadSnapshot(paths, fts.WordKeys,
+				ftspersist.SnapshotLoadOptions{Registry: registry},
+				fts.WithPipeline(pipeline),
+			); err == nil {
+				t.Fatal("LoadSnapshot() error = nil")
+			}
+		})
 	}
 }

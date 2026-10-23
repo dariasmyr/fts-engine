@@ -79,15 +79,6 @@ func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opt
 	return s
 }
 
-// DefaultAnalyzerDescriptor returns the identity of the service's default
-// analyzer.
-func (s *Service) DefaultAnalyzerDescriptor() (AnalyzerDescriptor, bool) {
-	if s == nil {
-		return AnalyzerDescriptor{}, false
-	}
-	return DescribePipeline(s.pipeline)
-}
-
 // KeyGeneratorDescriptor returns the identity of the service key generator.
 func (s *Service) KeyGeneratorDescriptor() (KeyGeneratorDescriptor, bool) {
 	if s == nil || s.keyGenerator == nil {
@@ -96,11 +87,11 @@ func (s *Service) KeyGeneratorDescriptor() (KeyGeneratorDescriptor, bool) {
 	return *s.keyGenerator, true
 }
 
-// AnalyzerDescriptors returns the analyzer identities observed for each field.
-// It returns false when a field uses an undescribed pipeline.
-func (s *Service) AnalyzerDescriptors() (map[string]AnalyzerDescriptor, bool) {
+// AnalyzerDescriptors returns the validated analyzer identities observed for
+// each indexed field.
+func (s *Service) AnalyzerDescriptors() (map[string]AnalyzerDescriptor, error) {
 	if s == nil {
-		return nil, false
+		return nil, fmt.Errorf("fts: nil service")
 	}
 
 	fields := s.fieldNames()
@@ -108,11 +99,17 @@ func (s *Service) AnalyzerDescriptors() (map[string]AnalyzerDescriptor, bool) {
 	for _, fieldName := range fields {
 		descriptor, ok := s.fieldAnalyzer(fieldName)
 		if !ok {
-			return nil, false
+			return nil, fmt.Errorf("fts: field %q: analyzer descriptor is unavailable", fieldName)
+		}
+		if err := ValidateAnalyzerDescriptor(descriptor); err != nil {
+			return nil, fmt.Errorf("fts: field %q: %w", fieldName, err)
 		}
 		result[fieldName] = descriptor
 	}
-	return result, true
+	if err := s.ValidateAnalyzerDescriptors(result); err != nil {
+		return nil, fmt.Errorf("fts: configured analyzers do not match indexed fields: %w", err)
+	}
+	return result, nil
 }
 
 // ValidateAnalyzerDescriptors checks the pipelines configured for the fields
@@ -121,23 +118,18 @@ func (s *Service) ValidateAnalyzerDescriptors(expected map[string]AnalyzerDescri
 	if s == nil {
 		return fmt.Errorf("fts: nil service")
 	}
-	for fieldName, want := range expected {
-		pipeline := s.pipeline
+	actual := make(map[string]AnalyzerDescriptor, len(s.fieldNames()))
+	for _, fieldName := range s.fieldNames() {
 		s.mu.RLock()
-		if fieldPipeline := s.fieldPipelines[fieldName]; fieldPipeline != nil {
-			pipeline = fieldPipeline
-		}
+		pipeline := s.pipelineForFieldLocked(fieldName)
 		s.mu.RUnlock()
-
-		got, ok := DescribePipeline(pipeline)
-		if !ok {
-			return fmt.Errorf("fts: field %q: analyzer descriptor is unavailable", fieldName)
+		descriptor := pipeline.Descriptor()
+		if err := ValidateAnalyzerDescriptor(descriptor); err != nil {
+			return fmt.Errorf("fts: field %q: invalid configured analyzer descriptor: %w", fieldName, err)
 		}
-		if got.Fingerprint != want.Fingerprint {
-			return fmt.Errorf("fts: field %q: analyzer fingerprint mismatch: got %q, want %q", fieldName, got.Fingerprint, want.Fingerprint)
-		}
+		actual[fieldName] = descriptor
 	}
-	return nil
+	return ValidateAnalyzers(expected, actual)
 }
 
 func (s *Service) fieldAnalyzer(fieldName string) (AnalyzerDescriptor, bool) {
@@ -148,24 +140,33 @@ func (s *Service) fieldAnalyzer(fieldName string) (AnalyzerDescriptor, bool) {
 }
 
 func (s *Service) recordFieldAnalyzer(fieldName string, pipeline Pipeline) error {
-	descriptor, ok := DescribePipeline(pipeline)
-	if !ok {
-		s.mu.RLock()
-		_, known := s.fieldAnalyzers[fieldName]
-		s.mu.RUnlock()
-		if known {
-			return fmt.Errorf("fts: field %q: analyzer descriptor is unavailable after a described pipeline was used", fieldName)
-		}
-		return nil
+	if pipeline == nil {
+		return fmt.Errorf("fts: field %q: nil analyzer pipeline", fieldName)
+	}
+	descriptor := pipeline.Descriptor()
+	if err := ValidateAnalyzerDescriptor(descriptor); err != nil {
+		return fmt.Errorf("fts: field %q: invalid analyzer descriptor: %w", fieldName, err)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if previous, exists := s.fieldAnalyzers[fieldName]; exists && previous.Fingerprint != descriptor.Fingerprint {
-		return fmt.Errorf("fts: field %q: analyzer fingerprint mismatch: got %q, want %q", fieldName, descriptor.Fingerprint, previous.Fingerprint)
+	if previous, exists := s.fieldAnalyzers[fieldName]; exists {
+		if err := ValidateAnalyzers(
+			map[string]AnalyzerDescriptor{fieldName: previous},
+			map[string]AnalyzerDescriptor{fieldName: descriptor},
+		); err != nil {
+			return err
+		}
 	}
 	s.fieldAnalyzers[fieldName] = descriptor
 	return nil
+}
+
+func (s *Service) pipelineForFieldLocked(fieldName string) Pipeline {
+	if pipeline := s.fieldPipelines[fieldName]; pipeline != nil {
+		return pipeline
+	}
+	return s.pipeline
 }
 
 func newService(keyGen KeyGenerator, opts ...Option) *Service {

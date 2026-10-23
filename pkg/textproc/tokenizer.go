@@ -7,9 +7,15 @@ import (
 
 type Tokenizer interface {
 	Tokenize(text string) []string
+	// Descriptor must cover every tokenizer setting that can affect output.
+	Descriptor() ComponentDescriptor
 }
 
 type AlnumTokenizer struct{}
+
+func (AlnumTokenizer) Descriptor() ComponentDescriptor {
+	return component("alnum", unicodeParams())
+}
 
 func (AlnumTokenizer) Tokenize(text string) []string {
 	if text == "" {
@@ -43,6 +49,10 @@ func (AlnumTokenizer) Tokenize(text string) []string {
 // alphanumeric components. For example, "10.0.0.1" produces the complete IP
 // plus 10/0/0/1, while ordinary words are emitted once.
 type ObservabilityTokenizer struct{}
+
+func (ObservabilityTokenizer) Descriptor() ComponentDescriptor {
+	return component("observability", unicodeParams())
+}
 
 func (ObservabilityTokenizer) Tokenize(text string) []string {
 	if text == "" {

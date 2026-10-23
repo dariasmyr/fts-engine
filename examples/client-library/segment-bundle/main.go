@@ -38,9 +38,9 @@ func run(out io.Writer) error {
 	if !ok {
 		return fmt.Errorf("index does not implement segment.Source")
 	}
-	descriptors, ok := service.AnalyzerDescriptors()
-	if !ok {
-		return fmt.Errorf("analyzer descriptor is unavailable")
+	descriptors, err := service.AnalyzerDescriptors()
+	if err != nil {
+		return err
 	}
 	keyGenerator := fts.NewKeyGeneratorDescriptor("word-keys", 1)
 

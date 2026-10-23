@@ -114,13 +114,17 @@ Available presets:
 Use `pkg/textproc` when you want an explicit pipeline:
 
 ```go
-pipe := textproc.NewPipeline(
+pipe, err := textproc.NewNamedPipeline(
+	"custom-search",
 	textproc.AlnumTokenizer{},
 	textproc.LowercaseFilter{},
 	textproc.MinLengthOrNumericFilter{MinLength: 2},
 	textproc.EnglishStopwordFilter{},
 	textproc.EnglishStemFilter{},
 )
+if err != nil {
+	return err
+}
 
 engine := fts.New(slicedradix.New(), fts.WordKeys, fts.WithPipeline(pipe))
 ```
@@ -130,18 +134,43 @@ Each `fts.Field` can also override the service-level pipeline with its own `Fiel
 Use a named pipeline when its output will be persisted in a sealed segment:
 
 ```go
-pipe := textproc.NewNamedPipeline(
+pipe, err := textproc.NewNamedPipeline(
 	"support-events",
-	1,
 	textproc.AlnumTokenizer{},
 	textproc.LowercaseFilter{},
 )
+if err != nil {
+	return err
+}
 ```
 
-The name and version form a caller-owned compatibility identity. Increment the
-version whenever the same input may produce different tokens. `NewPipeline(...)`
-uses the generic identity `custom@0`, so prefer `NewNamedPipeline(...)` for
-persisted indexes.
+`textproc` fingerprints the tokenizer descriptor and ordered filter descriptors.
+The pipeline name is diagnostic metadata and does not affect compatibility.
+Component parameters, Unicode table version, and
+the pinned Snowball implementation/dictionary identity are included. Changing a
+tokenizer, filter order, filter parameter, or component version changes the
+fingerprint automatically.
+
+Custom tokenizers and filters implement `Descriptor() textproc.ComponentDescriptor`.
+Use stable component names, include every token-affecting parameter, and increment
+the component version when behavior changes without a parameter change. Components
+must keep execution behavior consistent with their descriptors; no reflection or
+implementation hashing is used.
+
+External implementations of `fts.Pipeline` construct their own
+`fts.AnalyzerDescriptor` with a supported numeric fingerprint scheme and lowercase
+SHA-256 fingerprint. The engine
+can validate its structure and compare it exactly, but cannot prove that a custom
+implementation honestly fingerprints its behavior.
+
+Fingerprint scheme `1` uses lowercase SHA-256 hex. The hashed canonical stream
+starts with the unframed ASCII bytes `fts-engine/textproc-pipeline`, followed by
+the configuration schema version as an unsigned big-endian 32-bit integer. The
+tokenizer component is encoded as its length-prefixed name, unsigned big-endian
+32-bit version, unsigned
+big-endian 64-bit parameter count, then parameters sorted bytewise by key with
+each key and value length-prefixed. The tokenizer is followed by an unsigned
+big-endian 64-bit filter count and filter descriptors in execution order.
 
 ### Observability Pipeline
 
@@ -328,30 +357,30 @@ Important details:
 - `pkg/segmentbundle` stores a complete sealed index as one `io.Reader`/`io.Writer` bundle
 - create one `fts.SnapshotRegistry`, register built-in codecs with `ftsbuiltin.RegisterSnapshotCodecs(registry)`, and pass it through persistence options
 
-Sealed segment manifests store the service's default analyzer descriptor. Supply
-the same pipeline when restoring the service. An optional expected fingerprint
-can reject an incompatible segment before its field files are opened:
+Snapshots, filesystem segment manifests, and segment bundles store one analyzer
+descriptor per indexed field. Supply matching default and field pipelines when
+restoring the service:
 
 ```go
 pipe := textproc.ObservabilityPipeline()
-descriptor := pipe.Descriptor()
-
 loaded, err := ftspersist.LoadSegment(
 	ftspersist.SegmentPaths{Dir: "./data/segments/events"},
 	fts.WordKeys,
 	ftspersist.SegmentLoadOptions{
-		Access:                      ftspersist.AccessFile,
-		ExpectedAnalyzerFingerprint: descriptor.Fingerprint,
+		Access: ftspersist.AccessFile,
 	},
 	fts.WithPipeline(pipe),
 )
 ```
 
-The compatibility gate currently covers sealed segments and the service-level
-default pipeline. It does not describe mutable snapshots, field-level pipeline
-overrides, or the key generator. Rebuild persisted data when any of those token
-or key-generation rules change. Legacy v1 segment manifests remain readable but
-do not contain analyzer metadata.
+Restore validates analyzer fingerprint schemes and fingerprints against the actual
+configured pipelines before returning the service. Current snapshots and segment manifests
+require analyzer and key-generator metadata; older format versions must be
+rebuilt. Legacy bare `SHA256(name + "@" + version)` fingerprints are never
+accepted or migrated because they did not record pipeline configuration.
+Analyzer-bearing single snapshots use format version 4, multi-field snapshots
+use version 5, filesystem segment manifests use version 4, and bundles use
+version 5. Filter snapshots and raw segment payload versions are unchanged.
 
 `AccessFile` keeps the term table resident and reads matching posting ranges from
 the file. `AccessMmap` maps the segment. Opening either mode validates the segment
@@ -396,7 +425,7 @@ store an analyzer descriptor for every field and validate them during restore.
 Use `fts.WithFieldPipelines` when restoring field-specific pipelines. See
 `examples/client-library/segment-bundle` for a complete round-trip example.
 
-The v3 bundle format requires analyzer metadata; bundles created by older
+The v5 bundle format requires configuration fingerprints; bundles created by older
 formats must be rebuilt.
 
 When exporting custom `segment.Source` values directly, pass analyzer identities
