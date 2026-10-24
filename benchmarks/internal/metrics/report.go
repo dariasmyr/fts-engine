@@ -32,14 +32,15 @@ type Record struct {
 }
 
 type RunMeta struct {
-	Timestamp   time.Time `json:"timestamp"`
-	GoVersion   string    `json:"go_version"`
-	GOOS        string    `json:"goos"`
-	GOARCH      string    `json:"goarch"`
-	NumCPU      int       `json:"num_cpu"`
-	Concurrency int       `json:"concurrency"`
-	BatchSize   int       `json:"batch_size,omitempty"`
-	WarmupFrac  float64   `json:"warmup_frac,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
+	GoVersion    string    `json:"go_version"`
+	GOOS         string    `json:"goos"`
+	GOARCH       string    `json:"goarch"`
+	NumCPU       int       `json:"num_cpu"`
+	Concurrency  int       `json:"concurrency"`
+	BatchSize    int       `json:"batch_size,omitempty"`
+	WarmupFrac   float64   `json:"warmup_frac,omitempty"`
+	QueryRepeats int       `json:"query_repeats,omitempty"`
 }
 
 type DatasetMeta struct {
@@ -211,12 +212,14 @@ func queryClassRank(class string) int {
 		return 1
 	case "and-hl":
 		return 2
-	case "or-hh":
+	case "and-hr":
 		return 3
-	case "phrase":
+	case "or-hh":
 		return 4
-	case "prefix":
+	case "phrase":
 		return 5
+	case "prefix":
+		return 6
 	case "-":
 		return 100
 	default:

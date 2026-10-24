@@ -12,11 +12,12 @@ import (
 )
 
 type RunConfig struct {
-	Dir         string
-	BatchSize   int
-	WarmupFrac  float64
-	Concurrency int
-	Seed        uint64
+	Dir          string
+	BatchSize    int
+	WarmupFrac   float64
+	Concurrency  int
+	QueryRepeats int
+	Seed         uint64
 }
 
 func (c RunConfig) withDefaults() RunConfig {
@@ -28,6 +29,9 @@ func (c RunConfig) withDefaults() RunConfig {
 	}
 	if c.Concurrency <= 0 {
 		c.Concurrency = 1
+	}
+	if c.QueryRepeats <= 0 {
+		c.QueryRepeats = 1
 	}
 	if c.Seed == 0 {
 		c.Seed = 0xC0FFEE
@@ -134,20 +138,24 @@ func RunQueries(ctx context.Context, eng Engine, queries []Query, cfg RunConfig,
 	}
 	measure := shuffled[warmupN:]
 
-	rep.Latencies = make([]time.Duration, len(measure))
+	rep.Latencies = make([]time.Duration, len(measure)*cfg.QueryRepeats)
 	rep.QueryResults = make([]QueryResult, len(measure))
 
 	measureStart := time.Now()
 	if cfg.Concurrency == 1 {
-		for i, q := range measure {
-			t0 := time.Now()
-			hits, err := eng.Search(ctx, q)
-			if err != nil {
-				return nil, fmt.Errorf("search %q: %w", q.ID, err)
+		for repeat := 0; repeat < cfg.QueryRepeats; repeat++ {
+			for i, q := range measure {
+				t0 := time.Now()
+				hits, err := eng.Search(ctx, q)
+				if err != nil {
+					return nil, fmt.Errorf("search %q: %w", q.ID, err)
+				}
+				dt := time.Since(t0)
+				rep.Latencies[repeat*len(measure)+i] = dt
+				if repeat == 0 {
+					rep.QueryResults[i] = QueryResult{QueryID: q.ID, Latency: dt, Hits: hits}
+				}
 			}
-			dt := time.Since(t0)
-			rep.Latencies[i] = dt
-			rep.QueryResults[i] = QueryResult{QueryID: q.ID, Latency: dt, Hits: hits}
 		}
 	} else {
 		var wg sync.WaitGroup
@@ -156,7 +164,8 @@ func RunQueries(ctx context.Context, eng Engine, queries []Query, cfg RunConfig,
 		for worker := 0; worker < cfg.Concurrency; worker++ {
 			wg.Go(
 				func() {
-					for i := range jobs {
+					for runIndex := range jobs {
+						i := runIndex % len(measure)
 						q := measure[i]
 						t0 := time.Now()
 						hits, err := eng.Search(ctx, q)
@@ -165,13 +174,15 @@ func RunQueries(ctx context.Context, eng Engine, queries []Query, cfg RunConfig,
 							errCh <- fmt.Errorf("search %q: %w", q.ID, err)
 							continue
 						}
-						rep.Latencies[i] = dt
-						rep.QueryResults[i] = QueryResult{QueryID: q.ID, Latency: dt, Hits: hits}
+						rep.Latencies[runIndex] = dt
+						if runIndex < len(measure) {
+							rep.QueryResults[i] = QueryResult{QueryID: q.ID, Latency: dt, Hits: hits}
+						}
 					}
 				},
 			)
 		}
-		for i := range measure {
+		for i := range rep.Latencies {
 			jobs <- i
 		}
 		close(jobs)

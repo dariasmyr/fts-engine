@@ -28,6 +28,7 @@ type config struct {
 	Batch         int
 	Warmup        float64
 	Concurrency   int
+	QueryRepeats  int
 	Seed          uint64
 	MSMARCODir    string
 	WikiDump      string
@@ -45,6 +46,7 @@ type config struct {
 	HighSkipTop   int
 	HighPool      int
 	LowPool       int
+	RarePool      int
 	PrefixMinExp  int
 	PrefixMaxExp  int
 	Index         string
@@ -81,6 +83,7 @@ func parseFlags(args []string) (config, error) {
 		batch         = fs.Int("batch", 1000, "indexing batch size")
 		warmup        = fs.Float64("warmup", 0.10, "warmup fraction in [0, 0.5]")
 		concurrency   = fs.Int("concurrency", 1, "search concurrency")
+		queryRepeats  = fs.Int("query-repeats", 1, "repeat the measured query set this many times")
 		seed          = fs.Uint64("seed", 0xC0FFEE, "deterministic seed")
 		msmarcoDir    = fs.String("msmarco-dir", "", "directory with collection.tsv, queries.dev.small.tsv, qrels.dev.small.tsv")
 		wikiDump      = fs.String("wiki-dump", "", "path to real-data wiki dump (.xml|.xml.gz|.xml.bz2) for -dataset=wiki-typed")
@@ -94,10 +97,11 @@ func parseFlags(args []string) (config, error) {
 		vocabSize     = fs.Int("vocab-size", 20000, "synthetic vocabulary size")
 		zipfS         = fs.Float64("zipf-s", 1.07, "synthetic Zipf exponent")
 		typedQueries  = fs.Int("typed-queries", 200, "queries per class for typed real-data datasets")
-		queryTypes    = fs.String("query-types", "", "comma-separated typed query classes (term,and-hh,and-hl,or-hh,phrase,prefix)")
+		queryTypes    = fs.String("query-types", "", "comma-separated typed query classes (term,and-hh,and-hl,and-hr,or-hh,phrase,prefix)")
 		highSkipTop   = fs.Int("high-skip-top", 30, "skip this many top DF terms before building high-frequency pools")
 		highPool      = fs.Int("high-pool", 300, "number of high-DF terms in the query generator pool")
 		lowPool       = fs.Int("low-pool", 5000, "number of lower/mid-DF terms in the query generator pool")
+		rarePool      = fs.Int("rare-pool", 5000, "number of lowest-DF terms with DF >= 2 in the rare query pool")
 		prefixMinExp  = fs.Int("prefix-min-expand", 2, "minimum number of term expansions for generated prefix queries")
 		prefixMaxExp  = fs.Int("prefix-max-expand", 32, "maximum number of term expansions for generated prefix queries")
 		index         = fs.String("index", "slicedradix", "fts-engine index: slicedradix|hamt|flat")
@@ -121,6 +125,7 @@ func parseFlags(args []string) (config, error) {
 		Batch:         *batch,
 		Warmup:        *warmup,
 		Concurrency:   *concurrency,
+		QueryRepeats:  *queryRepeats,
 		Seed:          *seed,
 		MSMARCODir:    strings.TrimSpace(*msmarcoDir),
 		WikiDump:      strings.TrimSpace(*wikiDump),
@@ -138,6 +143,7 @@ func parseFlags(args []string) (config, error) {
 		HighSkipTop:   *highSkipTop,
 		HighPool:      *highPool,
 		LowPool:       *lowPool,
+		RarePool:      *rarePool,
 		PrefixMinExp:  *prefixMinExp,
 		PrefixMaxExp:  *prefixMaxExp,
 		Index:         strings.TrimSpace(*index),
@@ -173,6 +179,9 @@ func (c config) validate() error {
 	}
 	if c.Concurrency <= 0 {
 		return fmt.Errorf("bench: -concurrency must be > 0, got %d", c.Concurrency)
+	}
+	if c.QueryRepeats <= 0 {
+		return fmt.Errorf("bench: -query-repeats must be > 0, got %d", c.QueryRepeats)
 	}
 	if c.Work == "" {
 		return errors.New("bench: -work must not be empty")
@@ -249,9 +258,10 @@ func runEngineGroups(ctx context.Context, engineName string, cfg config, corpus 
 	for _, group := range groups {
 		logf("bench: running engine=%s query_class=%s docs=%d queries=%d", engineName, groupNameOrDefault(group.Name), len(corpus.Docs), len(group.Queries))
 		rep, err := harness.RunQueries(ctx, eng, group.Queries, harness.RunConfig{
-			WarmupFrac:  cfg.Warmup,
-			Concurrency: cfg.Concurrency,
-			Seed:        cfg.Seed,
+			WarmupFrac:   cfg.Warmup,
+			Concurrency:  cfg.Concurrency,
+			QueryRepeats: cfg.QueryRepeats,
+			Seed:         cfg.Seed,
 		}, buildReport)
 		if err != nil {
 			return fmt.Errorf("bench: run %s/%s: %w", engineName, groupNameOrDefault(group.Name), err)
@@ -260,9 +270,10 @@ func runEngineGroups(ctx context.Context, engineName string, cfg config, corpus 
 
 		qs := quality.Compute(rep.QueryResults, group.Qrels, cfg.K)
 		rec := metrics.Build(rep, qs, metrics.RunMeta{
-			Concurrency: cfg.Concurrency,
-			BatchSize:   cfg.Batch,
-			WarmupFrac:  cfg.Warmup,
+			Concurrency:  cfg.Concurrency,
+			BatchSize:    cfg.Batch,
+			WarmupFrac:   cfg.Warmup,
+			QueryRepeats: cfg.QueryRepeats,
 		})
 		rec.QueryClass = group.Name
 		rec.Dataset = datasetMetadata(cfg, corpus, group)
@@ -309,6 +320,7 @@ func loadDataset(cfg config) (*dataset.Corpus, error) {
 			HighSkipTop:      cfg.HighSkipTop,
 			HighPool:         cfg.HighPool,
 			LowPool:          cfg.LowPool,
+			RarePool:         cfg.RarePool,
 			PrefixMinExpand:  cfg.PrefixMinExp,
 			PrefixMaxExpand:  cfg.PrefixMaxExp,
 			QueryTypes:       cfg.QueryTypes,
@@ -353,6 +365,7 @@ func datasetMetadata(cfg config, corpus *dataset.Corpus, group dataset.QueryGrou
 			"high_skip_top":     cfg.HighSkipTop,
 			"high_pool":         cfg.HighPool,
 			"low_pool":          cfg.LowPool,
+			"rare_pool":         cfg.RarePool,
 			"prefix_min_expand": cfg.PrefixMinExp,
 			"prefix_max_expand": cfg.PrefixMaxExp,
 			"query_type_filter": strings.Join(cfg.QueryTypes, ","),
@@ -402,6 +415,18 @@ func validateDatasetConfig(c config) error {
 		}
 		if c.LowPool <= 0 {
 			return fmt.Errorf("bench: -low-pool must be > 0, got %d", c.LowPool)
+		}
+		if c.RarePool <= 0 {
+			return fmt.Errorf("bench: -rare-pool must be > 0, got %d", c.RarePool)
+		}
+		validQueryTypes := map[string]bool{
+			"term": true, "and-hh": true, "and-hl": true, "and-hr": true,
+			"or-hh": true, "phrase": true, "prefix": true,
+		}
+		for _, queryType := range c.QueryTypes {
+			if !validQueryTypes[queryType] {
+				return fmt.Errorf("bench: unsupported wiki-typed query class %q", queryType)
+			}
 		}
 		if c.PrefixMinExp <= 0 || c.PrefixMaxExp <= 0 || c.PrefixMinExp > c.PrefixMaxExp {
 			return fmt.Errorf("bench: invalid prefix expansion range %d..%d", c.PrefixMinExp, c.PrefixMaxExp)

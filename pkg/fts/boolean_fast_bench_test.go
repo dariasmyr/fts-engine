@@ -1,0 +1,95 @@
+package fts
+
+import (
+	"fmt"
+	"testing"
+)
+
+func BenchmarkPostingIntersection(b *testing.B) {
+	for _, shortSize := range []int{8, 128, 2048} {
+		for _, ratio := range []int{1, 2, 4, 8, 16, 64, 256} {
+			for _, overlapPercent := range []int{0, 10, 100} {
+				name := fmt.Sprintf("short=%d/ratio=%d/overlap=%d%%", shortSize, ratio, overlapPercent)
+				short, long, want := makePostingIntersectionBenchmarkData(shortSize, ratio, overlapPercent)
+
+				b.Run(name+"/two-pointer", func(b *testing.B) {
+					if got := intersectPostingsTwoPointer(short, long); got != want {
+						b.Fatalf("intersection count = %d, want %d", got, want)
+					}
+					for b.Loop() {
+						intersectPostingsTwoPointer(short, long)
+					}
+				})
+
+				b.Run(name+"/galloping", func(b *testing.B) {
+					if got := intersectPostingsGalloping(short, long); got != want {
+						b.Fatalf("intersection count = %d, want %d", got, want)
+					}
+					for b.Loop() {
+						intersectPostingsGalloping(short, long)
+					}
+				})
+			}
+		}
+	}
+}
+
+func makePostingIntersectionBenchmarkData(shortSize, ratio, overlapPercent int) ([]Posting, []Posting, int) {
+	longSize := shortSize * ratio
+	long := make([]Posting, longSize)
+	for i := range long {
+		long[i].Seq = uint32(i * 2)
+	}
+
+	short := make([]Posting, shortSize)
+	want := 0
+	for i := range short {
+		longIndex := i * ratio
+		seq := uint32(longIndex * 2)
+		matches := overlapPercent == 100 || overlapPercent > 0 && i%(100/overlapPercent) == 0
+		if matches {
+			want++
+		} else {
+			seq++
+		}
+		short[i].Seq = seq
+	}
+	return short, long, want
+}
+
+func intersectPostingsTwoPointer(left, right []Posting) int {
+	i, j, matches := 0, 0, 0
+	for i < len(left) && j < len(right) {
+		switch {
+		case left[i].Seq < right[j].Seq:
+			i++
+		case left[i].Seq > right[j].Seq:
+			j++
+		default:
+			matches++
+			i++
+			j++
+		}
+	}
+	return matches
+}
+
+func intersectPostingsGalloping(short, long []Posting) int {
+	if len(short) > len(long) {
+		short, long = long, short
+	}
+
+	longIndex := 0
+	matches := 0
+	for _, posting := range short {
+		longIndex = gallopPostingLowerBound(long, longIndex, posting.Seq)
+		if longIndex == len(long) {
+			break
+		}
+		if long[longIndex].Seq == posting.Seq {
+			matches++
+			longIndex++
+		}
+	}
+	return matches
+}
