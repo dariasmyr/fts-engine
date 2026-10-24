@@ -5,7 +5,10 @@ import (
 	"sort"
 )
 
-const lookupMapThreshold = 50
+const (
+	lookupMapThreshold = 50
+	postingGallopRatio = 8
+)
 
 type termExpansion struct {
 	field string
@@ -397,27 +400,38 @@ func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause
 			return map[DocOrd]docAccum{}, true, nil
 		}
 	}
+	// Gallop when a postings list is much larger than the shortest list.
+	gallopMinLen := len(exps[0].docs) * postingGallopRatio
 
 	combined := make(map[DocOrd]docAccum, len(exps[0].docs))
 	currentSeq := exps[0].docs[0].Seq
 
 loop:
 	for {
+		allAligned := true
 		for i := 0; i < k; i++ {
 			docs := exps[i].docs
-			// Advance each pointer up to the current candidate Seq.
-			for ptrs[i] < len(docs) && docs[ptrs[i]].Seq < currentSeq {
-				ptrs[i]++
+			if len(docs) >= gallopMinLen {
+				ptrs[i] = gallopPostingLowerBound(docs, ptrs[i], currentSeq)
+			} else {
+				// Sequential scans are faster while posting-list sizes remain comparable.
+				for ptrs[i] < len(docs) && docs[ptrs[i]].Seq < currentSeq {
+					ptrs[i]++
+				}
 			}
 			if ptrs[i] >= len(docs) {
 				break loop
 			}
 			if docs[ptrs[i]].Seq > currentSeq {
-				// This list moved past the candidate, so retry from the larger Seq.
+				// Earlier lists were checked against the old candidate. Restart
+				// alignment so every list catches up to the new candidate.
 				currentSeq = docs[ptrs[i]].Seq
-				i = -1
-				continue
+				allAligned = false
+				break
 			}
+		}
+		if !allAligned {
+			continue
 		}
 
 		// All MUST lists are aligned on the same Seq, so we found an intersection hit.
@@ -454,6 +468,38 @@ loop:
 	}
 
 	return combined, true, nil
+}
+
+func gallopPostingLowerBound(postings []Posting, from int, target uint32) int {
+	n := len(postings)
+	if from >= n {
+		return n
+	}
+	if postings[from].Seq >= target {
+		return from
+	}
+
+	// Find an exponential range that may contain the first Seq >= target.
+	step := 1
+	for step < n-from && postings[from+step].Seq < target {
+		step *= 2
+	}
+
+	// Split step in half to get the lower bound of the range
+	left := from + step/2 + 1
+	// The upper bound of the range is either the end of the postings or the last step we took.
+	right := min(from+step+1, n)
+
+	// Find the lower bound within [left, right) using binary search.
+	for left < right {
+		mid := left + (right-left)/2
+		if postings[mid].Seq < target {
+			left = mid + 1
+		} else {
+			right = mid
+		}
+	}
+	return left
 }
 
 func (s *Service) collectTermPostings(ctx context.Context, q TermQuery, scope queryFieldScope) (fastMust, error) {
