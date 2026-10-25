@@ -201,15 +201,15 @@ func TestUpdateDocumentReplacesMultiFieldDocument(t *testing.T) {
 	factory := func(name string) (Index, error) { return newOrdAwareMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys)
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{
-		"title": {Value: "oldtitle"},
-		"body":  {Value: "oldbody"},
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]FieldData{
+		"title": {Text: "oldtitle"},
+		"body":  {Text: "oldbody"},
 	}}); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.Update(ctx, Document{ID: "doc-a", Fields: map[string]Field{
-		"title": {Value: "newtitle"},
-		"body":  {Value: "newbody"},
+	if err := svc.Update(ctx, Document{ID: "doc-a", Fields: map[string]FieldData{
+		"title": {Text: "newtitle"},
+		"body":  {Text: "newbody"},
 	}}); err != nil {
 		t.Fatalf("Update(doc-a) error = %v", err)
 	}

@@ -31,7 +31,7 @@ func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
 	}
 
 	svc := fts.New(idx, fts.WordKeys, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
-	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "snapshot roundtrip"}}}); err != nil {
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "snapshot roundtrip"}}}); err != nil {
 		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 
@@ -69,7 +69,7 @@ func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
 		t.Fatalf("TotalResultsCount = %d, want %d", got, want)
 	}
 
-	if err := loaded.Service.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "snapshot stays writable"}}}); err != nil {
+	if err := loaded.Service.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "snapshot stays writable"}}}); err != nil {
 		t.Fatalf("Index(doc-2) after restore error = %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestLoadSnapshotDataAllowsExplicitRestore(t *testing.T) {
 	}
 
 	svc := fts.New(idx, fts.WordKeys, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
-	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "explicit restore path"}}}); err != nil {
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "explicit restore path"}}}); err != nil {
 		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 
@@ -154,9 +154,9 @@ func TestSaveLoadSnapshotRoundTripMultiField(t *testing.T) {
 
 	factory := func(name string) (fts.Index, error) { return slicedradix.New(), nil }
 	svc := fts.NewMultiField(factory, fts.WordKeys, fts.WithScorer(fts.BM25()))
-	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
-		"title": {Value: "alpha title"},
-		"body":  {Value: "beta body"},
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.FieldData{
+		"title": {Text: "alpha title"},
+		"body":  {Text: "beta body"},
 	}}); err != nil {
 		t.Fatalf("Index(doc-1) error = %v", err)
 	}

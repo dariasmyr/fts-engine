@@ -26,7 +26,7 @@ func (s *Service) Index(ctx context.Context, doc Document) error {
 	return nil
 }
 
-func (s *Service) indexField(ctx context.Context, docID DocID, name string, field Field) error {
+func (s *Service) indexField(ctx context.Context, docID DocID, name string, field FieldData) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -53,7 +53,7 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 	}
 
 	positional, supportsPositions := index.(PositionalIndex)
-	tokens := pipeline.Process(field.Value)
+	tokens := pipeline.Process(field.Text)
 	ord := s.registry.GetOrAssign(docID)
 	if s.scorer != nil {
 		s.collection.observe(name, ord, uint32(len(tokens)))

@@ -275,8 +275,8 @@ func TestSearchWithWeightedScorerRanksHigherWeightedFieldFirst(t *testing.T) {
 
 	ctx := context.Background()
 	docs := []Document{
-		{ID: "doc-a", Fields: map[string]Field{"title": {Value: "alpha"}}},
-		{ID: "doc-b", Fields: map[string]Field{"body": {Value: "alpha alpha alpha"}}},
+		{ID: "doc-a", Fields: map[string]FieldData{"title": {Text: "alpha"}}},
+		{ID: "doc-b", Fields: map[string]FieldData{"body": {Text: "alpha alpha alpha"}}},
 	}
 	for _, doc := range docs {
 		if err := svc.Index(ctx, doc); err != nil {
@@ -312,8 +312,8 @@ func TestSearchWithRankProfileUsesFieldWeights(t *testing.T) {
 
 	ctx := context.Background()
 	docs := []Document{
-		{ID: "doc-a", Fields: map[string]Field{"title": {Value: "alpha"}}},
-		{ID: "doc-b", Fields: map[string]Field{"body": {Value: "alpha alpha alpha alpha"}}},
+		{ID: "doc-a", Fields: map[string]FieldData{"title": {Text: "alpha"}}},
+		{ID: "doc-b", Fields: map[string]FieldData{"body": {Text: "alpha alpha alpha alpha"}}},
 	}
 	for _, doc := range docs {
 		if err := svc.Index(ctx, doc); err != nil {
@@ -349,8 +349,8 @@ func TestSearchWithRankProfileUsesQueryTypeWeights(t *testing.T) {
 
 	ctx := context.Background()
 	docs := []Document{
-		{ID: "doc-phrase", Fields: map[string]Field{"body": {Value: "alpha beta"}}},
-		{ID: "doc-prefix", Fields: map[string]Field{"body": {Value: "alphabet alphabet alphabet alphabet alphabet"}}},
+		{ID: "doc-phrase", Fields: map[string]FieldData{"body": {Text: "alpha beta"}}},
+		{ID: "doc-prefix", Fields: map[string]FieldData{"body": {Text: "alphabet alphabet alphabet alphabet alphabet"}}},
 	}
 	for _, doc := range docs {
 		if err := svc.Index(ctx, doc); err != nil {
@@ -389,8 +389,8 @@ func TestExplainWithRankProfileShowsWeightedContribution(t *testing.T) {
 
 	ctx := context.Background()
 	docs := []Document{
-		{ID: "doc-a", Fields: map[string]Field{"title": {Value: "alpha"}}},
-		{ID: "doc-b", Fields: map[string]Field{"body": {Value: "alpha alpha alpha alpha"}}},
+		{ID: "doc-a", Fields: map[string]FieldData{"title": {Text: "alpha"}}},
+		{ID: "doc-b", Fields: map[string]FieldData{"body": {Text: "alpha alpha alpha alpha"}}},
 	}
 	for _, doc := range docs {
 		if err := svc.Index(ctx, doc); err != nil {
@@ -435,7 +435,7 @@ func TestExplainWithRankProfileShowsQueryTypeWeight(t *testing.T) {
 	}))
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{"body": {Value: "alpha beta"}}}); err != nil {
+	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]FieldData{"body": {Text: "alpha beta"}}}); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
@@ -513,10 +513,10 @@ func TestSearchPhraseWithTFIDFScoresAcrossFields(t *testing.T) {
 
 	ctx := context.Background()
 	docs := []Document{
-		{ID: "doc-a", Fields: map[string]Field{"title": {Value: "james doe"}}},
-		{ID: "doc-b", Fields: map[string]Field{"body": {Value: "james doe james doe"}}},
-		{ID: "doc-c", Fields: map[string]Field{"title": {Value: "speech only"}}},
-		{ID: "doc-d", Fields: map[string]Field{"body": {Value: "speech only"}}},
+		{ID: "doc-a", Fields: map[string]FieldData{"title": {Text: "james doe"}}},
+		{ID: "doc-b", Fields: map[string]FieldData{"body": {Text: "james doe james doe"}}},
+		{ID: "doc-c", Fields: map[string]FieldData{"title": {Text: "speech only"}}},
+		{ID: "doc-d", Fields: map[string]FieldData{"body": {Text: "speech only"}}},
 	}
 	for _, doc := range docs {
 		if err := svc.Index(ctx, doc); err != nil {

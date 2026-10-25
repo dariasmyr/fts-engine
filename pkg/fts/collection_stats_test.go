@@ -13,14 +13,14 @@ func TestCollectionStatsObservePerFieldLengths(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	if err := svc.Index(ctx, Document{ID: "doc-1", Fields: map[string]Field{
-		"title": {Value: "alpha beta"},
-		"body":  {Value: "alpha beta gamma"},
+	if err := svc.Index(ctx, Document{ID: "doc-1", Fields: map[string]FieldData{
+		"title": {Text: "alpha beta"},
+		"body":  {Text: "alpha beta gamma"},
 	}}); err != nil {
 		t.Fatalf("Index(doc-1) error = %v", err)
 	}
-	if err := svc.Index(ctx, Document{ID: "doc-2", Fields: map[string]Field{
-		"title": {Value: "alpha"},
+	if err := svc.Index(ctx, Document{ID: "doc-2", Fields: map[string]FieldData{
+		"title": {Text: "alpha"},
 	}}); err != nil {
 		t.Fatalf("Index(doc-2) error = %v", err)
 	}

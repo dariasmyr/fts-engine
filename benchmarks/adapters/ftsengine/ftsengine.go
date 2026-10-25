@@ -118,8 +118,8 @@ func (a *Adapter) Index(ctx context.Context, docs []harness.Document) error {
 	for _, doc := range docs {
 		if err := a.svc.Index(ctx, fts.Document{
 			ID: fts.DocID(doc.ID),
-			Fields: map[string]fts.Field{
-				fts.DefaultField: {Value: doc.Body},
+			Fields: map[string]fts.FieldData{
+				fts.DefaultField: {Text: doc.Body},
 			},
 		}); err != nil {
 			return fmt.Errorf("index %q: %w", doc.ID, err)

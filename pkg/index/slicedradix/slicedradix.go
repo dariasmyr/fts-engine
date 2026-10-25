@@ -4,11 +4,12 @@ package slicedradix
 import (
 	"encoding/gob"
 	"fmt"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/segment"
 	"io"
 	"sort"
 	"sync"
+
+	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/pkg/segment"
 )
 
 type node struct {

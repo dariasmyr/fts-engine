@@ -26,8 +26,8 @@ func main() {
 		fts.WithFilter(bloom),
 	)
 
-	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Search with custom index"}}})
-	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Another searchable document"}}})
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "Search with custom index"}}})
+	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "Another searchable document"}}})
 
 	res, err := engine.SearchDocuments(context.Background(), "searchable", 5)
 	if err != nil {

@@ -5,8 +5,8 @@ import "context"
 func defaultDoc(id DocID, content string) Document {
 	return Document{
 		ID: id,
-		Fields: map[string]Field{
-			DefaultField: {Value: content},
+		Fields: map[string]FieldData{
+			DefaultField: {Text: content},
 		},
 	}
 }

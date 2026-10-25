@@ -55,15 +55,15 @@ func indexDocument(ctx context.Context, service *pkgfts.Service, doc models.Docu
 	if service == nil {
 		return fmt.Errorf("nil service")
 	}
-	fields := make(map[string]pkgfts.Field, 3)
+	fields := make(map[string]pkgfts.FieldData, 3)
 	if doc.Title != "" {
-		fields["title"] = pkgfts.Field{Value: doc.Title}
+		fields["title"] = pkgfts.FieldData{Text: doc.Title}
 	}
 	if doc.Abstract != "" {
-		fields["abstract"] = pkgfts.Field{Value: doc.Abstract}
+		fields["abstract"] = pkgfts.FieldData{Text: doc.Abstract}
 	}
 	if doc.Extract != "" {
-		fields["extract"] = pkgfts.Field{Value: doc.Extract}
+		fields["extract"] = pkgfts.FieldData{Text: doc.Extract}
 	}
 	if len(fields) == 0 {
 		return nil

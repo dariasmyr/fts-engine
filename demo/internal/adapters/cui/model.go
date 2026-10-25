@@ -35,12 +35,12 @@ type searchDoneMsg struct {
 }
 
 type keyMap struct {
-	Tab         key.Binding
-	Search      key.Binding
-	ToggleMode  key.Binding
-	ScrollUp    key.Binding
-	ScrollDown  key.Binding
-	Quit        key.Binding
+	Tab        key.Binding
+	Search     key.Binding
+	ToggleMode key.Binding
+	ScrollUp   key.Binding
+	ScrollDown key.Binding
+	Quit       key.Binding
 }
 
 var keys = keyMap{

@@ -15,8 +15,8 @@ func main() {
 	engine := fts.New(flat.New(), fts.WordKeys, fts.WithPipeline(pipeline))
 
 	docs := []fts.Document{
-		{ID: "event-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "checkout-api/v2 failed with io.EOF from 10.0.0.1"}}},
-		{ID: "event-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "payments-api/v1 returned timeout from 10.0.0.2"}}},
+		{ID: "event-1", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "checkout-api/v2 failed with io.EOF from 10.0.0.1"}}},
+		{ID: "event-2", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "payments-api/v1 returned timeout from 10.0.0.2"}}},
 	}
 	for _, doc := range docs {
 		if err := engine.Index(ctx, doc); err != nil {
