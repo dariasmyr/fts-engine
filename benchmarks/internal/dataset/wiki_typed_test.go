@@ -35,6 +35,7 @@ func TestLoadWikiTypedBuildsAllQueryGroups(t *testing.T) {
 		HighSkipTop:     0,
 		HighPool:        3,
 		LowPool:         8,
+		RarePool:        4,
 		PrefixMinExpand: 2,
 		PrefixMaxExpand: 8,
 	})
@@ -44,9 +45,10 @@ func TestLoadWikiTypedBuildsAllQueryGroups(t *testing.T) {
 	if len(corpus.Docs) != 6 {
 		t.Fatalf("len(Docs) = %d, want 6", len(corpus.Docs))
 	}
-	if len(corpus.Groups) != 6 {
-		t.Fatalf("len(Groups) = %d, want 6", len(corpus.Groups))
+	if len(corpus.Groups) != 7 {
+		t.Fatalf("len(Groups) = %d, want 7", len(corpus.Groups))
 	}
+	wantGroups := []string{queryClassTerm, queryClassAndHH, queryClassAndHL, queryClassAndHR, queryClassOrHH, queryClassPhrase, queryClassPrefix}
 	for _, group := range corpus.Groups {
 		if len(group.Queries) != 1 {
 			t.Fatalf("group %q query count = %d, want 1", group.Name, len(group.Queries))
@@ -63,8 +65,13 @@ func TestLoadWikiTypedBuildsAllQueryGroups(t *testing.T) {
 			t.Fatalf("group %q relevant set is empty", group.Name)
 		}
 	}
-	if len(corpus.Queries) != 6 {
-		t.Fatalf("len(Queries) = %d, want 6", len(corpus.Queries))
+	for i, want := range wantGroups {
+		if got := corpus.Groups[i].Name; got != want {
+			t.Fatalf("Groups[%d].Name = %q, want %q", i, got, want)
+		}
+	}
+	if len(corpus.Queries) != 7 {
+		t.Fatalf("len(Queries) = %d, want 7", len(corpus.Queries))
 	}
 	if used, _ := corpus.Meta["docs_cache_used"].(bool); used {
 		t.Fatal("first LoadWikiTyped() should not report docs_cache_used=true")
@@ -96,6 +103,7 @@ func TestLoadWikiTypedBuildsAllQueryGroups(t *testing.T) {
 		HighSkipTop:     0,
 		HighPool:        3,
 		LowPool:         8,
+		RarePool:        4,
 		PrefixMinExpand: 2,
 		PrefixMaxExpand: 8,
 	})

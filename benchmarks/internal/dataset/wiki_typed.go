@@ -24,6 +24,7 @@ const (
 	queryClassTerm   = "term"
 	queryClassAndHH  = "and-hh"
 	queryClassAndHL  = "and-hl"
+	queryClassAndHR  = "and-hr"
 	queryClassOrHH   = "or-hh"
 	queryClassPhrase = "phrase"
 	queryClassPrefix = "prefix"
@@ -39,6 +40,7 @@ type WikiTypedConfig struct {
 	HighSkipTop      int
 	HighPool         int
 	LowPool          int
+	RarePool         int
 	PrefixMinExpand  int
 	PrefixMaxExpand  int
 	QueryTypes       []string
@@ -66,6 +68,7 @@ type corpusStats struct {
 	prefixStats  []prefixStat
 	highTerms    []string
 	lowTerms     []string
+	rareTerms    []string
 	termUniverse []string
 }
 
@@ -152,6 +155,9 @@ func LoadWikiTyped(cfg WikiTypedConfig) (*Corpus, error) {
 	}
 	if cfg.LowPool <= 0 {
 		cfg.LowPool = 5000
+	}
+	if cfg.RarePool <= 0 {
+		cfg.RarePool = 5000
 	}
 	if cfg.PrefixMinExpand <= 0 {
 		cfg.PrefixMinExpand = 2
@@ -351,7 +357,7 @@ func buildCorpusStats(docs []harness.Document, cfg WikiTypedConfig) corpusStats 
 		return termFreqs[i].DF > termFreqs[j].DF
 	})
 
-	highTerms, lowTerms, universe := selectTermBuckets(termFreqs, cfg)
+	highTerms, lowTerms, rareTerms, universe := selectTermBuckets(termFreqs, cfg)
 	prefixStats, prefixTerms := buildPrefixStats(postings, cfg)
 
 	return corpusStats{
@@ -363,6 +369,7 @@ func buildCorpusStats(docs []harness.Document, cfg WikiTypedConfig) corpusStats 
 		prefixStats:  prefixStats,
 		highTerms:    highTerms,
 		lowTerms:     lowTerms,
+		rareTerms:    rareTerms,
 		termUniverse: universe,
 	}
 }
@@ -377,6 +384,7 @@ func buildWikiQueryGroups(stats corpusStats, cfg WikiTypedConfig) ([]QueryGroup,
 		{name: queryClassTerm, build: buildTermQueries},
 		{name: queryClassAndHH, build: buildAndHHQueries},
 		{name: queryClassAndHL, build: buildAndHLQueries},
+		{name: queryClassAndHR, build: buildAndHRQueries},
 		{name: queryClassOrHH, build: buildOrHHQueries},
 		{name: queryClassPhrase, build: buildPhraseQueries},
 		{name: queryClassPrefix, build: buildPrefixQueries},
@@ -485,6 +493,10 @@ func buildAndHLQueries(rng *rand.Rand, stats corpusStats, cfg WikiTypedConfig) (
 	return buildBooleanPairQueries(rng, stats.highTerms, stats.lowTerms, stats, cfg, queryClassAndHL, true, harness.OccurMust)
 }
 
+func buildAndHRQueries(rng *rand.Rand, stats corpusStats, cfg WikiTypedConfig) ([]harness.Query, error) {
+	return buildBooleanPairQueries(rng, stats.highTerms, stats.rareTerms, stats, cfg, queryClassAndHR, true, harness.OccurMust)
+}
+
 func buildOrHHQueries(rng *rand.Rand, stats corpusStats, cfg WikiTypedConfig) ([]harness.Query, error) {
 	return buildBooleanPairQueries(rng, stats.highTerms, stats.highTerms, stats, cfg, queryClassOrHH, false, harness.OccurShould)
 }
@@ -536,23 +548,28 @@ func buildSimpleTermQueries(rng *rand.Rand, terms []string, limit int, k int, cl
 	return queries
 }
 
-func selectTermBuckets(termFreqs []termStat, cfg WikiTypedConfig) (high []string, low []string, universe []string) {
+func selectTermBuckets(termFreqs []termStat, cfg WikiTypedConfig) (high []string, low []string, rare []string, universe []string) {
 	if len(termFreqs) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	start := min(cfg.HighSkipTop, len(termFreqs))
 	highEnd := min(start+cfg.HighPool, len(termFreqs))
 	lowEnd := min(highEnd+cfg.LowPool, len(termFreqs))
+	rareEnd := sort.Search(len(termFreqs), func(i int) bool { return termFreqs[i].DF < 2 })
+	rareStart := max(highEnd, rareEnd-cfg.RarePool)
 	for _, stat := range termFreqs[start:highEnd] {
 		high = append(high, stat.Term)
 	}
 	for _, stat := range termFreqs[highEnd:lowEnd] {
 		low = append(low, stat.Term)
 	}
+	for _, stat := range termFreqs[rareStart:rareEnd] {
+		rare = append(rare, stat.Term)
+	}
 	for _, stat := range termFreqs[start:] {
 		universe = append(universe, stat.Term)
 	}
-	return high, low, universe
+	return high, low, rare, universe
 }
 
 func buildPrefixStats(postings map[string][]int, cfg WikiTypedConfig) ([]prefixStat, map[string][]string) {
@@ -916,6 +933,7 @@ func wikiTypedQueriesCacheLocation(cfg WikiTypedConfig) (string, string, error) 
 		HighSkipTop     int    `json:"high_skip_top"`
 		HighPool        int    `json:"high_pool"`
 		LowPool         int    `json:"low_pool"`
+		RarePool        int    `json:"rare_pool"`
 		PrefixMinExpand int    `json:"prefix_min_expand"`
 		PrefixMaxExpand int    `json:"prefix_max_expand"`
 		IncludeTitle    bool   `json:"include_title_text"`
@@ -930,6 +948,7 @@ func wikiTypedQueriesCacheLocation(cfg WikiTypedConfig) (string, string, error) 
 		HighSkipTop:     cfg.HighSkipTop,
 		HighPool:        cfg.HighPool,
 		LowPool:         cfg.LowPool,
+		RarePool:        cfg.RarePool,
 		PrefixMinExpand: cfg.PrefixMinExpand,
 		PrefixMaxExpand: cfg.PrefixMaxExpand,
 		IncludeTitle:    cfg.IncludeTitleText,
@@ -1128,6 +1147,7 @@ func saveWikiTypedManifest(path string, docs docsCacheResult, queriesPath string
 			"high_skip_top":      cfg.HighSkipTop,
 			"high_pool":          cfg.HighPool,
 			"low_pool":           cfg.LowPool,
+			"rare_pool":          cfg.RarePool,
 			"prefix_min_expand":  cfg.PrefixMinExpand,
 			"prefix_max_expand":  cfg.PrefixMaxExpand,
 			"include_title_text": cfg.IncludeTitleText,
