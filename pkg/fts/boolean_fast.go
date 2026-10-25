@@ -389,73 +389,97 @@ func allSingleExpansionInSameField(musts []fastMust) bool {
 }
 
 func (s *Service) execBooleanAndSortMerge(musts []fastMust, shoulds []BoolClause, exclude map[DocOrd]struct{}, ctx context.Context, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
-	k := len(musts)
-	ptrs := make([]int, k)
-	exps := make([]*termExpansion, k)
-	for i := range musts {
+	listCount := len(musts)
+	expansions := make([]*termExpansion, listCount)
+	// mark the common range of Seq ordinals across all MUST clauses, so we can skip any candidates outside that range.
+	var commonStart, commonEnd uint32
+	var gallopMinLen int
+	// MUST lists are length-sorted, so one boundary separates sequential and galloping scans.
+	gallopStart := listCount
+	for listIndex := range musts {
 		// allSingleExpansion guarantees exactly one postings list per MUST clause here.
-		exps[i] = &musts[i].expansions[0]
-		if len(exps[i].docs) == 0 {
+		expansions[listIndex] = &musts[listIndex].expansions[0]
+		if len(expansions[listIndex].docs) == 0 {
 			// One empty MUST list makes the whole AND empty.
 			return map[DocOrd]docAccum{}, true, nil
 		}
+		// mark the first and last Seq ordinals in this MUST list
+		firstSeq := expansions[listIndex].docs[0].Seq
+		lastSeq := expansions[listIndex].docs[len(expansions[listIndex].docs)-1].Seq
+		if listIndex == 0 {
+			// first MUST list sets the initial common range
+			commonStart = firstSeq
+			commonEnd = lastSeq
+			gallopMinLen = len(expansions[listIndex].docs) * postingGallopRatio
+			continue
+		}
+		// subsequent MUST lists narrow the common range
+		commonStart = max(commonStart, firstSeq)
+		commonEnd = min(commonEnd, lastSeq)
+		if gallopStart == listCount && len(expansions[listIndex].docs) >= gallopMinLen {
+			gallopStart = listIndex
+		}
 	}
-	// Gallop when a postings list is much larger than the shortest list.
-	gallopMinLen := len(exps[0].docs) * postingGallopRatio
+	// If the common range is empty, there are no possible intersections.
+	if commonStart > commonEnd {
+		return map[DocOrd]docAccum{}, true, nil
+	}
 
-	combined := make(map[DocOrd]docAccum, len(exps[0].docs))
-	currentSeq := exps[0].docs[0].Seq
+	positions := make([]int, listCount)
+	combined := make(map[DocOrd]docAccum, len(expansions[0].docs))
+	candidateSeq := commonStart
 
-loop:
+alignmentLoop:
 	for {
-		allAligned := true
-		for i := 0; i < k; i++ {
-			docs := exps[i].docs
-			if len(docs) >= gallopMinLen {
-				ptrs[i] = gallopPostingLowerBound(docs, ptrs[i], currentSeq)
+		allListsAligned := true
+		for listIndex := range listCount {
+			postings := expansions[listIndex].docs
+			if listIndex >= gallopStart {
+				positions[listIndex] = gallopPostingLowerBound(postings, positions[listIndex], candidateSeq)
 			} else {
 				// Sequential scans are faster while posting-list sizes remain comparable.
-				for ptrs[i] < len(docs) && docs[ptrs[i]].Seq < currentSeq {
-					ptrs[i]++
+				for positions[listIndex] < len(postings) && postings[positions[listIndex]].Seq < candidateSeq {
+					positions[listIndex]++
 				}
 			}
-			if ptrs[i] >= len(docs) {
-				break loop
+			if positions[listIndex] >= len(postings) {
+				break alignmentLoop
 			}
-			if docs[ptrs[i]].Seq > currentSeq {
+			if postings[positions[listIndex]].Seq > candidateSeq {
 				// Earlier lists were checked against the old candidate. Restart
 				// alignment so every list catches up to the new candidate.
-				currentSeq = docs[ptrs[i]].Seq
-				allAligned = false
+				candidateSeq = postings[positions[listIndex]].Seq
+				allListsAligned = false
 				break
 			}
 		}
-		if !allAligned {
+		if !allListsAligned {
 			continue
 		}
 
 		// All MUST lists are aligned on the same Seq, so we found an intersection hit.
-		docOrd := exps[0].docs[ptrs[0]].Ord
+		docOrd := expansions[0].docs[positions[0]].Ord
 		if _, skip := exclude[docOrd]; !skip {
 			var accum docAccum
-			for i := 0; i < k; i++ {
-				d := exps[i].docs[ptrs[i]]
+			for listIndex := range listCount {
+				posting := expansions[listIndex].docs[positions[listIndex]]
 				accum.UniqueMatches++
-				accum.TotalMatches += int(d.Count)
-				accum.Score += s.scoreTermExpansionDoc(ctx, *exps[i], d)
+				accum.TotalMatches += int(posting.Count)
+				accum.Score += s.scoreTermExpansionDoc(ctx, *expansions[listIndex], posting)
 			}
 			combined[docOrd] = accum
 		}
 
 		// Move every list forward past the matched document and continue the merge walk.
-		for i := 0; i < k; i++ {
-			ptrs[i]++
-			if ptrs[i] >= len(exps[i].docs) {
-				break loop
+		for listIndex := range listCount {
+			positions[listIndex]++
+			if positions[listIndex] >= len(expansions[listIndex].docs) {
+				// One list is exhausted, so there are no more intersections possible.
+				break alignmentLoop
 			}
 		}
 		// Start from the next Seq in the first list; the other lists will catch up or move the candidate higher.
-		currentSeq = exps[0].docs[ptrs[0]].Seq
+		candidateSeq = expansions[0].docs[positions[0]].Seq
 	}
 
 	if err := s.applyShouldClauseBoosts(ctx, combined, shoulds, scope); err != nil {
@@ -478,9 +502,15 @@ func gallopPostingLowerBound(postings []Posting, from int, target uint32) int {
 	if postings[from].Seq >= target {
 		return from
 	}
+	if from+1 >= n {
+		return n
+	}
+	if postings[from+1].Seq >= target {
+		return from + 1
+	}
 
 	// Find an exponential range that may contain the first Seq >= target.
-	step := 1
+	step := 2
 	for step < n-from && postings[from+step].Seq < target {
 		step *= 2
 	}

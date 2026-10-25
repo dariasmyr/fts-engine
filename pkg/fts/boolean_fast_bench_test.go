@@ -1,9 +1,12 @@
 package fts
 
 import (
+	"context"
 	"fmt"
 	"testing"
 )
+
+var postingBenchmarkSink int
 
 func BenchmarkPostingIntersection(b *testing.B) {
 	for _, shortSize := range []int{8, 128, 2048} {
@@ -31,6 +34,89 @@ func BenchmarkPostingIntersection(b *testing.B) {
 				})
 			}
 		}
+	}
+}
+
+func BenchmarkGallopPostingLowerBound(b *testing.B) {
+	postings := make([]Posting, 8192)
+	for i := range postings {
+		postings[i].Seq = uint32(i * 2)
+	}
+
+	for _, benchmark := range []struct {
+		name   string
+		from   int
+		target uint32
+	}{
+		{name: "current", from: 100, target: postings[100].Seq},
+		{name: "next", from: 100, target: postings[101].Seq},
+		{name: "distant", from: 100, target: postings[4196].Seq},
+	} {
+		b.Run(benchmark.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				postingBenchmarkSink = gallopPostingLowerBound(postings, benchmark.from, benchmark.target)
+			}
+		})
+	}
+}
+
+func BenchmarkBooleanAndSortMergeRange(b *testing.B) {
+	for _, benchmark := range []struct {
+		name  string
+		musts []fastMust
+	}{
+		{
+			name: "disjoint-comparable",
+			musts: []fastMust{
+				benchmarkFastMust(10_000, 128, 1),
+				benchmarkFastMust(0, 512, 1),
+			},
+		},
+		{
+			name: "tiny-overlap",
+			musts: []fastMust{
+				benchmarkFastMust(8, 2, 7),
+				benchmarkFastMust(0, 16, 1),
+			},
+		},
+		{
+			name: "comparable-overlap",
+			musts: []fastMust{
+				benchmarkFastMust(0, 128, 4),
+				benchmarkFastMust(0, 512, 1),
+			},
+		},
+	} {
+		b.Run(benchmark.name, func(b *testing.B) {
+			service := &Service{}
+			b.ReportAllocs()
+			for b.Loop() {
+				got, _, err := service.execBooleanAndSortMerge(
+					benchmark.musts,
+					nil,
+					nil,
+					context.Background(),
+					queryFieldScope{},
+				)
+				if err != nil {
+					b.Fatal(err)
+				}
+				postingBenchmarkSink = len(got)
+			}
+		})
+	}
+}
+
+func benchmarkFastMust(start uint32, size int, step uint32) fastMust {
+	docs := make([]Posting, size)
+	for i := range docs {
+		seq := start + uint32(i)*step
+		docs[i] = Posting{Ord: DocOrd(seq), Count: 1, Seq: seq}
+	}
+	return fastMust{
+		expansions: []termExpansion{{field: DefaultField, docs: docs}},
+		totalDocs:  len(docs),
 	}
 }
 
