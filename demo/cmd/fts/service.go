@@ -1,15 +1,16 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"time"
 
 	"github.com/dariasmyr/fts-engine/demo/internal/config"
-	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
+	pkgfts "github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 )
 
 func selectScorer(kind string) (pkgfts.Scorer, error) {
@@ -25,7 +26,7 @@ func selectScorer(kind string) (pkgfts.Scorer, error) {
 	}
 }
 
-func selectScoringOption(cfg config.FTSConfig) (pkgfts.Option, error) {
+func selectScoringOption(cfg config.FTSConfig) (*pkgfts.Option, error) {
 	scorer, err := selectScorer(cfg.Scorer)
 	if err != nil {
 		return nil, err
@@ -76,7 +77,7 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 		return nil, false, err
 	}
 
-	serviceOpts := []pkgfts.Option{pkgfts.WithPipeline(pipeline)}
+	serviceOpts := []*pkgfts.Option{pkgfts.WithPipeline(pipeline)}
 	if scorerOpt != nil {
 		serviceOpts = append(serviceOpts, scorerOpt)
 	}
@@ -97,7 +98,10 @@ func buildService(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerat
 	if cfg.Mode.Type == "prod" && cfg.FTS.Persistence.Enabled && cfg.FTS.Persistence.LoadOnStart {
 		svc, ok, err := tryLoadPersistence(log, cfg, keyGen, registry, serviceOpts)
 		if err != nil {
-			return nil, false, err
+			if !errors.Is(err, pkgfts.ErrPersistenceRebuildRequired) {
+				return nil, false, err
+			}
+			log.Warn("Persisted FTS index requires rebuild", "error", err)
 		}
 		if ok {
 			return svc, true, nil
@@ -170,9 +174,9 @@ func buildFilterIfNeeded(log *slog.Logger, svc *pkgfts.Service) error {
 	return nil
 }
 
-func buildPipeline(cfg *config.Config) textproc.Pipeline {
+func buildPipeline(cfg *config.Config) (textproc.Pipeline, error) {
 	if cfg.FTS.Pipeline.Preset == "observability" {
-		return textproc.ObservabilityPipeline()
+		return textproc.ObservabilityPipeline(), nil
 	}
 
 	filters := make([]textproc.Filter, 0, 4)
@@ -201,14 +205,5 @@ func buildPipeline(cfg *config.Config) textproc.Pipeline {
 		filters = append(filters, textproc.RussianStemFilter{})
 	}
 
-	name := fmt.Sprintf(
-		"demo-custom/lowercase=%t/min=%d/stopwords-en=%t/stopwords-ru=%t/stem-en=%t/stem-ru=%t",
-		cfg.FTS.Pipeline.Lowercase,
-		cfg.FTS.Pipeline.MinLength,
-		cfg.FTS.Pipeline.StopwordsEN,
-		cfg.FTS.Pipeline.StopwordsRU,
-		cfg.FTS.Pipeline.StemEN,
-		cfg.FTS.Pipeline.StemRU,
-	)
-	return textproc.NewNamedPipeline(name, 1, textproc.AlnumTokenizer{}, filters...)
+	return textproc.NewNamedPipeline("demo-custom", textproc.AlnumTokenizer{}, filters...)
 }

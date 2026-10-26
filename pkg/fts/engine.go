@@ -36,7 +36,7 @@ type Service struct {
 	pendingCollectionStatsSnapshot *CollectionStatsSnapshot
 	singleField                    bool
 	fieldPipelines                 map[string]Pipeline
-	fieldAnalyzers                 map[string]AnalyzerDescriptor
+	fieldPipelineDescriptors       map[string]PipelineDescriptor
 	keyGenerator                   *KeyGeneratorDescriptor
 
 	mu      sync.RWMutex
@@ -50,7 +50,7 @@ type CompactionStats struct {
 	TombstoneLoadFactor float64
 }
 
-func New(index Index, keyGen KeyGenerator, opts ...Option) *Service {
+func New(index Index, keyGen KeyGenerator, opts ...*Option) *Service {
 	s := newService(keyGen, opts...)
 	s.singleField = true
 	s.indexFactory = func(name string) (Index, error) {
@@ -58,20 +58,22 @@ func New(index Index, keyGen KeyGenerator, opts ...Option) *Service {
 	}
 	if index != nil {
 		s.indexes[DefaultField] = index
+		s.setInitialFieldPipelineDescriptor(DefaultField)
 	}
 	return s
 }
 
-func NewMultiField(factory IndexFactory, keyGen KeyGenerator, opts ...Option) *Service {
+func NewMultiField(factory IndexFactory, keyGen KeyGenerator, opts ...*Option) *Service {
 	s := newService(keyGen, opts...)
 	s.indexFactory = factory
 	return s
 }
 
-func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opts ...Option) *Service {
+func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opts ...*Option) *Service {
 	s := newService(keyGen, opts...)
 	for name, idx := range indexes {
 		s.indexes[name] = idx
+		s.setInitialFieldPipelineDescriptor(name)
 	}
 	s.indexFactory = func(name string) (Index, error) {
 		return nil, fmt.Errorf("fts: field %q was not present in the restored snapshot", name)
@@ -79,13 +81,19 @@ func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opt
 	return s
 }
 
-// DefaultAnalyzerDescriptor returns the identity of the service's default
-// analyzer.
-func (s *Service) DefaultAnalyzerDescriptor() (AnalyzerDescriptor, bool) {
-	if s == nil {
-		return AnalyzerDescriptor{}, false
+// IsMultiField reports whether the service was constructed for named fields.
+func (s *Service) IsMultiField() bool {
+	return s != nil && !s.singleField
+}
+
+func (s *Service) setInitialFieldPipelineDescriptor(fieldName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.fieldPipelineDescriptors[fieldName]; exists {
+		return
 	}
-	return DescribePipeline(s.pipeline)
+	s.fieldPipelineDescriptors[fieldName] = s.pipelineForField(fieldName).Descriptor()
 }
 
 // KeyGeneratorDescriptor returns the identity of the service key generator.
@@ -96,94 +104,102 @@ func (s *Service) KeyGeneratorDescriptor() (KeyGeneratorDescriptor, bool) {
 	return *s.keyGenerator, true
 }
 
-// AnalyzerDescriptors returns the analyzer identities observed for each field.
-// It returns false when a field uses an undescribed pipeline.
-func (s *Service) AnalyzerDescriptors() (map[string]AnalyzerDescriptor, bool) {
+// PipelineDescriptors returns the validated pipeline identities observed for
+// each indexed field.
+func (s *Service) PipelineDescriptors() (map[string]PipelineDescriptor, error) {
 	if s == nil {
-		return nil, false
+		return nil, fmt.Errorf("fts: nil service")
 	}
 
 	fields := s.fieldNames()
-	result := make(map[string]AnalyzerDescriptor, len(fields))
+	result := make(map[string]PipelineDescriptor, len(fields))
 	for _, fieldName := range fields {
-		descriptor, ok := s.fieldAnalyzer(fieldName)
+		descriptor, ok := s.fieldPipelineDescriptor(fieldName)
 		if !ok {
-			return nil, false
+			return nil, fmt.Errorf("fts: field %q: pipeline descriptor is unavailable", fieldName)
+		}
+		if err := ValidatePipelineDescriptor(descriptor); err != nil {
+			return nil, fmt.Errorf("fts: field %q: %w", fieldName, err)
 		}
 		result[fieldName] = descriptor
 	}
-	return result, true
+	if err := s.ValidatePipelineDescriptors(result); err != nil {
+		return nil, fmt.Errorf("fts: configured pipelines do not match indexed fields: %w", err)
+	}
+	return result, nil
 }
 
-// ValidateAnalyzerDescriptors checks the pipelines configured for the fields
-// against persisted analyzer identities.
-func (s *Service) ValidateAnalyzerDescriptors(expected map[string]AnalyzerDescriptor) error {
+// ValidatePipelineDescriptors checks the pipelines configured for the fields
+// against persisted pipeline identities.
+func (s *Service) ValidatePipelineDescriptors(expected map[string]PipelineDescriptor) error {
 	if s == nil {
 		return fmt.Errorf("fts: nil service")
 	}
-	for fieldName, want := range expected {
-		pipeline := s.pipeline
-		s.mu.RLock()
-		if fieldPipeline := s.fieldPipelines[fieldName]; fieldPipeline != nil {
-			pipeline = fieldPipeline
+	actual := make(map[string]PipelineDescriptor, len(s.fieldNames()))
+	for _, fieldName := range s.fieldNames() {
+		descriptor := s.pipelineForField(fieldName).Descriptor()
+		if err := ValidatePipelineDescriptor(descriptor); err != nil {
+			return fmt.Errorf("fts: field %q: invalid configured pipeline descriptor: %w", fieldName, err)
 		}
-		s.mu.RUnlock()
-
-		got, ok := DescribePipeline(pipeline)
-		if !ok {
-			return fmt.Errorf("fts: field %q: analyzer descriptor is unavailable", fieldName)
-		}
-		if got.Fingerprint != want.Fingerprint {
-			return fmt.Errorf("fts: field %q: analyzer fingerprint mismatch: got %q, want %q", fieldName, got.Fingerprint, want.Fingerprint)
-		}
+		actual[fieldName] = descriptor
 	}
-	return nil
+	return ValidatePipelineDescriptors(expected, actual)
 }
 
-func (s *Service) fieldAnalyzer(fieldName string) (AnalyzerDescriptor, bool) {
+func (s *Service) fieldPipelineDescriptor(fieldName string) (PipelineDescriptor, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	descriptor, ok := s.fieldAnalyzers[fieldName]
+	descriptor, ok := s.fieldPipelineDescriptors[fieldName]
 	return descriptor, ok
 }
 
-func (s *Service) recordFieldAnalyzer(fieldName string, pipeline Pipeline) error {
-	descriptor, ok := DescribePipeline(pipeline)
-	if !ok {
-		s.mu.RLock()
-		_, known := s.fieldAnalyzers[fieldName]
-		s.mu.RUnlock()
-		if known {
-			return fmt.Errorf("fts: field %q: analyzer descriptor is unavailable after a described pipeline was used", fieldName)
-		}
-		return nil
+func (s *Service) recordFieldPipeline(fieldName string, pipeline Pipeline) error {
+	if pipeline == nil {
+		return fmt.Errorf("fts: field %q: nil pipeline", fieldName)
+	}
+	descriptor := pipeline.Descriptor()
+	if err := ValidatePipelineDescriptor(descriptor); err != nil {
+		return fmt.Errorf("fts: field %q: invalid pipeline descriptor: %w", fieldName, err)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if previous, exists := s.fieldAnalyzers[fieldName]; exists && previous.Fingerprint != descriptor.Fingerprint {
-		return fmt.Errorf("fts: field %q: analyzer fingerprint mismatch: got %q, want %q", fieldName, descriptor.Fingerprint, previous.Fingerprint)
+	if previous, exists := s.fieldPipelineDescriptors[fieldName]; exists {
+		if err := ValidatePipelineDescriptors(
+			map[string]PipelineDescriptor{fieldName: previous},
+			map[string]PipelineDescriptor{fieldName: descriptor},
+		); err != nil {
+			return err
+		}
 	}
-	s.fieldAnalyzers[fieldName] = descriptor
+	s.fieldPipelineDescriptors[fieldName] = descriptor
 	return nil
 }
 
-func newService(keyGen KeyGenerator, opts ...Option) *Service {
+// pipelineForField reads pipeline configuration fixed during construction.
+func (s *Service) pipelineForField(fieldName string) Pipeline {
+	if pipeline := s.fieldPipelines[fieldName]; pipeline != nil {
+		return pipeline
+	}
+	return s.pipeline
+}
+
+func newService(keyGen KeyGenerator, opts ...*Option) *Service {
 	s := &Service{
-		keyGen:              keyGen,
-		pipeline:            defaultPipeline{},
-		indexes:             make(map[string]Index),
-		fieldPipelines:      make(map[string]Pipeline),
-		fieldAnalyzers:      make(map[string]AnalyzerDescriptor),
-		collection:          newCollectionStats(),
-		registry:            NewDocRegistry(),
-		tombstones:          NewTombstones(),
-		autoCompactionCheck: true,
+		keyGen:                   keyGen,
+		pipeline:                 defaultPipeline{},
+		indexes:                  make(map[string]Index),
+		fieldPipelines:           make(map[string]Pipeline),
+		fieldPipelineDescriptors: make(map[string]PipelineDescriptor),
+		collection:               newCollectionStats(),
+		registry:                 NewDocRegistry(),
+		tombstones:               NewTombstones(),
+		autoCompactionCheck:      true,
 	}
 
 	for _, opt := range opts {
-		if opt != nil {
-			opt(s)
+		if opt != nil && opt.apply != nil {
+			opt.apply(s)
 		}
 	}
 

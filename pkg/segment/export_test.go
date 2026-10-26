@@ -3,10 +3,10 @@ package segment_test
 import (
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/hamt"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/hamt"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
 )
 
 func TestBuildFromSourceRoundTripSlicedRadix(t *testing.T) {

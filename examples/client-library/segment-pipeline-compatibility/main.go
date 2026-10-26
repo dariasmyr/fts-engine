@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
-	"github.com/dariasmyr/fts-engine/pkg/index/flat"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftspersist"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/flat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 )
 
 func main() {
@@ -44,10 +44,7 @@ func main() {
 	loaded, err := ftspersist.LoadSegment(
 		paths,
 		fts.WordKeys,
-		ftspersist.SegmentLoadOptions{Registry: registry,
-			Access:                      ftspersist.AccessFile,
-			ExpectedAnalyzerFingerprint: descriptor.Fingerprint,
-		},
+		ftspersist.SegmentLoadOptions{Registry: registry, Access: ftspersist.AccessFile},
 		fts.WithPipeline(pipeline),
 	)
 	if err != nil {
@@ -63,5 +60,5 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("analyzer=%s@%d results=%d\n", descriptor.Name, descriptor.Version, res.TotalResultsCount)
+	fmt.Printf("pipeline=%s fingerprint=%s results=%d\n", descriptor.Name, descriptor.Fingerprint, res.TotalResultsCount)
 }

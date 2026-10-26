@@ -3,7 +3,7 @@ package segment
 import (
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 // Source emits mutable-index terms in a form that can be sealed into a segment.

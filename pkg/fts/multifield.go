@@ -34,21 +34,13 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 		return fmt.Errorf("fts: index document %q: field %q is not available in single-field mode; use %q or fts.NewMultiField", docID, name, DefaultField)
 	}
 
-	index, err := s.getOrCreateIndex(name)
-	if err != nil {
+	pipeline := s.pipelineForField(name)
+	if err := s.recordFieldPipeline(name, pipeline); err != nil {
 		return fmt.Errorf("fts: index document %q: %w", docID, err)
 	}
 
-	pipeline := field.Pipeline
-	if pipeline == nil {
-		s.mu.RLock()
-		pipeline = s.fieldPipelines[name]
-		if pipeline == nil {
-			pipeline = s.pipeline
-		}
-		s.mu.RUnlock()
-	}
-	if err := s.recordFieldAnalyzer(name, pipeline); err != nil {
+	index, err := s.getOrCreateIndex(name)
+	if err != nil {
 		return fmt.Errorf("fts: index document %q: %w", docID, err)
 	}
 
@@ -149,28 +141,18 @@ func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string,
 	start := exec.startTimer()
 
 	preStart := exec.startTimer()
-	plan := s.preparePhrase(fields, phrase)
+	fields = newQueryFieldScope(fields).fields
+	groups, err := s.processFields(fields, phrase)
+	if err != nil {
+		return nil, err
+	}
 	exec.observePreprocess(preStart)
 	exec.addFields(len(fields))
-	exec.addTokens(len(plan.tokens))
-
-	if len(plan.tokens) == 0 {
-		exec.setSearchTokensTiming(0)
-		exec.observeTotal(start)
-		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
-	}
-	if plan.fallback != nil {
-		res, err := s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
-		if err != nil {
-			return nil, err
-		}
-		exec.observeTotal(start)
-		return attachDiagnostics(ctx, res), nil
-	}
+	exec.addTokens(processedTokenCount(groups))
 	exec.setStrategy(strategyPhraseExact)
 
 	searchStart := exec.startTimer()
-	hits, err := s.evalExactPhraseTokenHits(ctx, fields, plan.tokens)
+	hits, err := s.evalProcessedPhraseHits(ctx, groups, QueryTypePhrase, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -193,28 +175,18 @@ func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []str
 	start := exec.startTimer()
 
 	preStart := exec.startTimer()
-	plan := s.preparePhrase(fields, phrase)
+	fields = newQueryFieldScope(fields).fields
+	groups, err := s.processFields(fields, phrase)
+	if err != nil {
+		return nil, err
+	}
 	exec.observePreprocess(preStart)
 	exec.addFields(len(fields))
-	exec.addTokens(len(plan.tokens))
-
-	if len(plan.tokens) == 0 {
-		exec.setSearchTokensTiming(0)
-		exec.observeTotal(start)
-		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
-	}
-	if plan.fallback != nil {
-		res, err := s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
-		if err != nil {
-			return nil, err
-		}
-		exec.observeTotal(start)
-		return attachDiagnostics(ctx, res), nil
-	}
+	exec.addTokens(processedTokenCount(groups))
 	exec.setStrategy(strategyPhraseNear)
 
 	searchStart := exec.startTimer()
-	hits, err := s.evalNearPhraseTokenHits(ctx, fields, plan.tokens, uint32(distance))
+	hits, err := s.evalProcessedPhraseHits(ctx, groups, QueryTypeNearPhrase, uint32(distance))
 	if err != nil {
 		return nil, err
 	}

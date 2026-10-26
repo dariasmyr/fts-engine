@@ -538,37 +538,38 @@ func (s *Service) collectTermPostings(ctx context.Context, q TermQuery, scope qu
 		return out, nil
 	}
 
-	tokens := s.pipeline.Process(q.Term)
-	if len(tokens) == 0 {
-		return out, nil
-	}
-
 	fields := s.resolveScopedFields(q.Field, scope)
+	groups, err := s.processFields(fields, q.Term)
+	if err != nil {
+		return fastMust{}, err
+	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
-		exec.addTokens(len(tokens))
+		exec.addTokens(processedTokenCount(groups))
 		exec.addFields(len(fields))
 	}
-	for _, token := range tokens {
-		keys, err := s.keyGen(token)
-		if err != nil {
-			return fastMust{}, err
-		}
-		if exec := diagnosticsFromContext(ctx); exec != nil {
-			exec.addKeys(len(keys))
-		}
-
-		for _, field := range fields {
-			index, ok := s.lookupIndex(field)
-			if !ok {
-				continue
-			}
-
-			res, err := s.searchKeysInField(ctx, field, index, token, keys)
+	for _, group := range groups {
+		for _, token := range group.tokens {
+			keys, err := s.keyGen(token)
 			if err != nil {
 				return fastMust{}, err
 			}
-			out.expansions = append(out.expansions, res.expansions...)
-			out.totalDocs += res.totalDocs
+			if exec := diagnosticsFromContext(ctx); exec != nil {
+				exec.addKeys(len(keys))
+			}
+
+			for _, field := range group.fields {
+				index, ok := s.lookupIndex(field)
+				if !ok {
+					continue
+				}
+
+				res, err := s.searchKeysInField(ctx, field, index, token, keys)
+				if err != nil {
+					return fastMust{}, err
+				}
+				out.expansions = append(out.expansions, res.expansions...)
+				out.totalDocs += res.totalDocs
+			}
 		}
 	}
 	return out, nil

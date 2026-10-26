@@ -9,8 +9,14 @@ import (
 	"sync"
 )
 
-const snapshotVersion uint16 = 2
-const multiIndexSnapshotVersion uint16 = 3
+const indexSnapshotVersion uint16 = 5
+const multiIndexSnapshotVersion uint16 = 6
+const filterSnapshotVersion uint16 = 2
+
+const (
+	snapshotKindSingle = "single"
+	snapshotKindMulti  = "multi"
+)
 
 type IndexSnapshotSaver func(index Index, w io.Writer) error
 type IndexSnapshotLoader func(r io.Reader) (Index, error)
@@ -28,6 +34,7 @@ type LoadedIndexSnapshot struct {
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	Pipelines       map[string]PipelineDescriptor
 	KeyGenerator    *KeyGeneratorDescriptor
 }
 
@@ -36,6 +43,7 @@ type LoadedMultiIndexSnapshot struct {
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	Pipelines       map[string]PipelineDescriptor
 	KeyGenerator    *KeyGeneratorDescriptor
 }
 
@@ -46,11 +54,13 @@ type LoadedFilterSnapshot struct {
 
 type indexEnvelope struct {
 	Version         uint16
+	Kind            string
 	IndexName       string
 	IndexPayload    []byte
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	Pipelines       map[string]PipelineDescriptor
 	KeyGenerator    *KeyGeneratorDescriptor
 }
 
@@ -62,10 +72,12 @@ type multiIndexField struct {
 
 type multiIndexEnvelope struct {
 	Version         uint16
+	Kind            string
 	Fields          []multiIndexField
 	CollectionStats *CollectionStatsSnapshot
 	Registry        []DocID
 	Tombstones      []uint64
+	Pipelines       map[string]PipelineDescriptor
 	KeyGenerator    *KeyGeneratorDescriptor
 }
 
@@ -156,7 +168,7 @@ func (r *SnapshotRegistry) RegisterFilterSnapshotCodec(name string, saver Filter
 	return nil
 }
 
-func (r *SnapshotRegistry) SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64, keyGenerators ...*KeyGeneratorDescriptor) error {
+func (r *SnapshotRegistry) SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64, pipelines map[string]PipelineDescriptor, keyGenerator *KeyGeneratorDescriptor) error {
 	if w == nil {
 		return fmt.Errorf("fts: save index snapshot: nil writer")
 	}
@@ -165,6 +177,12 @@ func (r *SnapshotRegistry) SaveIndexSnapshotWithState(w io.Writer, indexName str
 	}
 	if indexName == "" {
 		return fmt.Errorf("fts: save index snapshot: empty index name")
+	}
+	if err := ValidatePipelineFields([]string{DefaultField}, pipelines); err != nil {
+		return fmt.Errorf("fts: save index snapshot: %w", err)
+	}
+	if keyGenerator == nil {
+		return fmt.Errorf("fts: save index snapshot: key generator descriptor is unavailable")
 	}
 
 	indexCodec, ok := r.indexCodecByName(indexName)
@@ -178,15 +196,15 @@ func (r *SnapshotRegistry) SaveIndexSnapshotWithState(w io.Writer, indexName str
 	}
 
 	envelope := indexEnvelope{
-		Version:         snapshotVersion,
+		Version:         indexSnapshotVersion,
+		Kind:            snapshotKindSingle,
 		IndexName:       indexName,
 		IndexPayload:    indexPayload.Bytes(),
 		CollectionStats: stats,
 		Registry:        append([]DocID(nil), registry...),
 		Tombstones:      append([]uint64(nil), tombstones...),
-	}
-	if len(keyGenerators) > 0 {
-		envelope.KeyGenerator = cloneKeyGeneratorDescriptor(keyGenerators[0])
+		Pipelines:       clonePipelineDescriptors(pipelines),
+		KeyGenerator:    cloneKeyGeneratorDescriptor(keyGenerator),
 	}
 
 	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
@@ -209,11 +227,23 @@ func (registry *SnapshotRegistry) LoadIndexSnapshot(reader io.Reader) (*LoadedIn
 		return nil, fmt.Errorf("fts: load index snapshot: decode envelope: %w", err)
 	}
 
-	if envelope.Version != snapshotVersion {
+	if envelope.Version != indexSnapshotVersion {
+		if envelope.Version > 0 && envelope.Version < indexSnapshotVersion {
+			if envelope.Version == indexSnapshotVersion-1 {
+				return nil, fmt.Errorf("fts: load index snapshot: legacy version %d uses analyzer metadata: %w", envelope.Version, ErrPersistenceRebuildRequired)
+			}
+			return nil, fmt.Errorf("fts: load index snapshot: legacy version %d: %w", envelope.Version, ErrPersistenceRebuildRequired)
+		}
 		return nil, fmt.Errorf("fts: load index snapshot: unsupported version %d", envelope.Version)
+	}
+	if envelope.Kind != snapshotKindSingle {
+		return nil, fmt.Errorf("fts: load index snapshot: invalid snapshot kind %q", envelope.Kind)
 	}
 	if envelope.IndexName == "" {
 		return nil, fmt.Errorf("fts: load index snapshot: empty index name")
+	}
+	if err := ValidatePipelineFields([]string{DefaultField}, envelope.Pipelines); err != nil {
+		return nil, fmt.Errorf("fts: load index snapshot: %w", err)
 	}
 
 	indexCodec, ok := registry.indexCodecByName(envelope.IndexName)
@@ -232,16 +262,17 @@ func (registry *SnapshotRegistry) LoadIndexSnapshot(reader io.Reader) (*LoadedIn
 		CollectionStats: envelope.CollectionStats,
 		Registry:        append([]DocID(nil), envelope.Registry...),
 		Tombstones:      append([]uint64(nil), envelope.Tombstones...),
+		Pipelines:       clonePipelineDescriptors(envelope.Pipelines),
 		KeyGenerator:    cloneKeyGeneratorDescriptor(envelope.KeyGenerator),
 	}, nil
 }
 
-func (r *SnapshotRegistry) SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64, keyGenerators ...*KeyGeneratorDescriptor) error {
+func (r *SnapshotRegistry) SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64, pipelines map[string]PipelineDescriptor, keyGenerator *KeyGeneratorDescriptor) error {
 	if w == nil {
 		return fmt.Errorf("fts: save multi-index snapshot: nil writer")
 	}
-	if len(indexes) == 0 {
-		return fmt.Errorf("fts: save multi-index snapshot: no indexes")
+	if keyGenerator == nil {
+		return fmt.Errorf("fts: save multi-index snapshot: key generator descriptor is unavailable")
 	}
 
 	fieldNames := make([]string, 0, len(indexes))
@@ -249,6 +280,9 @@ func (r *SnapshotRegistry) SaveMultiIndexSnapshotWithState(w io.Writer, fieldCod
 		fieldNames = append(fieldNames, fieldName)
 	}
 	sort.Strings(fieldNames)
+	if err := ValidatePipelineFields(fieldNames, pipelines); err != nil {
+		return fmt.Errorf("fts: save multi-index snapshot: %w", err)
+	}
 
 	fields := make([]multiIndexField, 0, len(indexes))
 	for _, fieldName := range fieldNames {
@@ -285,13 +319,13 @@ func (r *SnapshotRegistry) SaveMultiIndexSnapshotWithState(w io.Writer, fieldCod
 
 	envelope := multiIndexEnvelope{
 		Version:         multiIndexSnapshotVersion,
+		Kind:            snapshotKindMulti,
 		Fields:          fields,
 		CollectionStats: stats,
 		Registry:        append([]DocID(nil), registry...),
 		Tombstones:      append([]uint64(nil), tombstones...),
-	}
-	if len(keyGenerators) > 0 {
-		envelope.KeyGenerator = cloneKeyGeneratorDescriptor(keyGenerators[0])
+		Pipelines:       clonePipelineDescriptors(pipelines),
+		KeyGenerator:    cloneKeyGeneratorDescriptor(keyGenerator),
 	}
 
 	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
@@ -315,7 +349,23 @@ func (registry *SnapshotRegistry) LoadMultiIndexSnapshot(reader io.Reader) (*Loa
 	}
 
 	if envelope.Version != multiIndexSnapshotVersion {
+		if envelope.Version > 0 && envelope.Version < multiIndexSnapshotVersion {
+			if envelope.Version == multiIndexSnapshotVersion-1 {
+				return nil, fmt.Errorf("fts: load multi-index snapshot: legacy version %d uses analyzer metadata: %w", envelope.Version, ErrPersistenceRebuildRequired)
+			}
+			return nil, fmt.Errorf("fts: load multi-index snapshot: legacy version %d: %w", envelope.Version, ErrPersistenceRebuildRequired)
+		}
 		return nil, fmt.Errorf("fts: load multi-index snapshot: unsupported version %d", envelope.Version)
+	}
+	if envelope.Kind != snapshotKindMulti {
+		return nil, fmt.Errorf("fts: load multi-index snapshot: invalid snapshot kind %q", envelope.Kind)
+	}
+	fieldNames := make([]string, 0, len(envelope.Fields))
+	for _, field := range envelope.Fields {
+		fieldNames = append(fieldNames, field.FieldName)
+	}
+	if err := ValidatePipelineFields(fieldNames, envelope.Pipelines); err != nil {
+		return nil, fmt.Errorf("fts: load multi-index snapshot: %w", err)
 	}
 
 	loaded := &LoadedMultiIndexSnapshot{
@@ -323,6 +373,7 @@ func (registry *SnapshotRegistry) LoadMultiIndexSnapshot(reader io.Reader) (*Loa
 		CollectionStats: envelope.CollectionStats,
 		Registry:        append([]DocID(nil), envelope.Registry...),
 		Tombstones:      append([]uint64(nil), envelope.Tombstones...),
+		Pipelines:       clonePipelineDescriptors(envelope.Pipelines),
 		KeyGenerator:    cloneKeyGeneratorDescriptor(envelope.KeyGenerator),
 	}
 	for _, field := range envelope.Fields {
@@ -377,7 +428,7 @@ func (r *SnapshotRegistry) SaveFilterSnapshot(w io.Writer, filterName string, fi
 	}
 
 	envelope := filterEnvelope{
-		Version:       snapshotVersion,
+		Version:       filterSnapshotVersion,
 		FilterName:    filterName,
 		FilterPayload: filterPayload.Bytes(),
 	}
@@ -402,7 +453,7 @@ func (registry *SnapshotRegistry) LoadFilterSnapshot(reader io.Reader) (*LoadedF
 		return nil, fmt.Errorf("fts: load filter snapshot: decode envelope: %w", err)
 	}
 
-	if envelope.Version != snapshotVersion {
+	if envelope.Version != filterSnapshotVersion {
 		return nil, fmt.Errorf("fts: load filter snapshot: unsupported version %d", envelope.Version)
 	}
 	if envelope.FilterName == "" {
@@ -448,4 +499,15 @@ func cloneKeyGeneratorDescriptor(descriptor *KeyGeneratorDescriptor) *KeyGenerat
 	}
 	cloned := *descriptor
 	return &cloned
+}
+
+func clonePipelineDescriptors(descriptors map[string]PipelineDescriptor) map[string]PipelineDescriptor {
+	if descriptors == nil {
+		return nil
+	}
+	cloned := make(map[string]PipelineDescriptor, len(descriptors))
+	for fieldName, descriptor := range descriptors {
+		cloned[fieldName] = descriptor
+	}
+	return cloned
 }

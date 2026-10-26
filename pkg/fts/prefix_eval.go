@@ -14,12 +14,31 @@ func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFiel
 	}
 
 	fields := s.resolveScopedFields(q.Field, scope)
-	if exec := diagnosticsFromContext(ctx); exec != nil {
-		exec.addFields(len(fields))
-	}
-	expansions, err := s.collectPrefixFieldDocs(ctx, fields, q.Prefix)
+	groups, err := s.processFields(fields, q.Prefix)
 	if err != nil {
 		return nil, err
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.addFields(len(fields))
+		exec.addTokens(processedTokenCount(groups))
+	}
+	expansions := make([]termExpansion, 0, len(fields))
+	for _, group := range groups {
+		seenPrefixes := make(map[string]struct{}, len(group.tokens))
+		for _, prefix := range group.tokens {
+			if prefix == "" {
+				continue
+			}
+			if _, seen := seenPrefixes[prefix]; seen {
+				continue
+			}
+			seenPrefixes[prefix] = struct{}{}
+			groupExpansions, err := s.collectPrefixFieldDocs(ctx, group.fields, prefix)
+			if err != nil {
+				return nil, err
+			}
+			expansions = append(expansions, groupExpansions...)
+		}
 	}
 
 	hits := make(map[DocOrd]docAccum)

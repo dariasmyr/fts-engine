@@ -15,3 +15,14 @@ func TestDefaultPipelineProcess(t *testing.T) {
 		t.Fatalf("tokens = %#v, want %#v", got, want)
 	}
 }
+
+func TestDefaultPipelineDescriptor(t *testing.T) {
+	first := defaultPipeline{}.Descriptor()
+	second := defaultPipeline{}.Descriptor()
+	if first != second {
+		t.Fatalf("descriptors differ: %+v != %+v", first, second)
+	}
+	if err := first.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}

@@ -75,6 +75,35 @@ func TestSearchDiagnosticsPrefixStrategy(t *testing.T) {
 	}
 }
 
+func TestSearchDiagnosticsCountsPipelineProcessingPerFieldGroup(t *testing.T) {
+	svc := NewMultiField(
+		func(string) (Index, error) { return newMemoryIndex(), nil },
+		WordKeys,
+		WithFieldPipelines(map[string]Pipeline{"title": uppercasePipeline{}}),
+	)
+	if err := svc.Index(context.Background(), Document{ID: "doc-1", Fields: map[string]Field{
+		"title": {Value: "Alpha"},
+		"body":  {Value: "alpha"},
+	}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	res, err := svc.Search(diagnosticsContext(), TermQuery{Term: "alpha"}, 10)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	d := requireDiagnostics(t, res)
+	if d.ProcessedTokens != 2 {
+		t.Fatalf("ProcessedTokens = %d, want 2 pipeline-group tokens", d.ProcessedTokens)
+	}
+	if d.FieldsVisited != 2 {
+		t.Fatalf("FieldsVisited = %d, want 2", d.FieldsVisited)
+	}
+	if d.GeneratedKeys != 2 {
+		t.Fatalf("GeneratedKeys = %d, want 2", d.GeneratedKeys)
+	}
+}
+
 func TestSearchDiagnosticsBooleanOrWandStrategy(t *testing.T) {
 	idx := newMemoryIndex()
 

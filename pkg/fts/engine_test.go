@@ -74,6 +74,13 @@ func (f *buildableContainsFilter) Build() error {
 	return nil
 }
 
+func TestNewIgnoresEmptyOption(t *testing.T) {
+	svc := New(newMemoryIndex(), WordKeys, &Option{})
+	if svc == nil {
+		t.Fatal("New() = nil")
+	}
+}
+
 func TestSearchDocumentsSortAndLimit(t *testing.T) {
 	idx := newMemoryIndex()
 

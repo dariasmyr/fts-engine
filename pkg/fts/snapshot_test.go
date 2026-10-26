@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -207,6 +209,139 @@ func TestSaveIndexSnapshotUnknownCodec(t *testing.T) {
 	if err == nil {
 		t.Fatal("SaveIndexSnapshotWithState() error = nil, want non-nil")
 	}
+}
+
+func TestLoadIndexSnapshotRejectsInvalidPipelineMetadata(t *testing.T) {
+	valid, _ := NewPipelineDescriptor("default", testFingerprint("default"))
+	tests := []struct {
+		name                string
+		pipelines           map[string]PipelineDescriptor
+		wantRebuildRequired bool
+	}{
+		{name: "missing", pipelines: nil},
+		{name: "malformed", pipelines: map[string]PipelineDescriptor{DefaultField: {Name: valid.Name, Fingerprint: "invalid"}}},
+		{name: "legacy", pipelines: map[string]PipelineDescriptor{DefaultField: {Name: valid.Name, Fingerprint: legacyTestFingerprint(valid.Name, 1)}}, wantRebuildRequired: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var payload bytes.Buffer
+			if err := gob.NewEncoder(&payload).Encode(indexEnvelope{
+				Version: indexSnapshotVersion, Kind: snapshotKindSingle, IndexName: "unused", Pipelines: test.pipelines,
+			}); err != nil {
+				t.Fatalf("Encode() error = %v", err)
+			}
+			_, err := testSnapshotRegistry.LoadIndexSnapshot(&payload)
+			if err == nil {
+				t.Fatal("LoadIndexSnapshot() error = nil")
+			}
+			if got := errors.Is(err, ErrPersistenceRebuildRequired); got != test.wantRebuildRequired {
+				t.Fatalf("errors.Is(ErrPersistenceRebuildRequired) = %t, want %t; error=%v", got, test.wantRebuildRequired, err)
+			}
+		})
+	}
+}
+
+func TestLoadIndexSnapshotRejectsLegacyVersion(t *testing.T) {
+	var payload bytes.Buffer
+	if err := gob.NewEncoder(&payload).Encode(legacyIndexEnvelopeFixture{
+		Version: indexSnapshotVersion - 1,
+		Analyzers: map[string]legacyAnalyzerDescriptorFixture{
+			DefaultField: {Name: "default", Fingerprint: legacyTestFingerprint("default", 1), FingerprintScheme: 1},
+		},
+	}); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if _, err := testSnapshotRegistry.LoadIndexSnapshot(&payload); err == nil || !errors.Is(err, ErrPersistenceRebuildRequired) || !strings.Contains(err.Error(), "legacy version 4 uses analyzer metadata") {
+		t.Fatalf("LoadIndexSnapshot() error = %v, want legacy analyzer rebuild guidance", err)
+	}
+}
+
+func TestLoadMultiIndexSnapshotAllowsNoFields(t *testing.T) {
+	var payload bytes.Buffer
+	if err := gob.NewEncoder(&payload).Encode(multiIndexEnvelope{Version: multiIndexSnapshotVersion, Kind: snapshotKindMulti}); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	loaded, err := testSnapshotRegistry.LoadMultiIndexSnapshot(&payload)
+	if err != nil {
+		t.Fatalf("LoadMultiIndexSnapshot() error = %v", err)
+	}
+	if len(loaded.Fields) != 0 {
+		t.Fatalf("len(Fields) = %d, want 0", len(loaded.Fields))
+	}
+}
+
+func TestLoadMultiIndexSnapshotRejectsLegacyPipeline(t *testing.T) {
+	legacy := PipelineDescriptor{Name: "default", Fingerprint: legacyTestFingerprint("default", 1)}
+	var payload bytes.Buffer
+	if err := gob.NewEncoder(&payload).Encode(multiIndexEnvelope{
+		Version:   multiIndexSnapshotVersion,
+		Kind:      snapshotKindMulti,
+		Fields:    []multiIndexField{{FieldName: DefaultField, IndexName: "unused"}},
+		Pipelines: map[string]PipelineDescriptor{DefaultField: legacy},
+	}); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if _, err := testSnapshotRegistry.LoadMultiIndexSnapshot(&payload); err == nil || !errors.Is(err, ErrPersistenceRebuildRequired) {
+		t.Fatalf("LoadMultiIndexSnapshot() error = %v", err)
+	}
+}
+
+func TestLoadMultiIndexSnapshotRejectsLegacyVersion(t *testing.T) {
+	var payload bytes.Buffer
+	if err := gob.NewEncoder(&payload).Encode(legacyMultiIndexEnvelopeFixture{
+		Version: multiIndexSnapshotVersion - 1,
+		Analyzers: map[string]legacyAnalyzerDescriptorFixture{
+			DefaultField: {Name: "default", Fingerprint: legacyTestFingerprint("default", 1), FingerprintScheme: 1},
+		},
+	}); err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if _, err := testSnapshotRegistry.LoadMultiIndexSnapshot(&payload); err == nil || !errors.Is(err, ErrPersistenceRebuildRequired) || !strings.Contains(err.Error(), "legacy version 5 uses analyzer metadata") {
+		t.Fatalf("LoadMultiIndexSnapshot() error = %v, want legacy analyzer rebuild guidance", err)
+	}
+}
+
+func TestLoadIndexSnapshotVersionClassification(t *testing.T) {
+	tests := []struct {
+		name                string
+		version             uint16
+		wantRebuildRequired bool
+	}{
+		{name: "older legacy", version: 1, wantRebuildRequired: true},
+		{name: "zero", version: 0},
+		{name: "future", version: indexSnapshotVersion + 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var payload bytes.Buffer
+			if err := gob.NewEncoder(&payload).Encode(indexEnvelope{Version: test.version}); err != nil {
+				t.Fatalf("Encode() error = %v", err)
+			}
+			_, err := testSnapshotRegistry.LoadIndexSnapshot(&payload)
+			if err == nil {
+				t.Fatal("LoadIndexSnapshot() error = nil")
+			}
+			if got := errors.Is(err, ErrPersistenceRebuildRequired); got != test.wantRebuildRequired {
+				t.Fatalf("errors.Is(ErrPersistenceRebuildRequired) = %t, want %t; error=%v", got, test.wantRebuildRequired, err)
+			}
+		})
+	}
+}
+
+type legacyAnalyzerDescriptorFixture struct {
+	Name              string
+	Fingerprint       string
+	FingerprintScheme uint32
+}
+
+type legacyIndexEnvelopeFixture struct {
+	Version   uint16
+	Analyzers map[string]legacyAnalyzerDescriptorFixture
+}
+
+type legacyMultiIndexEnvelopeFixture struct {
+	Version   uint16
+	Analyzers map[string]legacyAnalyzerDescriptorFixture
 }
 
 func TestSaveIndexSnapshotWritesPayload(t *testing.T) {
@@ -461,6 +596,7 @@ func TestLoadMultiIndexSnapshotRejectsEmptyFieldName(t *testing.T) {
 	var snap bytes.Buffer
 	if err := gob.NewEncoder(&snap).Encode(multiIndexEnvelope{
 		Version: multiIndexSnapshotVersion,
+		Kind:    snapshotKindMulti,
 		Fields:  []multiIndexField{{FieldName: "", IndexName: "codec", Payload: []byte("payload")}},
 	}); err != nil {
 		t.Fatalf("encode multiIndexEnvelope: %v", err)

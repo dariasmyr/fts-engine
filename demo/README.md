@@ -23,7 +23,7 @@ With an explicit config file:
 - default config path: `./config/config_local.yaml`
 - example config: `./config/config_local_example.yaml`
 
-The app depends on the public library module at `github.com/dariasmyr/fts-engine/pkg/...` and keeps its app-specific code inside `demo/internal/*`.
+The app depends on the public library module at `github.com/dariasmyr/fts-engine/v2/pkg/...` and keeps its app-specific code inside `demo/internal/*`.
 
 Relevant FTS choices:
 
@@ -42,9 +42,9 @@ fts:
 
 Keep the default `custom` preset for the bundled Wikipedia corpus. When changing
 the index or pipeline, use a fresh persistence path or rebuild persisted data.
-Sealed segments validate the default analyzer identity; mutable snapshots do not
-currently store it.
+Segments and mutable snapshots validate one pipeline identity per indexed field.
 
-Demo segments created before analyzer-aware custom configuration used the generic
-identity `custom@0`. Rebuild them once after this update; the demo now derives a
-distinct identity from every token-output setting.
+The demo uses `demo-custom` as a diagnostic name and derives compatibility from
+the tokenizer and selected filter configuration. Rebuild persistence created with
+legacy name/version-only fingerprints; those fingerprints cannot prove
+historical pipeline compatibility and are rejected.

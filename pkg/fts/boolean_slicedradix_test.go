@@ -6,9 +6,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/hamt"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/hamt"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
 )
 
 func TestSearchBooleanMustNotExcludes(t *testing.T) {
@@ -88,7 +88,7 @@ func booleanIndexCases() []booleanIndexCase {
 
 func buildBooleanService(t *testing.T, index fts.Index, scored bool) *fts.Service {
 	t.Helper()
-	var opts []fts.Option
+	var opts []*fts.Option
 	if scored {
 		opts = append(opts, fts.WithScorer(fts.BM25()))
 	}

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 func insertOrd(t *testing.T, idx *Index, term string, id fts.DocID, ord fts.DocOrd) {

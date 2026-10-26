@@ -9,11 +9,11 @@ import (
 	"strings"
 
 	"github.com/dariasmyr/fts-engine/demo/internal/config"
-	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
+	pkgfts "github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftspersist"
 )
 
-func tryLoadPersistence(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, registry *pkgfts.SnapshotRegistry, serviceOpts []pkgfts.Option) (*pkgfts.Service, bool, error) {
+func tryLoadPersistence(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyGenerator, registry *pkgfts.SnapshotRegistry, serviceOpts []*pkgfts.Option) (*pkgfts.Service, bool, error) {
 	if cfg == nil || cfg.FTS.Persistence.Path == "" {
 		return nil, false, nil
 	}
@@ -34,7 +34,12 @@ func tryLoadPersistence(log *slog.Logger, cfg *config.Config, keyGen pkgfts.KeyG
 				return nil, false, fmt.Errorf("check persistence filter path: %w", err)
 			}
 		}
-		loaded, err := ftspersist.LoadSnapshot(ftspersist.SnapshotPaths{IndexPath: indexPath, FilterPath: filterPath}, keyGen, ftspersist.SnapshotLoadOptions{Registry: registry}, serviceOpts...)
+		loaded, err := ftspersist.LoadSnapshot(ftspersist.SnapshotPaths{IndexPath: indexPath, FilterPath: filterPath}, keyGen, ftspersist.SnapshotLoadOptions{
+			Registry: registry,
+			IndexFactory: func(string) (pkgfts.Index, error) {
+				return selectIndex(cfg.FTS.Index)
+			},
+		}, serviceOpts...)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return nil, false, nil

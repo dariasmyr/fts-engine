@@ -9,8 +9,8 @@ import (
 
 	"github.com/dariasmyr/fts-engine/demo/internal/adapters/cui"
 	"github.com/dariasmyr/fts-engine/demo/internal/domain/models"
-	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
+	pkgfts "github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsstats"
 )
 
 func runCUI(ctx context.Context, log *slog.Logger, cfgIndex string, cfgScorer string, cfgProfile string, cfgFilter string, engine *serviceAdapter, documentsByID map[string]models.Document) error {
