@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
 )
 
 type AccessMode string
@@ -35,24 +35,26 @@ type SegmentLoadOptions struct {
 type loadedSegment struct {
 	Segment         *segment.Reader
 	Fields          map[string]*segment.Reader
+	MultiField      bool
 	Filter          fts.Filter
 	FilterName      string
 	CollectionStats *fts.CollectionStatsSnapshot
 	Registry        []fts.DocID
 	Tombstones      []uint64
-	Analyzers       map[string]fts.AnalyzerDescriptor
+	Pipelines       map[string]fts.PipelineDescriptor
 	KeyGenerator    *fts.KeyGeneratorDescriptor
 	Close           func() error
 }
 
 type segmentManifest struct {
 	Version         uint16
+	MultiField      bool
 	Fields          []segmentFieldMeta
 	CollectionStats *fts.CollectionStatsSnapshot
 	Registry        []fts.DocID
 	Tombstones      []uint64
 	Filter          *filterMeta
-	Analyzers       map[string]fts.AnalyzerDescriptor
+	Pipelines       map[string]fts.PipelineDescriptor
 	KeyGenerator    *fts.KeyGeneratorDescriptor
 }
 
@@ -67,7 +69,7 @@ type filterMeta struct {
 }
 
 const (
-	segmentManifestVersion uint16 = 4
+	segmentManifestVersion uint16 = 5
 	segmentManifestFile           = "manifest.gob"
 	segmentFilterFile             = "filter.fidx"
 )
@@ -86,13 +88,13 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 	if !ok {
 		return fmt.Errorf("ftspersist: save segment: key generator descriptor is unavailable")
 	}
-	analyzers, err := svc.AnalyzerDescriptors()
+	pipelines, err := svc.PipelineDescriptors()
 	if err != nil {
 		return fmt.Errorf("ftspersist: save segment: %w", err)
 	}
 
 	fields, searchFilter := svc.SnapshotFields()
-	if len(fields) == 0 {
+	if len(fields) == 0 && !svc.IsMultiField() {
 		return fmt.Errorf("ftspersist: save segment: no fields")
 	}
 
@@ -104,11 +106,12 @@ func SaveSegment(paths SegmentPaths, svc *fts.Service, filterName string, opts S
 
 	manifest := segmentManifest{
 		Version:         segmentManifestVersion,
+		MultiField:      svc.IsMultiField(),
 		Fields:          make([]segmentFieldMeta, 0, len(fieldNames)),
 		CollectionStats: svc.SnapshotCollectionStats(),
 		Registry:        append([]fts.DocID(nil), svc.SnapshotRegistry()...),
 		Tombstones:      append([]uint64(nil), svc.SnapshotTombstones()...),
-		Analyzers:       analyzers,
+		Pipelines:       pipelines,
 		KeyGenerator:    &keyGenerator,
 	}
 
@@ -177,12 +180,15 @@ func loadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*loadedSegmen
 		return nil, fmt.Errorf("ftspersist: decode segment manifest: %w", err)
 	}
 	if manifest.Version != segmentManifestVersion {
-		if manifest.Version == segmentManifestVersion-1 {
-			return nil, fmt.Errorf("ftspersist: load segment: legacy manifest version %d uses name/version-only analyzer fingerprints; rebuild persisted data", manifest.Version)
+		if manifest.Version > 0 && manifest.Version < segmentManifestVersion {
+			if manifest.Version == segmentManifestVersion-1 {
+				return nil, fmt.Errorf("ftspersist: load segment: legacy manifest version %d uses analyzer metadata: %w", manifest.Version, fts.ErrPersistenceRebuildRequired)
+			}
+			return nil, fmt.Errorf("ftspersist: load segment: legacy manifest version %d: %w", manifest.Version, fts.ErrPersistenceRebuildRequired)
 		}
 		return nil, fmt.Errorf("ftspersist: load segment: unsupported manifest version %d", manifest.Version)
 	}
-	if len(manifest.Fields) == 0 {
+	if len(manifest.Fields) == 0 && !manifest.MultiField {
 		return nil, fmt.Errorf("ftspersist: load segment: manifest has no fields")
 	}
 	seenFields := make(map[string]struct{}, len(manifest.Fields))
@@ -207,7 +213,7 @@ func loadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*loadedSegmen
 	for _, field := range manifest.Fields {
 		fieldNames = append(fieldNames, field.FieldName)
 	}
-	if err := fts.ValidateAnalyzerFields(fieldNames, manifest.Analyzers); err != nil {
+	if err := fts.ValidatePipelineFields(fieldNames, manifest.Pipelines); err != nil {
 		return nil, fmt.Errorf("ftspersist: load segment: %w", err)
 	}
 	if manifest.Filter != nil {
@@ -221,10 +227,11 @@ func loadSegmentData(paths SegmentPaths, load SegmentLoadOptions) (*loadedSegmen
 
 	loaded := &loadedSegment{
 		Fields:          make(map[string]*segment.Reader, len(manifest.Fields)),
+		MultiField:      manifest.MultiField,
 		CollectionStats: manifest.CollectionStats,
 		Registry:        append([]fts.DocID(nil), manifest.Registry...),
 		Tombstones:      append([]uint64(nil), manifest.Tombstones...),
-		Analyzers:       cloneAnalyzerDescriptors(manifest.Analyzers),
+		Pipelines:       clonePipelineDescriptors(manifest.Pipelines),
 		KeyGenerator:    cloneKeyGeneratorDescriptor(manifest.KeyGenerator),
 		Close:           func() error { return nil },
 	}
@@ -311,16 +318,16 @@ func validateSegmentFileName(fileName string) error {
 	return nil
 }
 
-func restoreSegmentService(loaded *loadedSegment, keyGen fts.KeyGenerator, opts ...fts.Option) (*fts.Service, error) {
+func restoreSegmentService(loaded *loadedSegment, keyGen fts.KeyGenerator, opts ...*fts.Option) (*fts.Service, error) {
 	if loaded == nil {
 		return nil, fmt.Errorf("ftspersist: restore segment service: nil segment")
 	}
-	if len(loaded.Fields) == 0 && loaded.Segment == nil {
+	if len(loaded.Fields) == 0 && loaded.Segment == nil && !loaded.MultiField {
 		return nil, fmt.Errorf("ftspersist: restore segment service: no segment readers")
 	}
 
-	builtOpts := append([]fts.Option(nil), opts...)
-	builtOpts = append(builtOpts, fts.WithAnalyzerDescriptors(loaded.Analyzers))
+	builtOpts := append([]*fts.Option(nil), opts...)
+	builtOpts = append(builtOpts, fts.WithPipelineDescriptors(loaded.Pipelines))
 	if loaded.Filter != nil {
 		builtOpts = append(builtOpts, fts.WithFilter(loaded.Filter))
 	}
@@ -335,7 +342,10 @@ func restoreSegmentService(loaded *loadedSegment, keyGen fts.KeyGenerator, opts 
 	}
 
 	var service *fts.Service
-	if len(loaded.Fields) == 1 {
+	if loaded.MultiField && len(loaded.Fields) == 0 {
+		service = fts.NewMultiFieldFromIndexes(map[string]fts.Index{}, keyGen, builtOpts...)
+	}
+	if !loaded.MultiField && len(loaded.Fields) == 1 {
 		if reader := loaded.Fields[fts.DefaultField]; reader != nil {
 			service = fts.New(reader, keyGen, builtOpts...)
 		}
@@ -354,7 +364,7 @@ func restoreSegmentService(loaded *loadedSegment, keyGen fts.KeyGenerator, opts 
 		}
 		service = fts.NewMultiFieldFromIndexes(indexes, keyGen, builtOpts...)
 	}
-	if err := service.ValidateAnalyzerDescriptors(loaded.Analyzers); err != nil {
+	if err := service.ValidatePipelineDescriptors(loaded.Pipelines); err != nil {
 		return nil, fmt.Errorf("ftspersist: restore segment service: %w", err)
 	}
 	if loaded.KeyGenerator == nil {
@@ -367,18 +377,18 @@ func restoreSegmentService(loaded *loadedSegment, keyGen fts.KeyGenerator, opts 
 	return service, nil
 }
 
-func cloneAnalyzerDescriptors(descriptors map[string]fts.AnalyzerDescriptor) map[string]fts.AnalyzerDescriptor {
+func clonePipelineDescriptors(descriptors map[string]fts.PipelineDescriptor) map[string]fts.PipelineDescriptor {
 	if descriptors == nil {
 		return nil
 	}
-	cloned := make(map[string]fts.AnalyzerDescriptor, len(descriptors))
+	cloned := make(map[string]fts.PipelineDescriptor, len(descriptors))
 	for fieldName, descriptor := range descriptors {
 		cloned[fieldName] = descriptor
 	}
 	return cloned
 }
 
-func LoadSegment(paths SegmentPaths, keyGen fts.KeyGenerator, load SegmentLoadOptions, opts ...fts.Option) (*LoadedService, error) {
+func LoadSegment(paths SegmentPaths, keyGen fts.KeyGenerator, load SegmentLoadOptions, opts ...*fts.Option) (*LoadedService, error) {
 	loadedSegment, err := loadSegmentData(paths, load)
 	if err != nil {
 		return nil, err

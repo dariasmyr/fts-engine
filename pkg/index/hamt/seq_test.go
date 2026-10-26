@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 func insertSeqOrd(t *testing.T, idx *Index, term string, id fts.DocID, ord fts.DocOrd) {

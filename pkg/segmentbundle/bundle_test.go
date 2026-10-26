@@ -5,11 +5,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/segment"
-	"github.com/dariasmyr/fts-engine/pkg/segmentbundle"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/segmentbundle"
+	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 )
 
 func TestBundleRestoreServiceRoundTrip(t *testing.T) {
@@ -30,9 +30,9 @@ func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 	if !svc.Delete("doc-a") {
 		t.Fatal("Delete(doc-a) = false, want true")
 	}
-	descriptors, err := svc.AnalyzerDescriptors()
+	descriptors, err := svc.PipelineDescriptors()
 	if err != nil {
-		t.Fatalf("AnalyzerDescriptors() error = %v", err)
+		t.Fatalf("PipelineDescriptors() error = %v", err)
 	}
 
 	var bundleBytes bytes.Buffer
@@ -42,7 +42,7 @@ func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 		t.Fatal("snapshot index does not implement segment.Source")
 	}
 	keyGenerator := fts.NewKeyGeneratorDescriptor("word-keys", 1)
-	if err := segmentbundle.SaveBundle(&bundleBytes, source, svc.SnapshotCollectionStats(), svc.SnapshotRegistry(), svc.SnapshotTombstones(), segmentbundle.BundleSaveOptions{Analyzers: descriptors, KeyGenerator: &keyGenerator}); err != nil {
+	if err := segmentbundle.SaveBundle(&bundleBytes, source, svc.SnapshotCollectionStats(), svc.SnapshotRegistry(), svc.SnapshotTombstones(), segmentbundle.BundleSaveOptions{Pipelines: descriptors, KeyGenerator: &keyGenerator}); err != nil {
 		t.Fatalf("SaveBundle() error = %v", err)
 	}
 
@@ -58,7 +58,7 @@ func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 		t.Fatalf("sealed Search(alpha) = %+v, want only live ord=1 count=2", sealed)
 	}
 	if _, err := segmentbundle.RestoreService(loaded, fts.WordKeys); err == nil {
-		t.Fatal("RestoreService() without pipeline error = nil, want analyzer descriptor error")
+		t.Fatal("RestoreService() without pipeline error = nil, want pipeline descriptor error")
 	}
 	restored, err := segmentbundle.RestoreService(loaded, fts.WordKeys, fts.WithPipeline(pipeline), fts.WithScorer(fts.BM25()))
 	if err != nil {
@@ -80,13 +80,90 @@ func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSaveServiceStoresAnalyzerIdentity(t *testing.T) {
+func TestBundleRestoreServiceRoundTripEmptyIndex(t *testing.T) {
+	svc := fts.New(slicedradix.New(), fts.WordKeys)
+
+	var bundleBytes bytes.Buffer
+	if err := segmentbundle.SaveService(&bundleBytes, svc); err != nil {
+		t.Fatalf("SaveService() error = %v", err)
+	}
+	loaded, err := segmentbundle.LoadBundle(bytes.NewReader(bundleBytes.Bytes()))
+	if err != nil {
+		t.Fatalf("LoadBundle() error = %v", err)
+	}
+	restored, err := segmentbundle.RestoreService(loaded, fts.WordKeys)
+	if err != nil {
+		t.Fatalf("RestoreService() error = %v", err)
+	}
+
+	res, err := restored.SearchDocuments(context.Background(), "missing", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if res.TotalResultsCount != 0 {
+		t.Fatalf("TotalResultsCount = %d, want 0", res.TotalResultsCount)
+	}
+}
+
+func TestBundleRestoreServiceRoundTripEmptyMultiField(t *testing.T) {
+	svc := fts.NewMultiField(func(string) (fts.Index, error) {
+		return slicedradix.New(), nil
+	}, fts.WordKeys)
+
+	var bundleBytes bytes.Buffer
+	if err := segmentbundle.SaveService(&bundleBytes, svc); err != nil {
+		t.Fatalf("SaveService() error = %v", err)
+	}
+	loaded, err := segmentbundle.LoadBundle(bytes.NewReader(bundleBytes.Bytes()))
+	if err != nil {
+		t.Fatalf("LoadBundle() error = %v", err)
+	}
+	restored, err := segmentbundle.RestoreService(loaded, fts.WordKeys)
+	if err != nil {
+		t.Fatalf("RestoreService() error = %v", err)
+	}
+	if !restored.IsMultiField() {
+		t.Fatal("restored service is not multi-field")
+	}
+	if fields := restored.Fields(); len(fields) != 0 {
+		t.Fatalf("Fields() = %v, want empty", fields)
+	}
+}
+
+func TestBundleRestoreServicePreservesMultiFieldModeWithDefaultFieldOnly(t *testing.T) {
+	svc := fts.NewMultiField(func(string) (fts.Index, error) {
+		return slicedradix.New(), nil
+	}, fts.WordKeys)
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
+		fts.DefaultField: {Value: "default only"},
+	}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	var bundleBytes bytes.Buffer
+	if err := segmentbundle.SaveService(&bundleBytes, svc); err != nil {
+		t.Fatalf("SaveService() error = %v", err)
+	}
+	loaded, err := segmentbundle.LoadBundle(bytes.NewReader(bundleBytes.Bytes()))
+	if err != nil {
+		t.Fatalf("LoadBundle() error = %v", err)
+	}
+	restored, err := segmentbundle.RestoreService(loaded, fts.WordKeys)
+	if err != nil {
+		t.Fatalf("RestoreService() error = %v", err)
+	}
+	if !restored.IsMultiField() {
+		t.Fatal("restored service is not multi-field")
+	}
+}
+
+func TestSaveServiceStoresPipelineIdentity(t *testing.T) {
 	pipeline := textproc.ObservabilityPipeline()
 	svc := fts.New(slicedradix.New(), fts.WordKeys, fts.WithPipeline(pipeline))
 	if err := svc.Index(context.Background(), fts.Document{
 		ID: "doc-1",
 		Fields: map[string]fts.Field{
-			fts.DefaultField: {Value: "analyzer identity"},
+			fts.DefaultField: {Value: "pipeline identity"},
 		},
 	}); err != nil {
 		t.Fatalf("Index() error = %v", err)
@@ -100,14 +177,14 @@ func TestSaveServiceStoresAnalyzerIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadBundle() error = %v", err)
 	}
-	if loaded.Analyzers[fts.DefaultField].Fingerprint == "" {
-		t.Fatalf("Analyzers = %+v, want fingerprint", loaded.Analyzers)
+	if loaded.Pipelines[fts.DefaultField].Fingerprint == "" {
+		t.Fatalf("Pipelines = %+v, want fingerprint", loaded.Pipelines)
 	}
 	if _, err := segmentbundle.RestoreService(loaded, fts.WordKeys); err == nil {
-		t.Fatal("RestoreService() without pipeline error = nil, want analyzer descriptor error")
+		t.Fatal("RestoreService() without pipeline error = nil, want pipeline descriptor error")
 	}
 	if _, err := segmentbundle.RestoreService(loaded, fts.WordKeys, fts.WithPipeline(textproc.DefaultEnglishPipeline())); err == nil {
-		t.Fatal("RestoreService() with mismatched pipeline error = nil, want analyzer mismatch")
+		t.Fatal("RestoreService() with mismatched pipeline error = nil, want pipeline mismatch")
 	}
 	changed, err := textproc.NewNamedPipeline("observability",
 		textproc.ObservabilityTokenizer{},
@@ -147,9 +224,9 @@ func TestMultiFieldBundleRestoreServiceRoundTrip(t *testing.T) {
 	if !svc.Delete("doc-a") {
 		t.Fatal("Delete(doc-a) = false, want true")
 	}
-	descriptors, err := svc.AnalyzerDescriptors()
+	descriptors, err := svc.PipelineDescriptors()
 	if err != nil {
-		t.Fatalf("AnalyzerDescriptors() error = %v", err)
+		t.Fatalf("PipelineDescriptors() error = %v", err)
 	}
 
 	fields, _ := svc.SnapshotFields()
@@ -164,7 +241,7 @@ func TestMultiFieldBundleRestoreServiceRoundTrip(t *testing.T) {
 
 	var bundleBytes bytes.Buffer
 	keyGenerator := fts.NewKeyGeneratorDescriptor("word-keys", 1)
-	if err := segmentbundle.SaveMultiFieldBundle(&bundleBytes, sources, svc.SnapshotCollectionStats(), svc.SnapshotRegistry(), svc.SnapshotTombstones(), segmentbundle.BundleSaveOptions{Analyzers: descriptors, KeyGenerator: &keyGenerator}); err != nil {
+	if err := segmentbundle.SaveMultiFieldBundle(&bundleBytes, sources, svc.SnapshotCollectionStats(), svc.SnapshotRegistry(), svc.SnapshotTombstones(), segmentbundle.BundleSaveOptions{Pipelines: descriptors, KeyGenerator: &keyGenerator}); err != nil {
 		t.Fatalf("SaveMultiFieldBundle() error = %v", err)
 	}
 
@@ -208,7 +285,7 @@ func TestMultiFieldBundleRestoreServiceRoundTrip(t *testing.T) {
 	}
 }
 
-func TestMultiFieldBundleStoresPerFieldAnalyzerIdentity(t *testing.T) {
+func TestMultiFieldBundleStoresPerFieldPipelineIdentity(t *testing.T) {
 	factory := func(name string) (fts.Index, error) { return slicedradix.New(), nil }
 	english := textproc.DefaultEnglishPipeline()
 	russian := textproc.DefaultRussianPipeline()
@@ -218,15 +295,15 @@ func TestMultiFieldBundleStoresPerFieldAnalyzerIdentity(t *testing.T) {
 	)
 	ctx := context.Background()
 	if err := svc.Index(ctx, fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
-		"title": {Value: "Hello", Pipeline: english},
-		"body":  {Value: "Привет", Pipeline: russian},
+		"title": {Value: "running"},
+		"body":  {Value: "машины"},
 	}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}
 
-	descriptors, err := svc.AnalyzerDescriptors()
+	descriptors, err := svc.PipelineDescriptors()
 	if err != nil || descriptors["title"].Fingerprint == descriptors["body"].Fingerprint {
-		t.Fatalf("AnalyzerDescriptors() = %+v, want distinct field descriptors", descriptors)
+		t.Fatalf("PipelineDescriptors() = %+v, want distinct field descriptors", descriptors)
 	}
 	var bundleBytes bytes.Buffer
 	if err := segmentbundle.SaveService(&bundleBytes, svc); err != nil {
@@ -240,11 +317,24 @@ func TestMultiFieldBundleStoresPerFieldAnalyzerIdentity(t *testing.T) {
 	if _, err := segmentbundle.RestoreService(bundle, fts.WordKeys, fts.WithPipeline(english)); err == nil {
 		t.Fatal("RestoreService() without field pipeline error = nil, want mismatch")
 	}
-	if _, err := segmentbundle.RestoreService(bundle, fts.WordKeys,
+	restored, err := segmentbundle.RestoreService(bundle, fts.WordKeys,
 		fts.WithPipeline(english),
 		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatalf("RestoreService() with field pipelines error = %v", err)
+	}
+	for _, query := range []fts.TermQuery{
+		{Field: "title", Term: "run"},
+		{Field: "body", Term: "машина"},
+	} {
+		res, err := restored.Search(ctx, query, 10)
+		if err != nil {
+			t.Fatalf("Search(%s:%s) error = %v", query.Field, query.Term, err)
+		}
+		if res.TotalResultsCount != 1 || res.Results[0].ID != "doc-1" {
+			t.Fatalf("Search(%s:%s) results = %+v, want doc-1", query.Field, query.Term, res.Results)
+		}
 	}
 }
 

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 const defaultRecentLimit = 64

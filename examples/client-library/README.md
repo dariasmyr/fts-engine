@@ -15,7 +15,7 @@ go mod init example.com/my-fts-app
 2. Add the dependency:
 
 ```bash
-go get github.com/dariasmyr/fts-engine@latest
+go get github.com/dariasmyr/fts-engine/v2@latest
 ```
 
 3. Copy one of the examples below into your project and run:
@@ -27,7 +27,7 @@ go run .
 If you want to test against local source, add a `replace` to your project's `go.mod`:
 
 ```go
-replace github.com/dariasmyr/fts-engine => /absolute/path/to/fts-engine
+replace github.com/dariasmyr/fts-engine/v2 => /absolute/path/to/fts-engine
 ```
 
 ## Example groups
@@ -39,7 +39,7 @@ Standalone examples:
 - `custom-options/main.go` - in-memory setup with a custom pipeline and filter
 - `field-clauses/main.go` - field-specific query clauses
 - `flat-observability/main.go` - flat index with observability-oriented tokenization
-- `segment-analyzer-compatibility/main.go` - self-contained segment save and analyzer-compatible restore
+- `segment-pipeline-compatibility/main.go` - self-contained segment save and pipeline-compatible restore
 - `segment-bundle/main.go` - save and restore one sealed segment as an `io.Writer`/`io.Reader` blob
 - `rank-profile/main.go` - multi-field ranking with weighted field scoring
 
@@ -67,7 +67,7 @@ go run ./examples/client-library/preset
 go run ./examples/client-library/custom-options
 go run ./examples/client-library/field-clauses
 go run ./examples/client-library/flat-observability
-go run ./examples/client-library/segment-analyzer-compatibility
+go run ./examples/client-library/segment-pipeline-compatibility
 go run ./examples/client-library/segment-bundle
 go run ./examples/client-library/rank-profile
 ```
@@ -85,7 +85,6 @@ Segment restore examples depend on files created by the segment save example:
 ```bash
 go run ./examples/client-library/segment-save-files
 go run ./examples/client-library/segment-load-files
-go run ./examples/client-library/segment-load-files-low-level
 go run ./examples/client-library/segment-load-mmap
 ```
 
@@ -95,4 +94,4 @@ Notes:
 - snapshot restore returns a writable service
 - segment restore returns a read-only service
 - `mmap` applies only to segment loading
-- snapshots and segment manifests store per-field configuration fingerprints; restore them with identically configured default and field pipelines
+- snapshots and segment manifests store per-field pipeline fingerprints; restore them with identically configured default and field pipelines

@@ -1,19 +1,16 @@
 package fts
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"strings"
 	"unicode"
 )
 
 type defaultPipeline struct{}
 
-func (defaultPipeline) Descriptor() AnalyzerDescriptor {
+func (defaultPipeline) Descriptor() PipelineDescriptor {
 	configuration := "fts-engine/default-pipeline/config-v1\x00unicode=" + unicode.Version
-	sum := sha256.Sum256([]byte(configuration))
-	fingerprint := hex.EncodeToString(sum[:])
-	descriptor, err := NewAnalyzerDescriptor("default", fingerprint, AnalyzerFingerprintSchemeV1)
+	fingerprint := SHA256Fingerprint([]byte(configuration))
+	descriptor, err := NewPipelineDescriptor("default", fingerprint)
 	if err != nil {
 		panic(err)
 	}

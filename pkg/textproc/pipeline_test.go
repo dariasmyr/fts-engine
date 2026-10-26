@@ -5,27 +5,24 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
-	"unicode"
-
-	"github.com/dariasmyr/fts-engine/pkg/fts"
 )
 
 type testTokenizer struct {
-	descriptor ComponentDescriptor
-	token      string
+	fingerprint string
+	token       string
 }
 
 func (tokenizer *testTokenizer) Tokenize(string) []string {
 	return []string{tokenizer.token}
 }
 
-func (tokenizer *testTokenizer) Descriptor() ComponentDescriptor {
-	return tokenizer.descriptor
+func (tokenizer *testTokenizer) Fingerprint() string {
+	return tokenizer.fingerprint
 }
 
 type testFilter struct {
-	descriptor ComponentDescriptor
-	suffix     string
+	fingerprint string
+	suffix      string
 }
 
 func (filter *testFilter) Apply(tokens []string) []string {
@@ -36,8 +33,8 @@ func (filter *testFilter) Apply(tokens []string) []string {
 	return result
 }
 
-func (filter *testFilter) Descriptor() ComponentDescriptor {
-	return filter.descriptor
+func (filter *testFilter) Fingerprint() string {
+	return filter.fingerprint
 }
 
 func TestAlnumTokenizer(t *testing.T) {
@@ -127,7 +124,7 @@ func TestObservabilityPipelineGolden(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Process() = %v, want %v", got, want)
 	}
-	if got := p.Descriptor(); got.Name != "observability" || got.FingerprintScheme != fts.AnalyzerFingerprintSchemeV1 || len(got.Fingerprint) != 64 {
+	if got := p.Descriptor(); got.Name != "observability" || !strings.HasPrefix(got.Fingerprint, "sha256:") || len(got.Fingerprint) != len("sha256:")+64 {
 		t.Fatalf("Descriptor() = %+v", got)
 	}
 }
@@ -144,27 +141,22 @@ func TestPipelineDescriptorStable(t *testing.T) {
 }
 
 func TestPipelineFingerprintGolden(t *testing.T) {
-	tokenizer := &testTokenizer{descriptor: ComponentDescriptor{
-		Name: "custom_tokenizer", Version: 2,
-		Params: map[string]string{"zeta": "last", "alpha": "first"},
-	}}
-	filter := &testFilter{descriptor: ComponentDescriptor{
-		Name: "custom_filter", Version: 3,
-		Params: map[string]string{"mode": "strict"},
-	}}
+	tokenizer := &testTokenizer{fingerprint: componentFingerprint("custom-tokenizer/v2", "alpha=first", "zeta=last")}
+	filter := &testFilter{fingerprint: componentFingerprint("custom-filter/v3", "mode=strict")}
 	pipeline, err := NewNamedPipeline("golden", tokenizer, filter)
 	if err != nil {
 		t.Fatalf("NewNamedPipeline() error = %v", err)
 	}
-	const want = "29e2fccffcec25794be78ec4af25cf9acc1ef0400fff0f18b13b99cf46a2c508"
+	const want = "sha256:20a85ff3b786ba0ac03a31a62c3e497860eb01c4399e58ef884de9ddb3122665"
 	if got := pipeline.Descriptor().Fingerprint; got != want {
 		t.Fatalf("Fingerprint = %q, want %q", got, want)
 	}
 }
 
-func TestPipelineFingerprintDeterministicParameterOrder(t *testing.T) {
-	first := &testTokenizer{descriptor: ComponentDescriptor{Name: "custom", Version: 1, Params: map[string]string{"a": "1", "b": "2"}}}
-	second := &testTokenizer{descriptor: ComponentDescriptor{Name: "custom", Version: 1, Params: map[string]string{"b": "2", "a": "1"}}}
+func TestPipelineFingerprintDeterministic(t *testing.T) {
+	fingerprint := componentFingerprint("custom/v1", "a=1", "b=2")
+	first := &testTokenizer{fingerprint: fingerprint}
+	second := &testTokenizer{fingerprint: fingerprint}
 	a, err := NewNamedPipeline("deterministic", first)
 	if err != nil {
 		t.Fatal(err)
@@ -179,12 +171,12 @@ func TestPipelineFingerprintDeterministicParameterOrder(t *testing.T) {
 }
 
 func TestPipelineFingerprintTracksConfiguration(t *testing.T) {
-	baseTokenizer := &testTokenizer{descriptor: ComponentDescriptor{Name: "tokenizer", Version: 1}}
-	otherTokenizer := &testTokenizer{descriptor: ComponentDescriptor{Name: "other_tokenizer", Version: 1}}
-	firstFilter := &testFilter{descriptor: ComponentDescriptor{Name: "first", Version: 1}}
-	secondFilter := &testFilter{descriptor: ComponentDescriptor{Name: "second", Version: 1}}
-	parameterFilter := &testFilter{descriptor: ComponentDescriptor{Name: "parameter", Version: 1, Params: map[string]string{"value": "1"}}}
-	versionFilter := &testFilter{descriptor: ComponentDescriptor{Name: "first", Version: 2}}
+	baseTokenizer := &testTokenizer{fingerprint: componentFingerprint("tokenizer/v1")}
+	otherTokenizer := &testTokenizer{fingerprint: componentFingerprint("other-tokenizer/v1")}
+	firstFilter := &testFilter{fingerprint: componentFingerprint("first/v1")}
+	secondFilter := &testFilter{fingerprint: componentFingerprint("second/v1")}
+	parameterFilter := &testFilter{fingerprint: componentFingerprint("parameter/v1", "value=1")}
+	versionFilter := &testFilter{fingerprint: componentFingerprint("first/v2")}
 
 	base := mustTestPipeline(t, "pipeline", baseTokenizer, firstFilter, secondFilter)
 	tests := []struct {
@@ -205,7 +197,7 @@ func TestPipelineFingerprintTracksConfiguration(t *testing.T) {
 			}
 		})
 	}
-	parameterChanged := &testFilter{descriptor: ComponentDescriptor{Name: "parameter", Version: 1, Params: map[string]string{"value": "2"}}}
+	parameterChanged := &testFilter{fingerprint: componentFingerprint("parameter/v1", "value=2")}
 	withParameter := mustTestPipeline(t, "parameterized", baseTokenizer, parameterFilter)
 	withChangedParameter := mustTestPipeline(t, "parameterized", baseTokenizer, parameterChanged)
 	if withParameter.Descriptor().Fingerprint == withChangedParameter.Descriptor().Fingerprint {
@@ -219,20 +211,17 @@ func TestPipelineNameDoesNotAffectCompatibility(t *testing.T) {
 	if first.Descriptor().Fingerprint != second.Descriptor().Fingerprint {
 		t.Fatalf("fingerprints differ: %q != %q", first.Descriptor().Fingerprint, second.Descriptor().Fingerprint)
 	}
-	if first.Descriptor().FingerprintScheme != second.Descriptor().FingerprintScheme {
-		t.Fatalf("schemes differ: %d != %d", first.Descriptor().FingerprintScheme, second.Descriptor().FingerprintScheme)
-	}
 }
 
-func TestPipelineFingerprintTracksMutableCustomDescriptor(t *testing.T) {
-	tokenizer := &testTokenizer{descriptor: ComponentDescriptor{Name: "custom", Version: 1, Params: map[string]string{"mode": "first"}}, token: "first"}
+func TestPipelineFingerprintTracksMutableCustomComponent(t *testing.T) {
+	tokenizer := &testTokenizer{fingerprint: componentFingerprint("custom/v1", "mode=first"), token: "first"}
 	pipeline := mustTestPipeline(t, "mutable", tokenizer)
 	first := pipeline.Descriptor()
-	tokenizer.descriptor.Params["mode"] = "second"
+	tokenizer.fingerprint = componentFingerprint("custom/v1", "mode=second")
 	tokenizer.token = "second"
 	second := pipeline.Descriptor()
 	if first.Fingerprint == second.Fingerprint {
-		t.Fatal("fingerprint did not change with custom component descriptor")
+		t.Fatal("fingerprint did not change with custom component")
 	}
 	if got := pipeline.Process(""); !reflect.DeepEqual(got, []string{"second"}) {
 		t.Fatalf("Process() = %v", got)
@@ -240,9 +229,9 @@ func TestPipelineFingerprintTracksMutableCustomDescriptor(t *testing.T) {
 }
 
 func TestNewNamedPipelineCopiesFilterSlice(t *testing.T) {
-	tokenizer := &testTokenizer{descriptor: ComponentDescriptor{Name: "custom", Version: 1}, token: "token"}
-	first := &testFilter{descriptor: ComponentDescriptor{Name: "first", Version: 1}, suffix: "-first"}
-	second := &testFilter{descriptor: ComponentDescriptor{Name: "second", Version: 1}, suffix: "-second"}
+	tokenizer := &testTokenizer{fingerprint: componentFingerprint("custom/v1"), token: "token"}
+	first := &testFilter{fingerprint: componentFingerprint("first/v1"), suffix: "-first"}
+	second := &testFilter{fingerprint: componentFingerprint("second/v1"), suffix: "-second"}
 	filters := []Filter{first}
 	pipeline := mustTestPipeline(t, "copy", tokenizer, filters...)
 	descriptor := pipeline.Descriptor()
@@ -255,63 +244,33 @@ func TestNewNamedPipelineCopiesFilterSlice(t *testing.T) {
 	}
 }
 
-func TestBuiltInComponentDescriptorsValid(t *testing.T) {
+func TestBuiltInComponentFingerprintsValid(t *testing.T) {
 	tests := []struct {
-		name string
-		got  ComponentDescriptor
-		want ComponentDescriptor
+		name        string
+		fingerprint string
 	}{
-		{name: "alnum", got: AlnumTokenizer{}.Descriptor(), want: component("alnum", unicodeParams())},
-		{name: "observability", got: ObservabilityTokenizer{}.Descriptor(), want: component("observability", unicodeParams())},
-		{name: "lowercase", got: LowercaseFilter{}.Descriptor(), want: component("lowercase", unicodeParams())},
-		{name: "minimum length", got: MinLengthOrNumericFilter{MinLength: 3}.Descriptor(), want: component("min_length_or_numeric", map[string]string{"min_length": "3"})},
-		{name: "unique", got: UniqueFilter{}.Descriptor(), want: component("unique", nil)},
-		{name: "english stopwords", got: EnglishStopwordFilter{}.Descriptor(), want: component("english_stopwords", map[string]string{"dictionary": snowballVersion + "/english-stopwords"})},
-		{name: "english stem", got: EnglishStemFilter{}.Descriptor(), want: component("english_stem", map[string]string{"implementation": snowballVersion + "/english", "stem_stop_words": "false"})},
-		{name: "russian stopwords", got: RussianStopwordFilter{}.Descriptor(), want: component("russian_stopwords", map[string]string{"dictionary": snowballVersion + "/russian-stopwords"})},
-		{name: "russian stem", got: RussianStemFilter{}.Descriptor(), want: component("russian_stem", map[string]string{"implementation": snowballVersion + "/russian", "stem_stop_words": "false"})},
-		{name: "multilingual stopwords", got: MultilingualStopwordFilter{}.Descriptor(), want: component("multilingual_stopwords", map[string]string{"english_dictionary": snowballVersion + "/english-stopwords", "russian_dictionary": snowballVersion + "/russian-stopwords", "unicode_version": unicode.Version})},
-		{name: "multilingual stem", got: MultilingualStemFilter{}.Descriptor(), want: component("multilingual_stem", map[string]string{"english_implementation": snowballVersion + "/english", "russian_implementation": snowballVersion + "/russian", "stem_stop_words": "false", "unicode_version": unicode.Version})},
+		{name: "alnum", fingerprint: AlnumTokenizer{}.Fingerprint()},
+		{name: "observability", fingerprint: ObservabilityTokenizer{}.Fingerprint()},
+		{name: "lowercase", fingerprint: LowercaseFilter{}.Fingerprint()},
+		{name: "minimum length", fingerprint: MinLengthOrNumericFilter{MinLength: 3}.Fingerprint()},
+		{name: "unique", fingerprint: UniqueFilter{}.Fingerprint()},
+		{name: "english stopwords", fingerprint: EnglishStopwordFilter{}.Fingerprint()},
+		{name: "english stem", fingerprint: EnglishStemFilter{}.Fingerprint()},
+		{name: "russian stopwords", fingerprint: RussianStopwordFilter{}.Fingerprint()},
+		{name: "russian stem", fingerprint: RussianStemFilter{}.Fingerprint()},
+		{name: "multilingual stopwords", fingerprint: MultilingualStopwordFilter{}.Fingerprint()},
+		{name: "multilingual stem", fingerprint: MultilingualStemFilter{}.Fingerprint()},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := test.got.Validate(); err != nil {
-				t.Fatalf("Validate() error = %v", err)
-			}
-			if !reflect.DeepEqual(test.got, test.want) {
-				t.Fatalf("Descriptor() = %+v, want %+v", test.got, test.want)
+			if err := validateComponentFingerprint(test.fingerprint); err != nil {
+				t.Fatalf("invalid fingerprint %q: %v", test.fingerprint, err)
 			}
 		})
 	}
 }
 
-func TestComponentDescriptorRejectsInvalidConfiguration(t *testing.T) {
-	tests := []struct {
-		name       string
-		descriptor ComponentDescriptor
-	}{
-		{name: "empty name", descriptor: ComponentDescriptor{Version: 1}},
-		{name: "invalid name", descriptor: ComponentDescriptor{Name: "bad name", Version: 1}},
-		{name: "zero version", descriptor: ComponentDescriptor{Name: "valid"}},
-		{name: "invalid parameter name", descriptor: ComponentDescriptor{Name: "valid", Version: 1, Params: map[string]string{"bad name": "value"}}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if err := test.descriptor.Validate(); err == nil {
-				t.Fatal("Validate() error = nil")
-			}
-		})
-	}
-}
-
-func TestComponentDescriptorAllowsEmptyParameterValue(t *testing.T) {
-	descriptor := ComponentDescriptor{Name: "valid", Version: 1, Params: map[string]string{"separator": ""}}
-	if err := descriptor.Validate(); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
-}
-
-func TestSnowballDescriptorVersionMatchesDependency(t *testing.T) {
+func TestSnowballSourceMatchesDependency(t *testing.T) {
 	buildInfo, ok := debug.ReadBuildInfo()
 	if !ok {
 		t.Fatal("ReadBuildInfo() = false")
@@ -320,32 +279,32 @@ func TestSnowballDescriptorVersionMatchesDependency(t *testing.T) {
 		if dependency.Path != "github.com/kljensen/snowball" {
 			continue
 		}
-		if got := dependency.Path + "@" + dependency.Version; got != snowballVersion {
-			t.Fatalf("snowball descriptor version = %q, linked dependency = %q", snowballVersion, got)
+		if got := dependency.Path + "@" + dependency.Version; got != snowballSource {
+			t.Fatalf("snowball source = %q, linked dependency = %q", snowballSource, got)
 		}
 		return
 	}
 	t.Fatal("snowball dependency is unavailable in build info")
 }
 
-func TestMinLengthDescriptorUsesEffectiveValue(t *testing.T) {
-	zero := MinLengthOrNumericFilter{MinLength: 0}.Descriptor()
-	negative := MinLengthOrNumericFilter{MinLength: -10}.Descriptor()
-	one := MinLengthOrNumericFilter{MinLength: 1}.Descriptor()
-	if !reflect.DeepEqual(zero, one) || !reflect.DeepEqual(negative, one) {
-		t.Fatalf("effective descriptors differ: zero=%+v negative=%+v one=%+v", zero, negative, one)
+func TestMinLengthFingerprintUsesEffectiveValue(t *testing.T) {
+	zero := MinLengthOrNumericFilter{MinLength: 0}.Fingerprint()
+	negative := MinLengthOrNumericFilter{MinLength: -10}.Fingerprint()
+	one := MinLengthOrNumericFilter{MinLength: 1}.Fingerprint()
+	if zero != one || negative != one {
+		t.Fatalf("effective fingerprints differ: zero=%q negative=%q one=%q", zero, negative, one)
 	}
 }
 
-func TestNewNamedPipelineRejectsInvalidDescriptor(t *testing.T) {
+func TestNewNamedPipelineRejectsInvalidFingerprint(t *testing.T) {
 	if _, err := NewNamedPipeline("", AlnumTokenizer{}); err == nil {
 		t.Fatal("NewNamedPipeline(empty name) error = nil")
 	}
-	invalidTokenizer := &testTokenizer{descriptor: ComponentDescriptor{Name: "", Version: 1}}
+	invalidTokenizer := &testTokenizer{fingerprint: "invalid"}
 	if _, err := NewNamedPipeline("custom", invalidTokenizer); err == nil || !strings.Contains(err.Error(), "tokenizer") {
 		t.Fatalf("NewNamedPipeline(invalid tokenizer) error = %v", err)
 	}
-	invalidFilter := &testFilter{descriptor: ComponentDescriptor{Name: "bad name", Version: 1}}
+	invalidFilter := &testFilter{fingerprint: "invalid"}
 	if _, err := NewNamedPipeline("custom", AlnumTokenizer{}, invalidFilter); err == nil || !strings.Contains(err.Error(), "filter 0") {
 		t.Fatalf("NewNamedPipeline(invalid filter) error = %v", err)
 	}

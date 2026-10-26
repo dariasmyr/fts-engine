@@ -151,7 +151,6 @@ func (s *Service) collectPositionalPostingsForToken(ctx context.Context, positio
 	}
 	if exec != nil {
 		exec.addKeys(len(keys))
-		exec.addTokens(1)
 	}
 	var filterChecks, filterRejects, indexLookups, postingsRead int
 	defer func() {

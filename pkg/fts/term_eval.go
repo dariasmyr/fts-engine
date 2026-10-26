@@ -5,6 +5,16 @@ import (
 	"fmt"
 )
 
+type processedTermGroup struct {
+	fields []string
+	term   string
+}
+
+type termOccurrence struct {
+	term       string
+	occurrence int
+}
+
 func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldScope) (map[DocOrd]docAccum, error) {
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.setStrategy(strategyTerm)
@@ -13,35 +23,58 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldSco
 		return map[DocOrd]docAccum{}, nil
 	}
 
-	tokens := s.pipeline.Process(q.Term)
-	if len(tokens) == 0 {
-		return map[DocOrd]docAccum{}, nil
-	}
 	fields := s.resolveScopedFields(q.Field, scope)
+	groups, err := s.processFields(fields, q.Term)
+	if err != nil {
+		return nil, err
+	}
 	if exec := diagnosticsFromContext(ctx); exec != nil {
-		exec.addTokens(len(tokens))
+		exec.addTokens(processedTokenCount(groups))
 		exec.addFields(len(fields))
 	}
-	keyGroups := make([][]string, len(tokens))
-	for i, token := range tokens {
-		keys, err := s.keyGen(token)
-		if err != nil {
-			return nil, fmt.Errorf("fts: term query: keygen: %w", err)
-		}
-		keyGroups[i] = keys
-		if exec := diagnosticsFromContext(ctx); exec != nil {
-			exec.addKeys(len(keys))
+	return s.evalProcessedTerms(ctx, mergeProcessedTerms(groups))
+}
+
+func mergeProcessedTerms(groups []processedFieldGroup) []processedTermGroup {
+	merged := make([]processedTermGroup, 0, processedTokenCount(groups))
+	byTermOccurrence := make(map[termOccurrence]int, len(merged))
+	for _, group := range groups {
+		occurrences := make(map[string]int, len(group.tokens))
+		for _, token := range group.tokens {
+			occurrence := occurrences[token]
+			occurrences[token]++
+			key := termOccurrence{term: token, occurrence: occurrence}
+			if index, ok := byTermOccurrence[key]; ok {
+				merged[index].fields = append(merged[index].fields, group.fields...)
+				continue
+			}
+			byTermOccurrence[key] = len(merged)
+			merged = append(merged, processedTermGroup{fields: group.fields, term: token})
 		}
 	}
+	return merged
+}
 
-	plan := make([]tokenGroup, 0, len(tokens))
+func (s *Service) evalProcessedTerms(ctx context.Context, terms []processedTermGroup) (map[DocOrd]docAccum, error) {
+	return s.evalProcessedTermsType(ctx, terms, QueryTypeTerm)
+}
+
+func (s *Service) evalProcessedTermsType(ctx context.Context, terms []processedTermGroup, queryType QueryType) (map[DocOrd]docAccum, error) {
+	plan := make([]tokenGroup, 0, len(terms))
 	totalCap := 0
-	for i := range tokens {
+	for _, processed := range terms {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		keys, err := s.keyGen(processed.term)
+		if err != nil {
+			return nil, fmt.Errorf("fts: term query: keygen: %w", err)
+		}
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			exec.addKeys(len(keys))
+		}
 
-		expansions, groupTotalDocs, err := s.collectTermFieldExpansions(ctx, fields, tokens[i], keyGroups[i])
+		expansions, groupTotalDocs, err := s.collectTermFieldExpansions(ctx, processed.fields, processed.term, keys)
 		if err != nil {
 			return nil, err
 		}
@@ -72,7 +105,7 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldSco
 					seenInGroup[ord] = struct{}{}
 				}
 				accum.TotalMatches += int(doc.Count)
-				accum.Score += s.scoreTermExpansionDoc(ctx, expansion, doc)
+				accum.Score += s.scoreTermExpansionDocType(ctx, expansion, doc, queryType)
 				hits[ord] = accum
 			}
 		}

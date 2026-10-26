@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/blevesearch/bleve/v2 v2.4.4
 	github.com/blugelabs/bluge v0.2.2
-	github.com/dariasmyr/fts-engine v1.6.1
+	github.com/dariasmyr/fts-engine/v2 v2.0.0
 )
 
 require (
@@ -46,4 +46,4 @@ require (
 	golang.org/x/text v0.8.0 // indirect
 )
 
-replace github.com/dariasmyr/fts-engine => ../
+replace github.com/dariasmyr/fts-engine/v2 => ../

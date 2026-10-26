@@ -2,6 +2,7 @@ package fts
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -73,8 +74,8 @@ func TestSingleFieldServiceRejectsOtherFields(t *testing.T) {
 
 type uppercasePipeline struct{}
 
-func (uppercasePipeline) Descriptor() AnalyzerDescriptor {
-	descriptor, err := NewAnalyzerDescriptor("uppercase-test", testFingerprint("uppercase-test-v1"), AnalyzerFingerprintSchemeV1)
+func (uppercasePipeline) Descriptor() PipelineDescriptor {
+	descriptor, err := NewPipelineDescriptor("uppercase-test", testFingerprint("uppercase-test-v1"))
 	if err != nil {
 		panic(err)
 	}
@@ -82,28 +83,42 @@ func (uppercasePipeline) Descriptor() AnalyzerDescriptor {
 }
 
 func (uppercasePipeline) Process(text string) []string {
-	out := make([]rune, 0, len(text))
-	for _, r := range text {
-		if r >= 'a' && r <= 'z' {
-			out = append(out, r-32)
-		} else if r >= 'A' && r <= 'Z' {
-			out = append(out, r)
-		}
+	words := strings.Fields(text)
+	for i := range words {
+		words[i] = strings.ToUpper(words[i])
 	}
-	return []string{string(out)}
+	return words
 }
 
-func TestPerFieldPipelineOverridesDefault(t *testing.T) {
+type fixedOutputPipeline struct {
+	name   string
+	tokens []string
+}
+
+func (pipeline *fixedOutputPipeline) Descriptor() PipelineDescriptor {
+	descriptor, err := NewPipelineDescriptor(pipeline.name, testFingerprint(strings.Join(pipeline.tokens, "\x00")))
+	if err != nil {
+		panic(err)
+	}
+	return descriptor
+}
+
+func (pipeline *fixedOutputPipeline) Process(string) []string {
+	return append([]string(nil), pipeline.tokens...)
+}
+
+func TestConfiguredFieldPipelineOverridesDefault(t *testing.T) {
 	idx := newMemoryIndex()
 	svc := NewMultiField(
 		func(name string) (Index, error) { return idx, nil },
 		WordKeys,
+		WithFieldPipelines(map[string]Pipeline{"title": uppercasePipeline{}}),
 	)
 
 	err := svc.Index(context.Background(), Document{
 		ID: "doc-1",
 		Fields: map[string]Field{
-			"title": {Value: "abc", Pipeline: uppercasePipeline{}},
+			"title": {Value: "abc"},
 		},
 	})
 	if err != nil {
@@ -111,24 +126,138 @@ func TestPerFieldPipelineOverridesDefault(t *testing.T) {
 	}
 
 	if len(idx.inserts) != 1 || idx.inserts[0].key != "ABC" {
-		t.Fatalf("per-field pipeline not applied: %+v", idx.inserts)
+		t.Fatalf("configured field pipeline not applied: %+v", idx.inserts)
 	}
 }
 
-func TestIndexRejectsIncompatibleAnalyzerForExistingField(t *testing.T) {
-	first, _ := NewAnalyzerDescriptor("same", testFingerprint("first"), AnalyzerFingerprintSchemeV1)
-	second, _ := NewAnalyzerDescriptor("same", testFingerprint("second"), AnalyzerFingerprintSchemeV1)
-	svc := NewMultiField(func(string) (Index, error) { return newMemoryIndex(), nil }, WordKeys)
+func TestIndexRejectsChangedConfiguredPipeline(t *testing.T) {
+	first, _ := NewPipelineDescriptor("same", testFingerprint("first"))
+	second, _ := NewPipelineDescriptor("same", testFingerprint("second"))
+	pipeline := &customPipeline{descriptor: first}
+	svc := NewMultiField(
+		func(string) (Index, error) { return newMemoryIndex(), nil },
+		WordKeys,
+		WithFieldPipelines(map[string]Pipeline{"title": pipeline}),
+	)
 
 	if err := svc.Index(context.Background(), Document{ID: "doc-1", Fields: map[string]Field{
-		"title": {Value: "alpha", Pipeline: customPipeline{descriptor: first}},
+		"title": {Value: "alpha"},
 	}}); err != nil {
 		t.Fatalf("first Index() error = %v", err)
 	}
+	pipeline.descriptor = second
 	if err := svc.Index(context.Background(), Document{ID: "doc-2", Fields: map[string]Field{
-		"title": {Value: "beta", Pipeline: customPipeline{descriptor: second}},
+		"title": {Value: "beta"},
 	}}); err == nil {
 		t.Fatal("second Index() error = nil")
+	}
+}
+
+func TestSearchRejectsChangedConfiguredPipeline(t *testing.T) {
+	pipeline := &fixedOutputPipeline{name: "mutable", tokens: []string{"first"}}
+	svc := New(newMemoryIndex(), WordKeys, WithPipeline(pipeline))
+	if err := svc.Index(context.Background(), Document{ID: "doc-1", Fields: map[string]Field{
+		DefaultField: {Value: "ignored"},
+	}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	pipeline.tokens = []string{"second"}
+	if _, err := svc.Search(context.Background(), TermQuery{Term: "ignored"}, 10); err == nil {
+		t.Fatal("Search() error = nil after pipeline fingerprint changed")
+	}
+}
+
+func TestPhraseUsesPhraseScoringAcrossPipelineGroups(t *testing.T) {
+	single := &fixedOutputPipeline{name: "single", tokens: []string{"joined"}}
+	split := &fixedOutputPipeline{name: "split", tokens: []string{"alpha", "beta"}}
+	svc := NewMultiField(
+		func(string) (Index, error) { return newExecPrefixPositionalMemoryIndex(), nil },
+		WordKeys,
+		WithPipeline(split),
+		WithFieldPipelines(map[string]Pipeline{"title": single}),
+		WithScorer(WeightedScorer{
+			Base:             fixedScorer(1),
+			QueryTypeWeights: QueryTypeWeights{Term: 2, Phrase: 5},
+		}),
+	)
+	if err := svc.Index(context.Background(), Document{ID: "doc-1", Fields: map[string]Field{
+		"title": {Value: "ignored"},
+		"body":  {Value: "ignored"},
+	}}); err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	res, err := svc.Search(WithDiagnostics(context.Background()), PhraseQuery{Phrase: "ignored"}, 10)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(res.Results) != 1 || res.Results[0].Score != 10 {
+		t.Fatalf("Results = %+v, want one result with phrase score 10", res.Results)
+	}
+	if res.Diagnostics == nil || res.Diagnostics.ProcessedTokens != 3 {
+		t.Fatalf("Diagnostics = %+v, want ProcessedTokens=3", res.Diagnostics)
+	}
+}
+
+func TestSearchUsesConfiguredPipelinePerField(t *testing.T) {
+	factory := func(string) (Index, error) { return newExecPrefixPositionalMemoryIndex(), nil }
+	svc := NewMultiField(
+		factory,
+		WordKeys,
+		WithFieldPipelines(map[string]Pipeline{"title": uppercasePipeline{}}),
+	)
+	ctx := context.Background()
+	if err := svc.Index(ctx, Document{ID: "title-doc", Fields: map[string]Field{
+		"title": {Value: "Alpha Beta"},
+	}}); err != nil {
+		t.Fatalf("Index(title-doc) error = %v", err)
+	}
+	if err := svc.Index(ctx, Document{ID: "body-doc", Fields: map[string]Field{
+		"body": {Value: "alpha beta"},
+	}}); err != nil {
+		t.Fatalf("Index(body-doc) error = %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		query Query
+	}{
+		{name: "term", query: TermQuery{Term: "alpha"}},
+		{name: "single-token phrase", query: PhraseQuery{Phrase: "alpha"}},
+		{name: "phrase", query: PhraseQuery{Phrase: "alpha beta"}},
+		{name: "prefix", query: PrefixQuery{Prefix: "al"}},
+		{name: "boolean fast path", query: &BooleanQuery{Clauses: []BoolClause{
+			MustClause(TermQuery{Term: "alpha"}),
+			MustClause(TermQuery{Term: "beta"}),
+		}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			res, err := svc.Search(ctx, test.query, 10)
+			if err != nil {
+				t.Fatalf("Search() error = %v", err)
+			}
+			if res.TotalResultsCount != 2 {
+				t.Fatalf("TotalResultsCount = %d, want 2; results=%+v", res.TotalResultsCount, res.Results)
+			}
+		})
+	}
+
+	res, err := svc.Search(ctx, TermQuery{Field: "title", Term: "alpha"}, 10)
+	if err != nil {
+		t.Fatalf("Search(title) error = %v", err)
+	}
+	if res.TotalResultsCount != 1 || res.Results[0].ID != "title-doc" {
+		t.Fatalf("title results = %+v, want title-doc", res.Results)
+	}
+
+	near, err := svc.SearchPhraseNearFields(ctx, []string{"title", "body"}, "alpha beta", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchPhraseNearFields() error = %v", err)
+	}
+	if near.TotalResultsCount != 2 {
+		t.Fatalf("near TotalResultsCount = %d, want 2; results=%+v", near.TotalResultsCount, near.Results)
 	}
 }
 

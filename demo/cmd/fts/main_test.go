@@ -2,16 +2,21 @@ package main
 
 import (
 	"context"
+	"encoding/gob"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/demo/internal/config"
 	"github.com/dariasmyr/fts-engine/demo/internal/domain/models"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsstats"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 )
 
 func indexTestDocument(ctx context.Context, svc *fts.Service, docID, content string) error {
@@ -173,6 +178,70 @@ func TestBuildServiceUsesConfiguredRankProfile(t *testing.T) {
 	}
 }
 
+func TestBuildServiceRebuildsLegacyPersistence(t *testing.T) {
+	dir := t.TempDir()
+	file, err := os.Create(filepath.Join(dir, "index.fidx"))
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	fixture := struct {
+		Version uint16
+		Fields  []struct {
+			FieldName string
+			IndexName string
+			Payload   []byte
+		}
+		Analyzers map[string]struct {
+			Name              string
+			Fingerprint       string
+			FingerprintScheme uint32
+		}
+	}{
+		Version: 5,
+		Fields: []struct {
+			FieldName string
+			IndexName string
+			Payload   []byte
+		}{{FieldName: "title", IndexName: "slicedradix"}},
+	}
+	if err := gob.NewEncoder(file).Encode(fixture); err != nil {
+		_ = file.Close()
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	registry := fts.NewSnapshotRegistry()
+	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
+		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
+	}
+	cfg := &config.Config{
+		Mode: config.ModeConfig{Type: "prod"},
+		FTS: config.FTSConfig{
+			Index:  "slicedradix",
+			Filter: "none",
+			Persistence: config.PersistenceConfig{
+				Enabled:     true,
+				Format:      "snapshot",
+				Path:        dir,
+				LoadOnStart: true,
+			},
+		},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc, loaded, err := buildService(log, cfg, fts.WordKeys, registry, textproc.DefaultEnglishPipeline())
+	if err != nil {
+		t.Fatalf("buildService() error = %v", err)
+	}
+	if loaded {
+		t.Fatal("buildService() loaded = true, want rebuild")
+	}
+	if svc == nil {
+		t.Fatal("buildService() service = nil")
+	}
+}
+
 func TestBuildPipelineSelectsObservabilityPreset(t *testing.T) {
 	cfg := &config.Config{FTS: config.FTSConfig{Pipeline: config.PipelineConfig{Preset: "observability"}}}
 	pipeline, err := buildPipeline(cfg)
@@ -180,7 +249,7 @@ func TestBuildPipelineSelectsObservabilityPreset(t *testing.T) {
 		t.Fatalf("buildPipeline() error = %v", err)
 	}
 	descriptor := pipeline.Descriptor()
-	if descriptor.Name != "observability" || descriptor.FingerprintScheme != fts.AnalyzerFingerprintSchemeV1 {
+	if descriptor.Name != "observability" || !strings.HasPrefix(descriptor.Fingerprint, "sha256:") {
 		t.Fatalf("Descriptor() = %+v", descriptor)
 	}
 	if got := pipeline.Process("io.EOF"); len(got) != 3 || got[0] != "io.eof" {

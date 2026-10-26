@@ -31,8 +31,7 @@ type Document struct {
 }
 
 type Field struct {
-	Value    string
-	Pipeline Pipeline
+	Value string
 }
 
 type PositionalPosting struct {

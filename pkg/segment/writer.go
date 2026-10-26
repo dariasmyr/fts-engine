@@ -7,7 +7,7 @@ import (
 	"hash/crc32"
 	"sort"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 // TermPostings is the writer's input for one term: ord-sorted postings plus

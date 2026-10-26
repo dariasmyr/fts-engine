@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
 )
 
 func main() {
@@ -49,7 +49,7 @@ func main() {
 	printResults(ctx, "rank profile title=3 abstract=1", weighted)
 }
 
-func newEngine(opts ...fts.Option) *fts.Service {
+func newEngine(opts ...*fts.Option) *fts.Service {
 	return fts.NewMultiField(func(string) (fts.Index, error) {
 		return slicedradix.New(), nil
 	}, fts.WordKeys, opts...)

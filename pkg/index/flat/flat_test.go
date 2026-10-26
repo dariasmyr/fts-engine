@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
 )
 
 func TestIndexInsertSearchAndCounts(t *testing.T) {

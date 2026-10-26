@@ -5,5 +5,5 @@ package fts
 // descriptor's structure but cannot verify an external implementation's claim.
 type Pipeline interface {
 	Process(text string) []string
-	Descriptor() AnalyzerDescriptor
+	Descriptor() PipelineDescriptor
 }

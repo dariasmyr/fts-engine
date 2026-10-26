@@ -4,8 +4,8 @@ package hamt
 import (
 	"encoding/gob"
 	"fmt"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
 	"io"
 	"math/bits"
 	"slices"
@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dariasmyr/fts-engine/internal/fnv"
+	"github.com/dariasmyr/fts-engine/v2/internal/fnv"
 )
 
 const (

@@ -6,7 +6,7 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/dariasmyr/fts-engine v1.6.1
+	github.com/dariasmyr/fts-engine/v2 v2.0.0
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/lucasb-eyer/go-colorful v1.3.0
 )
@@ -39,4 +39,4 @@ require (
 	olympos.io/encoding/edn v0.0.0-20201019073823-d3554ca0b0a3 // indirect
 )
 
-replace github.com/dariasmyr/fts-engine => ../
+replace github.com/dariasmyr/fts-engine/v2 => ../

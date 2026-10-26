@@ -7,11 +7,11 @@ import (
 	"io"
 	"os"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/segment"
-	"github.com/dariasmyr/fts-engine/pkg/segmentbundle"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/segmentbundle"
+	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 )
 
 func main() {
@@ -38,7 +38,7 @@ func run(out io.Writer) error {
 	if !ok {
 		return fmt.Errorf("index does not implement segment.Source")
 	}
-	descriptors, err := service.AnalyzerDescriptors()
+	descriptors, err := service.PipelineDescriptors()
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func run(out io.Writer) error {
 		service.SnapshotCollectionStats(),
 		service.SnapshotRegistry(),
 		service.SnapshotTombstones(),
-		segmentbundle.BundleSaveOptions{Analyzers: descriptors, KeyGenerator: &keyGenerator},
+		segmentbundle.BundleSaveOptions{Pipelines: descriptors, KeyGenerator: &keyGenerator},
 	); err != nil {
 		return err
 	}

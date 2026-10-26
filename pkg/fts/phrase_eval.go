@@ -7,45 +7,54 @@ import (
 
 type positionalPhraseSearch func(context.Context, PositionalIndex, []string) (map[DocOrd]uint32, error)
 
-type phrasePlan struct {
-	tokens   []string
-	fallback *TermQuery
-}
-
 func (s *Service) execPhrase(ctx context.Context, q PhraseQuery, scope queryFieldScope) (map[DocOrd]docAccum, error) {
-	return s.evalPhraseHits(ctx, s.resolveScopedFields(q.Field, scope), q.Phrase, scope)
-}
-
-func (s *Service) preparePhrase(fields []string, phrase string) phrasePlan {
-	tokens := s.pipeline.Process(phrase)
-	plan := phrasePlan{tokens: tokens}
-	if len(tokens) != 1 {
-		return plan
+	fields := s.resolveScopedFields(q.Field, scope)
+	groups, err := s.processFields(fields, q.Phrase)
+	if err != nil {
+		return nil, err
 	}
-	if len(fields) == 1 {
-		plan.fallback = &TermQuery{Field: fields[0], Term: phrase}
-		return plan
-	}
-	plan.fallback = &TermQuery{Term: phrase}
-	return plan
-}
-
-func (s *Service) evalPhraseHits(ctx context.Context, fields []string, phrase string, scope queryFieldScope) (map[DocOrd]docAccum, error) {
-	plan := s.preparePhrase(fields, phrase)
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.addFields(len(fields))
-		exec.addTokens(len(plan.tokens))
-	}
-	if len(plan.tokens) == 0 {
-		return map[DocOrd]docAccum{}, nil
-	}
-	if plan.fallback != nil {
-		return s.executeQuery(ctx, *plan.fallback, 0, scope)
-	}
-	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.addTokens(processedTokenCount(groups))
 		exec.setStrategy(strategyPhraseExact)
 	}
-	return s.evalExactPhraseTokenHits(ctx, fields, plan.tokens)
+	return s.evalProcessedPhraseHits(ctx, groups, QueryTypePhrase, 0)
+}
+
+func (s *Service) evalProcessedPhraseHits(ctx context.Context, groups []processedFieldGroup, queryType QueryType, maxGap uint32) (map[DocOrd]docAccum, error) {
+	hits := make(map[DocOrd]docAccum)
+	for _, group := range groups {
+		if len(group.tokens) == 0 {
+			continue
+		}
+
+		var groupHits map[DocOrd]docAccum
+		var err error
+		if len(group.tokens) == 1 {
+			groupHits, err = s.evalProcessedTermsType(ctx, []processedTermGroup{{fields: group.fields, term: group.tokens[0]}}, queryType)
+		} else if queryType == QueryTypeNearPhrase {
+			groupHits, err = s.evalNearPhraseTokenHits(ctx, group.fields, group.tokens, maxGap)
+		} else {
+			groupHits, err = s.evalExactPhraseTokenHits(ctx, group.fields, group.tokens)
+		}
+		if err != nil {
+			return nil, err
+		}
+		mergeSingleClauseHits(hits, groupHits)
+	}
+	return hits, nil
+}
+
+func mergeSingleClauseHits(dst, src map[DocOrd]docAccum) {
+	for ord, hit := range src {
+		accum := dst[ord]
+		if hit.UniqueMatches > 0 {
+			accum.UniqueMatches = 1
+		}
+		accum.TotalMatches += hit.TotalMatches
+		accum.Score += hit.Score
+		dst[ord] = accum
+	}
 }
 
 func (s *Service) evalExactPhraseTokenHits(ctx context.Context, fields []string, tokens []string) (map[DocOrd]docAccum, error) {

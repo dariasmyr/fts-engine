@@ -1,4 +1,4 @@
-// Package textproc provides tokenizers, filters, and analyzer pipelines.
+// Package textproc provides tokenizers, filters, and text-processing pipelines.
 package textproc
 
 import (
@@ -7,15 +7,16 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	snowballeng "github.com/kljensen/snowball/english"
 	snowballrus "github.com/kljensen/snowball/russian"
 )
 
 type Filter interface {
+	// Apply may mutate tokens and return the same backing storage.
 	Apply(tokens []string) []string
-	// Descriptor must cover every filter setting that can affect output.
-	Descriptor() ComponentDescriptor
+	// Fingerprint must cover every filter setting that can affect output.
+	Fingerprint() string
 }
 
 type Pipeline struct {
@@ -24,12 +25,9 @@ type Pipeline struct {
 	filters   []Filter
 }
 
-type Descriptor = fts.AnalyzerDescriptor
-
 // NewNamedPipeline creates a validated pipeline whose fingerprint covers its
 // tokenizer and ordered filters. Name is diagnostic metadata only. Custom
-// components must remain consistent with their descriptors and update component
-// versions when an implementation change is not represented by parameters.
+// components must return a new fingerprint whenever their behavior changes.
 func NewNamedPipeline(name string, tokenizer Tokenizer, filters ...Filter) (Pipeline, error) {
 	if tokenizer == nil {
 		tokenizer = AlnumTokenizer{}
@@ -58,10 +56,10 @@ func (p Pipeline) Process(text string) []string {
 	return tokens
 }
 
-func (p Pipeline) Descriptor() Descriptor {
+func (p Pipeline) Descriptor() fts.PipelineDescriptor {
 	descriptor, err := pipelineDescriptor(p.name, p.tokenizer, p.filters)
 	if err != nil {
-		return Descriptor{Name: p.name}
+		return fts.PipelineDescriptor{Name: p.name}
 	}
 	return descriptor
 }
@@ -117,8 +115,8 @@ func mustNewNamedPipeline(name string, tokenizer Tokenizer, filters ...Filter) P
 
 type LowercaseFilter struct{}
 
-func (LowercaseFilter) Descriptor() ComponentDescriptor {
-	return component("lowercase", unicodeParams())
+func (LowercaseFilter) Fingerprint() string {
+	return unicodeFingerprint("lowercase-filter/v1")
 }
 
 func (LowercaseFilter) Apply(tokens []string) []string {
@@ -140,8 +138,8 @@ type MinLengthOrNumericFilter struct {
 	MinLength int
 }
 
-func (f MinLengthOrNumericFilter) Descriptor() ComponentDescriptor {
-	return component("min_length_or_numeric", minLengthParams(f.MinLength))
+func (f MinLengthOrNumericFilter) Fingerprint() string {
+	return minLengthFingerprint(f.MinLength)
 }
 
 func (f MinLengthOrNumericFilter) Apply(tokens []string) []string {
@@ -169,8 +167,8 @@ func (f MinLengthOrNumericFilter) Apply(tokens []string) []string {
 // UniqueFilter removes duplicate tokens while preserving first-seen order.
 type UniqueFilter struct{}
 
-func (UniqueFilter) Descriptor() ComponentDescriptor {
-	return component("unique", nil)
+func (UniqueFilter) Fingerprint() string {
+	return componentFingerprint("unique-filter/v1")
 }
 
 func (UniqueFilter) Apply(tokens []string) []string {
@@ -194,10 +192,11 @@ func (UniqueFilter) Apply(tokens []string) []string {
 
 type EnglishStopwordFilter struct{}
 
-func (EnglishStopwordFilter) Descriptor() ComponentDescriptor {
-	return component("english_stopwords", map[string]string{
-		"dictionary": snowballVersion + "/english-stopwords",
-	})
+func (EnglishStopwordFilter) Fingerprint() string {
+	return componentFingerprint(
+		"english-stopword-filter/v1",
+		"dictionary="+snowballSource+"/english-stopwords",
+	)
 }
 
 func (EnglishStopwordFilter) Apply(tokens []string) []string {
@@ -224,11 +223,12 @@ func (EnglishStopwordFilter) Apply(tokens []string) []string {
 
 type EnglishStemFilter struct{}
 
-func (EnglishStemFilter) Descriptor() ComponentDescriptor {
-	return component("english_stem", map[string]string{
-		"implementation":  snowballVersion + "/english",
-		"stem_stop_words": "false",
-	})
+func (EnglishStemFilter) Fingerprint() string {
+	return componentFingerprint(
+		"english-stem-filter/v1",
+		"implementation="+snowballSource+"/english",
+		"stem-stop-words=false",
+	)
 }
 
 func (EnglishStemFilter) Apply(tokens []string) []string {
@@ -252,10 +252,11 @@ func (EnglishStemFilter) Apply(tokens []string) []string {
 
 type RussianStopwordFilter struct{}
 
-func (RussianStopwordFilter) Descriptor() ComponentDescriptor {
-	return component("russian_stopwords", map[string]string{
-		"dictionary": snowballVersion + "/russian-stopwords",
-	})
+func (RussianStopwordFilter) Fingerprint() string {
+	return componentFingerprint(
+		"russian-stopword-filter/v1",
+		"dictionary="+snowballSource+"/russian-stopwords",
+	)
 }
 
 func (RussianStopwordFilter) Apply(tokens []string) []string {
@@ -282,11 +283,12 @@ func (RussianStopwordFilter) Apply(tokens []string) []string {
 
 type RussianStemFilter struct{}
 
-func (RussianStemFilter) Descriptor() ComponentDescriptor {
-	return component("russian_stem", map[string]string{
-		"implementation":  snowballVersion + "/russian",
-		"stem_stop_words": "false",
-	})
+func (RussianStemFilter) Fingerprint() string {
+	return componentFingerprint(
+		"russian-stem-filter/v1",
+		"implementation="+snowballSource+"/russian",
+		"stem-stop-words=false",
+	)
 }
 
 func (RussianStemFilter) Apply(tokens []string) []string {
@@ -310,12 +312,13 @@ func (RussianStemFilter) Apply(tokens []string) []string {
 
 type MultilingualStopwordFilter struct{}
 
-func (MultilingualStopwordFilter) Descriptor() ComponentDescriptor {
-	return component("multilingual_stopwords", map[string]string{
-		"english_dictionary": snowballVersion + "/english-stopwords",
-		"russian_dictionary": snowballVersion + "/russian-stopwords",
-		"unicode_version":    unicode.Version,
-	})
+func (MultilingualStopwordFilter) Fingerprint() string {
+	return componentFingerprint(
+		"multilingual-stopword-filter/v1",
+		"english-dictionary="+snowballSource+"/english-stopwords",
+		"russian-dictionary="+snowballSource+"/russian-stopwords",
+		"unicode="+unicode.Version,
+	)
 }
 
 func (MultilingualStopwordFilter) Apply(tokens []string) []string {
@@ -351,13 +354,14 @@ func (MultilingualStopwordFilter) Apply(tokens []string) []string {
 
 type MultilingualStemFilter struct{}
 
-func (MultilingualStemFilter) Descriptor() ComponentDescriptor {
-	return component("multilingual_stem", map[string]string{
-		"english_implementation": snowballVersion + "/english",
-		"russian_implementation": snowballVersion + "/russian",
-		"stem_stop_words":        "false",
-		"unicode_version":        unicode.Version,
-	})
+func (MultilingualStemFilter) Fingerprint() string {
+	return componentFingerprint(
+		"multilingual-stem-filter/v1",
+		"english-implementation="+snowballSource+"/english",
+		"russian-implementation="+snowballSource+"/russian",
+		"stem-stop-words=false",
+		"unicode="+unicode.Version,
+	)
 }
 
 func (MultilingualStemFilter) Apply(tokens []string) []string {

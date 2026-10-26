@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
-	"github.com/dariasmyr/fts-engine/pkg/ftspreset"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftspersist"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftspreset"
+	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
 )
@@ -81,7 +81,7 @@ func (a *Adapter) Open(_ context.Context, dir string) error {
 	if err != nil {
 		return fmt.Errorf("build filter: %w", err)
 	}
-	opts := make([]fts.Option, 0, 3)
+	opts := make([]*fts.Option, 0, 3)
 	if presetOpt, err := selectPreset(a.cfg.Lang); err != nil {
 		return err
 	} else if presetOpt != nil {
@@ -326,7 +326,7 @@ func (a *Adapter) observeDiagnostics(diag *fts.QueryDiagnostics) {
 	}
 }
 
-func selectPreset(lang string) (fts.Option, error) {
+func selectPreset(lang string) (*fts.Option, error) {
 	switch lang {
 	case "", "none":
 		return nil, nil
@@ -343,7 +343,7 @@ func selectPreset(lang string) (fts.Option, error) {
 	}
 }
 
-func selectScorer(kind string) (fts.Option, error) {
+func selectScorer(kind string) (*fts.Option, error) {
 	switch kind {
 	case "", "none":
 		return nil, nil

@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
-	"github.com/dariasmyr/fts-engine/pkg/index/flat"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftspersist"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/flat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 )
 
 func main() {
@@ -60,5 +60,5 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("analyzer=%s scheme=%d fingerprint=%s results=%d\n", descriptor.Name, descriptor.FingerprintScheme, descriptor.Fingerprint, res.TotalResultsCount)
+	fmt.Printf("pipeline=%s fingerprint=%s results=%d\n", descriptor.Name, descriptor.Fingerprint, res.TotalResultsCount)
 }

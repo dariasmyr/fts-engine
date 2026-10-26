@@ -2,14 +2,17 @@ package ftspersist_test
 
 import (
 	"context"
+	"encoding/gob"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftspersist"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 )
 
 func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
@@ -80,6 +83,76 @@ func TestSaveLoadSnapshotRoundTripSingleField(t *testing.T) {
 	}
 	if got, want := res.TotalResultsCount, 1; got != want {
 		t.Fatalf("TotalResultsCount after restore write = %d, want %d", got, want)
+	}
+}
+
+func TestSaveLoadSnapshotRoundTripEmptyIndex(t *testing.T) {
+	registry := fts.NewSnapshotRegistry()
+	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
+		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
+	}
+	idx, err := ftsbuiltin.BuildIndex("slicedradix")
+	if err != nil {
+		t.Fatalf("BuildIndex() error = %v", err)
+	}
+	svc := fts.New(idx, fts.WordKeys)
+
+	paths := ftspersist.SnapshotPaths{IndexPath: filepath.Join(t.TempDir(), "empty.index.fidx")}
+	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "", ftspersist.SaveOptions{Registry: registry}); err != nil {
+		t.Fatalf("SaveSnapshot() error = %v", err)
+	}
+	loaded, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, ftspersist.SnapshotLoadOptions{Registry: registry})
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	defer func() {
+		if err := loaded.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+
+	res, err := loaded.Service.SearchDocuments(context.Background(), "missing", 10)
+	if err != nil {
+		t.Fatalf("SearchDocuments() error = %v", err)
+	}
+	if res.TotalResultsCount != 0 {
+		t.Fatalf("TotalResultsCount = %d, want 0", res.TotalResultsCount)
+	}
+}
+
+func TestSaveLoadSnapshotRoundTripEmptyMultiField(t *testing.T) {
+	registry := fts.NewSnapshotRegistry()
+	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
+		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
+	}
+	svc := fts.NewMultiField(func(string) (fts.Index, error) {
+		return slicedradix.New(), nil
+	}, fts.WordKeys)
+
+	paths := ftspersist.SnapshotPaths{IndexPath: filepath.Join(t.TempDir(), "empty-multi.index.fidx")}
+	if err := ftspersist.SaveSnapshot(paths, svc, "slicedradix", "", ftspersist.SaveOptions{Registry: registry}); err != nil {
+		t.Fatalf("SaveSnapshot() error = %v", err)
+	}
+	loaded, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, ftspersist.SnapshotLoadOptions{
+		Registry: registry,
+		IndexFactory: func(string) (fts.Index, error) {
+			return slicedradix.New(), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	defer loaded.Close()
+	if !loaded.Service.IsMultiField() {
+		t.Fatal("restored service is not multi-field")
+	}
+	if fields := loaded.Service.Fields(); len(fields) != 0 {
+		t.Fatalf("Fields() = %v, want empty", fields)
+	}
+	if err := loaded.Service.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
+		"title": {Value: "writable"},
+	}}); err != nil {
+		t.Fatalf("Index() after restore error = %v", err)
 	}
 }
 
@@ -189,7 +262,7 @@ func TestSaveLoadSnapshotRoundTripMultiField(t *testing.T) {
 	}
 }
 
-func TestSnapshotValidatesPerFieldAnalyzers(t *testing.T) {
+func TestSnapshotValidatesPerFieldPipelines(t *testing.T) {
 	registry := fts.NewSnapshotRegistry()
 	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
 		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
@@ -213,14 +286,22 @@ func TestSnapshotValidatesPerFieldAnalyzers(t *testing.T) {
 		t.Fatalf("SaveSnapshot() error = %v", err)
 	}
 	load := ftspersist.SnapshotLoadOptions{Registry: registry}
-	if _, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, load,
+	loaded, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, load,
 		fts.WithPipeline(english),
 		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
-	); err != nil {
-		t.Fatalf("LoadSnapshot(matching analyzers) error = %v", err)
+	)
+	if err != nil {
+		t.Fatalf("LoadSnapshot(matching pipelines) error = %v", err)
+	}
+	res, err := loaded.Service.Search(context.Background(), fts.TermQuery{Field: "body", Term: "машина"}, 10)
+	if err != nil {
+		t.Fatalf("Search(body:машина) error = %v", err)
+	}
+	if res.TotalResultsCount != 1 || res.Results[0].ID != "doc-1" {
+		t.Fatalf("body results = %+v, want doc-1", res.Results)
 	}
 	if _, err := ftspersist.LoadSnapshot(paths, fts.WordKeys, load, fts.WithPipeline(english)); err == nil {
-		t.Fatal("LoadSnapshot(missing field analyzer) error = nil")
+		t.Fatal("LoadSnapshot(missing field pipeline) error = nil")
 	}
 	changedEnglish, err := textproc.NewNamedPipeline("english", textproc.AlnumTokenizer{})
 	if err != nil {
@@ -230,7 +311,7 @@ func TestSnapshotValidatesPerFieldAnalyzers(t *testing.T) {
 		fts.WithPipeline(changedEnglish),
 		fts.WithFieldPipelines(map[string]fts.Pipeline{"body": russian}),
 	); err == nil {
-		t.Fatal("LoadSnapshot(mismatched analyzer configuration) error = nil")
+		t.Fatal("LoadSnapshot(mismatched pipeline configuration) error = nil")
 	}
 }
 
@@ -280,5 +361,87 @@ func TestSnapshotRejectsPipelineConfigurationChanges(t *testing.T) {
 				t.Fatal("LoadSnapshot() error = nil")
 			}
 		})
+	}
+}
+
+func TestLoadSnapshotDataDoesNotClassifyCurrentCorruptionAsLegacy(t *testing.T) {
+	descriptor, err := fts.NewPipelineDescriptor("default", fts.SHA256Fingerprint([]byte("default")))
+	if err != nil {
+		t.Fatalf("NewPipelineDescriptor() error = %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "current-corrupt.index.fidx")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	fixture := struct {
+		Version   uint16
+		Kind      string
+		IndexName string
+		Pipelines map[string]fts.PipelineDescriptor
+	}{
+		Version:   5,
+		Kind:      "multi",
+		IndexName: "unknown",
+		Pipelines: map[string]fts.PipelineDescriptor{fts.DefaultField: descriptor},
+	}
+	if err := gob.NewEncoder(file).Encode(fixture); err != nil {
+		_ = file.Close()
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	_, err = ftspersist.LoadSnapshotData(
+		ftspersist.SnapshotPaths{IndexPath: path},
+		ftspersist.SnapshotLoadOptions{Registry: fts.NewSnapshotRegistry()},
+	)
+	if err == nil {
+		t.Fatal("LoadSnapshotData() error = nil")
+	}
+	if errors.Is(err, fts.ErrPersistenceRebuildRequired) {
+		t.Fatalf("LoadSnapshotData() error = %v, must not require rebuild for current corruption", err)
+	}
+}
+
+func TestLoadSnapshotDataChecksLegacyIndexBeforeFilter(t *testing.T) {
+	dir := t.TempDir()
+	indexPath := filepath.Join(dir, "legacy.index.fidx")
+	file, err := os.Create(indexPath)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	fixture := struct {
+		Version uint16
+		Fields  []struct {
+			FieldName string
+			IndexName string
+		}
+	}{
+		Version: 5,
+		Fields: []struct {
+			FieldName string
+			IndexName string
+		}{{FieldName: "title", IndexName: "slicedradix"}},
+	}
+	if err := gob.NewEncoder(file).Encode(fixture); err != nil {
+		_ = file.Close()
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	filterPath := filepath.Join(dir, "corrupt.filter.fidx")
+	if err := os.WriteFile(filterPath, []byte("corrupt"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err = ftspersist.LoadSnapshotData(
+		ftspersist.SnapshotPaths{IndexPath: indexPath, FilterPath: filterPath},
+		ftspersist.SnapshotLoadOptions{Registry: fts.NewSnapshotRegistry()},
+	)
+	if err == nil || !errors.Is(err, fts.ErrPersistenceRebuildRequired) {
+		t.Fatalf("LoadSnapshotData() error = %v, want ErrPersistenceRebuildRequired", err)
 	}
 }

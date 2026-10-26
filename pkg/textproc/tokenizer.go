@@ -6,15 +6,16 @@ import (
 )
 
 type Tokenizer interface {
+	// Tokenize returns storage owned by the caller; pipeline filters may mutate it.
 	Tokenize(text string) []string
-	// Descriptor must cover every tokenizer setting that can affect output.
-	Descriptor() ComponentDescriptor
+	// Fingerprint must cover every tokenizer setting that can affect output.
+	Fingerprint() string
 }
 
 type AlnumTokenizer struct{}
 
-func (AlnumTokenizer) Descriptor() ComponentDescriptor {
-	return component("alnum", unicodeParams())
+func (AlnumTokenizer) Fingerprint() string {
+	return unicodeFingerprint("alnum-tokenizer/v1")
 }
 
 func (AlnumTokenizer) Tokenize(text string) []string {
@@ -50,8 +51,8 @@ func (AlnumTokenizer) Tokenize(text string) []string {
 // plus 10/0/0/1, while ordinary words are emitted once.
 type ObservabilityTokenizer struct{}
 
-func (ObservabilityTokenizer) Descriptor() ComponentDescriptor {
-	return component("observability", unicodeParams())
+func (ObservabilityTokenizer) Fingerprint() string {
+	return unicodeFingerprint("observability-tokenizer/v1")
 }
 
 func (ObservabilityTokenizer) Tokenize(text string) []string {

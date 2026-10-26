@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 func TestRibbonFilterBuildAndContains(t *testing.T) {

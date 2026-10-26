@@ -10,8 +10,8 @@ import (
 	"github.com/dariasmyr/fts-engine/demo/internal/adapters/loader/wiki"
 	"github.com/dariasmyr/fts-engine/demo/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/demo/internal/lib/logger/sl"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/ftsstats"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsstats"
 )
 
 const (
@@ -96,7 +96,7 @@ func main() {
 
 	pipeline, err := buildPipeline(cfg)
 	if err != nil {
-		log.Error("Failed to build analyzer pipeline", "error", sl.Err(err))
+		log.Error("Failed to build text-processing pipeline", "error", sl.Err(err))
 		return
 	}
 	svc, loadedFromSnapshot, err := buildService(log, cfg, keyGen, registry, pipeline)

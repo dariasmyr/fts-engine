@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 // Reader queries a sealed segment using an in-memory term table. The segment
