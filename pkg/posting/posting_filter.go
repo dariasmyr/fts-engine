@@ -41,9 +41,12 @@ func FilterPostingsWithIterator(
 	candidateCount uint64,
 	yield func(Posting) bool,
 ) (documentFrequency uint64, err error) {
-	if candidates != nil {
-		defer func() { err = errors.Join(err, candidates.Close()) }()
-	}
+	closeCandidates := candidates != nil
+	defer func() {
+		if closeCandidates {
+			err = errors.Join(err, candidates.Close())
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -57,24 +60,51 @@ func FilterPostingsWithIterator(
 	if postingCursor == nil {
 		return 0, fmt.Errorf("posting: nil posting iterator")
 	}
-	defer func() { err = errors.Join(err, postingCursor.Close()) }()
-	if count == 0 {
-		return 0, postingCursor.Err()
+	closeCandidates = false
+	return count, FilterPostingIterator(ctx, postingCursor, count, candidates, candidateCount, yield)
+}
+
+// FilterPostingIterator intersects an already-open frequency iterator with an
+// optional candidate iterator. The counts must be exact. It owns and closes
+// both iterators, allowing callers to use postingCount for result sizing before
+// traversal starts.
+func FilterPostingIterator(
+	ctx context.Context,
+	postingCursor FrequencyIterator,
+	postingCount uint64,
+	candidates OrdinalIterator,
+	candidateCount uint64,
+	yield func(Posting) bool,
+) (err error) {
+	if candidates != nil {
+		defer func() { err = errors.Join(err, candidates.Close()) }()
+	}
+	if postingCursor != nil {
+		defer func() { err = errors.Join(err, postingCursor.Close()) }()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if postingCursor == nil || yield == nil {
+		return fmt.Errorf("posting: nil posting iterator or callback")
+	}
+	if postingCount == 0 {
+		return postingCursor.Err()
 	}
 	if candidates != nil && candidateCount == 0 {
-		return count, candidates.Err()
+		return candidates.Err()
 	}
 
 	if candidates == nil {
-		return count, yieldAllPostings(ctx, postingCursor, yield)
+		return yieldAllPostings(ctx, postingCursor, yield)
 	}
 
 	// Drive the intersection with the smaller input. The other iterator uses
 	// Advance to skip directly to the current ordinal.
-	if candidateCount >= count {
-		return count, filterByIteratingPostings(ctx, postingCursor, candidates, yield)
+	if candidateCount >= postingCount {
+		return filterByIteratingPostings(ctx, postingCursor, candidates, yield)
 	}
-	return count, filterByIteratingCandidates(ctx, postingCursor, candidates, yield)
+	return filterByIteratingCandidates(ctx, postingCursor, candidates, yield)
 }
 
 func yieldAllPostings(

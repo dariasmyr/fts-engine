@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftse"
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
 var postingBenchmarkSink int
@@ -107,6 +110,221 @@ func BenchmarkBooleanAndSortMergeRange(b *testing.B) {
 			}
 		})
 	}
+}
+
+func BenchmarkBooleanAndPostingIntersect(b *testing.B) {
+	const documentCount = 10_000
+	common := make([]Posting, documentCount)
+	half := make([]Posting, documentCount/2)
+	for i := range common {
+		common[i] = Posting{Ord: DocOrd(i), Count: 1}
+		if i%2 == 0 {
+			half[i/2] = Posting{Ord: DocOrd(i), Count: 1}
+		}
+	}
+	data, err := ftse.Build([]posting.TermData{
+		{Term: "common", Postings: common},
+		{Term: "half", Postings: half},
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	reader, err := ftse.Open(data)
+	if err != nil {
+		b.Fatal(err)
+	}
+	service := New(reader, WordKeys)
+	mustTerms := []TermQuery{{Term: "common"}, {Term: "half"}}
+	ctx := context.Background()
+
+	for _, benchmark := range []struct {
+		name       string
+		candidates []DocOrd
+	}{
+		{name: "candidates=4", candidates: []DocOrd{0, 100, 5_000, 9_998}},
+		{name: "candidates=1024", candidates: evenlySpacedBenchmarkOrds(documentCount, 1_024)},
+		{name: "unrestricted"},
+	} {
+		b.Run(benchmark.name, func(b *testing.B) {
+			var candidates *candidateSet
+			if benchmark.candidates != nil {
+				candidates = candidateSetFromSortedOrds(benchmark.candidates)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				got, used, err := service.tryExecPostingAnd(ctx, candidates, mustTerms, nil, nil, queryFieldScope{})
+				if err != nil || !used {
+					b.Fatalf("used=%v err=%v", used, err)
+				}
+				postingBenchmarkSink = len(got)
+			}
+		})
+	}
+}
+
+func BenchmarkServiceCandidateSelectivity(b *testing.B) {
+	benchmarkServiceCandidateSelectivity(b, false)
+}
+
+func BenchmarkServicePreparedCandidateSelectivity(b *testing.B) {
+	benchmarkServiceCandidateSelectivity(b, true)
+}
+
+func benchmarkServiceCandidateSelectivity(b *testing.B, prepared bool) {
+	const documentCount = 10_000
+	common := make([]Posting, documentCount)
+	half := make([]Posting, documentCount/2)
+	rare := make([]Posting, documentCount/100)
+	ids := make([]DocID, documentCount)
+	for i := range documentCount {
+		ids[i] = DocID(fmt.Sprintf("doc-%05d", i))
+		common[i] = Posting{Ord: DocOrd(i), Count: uint32(i%3 + 1)}
+		if i%2 == 0 {
+			half[i/2] = Posting{Ord: DocOrd(i), Count: 1}
+		}
+		if i%100 == 0 {
+			rare[i/100] = Posting{Ord: DocOrd(i), Count: 1}
+		}
+	}
+	data, err := ftse.Build([]posting.TermData{
+		{Term: "common", Postings: common},
+		{Term: "half", Postings: half},
+		{Term: "rare", Postings: rare},
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	reader, err := ftse.Open(data)
+	if err != nil {
+		b.Fatal(err)
+	}
+	unranked := New(reader, WordKeys, WithDocRegistrySnapshot(ids))
+	ranked := New(reader, WordKeys, WithDocRegistrySnapshot(ids), WithScorer(BM25()))
+	andQuery := &BooleanQuery{Clauses: []BoolClause{
+		MustClause(TermQuery{Term: "common"}),
+		MustClause(TermQuery{Term: "half"}),
+	}}
+	rankedQuery := &BooleanQuery{Clauses: []BoolClause{
+		ShouldClause(TermQuery{Term: "common"}),
+		ShouldClause(TermQuery{Term: "half"}),
+	}}
+	queries := []struct {
+		name          string
+		service       *Service
+		query         Query
+		maxResults    int
+		queryPostings int
+		postingLists  int
+		minPostings   int
+	}{
+		{
+			name: "frequent", service: unranked, query: TermQuery{Term: "common"},
+			queryPostings: len(common), postingLists: 1, minPostings: len(common),
+		},
+		{
+			name: "and", service: unranked, query: andQuery,
+			queryPostings: len(common) + len(half), postingLists: 2, minPostings: len(half),
+		},
+		{
+			name: "rare", service: unranked, query: TermQuery{Term: "rare"},
+			queryPostings: len(rare), postingLists: 1, minPostings: len(rare),
+		},
+		{
+			name: "ranked_top10", service: ranked, query: rankedQuery, maxResults: 10,
+			queryPostings: len(common) + len(half), postingLists: 2, minPostings: len(half),
+		},
+	}
+	candidateCases := []struct {
+		name string
+		ords []DocOrd
+	}{
+		{name: "count=4_distribution=even", ords: evenlySpacedBenchmarkOrds(documentCount, 4)},
+		{name: "count=4_distribution=same-block", ords: []DocOrd{0, 1, 2, 3}},
+		{name: "count=4_distribution=different-blocks", ords: []DocOrd{0, 128, 256, 384}},
+		{name: "count=4_distribution=tail", ords: []DocOrd{9_996, 9_997, 9_998, 9_999}},
+		{name: "count=100_distribution=even", ords: evenlySpacedBenchmarkOrds(documentCount, 100)},
+		{name: "count=1000_distribution=even", ords: evenlySpacedBenchmarkOrds(documentCount, 1_000)},
+		{name: "count=5000_distribution=even", ords: evenlySpacedBenchmarkOrds(documentCount, 5_000)},
+	}
+	for _, candidates := range candidateCases {
+		candidateIDs := make([]DocID, len(candidates.ords))
+		for i, ord := range candidates.ords {
+			candidateIDs[i] = ids[ord]
+		}
+		preparedCandidates, err := unranked.newCandidateSet(context.Background(), candidateIDs)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Run(candidates.name, func(b *testing.B) {
+			for _, query := range queries {
+				b.Run(query.name, func(b *testing.B) {
+					ctx, traversal := posting.WithTraversalMetrics(context.Background())
+					var result *SearchResult
+					b.ReportAllocs()
+					for b.Loop() {
+						if prepared {
+							result, err = query.service.searchResultForQuery(
+								ctx,
+								preparedCandidates,
+								query.query,
+								query.maxResults,
+								queryFieldScope{},
+							)
+						} else {
+							result, err = query.service.SearchQuery(ctx, query.query, SearchOptions{
+								CandidateIDs: candidateIDs,
+								MaxResults:   query.maxResults,
+							})
+						}
+						if err != nil {
+							b.Fatal(err)
+						}
+					}
+					metrics := traversal.Snapshot()
+					b.ReportMetric(float64(query.postingLists), "posting-lists/op")
+					b.ReportMetric(float64(query.minPostings), "min-postings/op")
+					b.ReportMetric(float64(query.queryPostings), "query-postings/op")
+					b.ReportMetric(float64(metrics.DecodedBlocks)/float64(b.N), "decoded-blocks/op")
+					b.ReportMetric(float64(metrics.DecodedPostings)/float64(b.N), "decoded-postings/op")
+					b.ReportMetric(float64(result.TotalResultsCount), "hits-before-sort/op")
+				})
+			}
+		})
+	}
+}
+
+func BenchmarkCandidateSetPreparation(b *testing.B) {
+	const documentCount = 10_000
+	ids := make([]DocID, documentCount)
+	for i := range ids {
+		ids[i] = DocID(fmt.Sprintf("doc-%05d", i))
+	}
+	service := New(newMemoryIndex(), WordKeys, WithDocRegistrySnapshot(ids))
+	for _, count := range []int{4, 100, 1_000, 5_000} {
+		candidateIDs := make([]DocID, count)
+		for i, ord := range evenlySpacedBenchmarkOrds(documentCount, count) {
+			candidateIDs[i] = ids[ord]
+		}
+		b.Run(fmt.Sprintf("count=%d", count), func(b *testing.B) {
+			ctx := context.Background()
+			b.ReportAllocs()
+			for b.Loop() {
+				candidates, err := service.newCandidateSet(ctx, candidateIDs)
+				if err != nil {
+					b.Fatal(err)
+				}
+				postingBenchmarkSink = candidates.cardinality()
+			}
+		})
+	}
+}
+
+func evenlySpacedBenchmarkOrds(total, count int) []DocOrd {
+	ords := make([]DocOrd, count)
+	for i := range ords {
+		ords[i] = DocOrd(i * total / count)
+	}
+	return ords
 }
 
 func benchmarkFastMust(start uint32, size int, step uint32) fastMust {

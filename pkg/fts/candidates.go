@@ -13,7 +13,10 @@ type candidateSet struct {
 	ords  []DocOrd
 	byOrd map[DocOrd]struct{}
 	words []uint64
+	count int
 }
+
+const candidateMapThreshold = 64
 
 func (s *Service) newCandidateSet(ctx context.Context, ids []DocID) (*candidateSet, error) {
 	if err := ctx.Err(); err != nil {
@@ -23,9 +26,40 @@ func (s *Service) newCandidateSet(ctx context.Context, ids []DocID) (*candidateS
 		return nil, nil
 	}
 
-	candidates := &candidateSet{
-		ords: make([]DocOrd, 0, len(ids)),
+	totalAssigned := s.registry.TotalAssigned()
+	bitmapWords := (totalAssigned + 63) / 64
+	if bitmapWords > 0 && bitmapWords <= len(ids) {
+		candidates := &candidateSet{words: make([]uint64, bitmapWords)}
+		for i, id := range ids {
+			if i%1024 == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
+			ord, ok := s.registry.Has(id)
+			if !ok || s.tombstones != nil && s.tombstones.IsSet(ord) {
+				continue
+			}
+			word := &candidates.words[ord/64]
+			mask := uint64(1) << (ord % 64)
+			if *word&mask == 0 {
+				*word |= mask
+				candidates.count++
+			}
+		}
+		if candidates.count >= bitmapWords {
+			return candidates, nil
+		}
+
+		// A large input can collapse to a sparse set after unknown IDs,
+		// tombstones and duplicates are removed. Keep that result as ordinals
+		// rather than retaining a mostly empty registry-sized bitmap.
+		candidates.ords = ordsFromBitmap(candidates.words, candidates.count)
+		candidates.words = nil
+		return candidates, nil
 	}
+
+	candidates := &candidateSet{ords: make([]DocOrd, 0, len(ids))}
 	for i, id := range ids {
 		if i%1024 == 0 {
 			if err := ctx.Err(); err != nil {
@@ -43,49 +77,76 @@ func (s *Service) newCandidateSet(ctx context.Context, ids []DocID) (*candidateS
 	}
 	slices.Sort(candidates.ords)
 	candidates.ords = slices.Compact(candidates.ords)
-	totalAssigned := s.registry.TotalAssigned()
-	bitsPerWord := 64
-	bitmapWords := (totalAssigned + bitsPerWord - 1) / 64
-	if bitmapWords <= len(candidates.ords) {
-		// Use a bitmap when candidates are dense enough that it requires no
-		// more storage than one map entry per candidate.
-		candidates.words = make([]uint64, (totalAssigned+63)/64)
-		for _, ord := range candidates.ords {
-			candidates.words[ord/64] |= uint64(1) << (ord % 64)
-		}
-	} else {
-		// Use a map for sparse candidates to avoid allocating a bitmap spanning
-		// every assigned ordinal.
-		candidates.byOrd = make(map[DocOrd]struct{}, len(candidates.ords))
-		for _, ord := range candidates.ords {
-			candidates.byOrd[ord] = struct{}{}
-		}
-	}
+	candidates.count = len(candidates.ords)
 	return candidates, nil
+}
+
+func ordsFromBitmap(words []uint64, count int) []DocOrd {
+	ords := make([]DocOrd, 0, count)
+	iterator := posting.NewBitmapIterator(words)
+	defer iterator.Close()
+	for iterator.Next() {
+		ords = append(ords, iterator.Ord())
+	}
+	return ords
+}
+
+func candidateSetFromSortedOrds(ords []DocOrd) *candidateSet {
+	return &candidateSet{ords: ords, count: len(ords)}
+}
+
+func (c *candidateSet) cardinality() int {
+	if c == nil {
+		return 0
+	}
+	return c.count
+}
+
+func (c *candidateSet) buildMap() {
+	if c == nil || c.byOrd != nil || len(c.words) > 0 {
+		return
+	}
+	c.byOrd = make(map[DocOrd]struct{}, len(c.ords))
+	for _, ord := range c.ords {
+		c.byOrd[ord] = struct{}{}
+	}
+}
+
+func (c *candidateSet) prepareMembership(checks int) {
+	if c == nil || len(c.words) > 0 || len(c.ords) < candidateMapThreshold || checks < candidateMapThreshold {
+		return
+	}
+	c.buildMap()
 }
 
 func (c *candidateSet) contains(ord DocOrd) bool {
 	if c == nil {
 		return true
 	}
-	// use a bitset if it exists, otherwise use the map
+	// Dense external candidates use a bitmap. Sparse candidates and intersection
+	// results retain sorted ordinals until a materialized fallback needs a map.
 	if len(c.words) > 0 {
-		wordindex := int(ord / 64)
-		return wordindex < len(c.words) && c.words[wordindex]&(uint64(1)<<(ord%64)) != 0
+		wordIndex := int(ord / 64)
+		return wordIndex < len(c.words) && c.words[wordIndex]&(uint64(1)<<(ord%64)) != 0
 	}
-	_, ok := c.byOrd[ord]
+	if c.byOrd != nil {
+		_, ok := c.byOrd[ord]
+		return ok
+	}
+	_, ok := slices.BinarySearch(c.ords, ord)
 	return ok
 }
 
 func (c *candidateSet) empty() bool {
-	return c != nil && len(c.ords) == 0
+	return c != nil && c.cardinality() == 0
 }
 
 func (c *candidateSet) filterPostings(docs []Posting) []Posting {
 	if c == nil {
 		return docs
 	}
-	filtered := make([]Posting, 0, min(len(docs), len(c.ords)))
+	c.prepareMembership(len(docs))
+	filtered := make([]Posting, 0, min(len(docs), c.cardinality()))
 	for _, doc := range docs {
 		if c.contains(doc.Ord) {
 			filtered = append(filtered, doc)
@@ -98,6 +159,7 @@ func filterCandidateMap[T any](candidates *candidateSet, values map[DocOrd]T) {
 	if candidates == nil {
 		return
 	}
+	candidates.prepareMembership(len(values))
 	for ord := range values {
 		if !candidates.contains(ord) {
 			delete(values, ord)
@@ -119,17 +181,35 @@ func (s *Service) lookupTermPostings(
 	cursorIndex, supportsCursor := index.(posting.FrequencyPostingOpener)
 	canUseCursor := candidates != nil && supportsCursor && (s.tombstones == nil || !s.tombstones.Any())
 	if canUseCursor {
-		docs := make([]Posting, 0, len(candidates.ords))
-		count, err := posting.FilterPostings(
-			ctx,
-			cursorIndex,
-			key,
-			candidates.ords,
-			func(value Posting) bool {
-				docs = append(docs, value)
-				return true
-			},
-		)
+		capacity := candidates.cardinality()
+		var docs []Posting
+		yield := func(value Posting) bool {
+			docs = append(docs, value)
+			return true
+		}
+		var count uint64
+		var err error
+		if len(candidates.words) > 0 {
+			var cursor posting.FrequencyIterator
+			cursor, count, err = cursorIndex.OpenFrequencyPostings(ctx, key)
+			if err == nil {
+				if count < uint64(capacity) {
+					capacity = int(count)
+				}
+				docs = make([]Posting, 0, capacity)
+				err = posting.FilterPostingIterator(
+					ctx,
+					cursor,
+					count,
+					posting.NewBitmapIterator(candidates.words),
+					uint64(candidates.cardinality()),
+					yield,
+				)
+			}
+		} else {
+			docs = make([]Posting, 0, capacity)
+			count, err = posting.FilterPostings(ctx, cursorIndex, key, candidates.ords, yield)
+		}
 		if exec := diagnosticsFromContext(ctx); exec != nil {
 			exec.recordCursorPostingList()
 		}

@@ -116,3 +116,37 @@ func TestFilterPostingsWithIteratorOwnsCandidates(t *testing.T) {
 		t.Fatalf("closed candidates %d and postings %d times, want 1 and 1", candidateOwner.closed, opener.closed)
 	}
 }
+
+func TestFilterPostingIterator(t *testing.T) {
+	opener := &testFrequencyOpener{postings: []Posting{{Ord: 1, Count: 2}, {Ord: 4, Count: 3}}}
+	postingCursor, postingCount, err := opener.OpenFrequencyPostings(context.Background(), "key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateOwner := &testOpener{}
+	candidates := &testIterator{
+		sliceIterator: sliceIterator{ords: []Ord{4}, pos: -1},
+		opener:        candidateOwner,
+	}
+	var got []Posting
+	err = FilterPostingIterator(
+		context.Background(),
+		postingCursor,
+		postingCount,
+		candidates,
+		1,
+		func(posting Posting) bool {
+			got = append(got, posting)
+			return true
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Posting{{Ord: 4, Count: 3}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("FilterPostingIterator() = %v, want %v", got, want)
+	}
+	if candidateOwner.closed != 1 || opener.closed != 1 {
+		t.Fatalf("closed candidates %d and postings %d times, want 1 and 1", candidateOwner.closed, opener.closed)
+	}
+}
