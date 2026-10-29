@@ -225,6 +225,7 @@ func validateBlockBoundary(
 
 type blockedCursor struct {
 	ctx       context.Context
+	metrics   *posting.TraversalMetrics
 	reader    *Reader
 	entry     *termEntry
 	directory []blockDirectoryEntry
@@ -287,6 +288,9 @@ func (c *blockedCursor) Advance(target posting.Ord) bool {
 	if c.valid && c.Ord() >= target {
 		return true
 	}
+	// If target still fits in the decoded block, find it without touching the
+	// block directory or reading more data. When valid, the current ordinal was
+	// checked above and is below target, so searching starts at the next item.
 	if len(c.values) > 0 && c.values[len(c.values)-1].Ord >= target {
 		start := c.pos + 1
 		c.pos = start + sort.Search(len(c.values)-start, func(i int) bool {
@@ -295,8 +299,12 @@ func (c *blockedCursor) Advance(target posting.Ord) bool {
 		c.valid = true
 		return true
 	}
-	block := sort.Search(len(c.directory), func(i int) bool {
-		return c.directory[i].lastOrd >= target
+	// The target is beyond the decoded block. Directory entries contain each
+	// block's maximum ordinal, so skip directly to the first remaining block
+	// that may contain an ordinal >= target.
+	blockStart := c.block + 1
+	block := blockStart + sort.Search(len(c.directory)-blockStart, func(i int) bool {
+		return c.directory[blockStart+i].lastOrd >= target
 	})
 	if block == len(c.directory) {
 		c.done = true
@@ -305,6 +313,8 @@ func (c *blockedCursor) Advance(target posting.Ord) bool {
 	if block != c.block && !c.loadBlock(block) {
 		return false
 	}
+	// lastOrd identifies the target block, not the exact posting. Locate the
+	// first ordinal in that block which satisfies Advance's >= contract.
 	c.pos = sort.Search(len(c.values), func(i int) bool { return c.values[i].Ord >= target })
 	if c.pos == len(c.values) {
 		c.err = fmt.Errorf("ftse: v3 block maximum mismatch")
@@ -329,6 +339,7 @@ func (c *blockedCursor) loadBlock(block int) bool {
 		c.err, c.done = err, true
 		return false
 	}
+	c.metrics.RecordDecodedBlock(len(values))
 	c.values = values
 	c.block = block
 	c.pos = -1
@@ -340,7 +351,14 @@ func (r *Reader) openBlockedCursor(ctx context.Context, entry *termEntry) (*bloc
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
 	}
-	return &blockedCursor{ctx: ctx, reader: r, entry: entry, block: -1, pos: -1}, entry.documentFrequency, nil
+	return &blockedCursor{
+		ctx:     ctx,
+		metrics: posting.TraversalMetricsFromContext(ctx),
+		reader:  r,
+		entry:   entry,
+		block:   -1,
+		pos:     -1,
+	}, entry.documentFrequency, nil
 }
 
 var (

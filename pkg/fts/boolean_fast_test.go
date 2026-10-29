@@ -5,6 +5,9 @@ import (
 	"slices"
 	"sort"
 	"testing"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftse"
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
 func TestGallopPostingLowerBound(t *testing.T) {
@@ -114,6 +117,59 @@ func TestExecBooleanAndSortMergeRanges(t *testing.T) {
 				t.Fatalf("execBooleanAndSortMerge() ords = %v, want %v", ords, tt.want)
 			}
 		})
+	}
+}
+
+func TestBooleanAndUsesPostingIntersectionWithCandidates(t *testing.T) {
+	data, err := ftse.Build([]posting.TermData{
+		{Term: "alpha", Postings: []Posting{{Ord: 0, Count: 2}, {Ord: 1, Count: 1}, {Ord: 2, Count: 1}}},
+		{Term: "beta", Postings: []Posting{{Ord: 0, Count: 1}, {Ord: 2, Count: 3}}},
+		{Term: "blocked", Postings: []Posting{{Ord: 0, Count: 1}}},
+		{Term: "boost", Postings: []Posting{{Ord: 2, Count: 4}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := ftse.Open(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(reader, WordKeys, WithDocRegistrySnapshot([]DocID{"a", "b", "c"}))
+	query := &BooleanQuery{Clauses: []BoolClause{
+		MustClause(TermQuery{Term: "alpha"}),
+		MustClause(TermQuery{Term: "beta"}),
+		ShouldClause(TermQuery{Term: "boost"}),
+		MustNotClause(TermQuery{Term: "blocked"}),
+	}}
+
+	ctx, traversal := posting.WithTraversalMetrics(context.Background())
+	result, err := svc.SearchQuery(
+		WithDiagnostics(ctx),
+		query,
+		SearchOptions{CandidateIDs: []DocID{"a", "c"}, MaxResults: 10},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Results) != 1 || result.Results[0].ID != "c" {
+		t.Fatalf("results = %+v, want only c", result.Results)
+	}
+	if got := result.Results[0]; got.UniqueMatches != 3 || got.TotalMatches != 8 {
+		t.Fatalf("result = %+v, want three matches and total frequency 8", got)
+	}
+	if result.Diagnostics == nil || result.Diagnostics.ExecutionStrategy != strategyBoolAndIntersect {
+		t.Fatalf("diagnostics = %+v, want strategy %q", result.Diagnostics, strategyBoolAndIntersect)
+	}
+	if !result.Diagnostics.Boolean.AndFast.UsedIntersect {
+		t.Fatalf("AND diagnostics = %+v, want posting intersection", result.Diagnostics.Boolean.AndFast)
+	}
+	physical := traversal.Snapshot()
+	if physical.DecodedBlocks == 0 || physical.DecodedPostings == 0 {
+		t.Fatalf("traversal metrics = %+v, want decoded posting work", physical)
+	}
+	if result.Diagnostics.PostingAccess.DecodedBlocks != physical.DecodedBlocks ||
+		result.Diagnostics.PostingAccess.DecodedPostings != physical.DecodedPostings {
+		t.Fatalf("posting diagnostics = %+v, traversal metrics = %+v", result.Diagnostics.PostingAccess, physical)
 	}
 }
 

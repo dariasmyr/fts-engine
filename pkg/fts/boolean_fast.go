@@ -2,7 +2,11 @@ package fts
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"sort"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
 const (
@@ -46,6 +50,41 @@ func (e *termExpansion) lookup(ord DocOrd) (uint32, bool) {
 type fastMust struct {
 	expansions []termExpansion
 	totalDocs  int
+}
+
+type postingAndTerm struct {
+	field string
+	term  string
+	key   string
+}
+
+type frequencyIntersectionTerm struct {
+	cursor            posting.FrequencyIterator
+	documentFrequency uint32
+}
+
+type frequencyIntersectionOpener struct {
+	source posting.FrequencyPostingOpener
+	terms  map[string]frequencyIntersectionTerm
+}
+
+func (o *frequencyIntersectionOpener) OpenOrdinalPostings(
+	ctx context.Context,
+	key string,
+) (posting.OrdinalIterator, uint64, error) {
+	cursor, count, err := o.source.OpenFrequencyPostings(ctx, key)
+	if err != nil {
+		return nil, 0, err
+	}
+	if count > math.MaxUint32 {
+		_ = cursor.Close()
+		return nil, 0, fmt.Errorf("fts: posting list exceeds uint32 document frequency")
+	}
+	o.terms[key] = frequencyIntersectionTerm{
+		cursor:            cursor,
+		documentFrequency: uint32(count),
+	}
+	return cursor, count, nil
 }
 
 func (m *fastMust) contains(ord DocOrd) bool {
@@ -111,6 +150,9 @@ func parseFastOrClauses(q *BooleanQuery) ([]TermQuery, []BoolClause, bool, strin
 }
 
 func (s *Service) buildExcludeSet(ctx context.Context, candidates *candidateSet, clauses []BoolClause, scope queryFieldScope) (map[DocOrd]struct{}, error) {
+	if len(clauses) == 0 {
+		return nil, nil
+	}
 	exclude := make(map[DocOrd]struct{})
 	for _, clause := range clauses {
 		child, err := s.executeQuery(ctx, candidates, clause.Query, 0, scope)
@@ -172,6 +214,12 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, candidates *candida
 		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
 			b.AndFast.Eligible = true
 		})
+	}
+
+	if result, used, err := s.tryExecPostingAnd(ctx, candidates, mustTerms, shoulds, mustNots, scope); err != nil {
+		return nil, false, err
+	} else if used {
+		return result, true, nil
 	}
 
 	mustGroups, exhausted, err := s.collectFastMustGroups(ctx, candidates, mustTerms, scope)
@@ -296,6 +344,181 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, candidates *candida
 		})
 	}
 
+	return combined, true, nil
+}
+
+func (s *Service) tryExecPostingAnd(
+	ctx context.Context,
+	candidates *candidateSet,
+	mustTerms []TermQuery,
+	shoulds []BoolClause,
+	mustNots []BoolClause,
+	scope queryFieldScope,
+) (map[DocOrd]docAccum, bool, error) {
+	if candidates.empty() {
+		return map[DocOrd]docAccum{}, true, nil
+	}
+
+	plan := make([]postingAndTerm, 0, len(mustTerms))
+	var field string
+	var frequencyOpener posting.FrequencyPostingOpener
+	for _, clause := range mustTerms {
+		if clause.Term == "" {
+			return map[DocOrd]docAccum{}, true, nil
+		}
+		fields := s.resolveScopedFields(clause.Field, scope)
+		groups, err := s.processFields(fields, clause.Term)
+		if err != nil {
+			return nil, false, err
+		}
+		// Each group contains fields sharing one analysis pipeline and the tokens
+		// produced by that pipeline. For example, title:"Running" may produce
+		// fields=["title"] and tokens=["run"]. Direct posting intersection is
+		// valid only when the clause resolves to one field, one token and one key.
+		if len(groups) != 1 || len(groups[0].fields) != 1 || len(groups[0].tokens) != 1 {
+			return nil, false, nil
+		}
+		group := groups[0]
+		clauseField := group.fields[0]
+		token := group.tokens[0]
+		keys, err := s.keyGen(token)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(keys) != 1 {
+			return nil, false, nil
+		}
+		key := keys[0]
+
+		if field != "" && clauseField != field {
+			return nil, false, nil
+		}
+		clauseIndex, ok := s.lookupIndex(clauseField)
+		if !ok {
+			return map[DocOrd]docAccum{}, true, nil
+		}
+		clauseOpener, ok := clauseIndex.(posting.FrequencyPostingOpener)
+		if !ok {
+			return nil, false, nil
+		}
+		if s.filter != nil && !s.filter.Contains([]byte(key)) {
+			return map[DocOrd]docAccum{}, true, nil
+		}
+		if field == "" {
+			field = clauseField
+			frequencyOpener = clauseOpener
+		}
+		plan = append(plan, postingAndTerm{field: clauseField, term: token, key: key})
+	}
+	if frequencyOpener == nil {
+		return nil, false, nil
+	}
+
+	keys := make([]string, len(plan))
+	for i := range plan {
+		keys[i] = plan[i].key
+	}
+	matches := make([]DocOrd, 0)
+	if candidates != nil {
+		matches = make([]DocOrd, 0, candidates.cardinality())
+	}
+	opener := frequencyIntersectionOpener{
+		source: frequencyOpener,
+		terms:  make(map[string]frequencyIntersectionTerm, len(keys)),
+	}
+	combined := make(map[DocOrd]docAccum, cap(matches))
+	fieldStats := s.fieldStatsFor(field)
+	yield := func(ord posting.Ord) bool {
+		if s.tombstones != nil && s.tombstones.IsSet(ord) {
+			return true
+		}
+		matches = append(matches, ord)
+		var accum docAccum
+		for _, item := range plan {
+			term := opener.terms[item.key]
+			doc := Posting{Ord: ord, Count: term.cursor.Frequency()}
+			expansion := termExpansion{
+				field:      item.field,
+				term:       item.term,
+				df:         term.documentFrequency,
+				fieldStats: fieldStats,
+			}
+			accum.UniqueMatches++
+			accum.TotalMatches += int(doc.Count)
+			accum.Score += s.scoreTermExpansionDoc(ctx, expansion, doc)
+		}
+		combined[ord] = accum
+		return true
+	}
+	var err error
+	if candidates != nil && len(candidates.words) > 0 {
+		err = posting.IntersectWithIterator(
+			ctx,
+			&opener,
+			keys,
+			posting.NewBitmapIterator(candidates.words),
+			uint64(candidates.cardinality()),
+			yield,
+		)
+	} else {
+		var candidateOrds []DocOrd
+		if candidates != nil {
+			candidateOrds = candidates.ords
+		}
+		err = posting.Intersect(ctx, &opener, keys, candidateOrds, yield)
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("fts: boolean AND intersection: %w", err)
+	}
+
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.setStrategy(strategyBoolAndIntersect)
+		exec.addTokens(len(plan))
+		exec.addFields(len(plan))
+		exec.addKeys(len(keys))
+		seen := make(map[string]struct{}, len(keys))
+		for _, key := range keys {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			exec.addIndexLookups(1)
+			exec.recordCursorPostingList()
+		}
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.AndFast.Used = true
+			b.AndFast.UsedIntersect = true
+			b.AndFast.DriverGroupSize = len(matches)
+			b.AndFast.OtherGroupCount = len(plan) - 1
+			b.AndFast.CandidateDocs = len(matches)
+		})
+	}
+	if len(matches) == 0 {
+		return map[DocOrd]docAccum{}, true, nil
+	}
+
+	// Reuse the intersection as the candidate set for optional clauses, limiting
+	// their work to documents which already match every MUST term.
+	matchedCandidates := candidateSetFromSortedOrds(matches)
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.addPostingsRead(len(matches) * len(plan))
+	}
+
+	exclude, err := s.buildExcludeSet(ctx, matchedCandidates, mustNots, scope)
+	if err != nil {
+		return nil, false, err
+	}
+	for ord := range exclude {
+		delete(combined, ord)
+	}
+	if err := s.applyShouldClauseBoosts(ctx, matchedCandidates, combined, shoulds, scope); err != nil {
+		return nil, false, err
+	}
+	if exec := diagnosticsFromContext(ctx); exec != nil {
+		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+			b.AndFast.CandidateDocs = len(combined)
+		})
+	}
 	return combined, true, nil
 }
 

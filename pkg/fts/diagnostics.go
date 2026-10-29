@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
 type QueryDiagnostics struct {
@@ -68,6 +70,7 @@ const (
 	strategyBoolFallback         = "bool_fallback"
 	strategyBoolOrWAND           = "bool_or_wand"
 	strategyBoolOrFast           = "bool_or_fast"
+	strategyBoolAndIntersect     = "bool_and_posting_intersect"
 	strategyBoolAndFastDriver    = "bool_and_fast_driver"
 	strategyBoolAndFastSortMerge = "bool_and_fast_sort_merge"
 )
@@ -112,6 +115,10 @@ type BooleanDiagnostics struct {
 type PostingAccessDiagnostics struct {
 	MaterializedPostingLists int
 	CursorPostingLists       int
+	// DecodedBlocks counts physical posting blocks decoded by instrumented storage cursors.
+	DecodedBlocks uint64
+	// DecodedPostings counts all entries decoded in those blocks, including entries skipped by Advance.
+	DecodedPostings uint64
 }
 
 type WANDDiagnostics struct {
@@ -134,6 +141,7 @@ type AndFastDiagnostics struct {
 	DriverGroupSize int
 	OtherGroupCount int
 	CandidateDocs   int
+	UsedIntersect   bool
 	UsedSortMerge   bool
 	BuiltLookupMaps bool
 }
@@ -175,6 +183,10 @@ func attachDiagnostics(ctx context.Context, res *SearchResult) *SearchResult {
 	exec.setCandidateDocs(res.TotalResultsCount)
 	exec.setMatchedDocs(res.TotalResultsCount)
 	exec.setReturnedDocs(len(res.Results))
+	if metrics := posting.TraversalMetricsFromContext(ctx); metrics != nil {
+		snapshot := metrics.Snapshot()
+		exec.setDecodedPostings(snapshot.DecodedBlocks, snapshot.DecodedPostings)
+	}
 	res.Diagnostics = exec.snapshot()
 	return res
 }
@@ -300,6 +312,16 @@ func (q *queryExecContext) recordCursorPostingList() {
 	}
 	q.mu.Lock()
 	q.d.PostingAccess.CursorPostingLists++
+	q.mu.Unlock()
+}
+
+func (q *queryExecContext) setDecodedPostings(blocks, postings uint64) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	q.d.PostingAccess.DecodedBlocks = blocks
+	q.d.PostingAccess.DecodedPostings = postings
 	q.mu.Unlock()
 }
 

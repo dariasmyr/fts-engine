@@ -20,7 +20,13 @@ func (r *Reader) OpenOrdinalPostings(ctx context.Context, key string) (posting.O
 		return nil, 0, err
 	}
 	i := sort.Search(len(r.terms), func(i int) bool { return r.terms[i].key >= key })
-	c := &cursor{ctx: ctx, source: r.source, block: -1, pos: -1}
+	c := &cursor{
+		ctx:     ctx,
+		metrics: posting.TraversalMetricsFromContext(ctx),
+		source:  r.source,
+		block:   -1,
+		pos:     -1,
+	}
 	if i == len(r.terms) || r.terms[i].key != key {
 		c.done = true
 		return c, 0, nil
@@ -68,6 +74,7 @@ func (c *cursor) initDirectory() error {
 
 type cursor struct {
 	ctx     context.Context
+	metrics *posting.TraversalMetrics
 	source  io.ReaderAt
 	term    term
 	dir     []byte
@@ -246,6 +253,7 @@ func (c *cursor) load(b int) bool {
 		c.done = true
 		return false
 	}
+	c.metrics.RecordDecodedBlock(c.n)
 	c.block = b
 	c.pos = -1
 	return true

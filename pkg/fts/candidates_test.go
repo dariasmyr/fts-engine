@@ -3,6 +3,7 @@ package fts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 )
@@ -79,6 +80,58 @@ func TestSearchOptionsCandidateAPIs(t *testing.T) {
 		if len(result.Results) != 1 || result.Results[0].ID != "b" {
 			t.Fatalf("%s results = %+v, want only b", name, result.Results)
 		}
+	}
+}
+
+func TestCandidateSetAdaptiveRepresentations(t *testing.T) {
+	ids := make([]DocID, 256)
+	for i := range ids {
+		ids[i] = DocID(fmt.Sprintf("doc-%03d", i))
+	}
+	svc := New(newMemoryIndex(), WordKeys, WithDocRegistrySnapshot(ids))
+
+	sparse, err := svc.newCandidateSet(context.Background(), []DocID{ids[200], ids[3], ids[3], "missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sparse.cardinality() != 2 || len(sparse.ords) != 2 || len(sparse.words) != 0 || sparse.byOrd != nil {
+		t.Fatalf("sparse candidates = %+v, want two ordinals only", sparse)
+	}
+	if !sparse.contains(3) || !sparse.contains(200) || sparse.contains(4) {
+		t.Fatal("sparse candidate membership is incorrect")
+	}
+
+	denseIDs := make([]DocID, 128)
+	copy(denseIDs, ids[:128])
+	dense, err := svc.newCandidateSet(context.Background(), denseIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dense.cardinality() != 128 || len(dense.words) != 4 || dense.ords != nil || dense.byOrd != nil {
+		t.Fatalf("dense candidates = %+v, want bitmap only", dense)
+	}
+	if !dense.contains(0) || !dense.contains(127) || dense.contains(128) {
+		t.Fatal("dense candidate membership is incorrect")
+	}
+}
+
+func TestCandidateSetFallsBackToOrdinalsAfterDeduplication(t *testing.T) {
+	ids := make([]DocID, 256)
+	for i := range ids {
+		ids[i] = DocID(fmt.Sprintf("doc-%03d", i))
+	}
+	svc := New(newMemoryIndex(), WordKeys, WithDocRegistrySnapshot(ids))
+	input := make([]DocID, 128)
+	for i := range input {
+		input[i] = ids[7]
+	}
+
+	candidates, err := svc.newCandidateSet(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidates.cardinality() != 1 || !slices.Equal(candidates.ords, []DocOrd{7}) || len(candidates.words) != 0 {
+		t.Fatalf("candidates = %+v, want sparse ordinal fallback", candidates)
 	}
 }
 

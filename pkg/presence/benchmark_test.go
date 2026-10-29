@@ -275,10 +275,12 @@ func BenchmarkCandidateMatrix(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			candidateCounts := []struct {
-				name  string
-				count int
-			}{
+			type candidateCase struct {
+				name       string
+				count      int
+				candidates []posting.Ord
+			}
+			candidateCounts := []candidateCase{
 				{name: "0", count: 0},
 				{name: "1", count: 1},
 				{name: "4", count: min(4, postingCount)},
@@ -286,8 +288,21 @@ func BenchmarkCandidateMatrix(b *testing.B) {
 				{name: "10pct", count: max(1, postingCount/10)},
 				{name: "100pct", count: postingCount},
 			}
+			if postingCount == 10_000 {
+				candidateCounts = append(candidateCounts,
+					candidateCase{name: "100", count: 100},
+					candidateCase{name: "1000", count: 1_000},
+					candidateCase{name: "5000", count: 5_000},
+					candidateCase{name: "4_same-block", count: 4, candidates: []posting.Ord{0, 1, 2, 3}},
+					candidateCase{name: "4_different-blocks", count: 4, candidates: []posting.Ord{0, 128, 256, 384}},
+					candidateCase{name: "4_tail", count: 4, candidates: []posting.Ord{9_996, 9_997, 9_998, 9_999}},
+				)
+			}
 			for _, candidateCase := range candidateCounts {
-				candidates := evenlySpacedOrdinals(postingCount, candidateCase.count)
+				candidates := candidateCase.candidates
+				if candidates == nil && candidateCase.count > 0 {
+					candidates = evenlySpacedOrdinals(postingCount, candidateCase.count)
+				}
 				b.Run("candidates="+candidateCase.name, func(b *testing.B) {
 					for _, termCount := range []int{1, 2, 5} {
 						keys := make([]string, termCount)
@@ -390,6 +405,7 @@ func benchmarkMatrixBackend(b *testing.B, mode string, data []byte, keys []strin
 		if err != nil {
 			b.Fatal(err)
 		}
+		ctx, traversal := posting.WithTraversalMetrics(context.Background())
 		b.ReportAllocs()
 		for b.Loop() {
 			current := index
@@ -401,17 +417,20 @@ func benchmarkMatrixBackend(b *testing.B, mode string, data []byte, keys []strin
 					b.Fatal(err)
 				}
 			}
-			if err := runMatrixIntersection(current, keys, candidates, want); err != nil {
+			if err := runMatrixIntersection(ctx, current, keys, candidates, want); err != nil {
 				b.Fatal(err)
 			}
 		}
+		metrics := traversal.Snapshot()
+		b.ReportMetric(float64(metrics.DecodedBlocks)/float64(b.N), "decoded-blocks/op")
+		b.ReportMetric(float64(metrics.DecodedPostings)/float64(b.N), "decoded-postings/op")
 		b.ReportMetric(float64(len(data)), "index-B")
 	})
 }
 
-func runMatrixIntersection(index posting.OrdinalPostingOpener, keys []string, candidates []posting.Ord, want int) error {
+func runMatrixIntersection(ctx context.Context, index posting.OrdinalPostingOpener, keys []string, candidates []posting.Ord, want int) error {
 	count := 0
-	err := posting.Intersect(context.Background(), index, keys, candidates, func(posting.Ord) bool {
+	err := posting.Intersect(ctx, index, keys, candidates, func(posting.Ord) bool {
 		count++
 		return true
 	})
