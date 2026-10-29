@@ -50,13 +50,13 @@ func main() {
 }
 
 func newEngine(opts ...*fts.Option) *fts.Service {
-	return fts.NewMultiField(func(string) (fts.Index, error) {
+	return fts.NewMultiField(func(string) (fts.MutableIndex, error) {
 		return slicedradix.New(), nil
 	}, fts.WordKeys, opts...)
 }
 
 func printResults(ctx context.Context, label string, engine *fts.Service) {
-	res, err := engine.SearchDocuments(ctx, "postgres backup", 10)
+	res, err := engine.SearchText(ctx, "postgres backup", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		panic(err)
 	}

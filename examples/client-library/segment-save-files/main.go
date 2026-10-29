@@ -39,7 +39,7 @@ func main() {
 		panic(err)
 	}
 
-	if err := ftspersist.SaveSegment(ftspersist.SegmentPaths{Dir: "./data/segments/default"}, svc, "bloom", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(context.Background(), ftspersist.SegmentPaths{Dir: "./data/segments/default"}, svc, "bloom", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
 		panic(err)
 	}
 }

@@ -14,7 +14,7 @@ func main() {
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Wikipedia: Rosa is a French hotel barge"}}})
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Rosa runs hotel operations in France"}}})
 
-	res, err := engine.SearchDocuments(context.Background(), "french hotel", 10)
+	res, err := engine.SearchText(context.Background(), "french hotel", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		panic(err)
 	}

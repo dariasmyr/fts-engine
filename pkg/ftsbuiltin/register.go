@@ -84,7 +84,7 @@ func RegisterFilters(registry *fts.SnapshotRegistry) error {
 	return nil
 }
 
-func BuildIndex(name string) (fts.Index, error) {
+func BuildIndex(name string) (fts.MutableIndex, error) {
 	switch name {
 	case "flat":
 		return flat.New(), nil

@@ -39,6 +39,8 @@ Standalone examples:
 - `custom-options/main.go` - in-memory setup with a custom pipeline and filter
 - `field-clauses/main.go` - field-specific query clauses
 - `flat-observability/main.go` - flat index with observability-oriented tokenization
+- `filtered-search/main.go` - high-level candidate filtering through `fts.SearchOptions`
+- `filtered-presence/main.go` - low-level Amber-style FPR1 search with store-owned IDs, a candidate bitmap and streaming intersection
 - `segment-pipeline-compatibility/main.go` - self-contained segment save and pipeline-compatible restore
 - `segment-bundle/main.go` - save and restore one sealed segment as an `io.Writer`/`io.Reader` blob
 - `rank-profile/main.go` - multi-field ranking with weighted field scoring
@@ -67,6 +69,8 @@ go run ./examples/client-library/preset
 go run ./examples/client-library/custom-options
 go run ./examples/client-library/field-clauses
 go run ./examples/client-library/flat-observability
+go run ./examples/client-library/filtered-search
+go run ./examples/client-library/filtered-presence
 go run ./examples/client-library/segment-pipeline-compatibility
 go run ./examples/client-library/segment-bundle
 go run ./examples/client-library/rank-profile

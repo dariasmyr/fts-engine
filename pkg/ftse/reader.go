@@ -1,4 +1,4 @@
-package segment
+package ftse
 
 import (
 	"bytes"
@@ -11,16 +11,17 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
 // Reader queries a sealed segment using an in-memory term table. The segment
 // body can be backed by bytes, mmap, or ReaderAt file access.
 type Reader struct {
-	bytes    []byte
-	readerAt io.ReaderAt
-	size     uint64
-	terms    []termEntry
+	bytes         []byte
+	readerAt      io.ReaderAt
+	size          uint64
+	terms         []termEntry
+	formatVersion uint16
 
 	postingsBase  uint64
 	positionsBase uint64
@@ -34,6 +35,11 @@ type termEntry struct {
 	positionsOff uint64
 	positionsLen uint64
 	hasPositions bool
+
+	documentFrequency uint64
+	directoryOff      uint64
+	directoryLen      uint64
+	directoryCRC      uint32
 }
 
 // MappedReader is a Reader backed by a memory-mapped file.
@@ -82,17 +88,17 @@ func OpenFile(path string) (*MappedReader, error) {
 func OpenFileReader(path string) (*FileReader, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("segment: open %q: %w", path, err)
+		return nil, fmt.Errorf("ftse: open %q: %w", path, err)
 	}
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("segment: stat %q: %w", path, err)
+		return nil, fmt.Errorf("ftse: stat %q: %w", path, err)
 	}
 	r, err := OpenReaderAt(file, info.Size())
 	if err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("segment: open %q: %w", path, err)
+		return nil, fmt.Errorf("ftse: open %q: %w", path, err)
 	}
 	return &FileReader{Reader: r, file: file}, nil
 }
@@ -114,91 +120,123 @@ func OpenReaderAt(source io.ReaderAt, size int64) (*Reader, error) {
 
 func openReaderAt(source io.ReaderAt, size int64, data []byte) (*Reader, error) {
 	if source == nil {
-		return nil, fmt.Errorf("segment: nil reader")
+		return nil, fmt.Errorf("ftse: nil reader")
 	}
-	if size < headerLen+legacyFooterLen {
-		return nil, fmt.Errorf("segment: too short (%d bytes)", size)
+	if size < headerLen {
+		return nil, fmt.Errorf("ftse: too short (%d bytes)", size)
 	}
 
 	header, err := readAt(source, 0, headerLen)
 	if err != nil {
-		return nil, fmt.Errorf("segment: read header: %w", err)
+		return nil, fmt.Errorf("ftse: read header: %w", err)
 	}
 	if string(header[:4]) != magic {
-		return nil, fmt.Errorf("segment: bad header magic")
+		return nil, fmt.Errorf("ftse: bad header magic")
 	}
 	formatVersion := binary.LittleEndian.Uint16(header[4:6])
-	var formatFooterLen int
 	switch formatVersion {
-	case legacyVersion:
-		formatFooterLen = legacyFooterLen
-	case version:
-		formatFooterLen = footerLen
+	case legacyFormatVersion, blockedFormatVersion:
 	default:
-		return nil, fmt.Errorf("segment: unsupported version %d", formatVersion)
+		return nil, &UnsupportedVersionError{Version: formatVersion}
 	}
-	if size < int64(headerLen+formatFooterLen) {
-		return nil, fmt.Errorf("segment: too short (%d bytes)", size)
+	formatHeaderLen := headerLen
+	if formatVersion == blockedFormatVersion {
+		formatHeaderLen = blockedHeaderLen
+		if size < int64(blockedHeaderLen+footerLen) {
+			return nil, fmt.Errorf("ftse: too short (%d bytes)", size)
+		}
+		blockedHeader, err := readAt(source, 0, blockedHeaderLen)
+		if err != nil {
+			return nil, fmt.Errorf("ftse: read v3 header: %w", err)
+		}
+		if binary.LittleEndian.Uint16(blockedHeader[6:8]) != 0 ||
+			binary.LittleEndian.Uint16(blockedHeader[8:10]) != postingBlockSize ||
+			binary.LittleEndian.Uint16(blockedHeader[10:12]) != 0 {
+			return nil, fmt.Errorf("ftse: unsupported v3 header flags or block size")
+		}
+	}
+	if size < int64(formatHeaderLen+footerLen) {
+		return nil, fmt.Errorf("ftse: too short (%d bytes)", size)
 	}
 
-	footerOff := size - int64(formatFooterLen)
-	footer, err := readAt(source, footerOff, formatFooterLen)
+	footerOff := size - int64(footerLen)
+	footer, err := readAt(source, footerOff, footerLen)
 	if err != nil {
-		return nil, fmt.Errorf("segment: read footer: %w", err)
+		return nil, fmt.Errorf("ftse: read footer: %w", err)
 	}
-	magicOff, versionOff := 16, 20
-	if formatVersion == version {
-		magicOff, versionOff = 24, 28
-	}
+	magicOff, versionOff := 24, 28
 	if string(footer[magicOff:magicOff+4]) != magic {
-		return nil, fmt.Errorf("segment: bad footer magic")
+		return nil, fmt.Errorf("ftse: bad footer magic")
 	}
 	if footerVersion := binary.LittleEndian.Uint16(footer[versionOff : versionOff+2]); footerVersion != formatVersion {
-		return nil, fmt.Errorf("segment: footer version %d does not match header version %d", footerVersion, formatVersion)
+		return nil, fmt.Errorf("ftse: footer version %d does not match header version %d", footerVersion, formatVersion)
+	}
+	if formatVersion == blockedFormatVersion &&
+		(binary.LittleEndian.Uint32(footer[20:24]) != 0 || binary.LittleEndian.Uint16(footer[30:32]) != 0) {
+		return nil, fmt.Errorf("ftse: non-zero v3 footer reserved fields")
 	}
 
 	indexOff := binary.LittleEndian.Uint64(footer[0:8])
 	indexLen := binary.LittleEndian.Uint64(footer[8:16])
 	contentLen := uint64(footerOff)
-	if indexOff < headerLen || indexOff > contentLen || indexLen > contentLen-indexOff || indexOff+indexLen != contentLen {
-		return nil, fmt.Errorf("segment: index range out of bounds")
+	if indexOff < uint64(formatHeaderLen) || indexOff > contentLen || indexLen > contentLen-indexOff || indexOff+indexLen != contentLen {
+		return nil, fmt.Errorf("ftse: index range out of bounds")
 	}
 	if indexLen > uint64(math.MaxInt) {
-		return nil, fmt.Errorf("segment: index is too large")
+		return nil, fmt.Errorf("ftse: index is too large")
 	}
-	if formatVersion == version {
+	if formatVersion == legacyFormatVersion {
 		wantChecksum := binary.LittleEndian.Uint32(footer[16:20])
 		hash := crc32.NewIEEE()
 		if _, err := io.Copy(hash, io.NewSectionReader(source, 0, footerOff)); err != nil {
-			return nil, fmt.Errorf("segment: checksum read: %w", err)
+			return nil, fmt.Errorf("ftse: checksum read: %w", err)
 		}
 		if got := hash.Sum32(); got != wantChecksum {
-			return nil, fmt.Errorf("segment: checksum mismatch: got %08x, want %08x", got, wantChecksum)
+			return nil, fmt.Errorf("ftse: checksum mismatch: got %08x, want %08x", got, wantChecksum)
 		}
 	}
 
 	indexBytes, err := readAt(source, int64(indexOff), int(indexLen))
 	if err != nil {
-		return nil, fmt.Errorf("segment: read index: %w", err)
+		return nil, fmt.Errorf("ftse: read index: %w", err)
 	}
+	if formatVersion == blockedFormatVersion {
+		wantChecksum := binary.LittleEndian.Uint32(footer[16:20])
+		if got := crc32.ChecksumIEEE(indexBytes); got != wantChecksum {
+			return nil, fmt.Errorf("ftse: dictionary checksum mismatch: got %08x, want %08x", got, wantChecksum)
+		}
+		terms, err := parseBlockedTermIndex(indexBytes, indexOff)
+		if err != nil {
+			return nil, err
+		}
+		return &Reader{
+			bytes:         data,
+			readerAt:      source,
+			size:          uint64(size),
+			terms:         terms,
+			formatVersion: formatVersion,
+			indexOff:      indexOff,
+		}, nil
+	}
+
 	terms, postingsEnd, err := parseTermIndex(indexBytes)
 	if err != nil {
 		return nil, err
 	}
 	positionsBase := uint64(headerLen) + postingsEnd
 	if positionsBase > indexOff {
-		return nil, fmt.Errorf("segment: postings range overlaps term index")
+		return nil, fmt.Errorf("ftse: postings range overlaps term index")
 	}
 	for _, term := range terms {
 		if term.postingsOff > postingsEnd || term.postingsLen > postingsEnd-term.postingsOff {
-			return nil, fmt.Errorf("segment: postings range out of bounds for term %q", term.term)
+			return nil, fmt.Errorf("ftse: postings range out of bounds for term %q", term.term)
 		}
 		positionsSize := indexOff - positionsBase
 		if term.positionsOff > positionsSize || term.positionsLen > positionsSize-term.positionsOff {
-			return nil, fmt.Errorf("segment: positions range out of bounds for term %q", term.term)
+			return nil, fmt.Errorf("ftse: positions range out of bounds for term %q", term.term)
 		}
 		if !term.hasPositions && (term.positionsOff != 0 || term.positionsLen != 0) {
-			return nil, fmt.Errorf("segment: unexpected positions range for term %q", term.term)
+			return nil, fmt.Errorf("ftse: unexpected positions range for term %q", term.term)
 		}
 	}
 
@@ -207,10 +245,68 @@ func openReaderAt(source io.ReaderAt, size int64, data []byte) (*Reader, error) 
 		readerAt:      source,
 		size:          uint64(size),
 		terms:         terms,
+		formatVersion: formatVersion,
 		postingsBase:  headerLen,
 		positionsBase: positionsBase,
 		indexOff:      indexOff,
 	}, nil
+}
+
+func parseBlockedTermIndex(data []byte, indexOff uint64) ([]termEntry, error) {
+	pos := 0
+	take := func() (uint64, error) { return takeUvarint(data, &pos) }
+	count, err := take()
+	if err != nil || count > uint64(len(data)) {
+		return nil, fmt.Errorf("ftse: bad v3 term count")
+	}
+	terms := make([]termEntry, 0, int(count))
+	for range count {
+		termLen, err := take()
+		if err != nil || termLen == 0 || termLen > uint64(len(data)-pos) {
+			return nil, fmt.Errorf("ftse: bad v3 term length")
+		}
+		term := string(data[pos : pos+int(termLen)])
+		pos += int(termLen)
+		if len(terms) > 0 && term <= terms[len(terms)-1].term {
+			return nil, fmt.Errorf("ftse: v3 terms are not strictly sorted")
+		}
+		df, dfErr := take()
+		directoryOff, offsetErr := take()
+		directoryLen, lengthErr := take()
+		if dfErr != nil || offsetErr != nil || lengthErr != nil || df == 0 || df > uint64(math.MaxInt) ||
+			directoryOff < blockedHeaderLen || directoryOff > indexOff ||
+			directoryLen > indexOff-directoryOff || directoryLen == 0 ||
+			directoryLen%blockDirectoryEntrySize != 0 ||
+			directoryLen/blockDirectoryEntrySize != (df-1)/postingBlockSize+1 ||
+			pos+5 > len(data) {
+			return nil, fmt.Errorf("ftse: bad v3 entry for term %q", term)
+		}
+		directoryCRC := binary.LittleEndian.Uint32(data[pos : pos+4])
+		pos += 4
+		flags := data[pos]
+		pos++
+		if flags & ^byte(termHasPositions) != 0 {
+			return nil, fmt.Errorf("ftse: unknown v3 term flags for %q", term)
+		}
+		terms = append(terms, termEntry{
+			term:              term,
+			hasPositions:      flags&termHasPositions != 0,
+			documentFrequency: df,
+			directoryOff:      directoryOff,
+			directoryLen:      directoryLen,
+			directoryCRC:      directoryCRC,
+		})
+	}
+	if pos != len(data) {
+		return nil, fmt.Errorf("ftse: trailing v3 dictionary data")
+	}
+	for i := 1; i < len(terms); i++ {
+		previousEnd := terms[i-1].directoryOff + terms[i-1].directoryLen
+		if terms[i].directoryOff <= previousEnd {
+			return nil, fmt.Errorf("ftse: v3 term directories are overlapping or out of order")
+		}
+	}
+	return terms, nil
 }
 
 func parseTermIndex(data []byte) ([]termEntry, uint64, error) {
@@ -228,31 +324,31 @@ func parseTermIndex(data []byte) ([]termEntry, uint64, error) {
 	}
 	count, err := take()
 	if err != nil || count > uint64(len(data)) {
-		return nil, 0, fmt.Errorf("segment: bad term count")
+		return nil, 0, fmt.Errorf("ftse: bad term count")
 	}
 	terms := make([]termEntry, 0, int(count))
 	var postingsEnd uint64
 	for range count {
 		termLen, err := take()
 		if err != nil || termLen == 0 || termLen > uint64(len(data)-pos) {
-			return nil, 0, fmt.Errorf("segment: bad term length")
+			return nil, 0, fmt.Errorf("ftse: bad term length")
 		}
 		term := string(data[pos : pos+int(termLen)])
 		pos += int(termLen)
 		if len(terms) > 0 && term <= terms[len(terms)-1].term {
-			return nil, 0, fmt.Errorf("segment: terms are not strictly sorted")
+			return nil, 0, fmt.Errorf("ftse: terms are not strictly sorted")
 		}
 		postingsOff, err1 := take()
 		postingsLen, err2 := take()
 		positionsOff, err3 := take()
 		positionsLen, err4 := take()
 		if err1 != nil || err2 != nil || err3 != nil || err4 != nil || postingsLen == 0 || pos >= len(data) {
-			return nil, 0, fmt.Errorf("segment: bad entry for term %q", term)
+			return nil, 0, fmt.Errorf("ftse: bad entry for term %q", term)
 		}
 		hasPositions := data[pos] != 0
 		pos++
 		if postingsOff > math.MaxUint64-postingsLen {
-			return nil, 0, fmt.Errorf("segment: postings range overflow for term %q", term)
+			return nil, 0, fmt.Errorf("ftse: postings range overflow for term %q", term)
 		}
 		if end := postingsOff + postingsLen; end > postingsEnd {
 			postingsEnd = end
@@ -263,7 +359,7 @@ func parseTermIndex(data []byte) ([]termEntry, uint64, error) {
 		})
 	}
 	if pos != len(data) {
-		return nil, 0, fmt.Errorf("segment: trailing term index data")
+		return nil, 0, fmt.Errorf("ftse: trailing term index data")
 	}
 	return terms, postingsEnd, nil
 }
@@ -292,17 +388,17 @@ func (r *Reader) Bytes() []byte { return r.bytes }
 
 func (r *Reader) TermCount() int { return len(r.terms) }
 
-func (r *Reader) findTerm(term string) (termEntry, bool) {
+func (r *Reader) findTerm(term string) (*termEntry, bool) {
 	i := sort.Search(len(r.terms), func(i int) bool { return r.terms[i].term >= term })
 	if i < len(r.terms) && r.terms[i].term == term {
-		return r.terms[i], true
+		return &r.terms[i], true
 	}
-	return termEntry{}, false
+	return nil, false
 }
 
 func (r *Reader) readRange(off, length uint64) ([]byte, error) {
 	if off > r.indexOff || length > r.indexOff-off || length > uint64(math.MaxInt) {
-		return nil, fmt.Errorf("segment: read range out of bounds")
+		return nil, fmt.Errorf("ftse: read range out of bounds")
 	}
 	if r.bytes != nil {
 		return r.bytes[int(off):int(off+length)], nil
@@ -310,116 +406,110 @@ func (r *Reader) readRange(off, length uint64) ([]byte, error) {
 	return readAt(r.readerAt, int64(off), int(length))
 }
 
-func (r *Reader) Insert(key string, ord fts.DocOrd) error {
-	return fmt.Errorf("segment: read-only (Insert called on sealed segment)")
-}
-
-func (r *Reader) InsertAt(key string, position uint32, ord fts.DocOrd) error {
-	return fmt.Errorf("segment: read-only (InsertAt called on sealed segment)")
-}
-
-func (r *Reader) Search(key string) ([]fts.Posting, error) {
+func (r *Reader) Search(key string) ([]posting.Posting, error) {
 	e, ok := r.findTerm(key)
 	if !ok {
 		return nil, nil
 	}
+	if r.formatVersion == blockedFormatVersion {
+		return r.searchBlocked(e)
+	}
 	blob, err := r.readRange(r.postingsBase+e.postingsOff, e.postingsLen)
 	if err != nil {
-		return nil, fmt.Errorf("segment: read postings for term %q: %w", key, err)
+		return nil, fmt.Errorf("ftse: read postings for term %q: %w", key, err)
 	}
 	return decodePostings(blob)
 }
 
-func (r *Reader) SearchPositional(key string) ([]fts.PositionalPosting, error) {
+func (r *Reader) SearchPositional(key string) ([]posting.PositionalPosting, error) {
 	e, ok := r.findTerm(key)
 	if !ok {
 		return nil, nil
 	}
+	if r.formatVersion == blockedFormatVersion {
+		return r.searchBlockedPositional(e)
+	}
 	postingBlob, err := r.readRange(r.postingsBase+e.postingsOff, e.postingsLen)
 	if err != nil {
-		return nil, fmt.Errorf("segment: read postings for term %q: %w", key, err)
+		return nil, fmt.Errorf("ftse: read postings for term %q: %w", key, err)
 	}
 	postings, err := decodePostings(postingBlob)
 	if err != nil {
-		return nil, fmt.Errorf("segment: decode postings for term %q: %w", key, err)
+		return nil, fmt.Errorf("ftse: decode postings for term %q: %w", key, err)
 	}
-	out := make([]fts.PositionalPosting, len(postings))
+	out := make([]posting.PositionalPosting, len(postings))
 	if !e.hasPositions {
-		for i, posting := range postings {
-			out[i] = fts.PositionalPosting{Ord: posting.Ord}
+		for i, value := range postings {
+			out[i] = posting.PositionalPosting{Ord: value.Ord}
 		}
 		return out, nil
 	}
 	posBuf, err := r.readRange(r.positionsBase+e.positionsOff, e.positionsLen)
 	if err != nil {
-		return nil, fmt.Errorf("segment: read positions for term %q: %w", key, err)
+		return nil, fmt.Errorf("ftse: read positions for term %q: %w", key, err)
 	}
 	cur := 0
-	for i, posting := range postings {
+	for i, value := range postings {
 		count, err := takeUvarint(posBuf, &cur)
 		if err != nil || count > uint64(len(posBuf)-cur) {
-			return nil, fmt.Errorf("segment: bad position count for term %q", key)
+			return nil, fmt.Errorf("ftse: bad position count for term %q", key)
 		}
 		positions := make([]uint32, 0, int(count))
 		var previous uint32
 		for range count {
 			delta, err := takeUvarint(posBuf, &cur)
 			if err != nil || delta > uint64(math.MaxUint32-previous) {
-				return nil, fmt.Errorf("segment: bad position delta for term %q", key)
+				return nil, fmt.Errorf("ftse: bad position delta for term %q", key)
 			}
 			previous += uint32(delta)
 			positions = append(positions, previous)
 		}
-		out[i] = fts.PositionalPosting{Ord: posting.Ord, Positions: positions}
+		out[i] = posting.PositionalPosting{Ord: value.Ord, Positions: positions}
 	}
 	if cur != len(posBuf) {
-		return nil, fmt.Errorf("segment: trailing position data for term %q", key)
+		return nil, fmt.Errorf("ftse: trailing position data for term %q", key)
 	}
 	return out, nil
 }
 
-func (r *Reader) SearchPrefix(prefix string) ([]fts.Posting, error) {
+func (r *Reader) SearchPrefix(prefix string) ([]posting.Posting, error) {
 	if prefix == "" {
 		return nil, nil
 	}
 	start := sort.Search(len(r.terms), func(i int) bool { return r.terms[i].term >= prefix })
-	aggregated := make(map[fts.DocOrd]uint32)
+	aggregated := make(map[posting.Ord]uint32)
 	for i := start; i < len(r.terms); i++ {
 		entry := r.terms[i]
 		if !strings.HasPrefix(entry.term, prefix) {
 			break
 		}
-		blob, err := r.readRange(r.postingsBase+entry.postingsOff, entry.postingsLen)
+		postings, err := r.Search(entry.term)
 		if err != nil {
-			return nil, fmt.Errorf("segment: read postings for term %q: %w", entry.term, err)
-		}
-		postings, err := decodePostings(blob)
-		if err != nil {
-			return nil, fmt.Errorf("segment: decode postings for term %q: %w", entry.term, err)
+			return nil, fmt.Errorf("ftse: search postings for term %q: %w", entry.term, err)
 		}
 		for _, posting := range postings {
 			if posting.Count > math.MaxUint32-aggregated[posting.Ord] {
-				return nil, fmt.Errorf("segment: posting count overflow for prefix %q", prefix)
+				return nil, fmt.Errorf("ftse: posting count overflow for prefix %q", prefix)
 			}
 			aggregated[posting.Ord] += posting.Count
 		}
 	}
-	out := make([]fts.Posting, 0, len(aggregated))
+	out := make([]posting.Posting, 0, len(aggregated))
 	for ord, count := range aggregated {
-		out = append(out, fts.Posting{Ord: ord, Seq: uint32(ord), Count: count})
+		out = append(out, posting.Posting{Ord: ord, Count: count})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
 	return out, nil
 }
 
-func decodePostings(blob []byte) ([]fts.Posting, error) {
+func decodePostings(blob []byte) ([]posting.Posting, error) {
 	pos := 0
 	count, err := takeUvarint(blob, &pos)
 	if err != nil || count == 0 || count > uint64(len(blob)) {
 		return nil, fmt.Errorf("invalid posting count")
 	}
-	out := make([]fts.Posting, 0, int(count))
-	var ord fts.DocOrd
+	out := make([]posting.Posting, 0, int(count))
+	var ord posting.Ord
 	for range count {
 		delta, err := takeUvarint(blob, &pos)
 		if err != nil || delta > uint64(math.MaxUint32-uint32(ord)) {
@@ -429,8 +519,8 @@ func decodePostings(blob []byte) ([]fts.Posting, error) {
 		if err != nil || termFrequency == 0 || termFrequency > math.MaxUint32 {
 			return nil, fmt.Errorf("invalid posting count value")
 		}
-		ord += fts.DocOrd(delta)
-		out = append(out, fts.Posting{Ord: ord, Seq: uint32(ord), Count: uint32(termFrequency)})
+		ord += posting.Ord(delta)
+		out = append(out, posting.Posting{Ord: ord, Count: uint32(termFrequency)})
 	}
 	if pos != len(blob) {
 		return nil, fmt.Errorf("trailing posting data")
@@ -449,9 +539,3 @@ func takeUvarint(data []byte, pos *int) (uint64, error) {
 	*pos += n
 	return value, nil
 }
-
-var (
-	_ fts.Index           = (*Reader)(nil)
-	_ fts.PositionalIndex = (*Reader)(nil)
-	_ fts.PrefixIndex     = (*Reader)(nil)
-)

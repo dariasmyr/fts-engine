@@ -44,8 +44,8 @@ func (m *ordAwareMemoryIndex) bumpCount(key string, ord DocOrd) {
 			return
 		}
 	}
-	m.postings[key] = append(entries, Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
-	sort.Slice(m.postings[key], func(i, j int) bool { return m.postings[key][i].Seq < m.postings[key][j].Seq })
+	m.postings[key] = append(entries, Posting{Ord: ord, Count: 1})
+	sort.Slice(m.postings[key], func(i, j int) bool { return m.postings[key][i].Ord < m.postings[key][j].Ord })
 }
 
 func (m *ordAwareMemoryIndex) Search(key string) ([]Posting, error) {
@@ -61,7 +61,7 @@ func (m *ordAwareMemoryIndex) SearchPrefix(prefix string) ([]Posting, error) {
 		for _, doc := range docs {
 			ref := merged[doc.Ord]
 			ref.Ord = doc.Ord
-			ref.Seq = doc.Seq
+			ref.Ord = doc.Ord
 			ref.Count += doc.Count
 			merged[doc.Ord] = ref
 		}
@@ -70,7 +70,7 @@ func (m *ordAwareMemoryIndex) SearchPrefix(prefix string) ([]Posting, error) {
 	for _, doc := range merged {
 		out = append(out, doc)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
 	return out, nil
 }
 
@@ -112,34 +112,34 @@ func TestDeleteFiltersAllSearchPathsAndUpdatesStats(t *testing.T) {
 		t.Fatal("Delete(doc-a) = false, want true")
 	}
 
-	termRes, err := svc.SearchDocuments(ctx, "alpha", 10)
+	termRes, err := svc.SearchText(ctx, "alpha", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(alpha) error = %v", err)
+		t.Fatalf("SearchText(alpha) error = %v", err)
 	}
 	if hasResultID(termRes, "doc-a") {
 		t.Fatalf("deleted doc leaked into term search: %+v", termRes.Results)
 	}
 
-	prefixRes, err := svc.SearchDocuments(ctx, "bar*", 10)
+	prefixRes, err := svc.SearchText(ctx, "bar*", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(bar*) error = %v", err)
+		t.Fatalf("SearchText(bar*) error = %v", err)
 	}
 	if hasResultID(prefixRes, "doc-a") || !hasResultID(prefixRes, "doc-c") {
 		t.Fatalf("unexpected prefix results after delete: %+v", prefixRes.Results)
 	}
 
-	phraseRes, err := svc.SearchDocuments(ctx, `"james doe"`, 10)
+	phraseRes, err := svc.SearchText(ctx, `"james doe"`, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(phrase) error = %v", err)
+		t.Fatalf("SearchText(phrase) error = %v", err)
 	}
 	if len(phraseRes.Results) != 0 {
 		t.Fatalf("deleted doc leaked into phrase search: %+v", phraseRes.Results)
 	}
 
-	boolFastRes, err := svc.Search(ctx, &BooleanQuery{Clauses: []BoolClause{
+	boolFastRes, err := svc.SearchQuery(ctx, &BooleanQuery{Clauses: []BoolClause{
 		MustClause(TermQuery{Term: "alpha"}),
 		MustClause(TermQuery{Term: "beta"}),
-	}}, 10)
+	}}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(bool must) error = %v", err)
 	}
@@ -147,11 +147,11 @@ func TestDeleteFiltersAllSearchPathsAndUpdatesStats(t *testing.T) {
 		t.Fatalf("unexpected bool fast results after delete: %+v", boolFastRes.Results)
 	}
 
-	wandRes, err := svc.Search(ctx, &BooleanQuery{Clauses: []BoolClause{
+	wandRes, err := svc.SearchQuery(ctx, &BooleanQuery{Clauses: []BoolClause{
 		ShouldClause(TermQuery{Term: "alpha"}),
 		ShouldClause(TermQuery{Term: "beta"}),
 		ShouldClause(TermQuery{Term: "gamma"}),
-	}}, 2)
+	}}, SearchOptions{MaxResults: 2})
 	if err != nil {
 		t.Fatalf("Search(WAND) error = %v", err)
 	}
@@ -180,17 +180,17 @@ func TestUpdateDocumentDoesNotLeaveStaleContent(t *testing.T) {
 		t.Fatalf("Update(doc-a) error = %v", err)
 	}
 
-	oldRes, err := svc.SearchDocuments(ctx, "oldterm", 10)
+	oldRes, err := svc.SearchText(ctx, "oldterm", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(oldterm) error = %v", err)
+		t.Fatalf("SearchText(oldterm) error = %v", err)
 	}
 	if hasResultID(oldRes, "doc-a") {
 		t.Fatalf("stale content leaked after UpdateDocument: %+v", oldRes.Results)
 	}
 
-	newRes, err := svc.SearchDocuments(ctx, "newterm", 10)
+	newRes, err := svc.SearchText(ctx, "newterm", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(newterm) error = %v", err)
+		t.Fatalf("SearchText(newterm) error = %v", err)
 	}
 	if len(newRes.Results) != 1 || newRes.Results[0].ID != "doc-a" {
 		t.Fatalf("updated content not found after UpdateDocument: %+v", newRes.Results)
@@ -198,7 +198,7 @@ func TestUpdateDocumentDoesNotLeaveStaleContent(t *testing.T) {
 }
 
 func TestUpdateDocumentReplacesMultiFieldDocument(t *testing.T) {
-	factory := func(name string) (Index, error) { return newOrdAwareMemoryIndex(), nil }
+	factory := func(name string) (MutableIndex, error) { return newOrdAwareMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys)
 	ctx := context.Background()
 	if err := svc.Index(ctx, Document{ID: "doc-a", Fields: map[string]Field{
@@ -214,7 +214,7 @@ func TestUpdateDocumentReplacesMultiFieldDocument(t *testing.T) {
 		t.Fatalf("Update(doc-a) error = %v", err)
 	}
 
-	oldTitle, err := svc.Search(ctx, TermQuery{Field: "title", Term: "oldtitle"}, 10)
+	oldTitle, err := svc.SearchQuery(ctx, TermQuery{Field: "title", Term: "oldtitle"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(title:oldtitle) error = %v", err)
 	}
@@ -222,7 +222,7 @@ func TestUpdateDocumentReplacesMultiFieldDocument(t *testing.T) {
 		t.Fatalf("old title leaked after Update: %+v", oldTitle.Results)
 	}
 
-	newTitle, err := svc.Search(ctx, TermQuery{Field: "title", Term: "newtitle"}, 10)
+	newTitle, err := svc.SearchQuery(ctx, TermQuery{Field: "title", Term: "newtitle"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(title:newtitle) error = %v", err)
 	}
@@ -230,7 +230,7 @@ func TestUpdateDocumentReplacesMultiFieldDocument(t *testing.T) {
 		t.Fatalf("new title missing after Update: %+v", newTitle.Results)
 	}
 
-	oldBody, err := svc.Search(ctx, TermQuery{Field: "body", Term: "oldbody"}, 10)
+	oldBody, err := svc.SearchQuery(ctx, TermQuery{Field: "body", Term: "oldbody"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(body:oldbody) error = %v", err)
 	}

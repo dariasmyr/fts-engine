@@ -28,7 +28,7 @@ func (p *execPrefixPositionalMemoryIndex) SearchPrefix(prefix string) ([]Posting
 
 	out := make([]Posting, 0, len(merged))
 	for ord, count := range merged {
-		out = append(out, Posting{Ord: ord, Count: count, Seq: uint32(ord)})
+		out = append(out, Posting{Ord: ord, Count: count})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
 	return out, nil
@@ -36,7 +36,7 @@ func (p *execPrefixPositionalMemoryIndex) SearchPrefix(prefix string) ([]Posting
 
 func buildExecService(t *testing.T) *Service {
 	t.Helper()
-	factory := func(name string) (Index, error) { return newExecPrefixPositionalMemoryIndex(), nil }
+	factory := func(name string) (MutableIndex, error) { return newExecPrefixPositionalMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys)
 	ctx := context.Background()
 	seed := map[string]map[string]string{
@@ -60,7 +60,7 @@ func buildExecService(t *testing.T) *Service {
 func TestSearchAPITermQuery(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), TermQuery{Term: "james"}, 10)
+	res, err := svc.SearchQuery(context.Background(), TermQuery{Term: "james"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -72,7 +72,7 @@ func TestSearchAPITermQuery(t *testing.T) {
 func TestSearchAPIFieldScopedTerm(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), TermQuery{Field: "title", Term: "james"}, 10)
+	res, err := svc.SearchQuery(context.Background(), TermQuery{Field: "title", Term: "james"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -84,7 +84,7 @@ func TestSearchAPIFieldScopedTerm(t *testing.T) {
 func TestSearchAPIPhraseQuery(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), PhraseQuery{Phrase: "james doe"}, 10)
+	res, err := svc.SearchQuery(context.Background(), PhraseQuery{Phrase: "james doe"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -96,7 +96,7 @@ func TestSearchAPIPhraseQuery(t *testing.T) {
 func TestSearchAPIPrefixQuery(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), PrefixQuery{Field: "title", Prefix: "j"}, 10)
+	res, err := svc.SearchQuery(context.Background(), PrefixQuery{Field: "title", Prefix: "j"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestSearchAPIBooleanMustIntersects(t *testing.T) {
 		MustClause(TermQuery{Term: "australia"}),
 	}}
 
-	res, err := svc.Search(context.Background(), q, 10)
+	res, err := svc.SearchQuery(context.Background(), q, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -132,7 +132,7 @@ func TestSearchAPIBooleanMustNotExcludes(t *testing.T) {
 		MustNotClause(TermQuery{Term: "australia"}),
 	}}
 
-	res, err := svc.Search(context.Background(), q, 10)
+	res, err := svc.SearchQuery(context.Background(), q, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -148,7 +148,7 @@ func TestSearchAPIBooleanMustNotExcludes(t *testing.T) {
 func TestSearchAPINilQueryReturnsEmpty(t *testing.T) {
 	svc := buildExecService(t)
 
-	res, err := svc.Search(context.Background(), nil, 10)
+	res, err := svc.SearchQuery(context.Background(), nil, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -164,7 +164,7 @@ func TestSearchAPIParsedQuery(t *testing.T) {
 		t.Fatalf("ParseQuery() error = %v", err)
 	}
 
-	res, err := svc.Search(context.Background(), q, 10)
+	res, err := svc.SearchQuery(context.Background(), q, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -185,7 +185,7 @@ func TestSearchAPIParsedNestedQuery(t *testing.T) {
 		t.Fatalf("ParseQuery() error = %v", err)
 	}
 
-	res, err := svc.Search(context.Background(), q, 10)
+	res, err := svc.SearchQuery(context.Background(), q, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}

@@ -53,7 +53,7 @@ type CompactionStats struct {
 func New(index Index, keyGen KeyGenerator, opts ...*Option) *Service {
 	s := newService(keyGen, opts...)
 	s.singleField = true
-	s.indexFactory = func(name string) (Index, error) {
+	s.indexFactory = func(name string) (MutableIndex, error) {
 		return nil, fmt.Errorf("fts: field %q is not available (service was built with fts.New; use fts.NewMultiField to index arbitrary fields)", name)
 	}
 	if index != nil {
@@ -75,7 +75,7 @@ func NewMultiFieldFromIndexes(indexes map[string]Index, keyGen KeyGenerator, opt
 		s.indexes[name] = idx
 		s.setInitialFieldPipelineDescriptor(name)
 	}
-	s.indexFactory = func(name string) (Index, error) {
+	s.indexFactory = func(name string) (MutableIndex, error) {
 		return nil, fmt.Errorf("fts: field %q was not present in the restored snapshot", name)
 	}
 	return s
@@ -255,23 +255,12 @@ func (s *Service) Update(ctx context.Context, doc Document) error {
 	return nil
 }
 
-func (s *Service) SearchDocuments(ctx context.Context, query string, maxResults int) (*SearchResult, error) {
-	return s.searchQueryString(ctx, query, "", queryFieldScope{}, maxResults)
-}
-
-func (s *Service) SearchPlainText(ctx context.Context, query string, maxResults int) (*SearchResult, error) {
-	return s.searchPlainText(ctx, query, "", queryFieldScope{}, maxResults)
-}
-
-func (s *Service) SearchField(ctx context.Context, field string, query string, maxResults int) (*SearchResult, error) {
-	return s.searchQueryString(ctx, query, field, queryFieldScope{}, maxResults)
-}
-
-func (s *Service) SearchFields(ctx context.Context, fields []string, query string, maxResults int) (*SearchResult, error) {
-	return s.searchQueryString(ctx, query, "", newQueryFieldScope(fields), maxResults)
-}
-
-func (s *Service) searchQueryString(ctx context.Context, query string, defaultField string, scope queryFieldScope, maxResults int) (*SearchResult, error) {
+// SearchText parses and executes a query with a unified set of search options.
+func (s *Service) SearchText(ctx context.Context, query string, options SearchOptions) (*SearchResult, error) {
+	candidates, err := s.newCandidateSet(ctx, options.CandidateIDs)
+	if err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -284,59 +273,21 @@ func (s *Service) searchQueryString(ctx context.Context, query string, defaultFi
 	if err != nil {
 		return nil, err
 	}
-	parsed = bindDefaultField(parsed, defaultField)
+	parsed = bindDefaultField(parsed, options.DefaultField)
 	exec.observePreprocess(preStart)
 
-	res, err := s.searchResultForQuery(ctx, parsed, maxResults, scope)
+	res, err := s.searchResultForQuery(
+		ctx,
+		candidates,
+		parsed,
+		options.MaxResults,
+		optionalQueryFieldScope(options.Fields),
+	)
 	if err != nil {
 		return nil, err
 	}
 	exec.observeTotal(start)
 	return attachDiagnostics(ctx, res), nil
-}
-
-func (s *Service) searchPlainText(ctx context.Context, query string, defaultField string, scope queryFieldScope, maxResults int) (*SearchResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	ctx, exec := ensureDiagnosticsContext(ctx)
-
-	start := exec.startTimer()
-
-	preStart := exec.startTimer()
-	plain := bindDefaultField(TermQuery{Term: query}, defaultField)
-	exec.observePreprocess(preStart)
-
-	res, err := s.searchResultForQuery(ctx, plain, maxResults, scope)
-	if err != nil {
-		return nil, err
-	}
-	exec.observeTotal(start)
-	return attachDiagnostics(ctx, res), nil
-}
-
-func (s *Service) SearchPhrase(ctx context.Context, phrase string, maxResults int) (*SearchResult, error) {
-	return s.searchPhraseFieldsResult(ctx, s.fieldNames(), phrase, maxResults)
-}
-
-func (s *Service) SearchPhraseField(ctx context.Context, field string, phrase string, maxResults int) (*SearchResult, error) {
-	return s.SearchPhraseFields(ctx, []string{field}, phrase, maxResults)
-}
-
-func (s *Service) SearchPhraseFields(ctx context.Context, fields []string, phrase string, maxResults int) (*SearchResult, error) {
-	return s.searchPhraseFieldsResult(ctx, fields, phrase, maxResults)
-}
-
-func (s *Service) SearchPhraseNear(ctx context.Context, phrase string, distance int, maxResults int) (*SearchResult, error) {
-	return s.searchPhraseNearFieldsResult(ctx, s.fieldNames(), phrase, distance, maxResults)
-}
-
-func (s *Service) SearchPhraseNearField(ctx context.Context, field string, phrase string, distance int, maxResults int) (*SearchResult, error) {
-	return s.SearchPhraseNearFields(ctx, []string{field}, phrase, distance, maxResults)
-}
-
-func (s *Service) SearchPhraseNearFields(ctx context.Context, fields []string, phrase string, distance int, maxResults int) (*SearchResult, error) {
-	return s.searchPhraseNearFieldsResult(ctx, fields, phrase, distance, maxResults)
 }
 
 func (s *Service) SnapshotComponents() (Index, Filter) {

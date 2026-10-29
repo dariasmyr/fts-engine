@@ -9,7 +9,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 	"github.com/dariasmyr/fts-engine/v2/pkg/segmentbundle"
 	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 )
@@ -34,9 +34,9 @@ func run(out io.Writer) error {
 	}
 
 	index, _ := service.SnapshotComponents()
-	source, ok := index.(segment.Source)
+	source, ok := index.(posting.Exporter)
 	if !ok {
-		return fmt.Errorf("index does not implement segment.Source")
+		return fmt.Errorf("index does not implement posting.Exporter")
 	}
 	descriptors, err := service.PipelineDescriptors()
 	if err != nil {
@@ -65,7 +65,7 @@ func run(out io.Writer) error {
 		return err
 	}
 
-	result, err := restored.SearchDocuments(ctx, "bundle", 10)
+	result, err := restored.SearchText(ctx, "bundle", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		return err
 	}

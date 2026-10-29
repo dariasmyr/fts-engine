@@ -1,6 +1,6 @@
 //go:build !linux && !darwin && !freebsd
 
-package segment
+package ftse
 
 import "os"
 

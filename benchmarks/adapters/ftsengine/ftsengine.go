@@ -162,19 +162,19 @@ func (a *Adapter) Search(ctx context.Context, q harness.Query) ([]harness.Search
 func (a *Adapter) search(ctx context.Context, q harness.Query) (*fts.SearchResult, error) {
 	switch q.Kind {
 	case "", harness.QueryKindText:
-		return a.svc.SearchPlainText(ctx, q.Text, q.K)
+		return a.svc.SearchQuery(ctx, fts.TermQuery{Term: q.Text}, fts.SearchOptions{MaxResults: q.K})
 	case harness.QueryKindTerm:
-		return a.svc.Search(ctx, fts.TermQuery{Term: q.Text}, q.K)
+		return a.svc.SearchQuery(ctx, fts.TermQuery{Term: q.Text}, fts.SearchOptions{MaxResults: q.K})
 	case harness.QueryKindPhrase:
-		return a.svc.Search(ctx, fts.PhraseQuery{Phrase: q.Text}, q.K)
+		return a.svc.SearchQuery(ctx, fts.PhraseQuery{Phrase: q.Text}, fts.SearchOptions{MaxResults: q.K})
 	case harness.QueryKindPrefix:
-		return a.svc.Search(ctx, fts.PrefixQuery{Prefix: q.Text}, q.K)
+		return a.svc.SearchQuery(ctx, fts.PrefixQuery{Prefix: q.Text}, fts.SearchOptions{MaxResults: q.K})
 	case harness.QueryKindBoolean:
 		fq, err := buildFTSBooleanQuery(q.Boolean)
 		if err != nil {
 			return nil, err
 		}
-		return a.svc.Search(ctx, fq, q.K)
+		return a.svc.SearchQuery(ctx, fq, fts.SearchOptions{MaxResults: q.K})
 	default:
 		return nil, fmt.Errorf("unsupported harness query kind %q", q.Kind)
 	}
@@ -286,7 +286,7 @@ func (a *Adapter) saveSegment() error {
 	if err := os.MkdirAll(segmentDir, 0o755); err != nil {
 		return fmt.Errorf("create segment dir: %w", err)
 	}
-	if err := ftspersist.SaveSegment(ftspersist.SegmentPaths{Dir: segmentDir}, a.svc, filterCodecName(a.cfg.Filter), ftspersist.SaveOptions{Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(context.Background(), ftspersist.SegmentPaths{Dir: segmentDir}, a.svc, filterCodecName(a.cfg.Filter), ftspersist.SaveOptions{Registry: registry}); err != nil {
 		return fmt.Errorf("save segment: %w", err)
 	}
 	size, err := pathSize(segmentDir)

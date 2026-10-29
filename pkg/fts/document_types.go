@@ -1,14 +1,12 @@
 package fts
 
+import "github.com/dariasmyr/fts-engine/v2/pkg/posting"
+
 type DocID string
 
-type DocOrd uint32
+type DocOrd = posting.Ord
 
-type Posting struct {
-	Ord   DocOrd
-	Count uint32
-	Seq   uint32
-}
+type Posting = posting.Posting
 
 type Result struct {
 	ID            DocID
@@ -23,6 +21,18 @@ type SearchResult struct {
 	Diagnostics       *QueryDiagnostics
 }
 
+// SearchOptions configures typed and text searches. Nil CandidateIDs means
+// unrestricted search; a non-nil empty slice matches no documents. Unknown,
+// duplicate, and deleted IDs are ignored. DefaultField applies to unqualified
+// clauses parsed by SearchText. A non-nil Fields slice restricts typed and text
+// queries to the listed fields; an empty slice matches no fields.
+type SearchOptions struct {
+	MaxResults   int
+	CandidateIDs []DocID
+	DefaultField string
+	Fields       []string
+}
+
 const DefaultField = "_default"
 
 type Document struct {
@@ -34,8 +44,4 @@ type Field struct {
 	Value string
 }
 
-type PositionalPosting struct {
-	Ord DocOrd
-	// Positions may share backing storage with the index and must be treated as read-only.
-	Positions []uint32
-}
+type PositionalPosting = posting.PositionalPosting

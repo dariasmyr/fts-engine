@@ -15,7 +15,7 @@ type termOccurrence struct {
 	occurrence int
 }
 
-func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldScope) (map[DocOrd]docAccum, error) {
+func (s *Service) execTerm(ctx context.Context, candidates *candidateSet, q TermQuery, scope queryFieldScope) (map[DocOrd]docAccum, error) {
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.setStrategy(strategyTerm)
 	}
@@ -32,7 +32,7 @@ func (s *Service) execTerm(ctx context.Context, q TermQuery, scope queryFieldSco
 		exec.addTokens(processedTokenCount(groups))
 		exec.addFields(len(fields))
 	}
-	return s.evalProcessedTerms(ctx, mergeProcessedTerms(groups))
+	return s.evalProcessedTerms(ctx, candidates, mergeProcessedTerms(groups))
 }
 
 func mergeProcessedTerms(groups []processedFieldGroup) []processedTermGroup {
@@ -55,11 +55,11 @@ func mergeProcessedTerms(groups []processedFieldGroup) []processedTermGroup {
 	return merged
 }
 
-func (s *Service) evalProcessedTerms(ctx context.Context, terms []processedTermGroup) (map[DocOrd]docAccum, error) {
-	return s.evalProcessedTermsType(ctx, terms, QueryTypeTerm)
+func (s *Service) evalProcessedTerms(ctx context.Context, candidates *candidateSet, terms []processedTermGroup) (map[DocOrd]docAccum, error) {
+	return s.evalProcessedTermsType(ctx, candidates, terms, QueryTypeTerm)
 }
 
-func (s *Service) evalProcessedTermsType(ctx context.Context, terms []processedTermGroup, queryType QueryType) (map[DocOrd]docAccum, error) {
+func (s *Service) evalProcessedTermsType(ctx context.Context, candidates *candidateSet, terms []processedTermGroup, queryType QueryType) (map[DocOrd]docAccum, error) {
 	plan := make([]tokenGroup, 0, len(terms))
 	totalCap := 0
 	for _, processed := range terms {
@@ -74,7 +74,7 @@ func (s *Service) evalProcessedTermsType(ctx context.Context, terms []processedT
 			exec.addKeys(len(keys))
 		}
 
-		expansions, groupTotalDocs, err := s.collectTermFieldExpansions(ctx, processed.fields, processed.term, keys)
+		expansions, groupTotalDocs, err := s.collectTermFieldExpansions(ctx, candidates, processed.fields, processed.term, keys)
 		if err != nil {
 			return nil, err
 		}

@@ -91,9 +91,9 @@ func (s *serviceAdapter) HighlightQueryString(query string, text string) string 
 	return strings.Join(out, "\n")
 }
 
-func (s *serviceAdapter) SearchPlainText(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
+func (s *serviceAdapter) SearchTerm(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
 	ctx = pkgfts.WithDiagnostics(ctx)
-	result, err := s.service.SearchPlainText(ctx, query, maxResults)
+	result, err := s.service.SearchQuery(ctx, pkgfts.TermQuery{Term: query}, pkgfts.SearchOptions{MaxResults: maxResults})
 	if s.searchStats != nil {
 		s.searchStats.ObserveResult(query, result, err)
 	}
@@ -108,9 +108,9 @@ func (s *serviceAdapter) SearchPlainText(ctx context.Context, query string, maxR
 	}, nil
 }
 
-func (s *serviceAdapter) SearchQueryString(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
+func (s *serviceAdapter) SearchText(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
 	ctx = pkgfts.WithDiagnostics(ctx)
-	result, err := s.service.SearchDocuments(ctx, query, maxResults)
+	result, err := s.service.SearchText(ctx, query, pkgfts.SearchOptions{MaxResults: maxResults})
 	if s.searchStats != nil {
 		s.searchStats.ObserveResult(query, result, err)
 	}

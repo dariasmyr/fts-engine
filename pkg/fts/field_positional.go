@@ -7,16 +7,21 @@ import (
 )
 
 type positionalFieldMatchResult struct {
-	field        string
-	matchesByDoc map[DocOrd]uint32
-	err          error
+	field             string
+	matchesByDoc      map[DocOrd]uint32
+	documentFrequency uint32
+	err               error
 }
 
 func (s *Service) collectPositionalFieldMatches(
 	ctx context.Context,
+	candidates *candidateSet,
 	fields []string,
 	searchInField func(PositionalIndex) (map[DocOrd]uint32, error),
 ) ([]positionalFieldMatchResult, error) {
+	if candidates.empty() {
+		return []positionalFieldMatchResult{}, nil
+	}
 	resultsByField := make([]positionalFieldMatchResult, 0, len(fields))
 	if len(fields) <= 1 {
 		for _, field := range fields {
@@ -32,10 +37,16 @@ func (s *Service) collectPositionalFieldMatches(
 			if err != nil {
 				return nil, err
 			}
+			df := uint32(len(matchesByDoc))
+			filterCandidateMap(candidates, matchesByDoc)
 			if len(matchesByDoc) == 0 {
 				continue
 			}
-			resultsByField = append(resultsByField, positionalFieldMatchResult{field: field, matchesByDoc: matchesByDoc})
+			resultsByField = append(resultsByField, positionalFieldMatchResult{
+				field:             field,
+				matchesByDoc:      matchesByDoc,
+				documentFrequency: df,
+			})
 		}
 		return resultsByField, nil
 	}
@@ -65,10 +76,16 @@ func (s *Service) collectPositionalFieldMatches(
 				results <- positionalFieldMatchResult{err: err}
 				return
 			}
+			df := uint32(len(matchesByDoc))
+			filterCandidateMap(candidates, matchesByDoc)
 			if len(matchesByDoc) == 0 {
 				return
 			}
-			results <- positionalFieldMatchResult{field: fieldName, matchesByDoc: matchesByDoc}
+			results <- positionalFieldMatchResult{
+				field:             fieldName,
+				matchesByDoc:      matchesByDoc,
+				documentFrequency: df,
+			}
 		})
 	}
 
@@ -337,8 +354,8 @@ outer:
 		for i := 1; i < len(positions); i++ {
 			pos := positions[i]
 			j := ptrs[i]
-			minPos := prev + 1
-			for j < len(pos) && pos[j] < minPos {
+			minPos := uint64(prev) + 1
+			for j < len(pos) && uint64(pos[j]) < minPos {
 				j++
 			}
 			ptrs[i] = j
@@ -347,8 +364,8 @@ outer:
 				return matches
 			}
 
-			maxPos := minPos + maxGap
-			if pos[j] > maxPos {
+			maxPos := minPos + uint64(maxGap)
+			if uint64(pos[j]) > maxPos {
 				continue outer
 			}
 

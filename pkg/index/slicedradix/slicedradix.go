@@ -4,11 +4,12 @@ package slicedradix
 import (
 	"encoding/gob"
 	"fmt"
-	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/segment"
 	"io"
 	"sort"
 	"sync"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
 type node struct {
@@ -22,6 +23,11 @@ type Index struct {
 	root  int
 	nodes []node
 	mu    sync.RWMutex
+}
+
+type exportTermRef struct {
+	key  string
+	node int
 }
 
 type snapshotNode struct {
@@ -203,7 +209,7 @@ func (t *Index) addDoc(nodeIdx int, ord fts.DocOrd, hasPos bool, pos uint32) {
 		return
 	}
 	if last < 0 || ord > n.docs[last].Ord {
-		n.docs = append(n.docs, fts.Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
+		n.docs = append(n.docs, fts.Posting{Ord: ord, Count: 1})
 		if hasPos {
 			t.growPositions(nodeIdx, len(n.docs))
 			n.positions[len(n.docs)-1] = []uint32{pos}
@@ -223,7 +229,7 @@ func (t *Index) addDoc(nodeIdx int, ord fts.DocOrd, hasPos bool, pos uint32) {
 
 	n.docs = append(n.docs, fts.Posting{})
 	copy(n.docs[i+1:], n.docs[i:])
-	n.docs[i] = fts.Posting{Ord: ord, Count: 1, Seq: uint32(ord)}
+	n.docs[i] = fts.Posting{Ord: ord, Count: 1}
 	if hasPos || i < len(n.positions) {
 		t.growPositions(nodeIdx, len(n.docs))
 		copy(n.positions[i+1:], n.positions[i:])
@@ -302,11 +308,24 @@ func (t *Index) SearchPositional(word string) ([]fts.PositionalPosting, error) {
 	}
 }
 
-func (t *Index) ExportSegmentTerms(yield func(segment.TermPostings) error) error {
+func (t *Index) ExportPostings(yield func(posting.TermData) error) error {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	return t.exportNodeTerms(t.root, "", yield)
+	terms := make([]exportTermRef, 0, len(t.nodes))
+	terms = t.collectExportTermRefs(t.root, "", terms)
+	sort.Slice(terms, func(i, j int) bool { return terms[i].key < terms[j].key })
+	for _, ref := range terms {
+		node := &t.nodes[ref.node]
+		if err := yield(posting.TermData{
+			Term:      ref.key,
+			Postings:  []posting.Posting(node.docs),
+			Positions: node.positions,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (t *Index) next(current int, rest string) (int, string, bool, bool) {
@@ -333,43 +352,26 @@ func (n *node) isTerminal() bool {
 	return len(n.docs) > 0
 }
 
-func (t *Index) exportNodeTerms(current int, prefix string, yield func(segment.TermPostings) error) error {
-	n := t.nodes[current]
+func (t *Index) collectExportTermRefs(
+	current int,
+	prefix string,
+	refs []exportTermRef,
+) []exportTermRef {
+	n := &t.nodes[current]
 	term := prefix + n.prefix
 	if n.isTerminal() {
-		postings, positions := cloneDocsAndPositions(n.docs, n.positions)
-		if err := yield(segment.TermPostings{
-			Term:      term,
-			Postings:  postings,
-			Positions: positions,
-		}); err != nil {
-			return err
-		}
+		refs = append(refs, exportTermRef{key: term, node: current})
 	}
 	for _, child := range n.children {
-		if err := t.exportNodeTerms(child, term, yield); err != nil {
-			return err
-		}
+		refs = t.collectExportTermRefs(child, term, refs)
 	}
-	return nil
+	return refs
 }
 
-func cloneDocsAndPositions(docs []fts.Posting, positions [][]uint32) ([]fts.Posting, [][]uint32) {
-	postings := append([]fts.Posting(nil), docs...)
-	if len(positions) == 0 {
-		return postings, nil
-	}
-	cloned := make([][]uint32, len(positions))
-	for i := range positions {
-		cloned[i] = append([]uint32(nil), positions[i]...)
-	}
-	return postings, cloned
-}
-
-func addMergedDoc(merged map[fts.DocOrd]fts.Posting, ord fts.DocOrd, count, seq uint32) {
+func addMergedDoc(merged map[fts.DocOrd]fts.Posting, ord fts.DocOrd, count uint32) {
 	ref, ok := merged[ord]
 	if !ok {
-		merged[ord] = fts.Posting{Ord: ord, Count: count, Seq: seq}
+		merged[ord] = fts.Posting{Ord: ord, Count: count}
 		return
 	}
 	ref.Count += count
@@ -381,7 +383,7 @@ func mergedDocsSlice(merged map[fts.DocOrd]fts.Posting) []fts.Posting {
 	for _, doc := range merged {
 		out = append(out, doc)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
 	return out
 }
 
@@ -409,7 +411,7 @@ func (t *Index) collectPrefixDocs(current int, prefix string, merged map[fts.Doc
 func (t *Index) collectSubtreeDocs(current int, merged map[fts.DocOrd]fts.Posting) {
 	n := &t.nodes[current]
 	for _, doc := range n.docs {
-		addMergedDoc(merged, doc.Ord, doc.Count, doc.Seq)
+		addMergedDoc(merged, doc.Ord, doc.Count)
 	}
 	for _, child := range n.children {
 		t.collectSubtreeDocs(child, merged)
@@ -417,6 +419,8 @@ func (t *Index) collectSubtreeDocs(current int, merged map[fts.DocOrd]fts.Postin
 }
 
 var _ fts.PositionalIndex = (*Index)(nil)
+var _ fts.MutablePositionalIndex = (*Index)(nil)
 var _ fts.PrefixIndex = (*Index)(nil)
 var _ fts.Index = (*Index)(nil)
-var _ segment.Source = (*Index)(nil)
+var _ fts.MutableIndex = (*Index)(nil)
+var _ posting.Exporter = (*Index)(nil)

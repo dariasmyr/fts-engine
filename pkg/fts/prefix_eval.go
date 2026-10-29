@@ -2,7 +2,7 @@ package fts
 
 import "context"
 
-func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFieldScope) (map[DocOrd]docAccum, error) {
+func (s *Service) execPrefix(ctx context.Context, candidates *candidateSet, q PrefixQuery, scope queryFieldScope) (map[DocOrd]docAccum, error) {
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.setStrategy(strategyPrefix)
 	}
@@ -33,7 +33,7 @@ func (s *Service) execPrefix(ctx context.Context, q PrefixQuery, scope queryFiel
 				continue
 			}
 			seenPrefixes[prefix] = struct{}{}
-			groupExpansions, err := s.collectPrefixFieldDocs(ctx, group.fields, prefix)
+			groupExpansions, err := s.collectPrefixFieldDocs(ctx, candidates, group.fields, prefix)
 			if err != nil {
 				return nil, err
 			}

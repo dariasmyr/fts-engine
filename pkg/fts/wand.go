@@ -7,7 +7,7 @@ import (
 	"sort"
 )
 
-func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
+func (s *Service) tryExecBooleanOrWand(ctx context.Context, candidates *candidateSet, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
 	if exec := diagnosticsFromContext(ctx); exec != nil {
 		exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
 			b.WAND.TopK = candidateLimit
@@ -29,11 +29,21 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		}
 		return nil, false, nil
 	}
-
 	shouldTerms, mustNots, ok, _ := parseFastOrClauses(q)
 	if !ok || len(shouldTerms) == 0 {
 		if exec := diagnosticsFromContext(ctx); exec != nil {
 			reason := "wand_not_or_terms_only"
+			exec.setSkipReasonIfEmpty(reason)
+			exec.recordFastPathSkip(reason)
+			exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
+				b.WAND.SkipReason = reason
+			})
+		}
+		return nil, false, nil
+	}
+	if !supportsWANDUpperBound(s.scorer) {
+		if exec := diagnosticsFromContext(ctx); exec != nil {
+			const reason = "wand_unsupported_scorer"
 			exec.setSkipReasonIfEmpty(reason)
 			exec.recordFastPathSkip(reason)
 			exec.updateBooleanDiagnostics(func(b *BooleanDiagnostics) {
@@ -48,7 +58,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		})
 	}
 
-	exclude, err := s.buildExcludeSet(ctx, mustNots, scope)
+	exclude, err := s.buildExcludeSet(ctx, candidates, mustNots, scope)
 	if err != nil {
 		return nil, false, err
 	}
@@ -59,7 +69,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		group, err := s.collectTermPostings(ctx, term, scope)
+		group, err := s.collectTermPostings(ctx, candidates, term, scope)
 		if err != nil {
 			return nil, false, err
 		}
@@ -85,7 +95,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		}
 		return map[DocOrd]docAccum{}, true, nil
 	}
-	if !allSingleExpansionInSameField(plan) || !allClausesHaveStrictSeq(plan) {
+	if !allSingleExpansionInSameField(plan) || !allClausesHaveStrictOrd(plan) {
 		if exec := diagnosticsFromContext(ctx); exec != nil {
 			reason := "wand_multiple_expansions_or_fields"
 			if !allSingleExpansionInSameField(plan) {
@@ -136,7 +146,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 		}
 
 		sort.Slice(clauses, func(i, j int) bool {
-			return clauses[i].currentSeq() < clauses[j].currentSeq()
+			return clauses[i].currentOrd() < clauses[j].currentOrd()
 		})
 
 		pivot := -1
@@ -152,13 +162,13 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 			break
 		}
 
-		pivotSeq := clauses[pivot].currentSeq()
-		if clauses[0].currentSeq() == pivotSeq {
+		pivotOrd := clauses[pivot].currentOrd()
+		if clauses[0].currentOrd() == pivotOrd {
 			candidateDocs++
-			matchedDocOrd := clauses[0].currentDocOrd()
+			matchedDocOrd := clauses[0].currentOrd()
 			var accum docAccum
 			for _, c := range clauses {
-				if c.currentSeq() != pivotSeq {
+				if c.currentOrd() != pivotOrd {
 					continue
 				}
 				d := c.currentDoc()
@@ -183,7 +193,7 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 			}
 
 			for _, c := range clauses {
-				if c.currentSeq() == pivotSeq {
+				if c.currentOrd() == pivotOrd {
 					postingsConsidered++
 					c.cursor++
 				}
@@ -193,8 +203,8 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 
 		for i := 0; i <= pivot; i++ {
 			c := clauses[i]
-			if c.currentSeq() < pivotSeq {
-				for c.cursor < len(c.exp.docs) && c.exp.docs[c.cursor].Seq < pivotSeq {
+			if c.currentOrd() < pivotOrd {
+				for c.cursor < len(c.exp.docs) && c.exp.docs[c.cursor].Ord < pivotOrd {
 					postingsConsidered++
 					c.cursor++
 				}
@@ -218,16 +228,44 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, q *BooleanQuery, can
 	return out, true, nil
 }
 
+func supportsWANDUpperBound(scorer Scorer) bool {
+	switch scorer := scorer.(type) {
+	case *BM25Scorer:
+		return scorer != nil
+	case *TFIDFScorer:
+		return scorer != nil
+	case TFIDFScorer:
+		return true
+	case WeightedScorer:
+		return supportsWeightedWANDUpperBound(scorer)
+	case *WeightedScorer:
+		return scorer != nil && supportsWeightedWANDUpperBound(*scorer)
+	default:
+		return false
+	}
+}
+
+func supportsWeightedWANDUpperBound(scorer WeightedScorer) bool {
+	if !supportsWANDUpperBound(scorer.Base) || scorer.DefaultWeight < 0 || scorer.QueryTypeWeights.Term < 0 {
+		return false
+	}
+	for _, weight := range scorer.FieldWeights {
+		if weight < 0 {
+			return false
+		}
+	}
+	return true
+}
+
 type wandClause struct {
 	exp    *termExpansion
 	ub     float64
 	cursor int
 }
 
-func (c *wandClause) currentDoc() Posting   { return c.exp.docs[c.cursor] }
-func (c *wandClause) currentSeq() uint32    { return c.exp.docs[c.cursor].Seq }
-func (c *wandClause) currentDocOrd() DocOrd { return c.exp.docs[c.cursor].Ord }
-func (c *wandClause) exhausted() bool       { return c.cursor >= len(c.exp.docs) }
+func (c *wandClause) currentDoc() Posting { return c.exp.docs[c.cursor] }
+func (c *wandClause) currentOrd() DocOrd  { return c.exp.docs[c.cursor].Ord }
+func (c *wandClause) exhausted() bool     { return c.cursor >= len(c.exp.docs) }
 
 func compactWandClauses(cs []*wandClause) []*wandClause {
 	out := cs[:0]
@@ -258,11 +296,11 @@ func clauseUpperBound(exp *termExpansion, s *Service) float64 {
 	return s.scorer.Score(ts, ds, exp.fieldStats)
 }
 
-func allClausesHaveStrictSeq(plan []fastMust) bool {
+func allClausesHaveStrictOrd(plan []fastMust) bool {
 	for i := range plan {
 		docs := plan[i].expansions[0].docs
 		for j := 1; j < len(docs); j++ {
-			if docs[j-1].Seq >= docs[j].Seq {
+			if docs[j-1].Ord >= docs[j].Ord {
 				return false
 			}
 		}

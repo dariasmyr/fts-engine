@@ -38,7 +38,7 @@ func TestLoadSegmentDataRejectsInvalidPipelineMetadata(t *testing.T) {
 			}
 			manifest := segmentManifest{
 				Version:   test.version,
-				Fields:    []segmentFieldMeta{{FieldName: fts.DefaultField, FileName: "field.segment.fidx"}},
+				Fields:    []segmentFieldMeta{{FieldName: fts.DefaultField, FileName: "field.ftse.fidx"}},
 				Pipelines: test.pipelines,
 			}
 			if err := gob.NewEncoder(file).Encode(manifest); err != nil {

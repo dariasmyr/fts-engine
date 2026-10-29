@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
@@ -19,16 +20,35 @@ type SaveOptions struct {
 }
 
 type SnapshotPaths struct {
-	IndexPath  string
+	// IndexPath stores the complete atomic snapshot bundle.
+	IndexPath string
+	// FilterPath is read only for compatibility with legacy split snapshots.
+	// New snapshots embed the filter in IndexPath.
 	FilterPath string
 }
 
 // SnapshotLoadOptions controls snapshot codec resolution during load.
 type SnapshotLoadOptions struct {
 	Registry *fts.SnapshotRegistry
+	// MaxBytes limits the snapshot bundle read from IndexPath. Values <= 0 use
+	// the package default.
+	MaxBytes int64
 	// IndexFactory is required to restore an empty multi-field snapshot because
 	// the snapshot contains no field index from which to derive future indexes.
 	IndexFactory fts.IndexFactory
+}
+
+const (
+	snapshotBundleVersion   uint16 = 1
+	defaultMaxSnapshotBytes        = int64(2 << 30)
+)
+
+var snapshotBundleMagic = []byte{'F', 'T', 'S', 'P', 'B', '1', 0}
+
+type snapshotBundle struct {
+	Version       uint16
+	IndexPayload  []byte
+	FilterPayload []byte
 }
 
 type LoadedSnapshot struct {
@@ -56,6 +76,8 @@ type LoadedService struct {
 	FilterName      string
 }
 
+// SaveSnapshot atomically writes one self-contained snapshot bundle. The
+// service must not be mutated during the call; searches may continue.
 func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filterName string, opts SaveOptions) error {
 	if svc == nil {
 		return fmt.Errorf("ftspersist: save snapshot: nil service")
@@ -68,6 +90,9 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 	}
 	if opts.Registry == nil {
 		return fmt.Errorf("ftspersist: save snapshot: nil snapshot registry")
+	}
+	if paths.FilterPath != "" && samePath(paths.IndexPath, paths.FilterPath) {
+		return fmt.Errorf("ftspersist: save snapshot: index and filter paths must differ")
 	}
 	keyGenerator, ok := svc.KeyGeneratorDescriptor()
 	if !ok {
@@ -82,15 +107,14 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 	stats := svc.SnapshotCollectionStats()
 	registry := svc.SnapshotRegistry()
 	tombstones := svc.SnapshotTombstones()
+	var indexPayload bytes.Buffer
 	if svc.IsMultiField() {
 		fieldCodecs := make(map[string]string, len(fields))
 		for fieldName := range fields {
 			fieldCodecs[fieldName] = indexName
 		}
-		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
-			return opts.Registry.SaveMultiIndexSnapshotWithState(w, fieldCodecs, fields, stats, registry, tombstones, pipelines, &keyGenerator)
-		}); err != nil {
-			return fmt.Errorf("ftspersist: save snapshot: %w", err)
+		if err := opts.Registry.SaveMultiIndexSnapshotWithState(&indexPayload, fieldCodecs, fields, stats, registry, tombstones, pipelines, &keyGenerator); err != nil {
+			return fmt.Errorf("ftspersist: save snapshot index: %w", err)
 		}
 	} else {
 		index, _ := svc.SnapshotComponents()
@@ -103,28 +127,31 @@ func SaveSnapshot(paths SnapshotPaths, svc *fts.Service, indexName string, filte
 		if index == nil {
 			return fmt.Errorf("ftspersist: save snapshot: nil index")
 		}
-		if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
-			return opts.Registry.SaveIndexSnapshotWithState(w, indexName, index, stats, registry, tombstones, pipelines, &keyGenerator)
-		}); err != nil {
-			return fmt.Errorf("ftspersist: save snapshot: %w", err)
+		if err := opts.Registry.SaveIndexSnapshotWithState(&indexPayload, indexName, index, stats, registry, tombstones, pipelines, &keyGenerator); err != nil {
+			return fmt.Errorf("ftspersist: save snapshot index: %w", err)
 		}
 	}
 
+	var filterPayload bytes.Buffer
 	if searchFilter != nil && filterName != "" {
-		if paths.FilterPath == "" {
-			return fmt.Errorf("ftspersist: save snapshot: empty filter path")
-		}
-		if err := saveAtomicWithOptions(paths.FilterPath, opts, func(w io.Writer) error {
-			return opts.Registry.SaveFilterSnapshot(w, filterName, searchFilter)
-		}); err != nil {
+		if err := opts.Registry.SaveFilterSnapshot(&filterPayload, filterName, searchFilter); err != nil {
 			return fmt.Errorf("ftspersist: save snapshot filter: %w", err)
 		}
-	} else if paths.FilterPath != "" {
-		if err := os.Remove(paths.FilterPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("ftspersist: remove stale filter snapshot: %w", err)
-		}
 	}
 
+	bundle := snapshotBundle{
+		Version:       snapshotBundleVersion,
+		IndexPayload:  indexPayload.Bytes(),
+		FilterPayload: filterPayload.Bytes(),
+	}
+	if err := saveAtomicWithOptions(paths.IndexPath, opts, func(w io.Writer) error {
+		if _, err := w.Write(snapshotBundleMagic); err != nil {
+			return err
+		}
+		return gob.NewEncoder(w).Encode(bundle)
+	}); err != nil {
+		return fmt.Errorf("ftspersist: save snapshot bundle: %w", err)
+	}
 	return nil
 }
 
@@ -136,7 +163,7 @@ func LoadSnapshotData(paths SnapshotPaths, opts SnapshotLoadOptions) (*LoadedSna
 		return nil, fmt.Errorf("ftspersist: load snapshot: nil snapshot registry")
 	}
 
-	indexPayload, err := os.ReadFile(paths.IndexPath)
+	indexPayload, filterPayload, isBundle, err := loadSnapshotPayload(paths.IndexPath, opts.MaxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("ftspersist: load snapshot index %q: %w", paths.IndexPath, err)
 	}
@@ -165,7 +192,7 @@ func LoadSnapshotData(paths SnapshotPaths, opts SnapshotLoadOptions) (*LoadedSna
 		}
 	}
 
-	loaded := &LoadedSnapshot{IndexFactory: opts.IndexFactory, Close: func() error { return nil }}
+	loaded := &LoadedSnapshot{IndexFactory: opts.IndexFactory, Close: onceClose(nil)}
 	switch kind {
 	case "multi":
 		if header.IndexName != "" {
@@ -208,23 +235,96 @@ func LoadSnapshotData(paths SnapshotPaths, opts SnapshotLoadOptions) (*LoadedSna
 		return nil, fmt.Errorf("ftspersist: load snapshot: unsupported snapshot kind %q", kind)
 	}
 
-	if paths.FilterPath != "" {
+	if len(filterPayload) > 0 {
+		loadedFilter, err := opts.Registry.LoadFilterSnapshot(bytes.NewReader(filterPayload))
+		if err != nil {
+			return nil, fmt.Errorf("ftspersist: decode bundled snapshot filter: %w", err)
+		}
+		loaded.FilterName = loadedFilter.FilterName
+		loaded.Filter = loadedFilter.Filter
+	} else if !isBundle && paths.FilterPath != "" {
 		filterFile, err := os.Open(paths.FilterPath)
 		if err != nil {
 			return nil, fmt.Errorf("ftspersist: load snapshot filter %q: %w", paths.FilterPath, err)
 		}
 		loadedFilter, loadErr := opts.Registry.LoadFilterSnapshot(filterFile)
 		closeErr := filterFile.Close()
-		if loadErr != nil {
-			return nil, fmt.Errorf("ftspersist: decode snapshot filter %q: %w", paths.FilterPath, loadErr)
-		}
-		if closeErr != nil {
-			return nil, fmt.Errorf("ftspersist: close snapshot filter %q: %w", paths.FilterPath, closeErr)
+		if loadErr != nil || closeErr != nil {
+			return nil, errors.Join(
+				wrapError(loadErr, "ftspersist: decode snapshot filter %q", paths.FilterPath),
+				wrapError(closeErr, "ftspersist: close snapshot filter %q", paths.FilterPath),
+			)
 		}
 		loaded.FilterName = loadedFilter.FilterName
 		loaded.Filter = loadedFilter.Filter
 	}
 	return loaded, nil
+}
+
+func samePath(left, right string) bool {
+	leftInfo, leftStatErr := os.Stat(left)
+	rightInfo, rightStatErr := os.Stat(right)
+	if leftStatErr == nil && rightStatErr == nil && os.SameFile(leftInfo, rightInfo) {
+		return true
+	}
+	leftPath, leftErr := filepath.Abs(left)
+	rightPath, rightErr := filepath.Abs(right)
+	if leftErr != nil || rightErr != nil {
+		return filepath.Clean(left) == filepath.Clean(right)
+	}
+	return filepath.Clean(leftPath) == filepath.Clean(rightPath)
+}
+
+func loadSnapshotPayload(path string, configuredMax int64) ([]byte, []byte, bool, error) {
+	maxBytes := configuredMax
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxSnapshotBytes
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if info.Size() > maxBytes {
+		return nil, nil, false, fmt.Errorf("file size %d exceeds limit %d", info.Size(), maxBytes)
+	}
+
+	magic := make([]byte, len(snapshotBundleMagic))
+	if _, err := io.ReadFull(file, magic); err != nil {
+		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, nil, false, err
+		}
+		if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+			return nil, nil, false, seekErr
+		}
+		payload, readErr := io.ReadAll(io.LimitReader(file, maxBytes+1))
+		return payload, nil, false, readErr
+	}
+	if bytes.Equal(magic, snapshotBundleMagic) {
+		var bundle snapshotBundle
+		if err := gob.NewDecoder(io.LimitReader(file, maxBytes-int64(len(magic)))).Decode(&bundle); err != nil {
+			return nil, nil, false, fmt.Errorf("decode snapshot bundle: %w", err)
+		}
+		if bundle.Version != snapshotBundleVersion {
+			return nil, nil, false, fmt.Errorf("unsupported snapshot bundle version %d", bundle.Version)
+		}
+		return bundle.IndexPayload, bundle.FilterPayload, true, nil
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, nil, false, err
+	}
+	payload, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if int64(len(payload)) > maxBytes {
+		return nil, nil, false, fmt.Errorf("file exceeds limit %d", maxBytes)
+	}
+	return payload, nil, false, nil
 }
 
 func RestoreSnapshotService(snapshot *LoadedSnapshot, keyGen fts.KeyGenerator, opts ...*fts.Option) (*fts.Service, error) {

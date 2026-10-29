@@ -28,7 +28,7 @@ func (m *snapshotIndex) Insert(key string, ord DocOrd) error {
 			return nil
 		}
 	}
-	m.data[key] = append(rows, Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
+	m.data[key] = append(rows, Posting{Ord: ord, Count: 1})
 	return nil
 }
 
@@ -136,9 +136,9 @@ func TestSaveLoadSplitSnapshotsRoundTrip(t *testing.T) {
 		WithFilter(loadedFilter.Filter),
 	)
 
-	res, err := reloaded.SearchDocuments(context.Background(), "alpha", 10)
+	res, err := reloaded.SearchText(context.Background(), "alpha", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 
 	if got, want := res.TotalResultsCount, 1; got != want {
@@ -191,9 +191,9 @@ func TestSaveLoadIndexSnapshotWithCollectionStatsRoundTrip(t *testing.T) {
 		WithTombstonesSnapshot(loaded.Tombstones),
 		WithCollectionStatsSnapshot(loaded.CollectionStats),
 	)
-	res, err := restored.SearchDocuments(ctx, "rosa barge", 10)
+	res, err := restored.SearchText(ctx, "rosa barge", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() after restore error = %v", err)
+		t.Fatalf("SearchText() after restore error = %v", err)
 	}
 	if len(res.Results) < 2 || res.Results[0].ID != "doc-a" {
 		t.Fatalf("expected doc-a to rank first after restore, got %+v", res.Results)
@@ -415,17 +415,17 @@ func TestSaveLoadIndexSnapshotPreservesRegistryAndTombstones(t *testing.T) {
 		WithCollectionStatsSnapshot(loaded.CollectionStats),
 	)
 
-	res, err := restored.SearchDocuments(ctx, "alpha", 10)
+	res, err := restored.SearchText(ctx, "alpha", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(alpha) after restore error = %v", err)
+		t.Fatalf("SearchText(alpha) after restore error = %v", err)
 	}
 	if len(res.Results) != 1 || res.Results[0].ID != "doc-b" {
 		t.Fatalf("expected only live doc after restore, got %+v", res.Results)
 	}
 
-	stale, err := restored.SearchDocuments(ctx, "stale", 10)
+	stale, err := restored.SearchText(ctx, "stale", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(stale) after restore error = %v", err)
+		t.Fatalf("SearchText(stale) after restore error = %v", err)
 	}
 	if len(stale.Results) != 0 {
 		t.Fatalf("deleted document leaked after restore: %+v", stale.Results)
@@ -442,7 +442,7 @@ func TestSaveLoadMultiIndexSnapshotRoundTrip(t *testing.T) {
 	}
 
 	svc := NewMultiField(
-		func(name string) (Index, error) { return newSnapshotIndex(), nil },
+		func(name string) (MutableIndex, error) { return newSnapshotIndex(), nil },
 		WordKeys,
 	)
 
@@ -492,7 +492,7 @@ func TestSaveLoadMultiIndexSnapshotRoundTrip(t *testing.T) {
 		WithTombstonesSnapshot(loaded.Tombstones),
 	)
 
-	titleRes, err := restored.Search(ctx, TermQuery{Field: "title", Term: "rosa"}, 10)
+	titleRes, err := restored.SearchQuery(ctx, TermQuery{Field: "title", Term: "rosa"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(title:rosa) error = %v", err)
 	}
@@ -500,7 +500,7 @@ func TestSaveLoadMultiIndexSnapshotRoundTrip(t *testing.T) {
 		t.Fatalf("restored title search = %+v, want doc-1", titleRes.Results)
 	}
 
-	bodyRes, err := restored.Search(ctx, TermQuery{Field: "body", Term: "french"}, 10)
+	bodyRes, err := restored.SearchQuery(ctx, TermQuery{Field: "body", Term: "french"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(body:french) error = %v", err)
 	}
@@ -519,7 +519,7 @@ func TestSaveLoadMultiIndexSnapshotWithCollectionStatsRoundTrip(t *testing.T) {
 	}
 
 	svc := NewMultiField(
-		func(name string) (Index, error) { return newSnapshotIndex(), nil },
+		func(name string) (MutableIndex, error) { return newSnapshotIndex(), nil },
 		WordKeys,
 		WithScorer(BM25()),
 	)
@@ -573,7 +573,7 @@ func TestSaveLoadMultiIndexSnapshotWithCollectionStatsRoundTrip(t *testing.T) {
 		WithTombstonesSnapshot(loaded.Tombstones),
 		WithCollectionStatsSnapshot(loaded.CollectionStats),
 	)
-	res, err := restored.Search(ctx, TermQuery{Field: "title", Term: "rosa barge"}, 10)
+	res, err := restored.SearchQuery(ctx, TermQuery{Field: "title", Term: "rosa barge"}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(title:rosa barge) error = %v", err)
 	}

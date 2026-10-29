@@ -35,10 +35,13 @@ func TestSaveLoadSegmentRoundTripSingleField(t *testing.T) {
 	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "segment roundtrip"}}}); err != nil {
 		t.Fatalf("Index(doc-1) error = %v", err)
 	}
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "segment candidate"}}}); err != nil {
+		t.Fatalf("Index(doc-2) error = %v", err)
+	}
 
 	dir := filepath.Join(t.TempDir(), "segment")
 	paths := ftspersist.SegmentPaths{Dir: dir}
-	if err := ftspersist.SaveSegment(paths, svc, "bloom", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(context.Background(), paths, svc, "bloom", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
 		t.Fatalf("SaveSegment() error = %v", err)
 	}
 
@@ -56,16 +59,26 @@ func TestSaveLoadSegmentRoundTripSingleField(t *testing.T) {
 		t.Fatalf("FilterName = %q, want bloom", loaded.FilterName)
 	}
 
-	res, err := loaded.Service.SearchDocuments(context.Background(), "segment", 10)
+	res, err := loaded.Service.SearchText(context.Background(), "segment", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(segment) error = %v", err)
+		t.Fatalf("SearchText(segment) error = %v", err)
 	}
-	if got, want := res.TotalResultsCount, 1; got != want {
+	if got, want := res.TotalResultsCount, 2; got != want {
 		t.Fatalf("TotalResultsCount = %d, want %d", got, want)
 	}
+	candidateResult, err := loaded.Service.SearchText(context.Background(), "segment", fts.SearchOptions{
+		CandidateIDs: []fts.DocID{"doc-2"},
+		MaxResults:   10,
+	})
+	if err != nil {
+		t.Fatalf("SearchText(segment, candidates) error = %v", err)
+	}
+	if len(candidateResult.Results) != 1 || candidateResult.Results[0].ID != "doc-2" {
+		t.Fatalf("candidate results = %+v, want only doc-2", candidateResult.Results)
+	}
 
-	if err := loaded.Service.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "should fail"}}}); err == nil {
-		t.Fatal("Index(doc-2) after segment restore error = nil, want read-only error")
+	if err := loaded.Service.Index(context.Background(), fts.Document{ID: "doc-3", Fields: map[string]fts.Field{fts.DefaultField: {Value: "should fail"}}}); err == nil {
+		t.Fatal("Index(doc-3) after segment restore error = nil, want read-only error")
 	}
 }
 
@@ -81,7 +94,7 @@ func TestSaveLoadSegmentRoundTripEmptyIndex(t *testing.T) {
 	svc := fts.New(idx, fts.WordKeys)
 
 	paths := ftspersist.SegmentPaths{Dir: filepath.Join(t.TempDir(), "empty-segment")}
-	if err := ftspersist.SaveSegment(paths, svc, "", ftspersist.SaveOptions{Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(context.Background(), paths, svc, "", ftspersist.SaveOptions{Registry: registry}); err != nil {
 		t.Fatalf("SaveSegment() error = %v", err)
 	}
 	loaded, err := ftspersist.LoadSegment(paths, fts.WordKeys, ftspersist.SegmentLoadOptions{Registry: registry})
@@ -94,9 +107,9 @@ func TestSaveLoadSegmentRoundTripEmptyIndex(t *testing.T) {
 		}
 	}()
 
-	res, err := loaded.Service.SearchDocuments(context.Background(), "missing", 10)
+	res, err := loaded.Service.SearchText(context.Background(), "missing", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 	if res.TotalResultsCount != 0 {
 		t.Fatalf("TotalResultsCount = %d, want 0", res.TotalResultsCount)
@@ -108,12 +121,12 @@ func TestSaveLoadSegmentRoundTripEmptyMultiField(t *testing.T) {
 	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
 		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
 	}
-	svc := fts.NewMultiField(func(string) (fts.Index, error) {
+	svc := fts.NewMultiField(func(string) (fts.MutableIndex, error) {
 		return slicedradix.New(), nil
 	}, fts.WordKeys)
 
 	paths := ftspersist.SegmentPaths{Dir: filepath.Join(t.TempDir(), "empty-multi-segment")}
-	if err := ftspersist.SaveSegment(paths, svc, "", ftspersist.SaveOptions{Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(context.Background(), paths, svc, "", ftspersist.SaveOptions{Registry: registry}); err != nil {
 		t.Fatalf("SaveSegment() error = %v", err)
 	}
 	loaded, err := ftspersist.LoadSegment(paths, fts.WordKeys, ftspersist.SegmentLoadOptions{Registry: registry})
@@ -134,7 +147,7 @@ func TestSaveLoadSegmentPreservesMultiFieldModeWithDefaultFieldOnly(t *testing.T
 	if err := ftsbuiltin.RegisterSnapshotCodecs(registry); err != nil {
 		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
 	}
-	svc := fts.NewMultiField(func(string) (fts.Index, error) {
+	svc := fts.NewMultiField(func(string) (fts.MutableIndex, error) {
 		return slicedradix.New(), nil
 	}, fts.WordKeys)
 	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
@@ -144,7 +157,7 @@ func TestSaveLoadSegmentPreservesMultiFieldModeWithDefaultFieldOnly(t *testing.T
 	}
 
 	paths := ftspersist.SegmentPaths{Dir: filepath.Join(t.TempDir(), "default-only-multi-segment")}
-	if err := ftspersist.SaveSegment(paths, svc, "", ftspersist.SaveOptions{Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(context.Background(), paths, svc, "", ftspersist.SaveOptions{Registry: registry}); err != nil {
 		t.Fatalf("SaveSegment() error = %v", err)
 	}
 	loaded, err := ftspersist.LoadSegment(paths, fts.WordKeys, ftspersist.SegmentLoadOptions{Registry: registry})
@@ -163,7 +176,7 @@ func TestSaveLoadSegmentRoundTripMultiField(t *testing.T) {
 		t.Fatalf("RegisterSnapshotCodecs() error = %v", err)
 	}
 
-	factory := func(name string) (fts.Index, error) { return slicedradix.New(), nil }
+	factory := func(name string) (fts.MutableIndex, error) { return slicedradix.New(), nil }
 	english := textproc.DefaultEnglishPipeline()
 	russian := textproc.DefaultRussianPipeline()
 	svc := fts.NewMultiField(factory, fts.WordKeys,
@@ -179,7 +192,7 @@ func TestSaveLoadSegmentRoundTripMultiField(t *testing.T) {
 	}
 
 	paths := ftspersist.SegmentPaths{Dir: filepath.Join(t.TempDir(), "segment")}
-	if err := ftspersist.SaveSegment(paths, svc, "", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(context.Background(), paths, svc, "", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
 		t.Fatalf("SaveSegment() error = %v", err)
 	}
 
@@ -193,7 +206,7 @@ func TestSaveLoadSegmentRoundTripMultiField(t *testing.T) {
 	}
 	defer restored.Close()
 
-	res, err := restored.Service.Search(context.Background(), fts.TermQuery{Field: "title", Term: "run"}, 10)
+	res, err := restored.Service.SearchQuery(context.Background(), fts.TermQuery{Field: "title", Term: "run"}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(title:run) error = %v", err)
 	}
@@ -201,7 +214,7 @@ func TestSaveLoadSegmentRoundTripMultiField(t *testing.T) {
 		t.Fatalf("title TotalResultsCount = %d, want %d", got, want)
 	}
 
-	res, err = restored.Service.Search(context.Background(), fts.TermQuery{Field: "body", Term: "машина"}, 10)
+	res, err = restored.Service.SearchQuery(context.Background(), fts.TermQuery{Field: "body", Term: "машина"}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search(body:машина) error = %v", err)
 	}
@@ -232,7 +245,7 @@ func TestSaveLoadSegmentRoundTripMmap(t *testing.T) {
 	}
 
 	paths := ftspersist.SegmentPaths{Dir: filepath.Join(t.TempDir(), "segment")}
-	if err := ftspersist.SaveSegment(paths, svc, "", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(context.Background(), paths, svc, "", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
 		t.Fatalf("SaveSegment() error = %v", err)
 	}
 
@@ -241,9 +254,9 @@ func TestSaveLoadSegmentRoundTripMmap(t *testing.T) {
 		t.Fatalf("LoadSegment() error = %v", err)
 	}
 
-	res, err := loaded.Service.SearchDocuments(context.Background(), "mmap", 10)
+	res, err := loaded.Service.SearchText(context.Background(), "mmap", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments(mmap) error = %v", err)
+		t.Fatalf("SearchText(mmap) error = %v", err)
 	}
 	if got, want := res.TotalResultsCount, 1; got != want {
 		t.Fatalf("TotalResultsCount = %d, want %d", got, want)
@@ -268,7 +281,7 @@ func TestSegmentPipelineFingerprintGate(t *testing.T) {
 	}
 
 	paths := ftspersist.SegmentPaths{Dir: filepath.Join(t.TempDir(), "segment")}
-	if err := ftspersist.SaveSegment(paths, svc, "", ftspersist.SaveOptions{Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(context.Background(), paths, svc, "", ftspersist.SaveOptions{Registry: registry}); err != nil {
 		t.Fatalf("SaveSegment() error = %v", err)
 	}
 	loaded, err := ftspersist.LoadSegment(paths, fts.WordKeys, ftspersist.SegmentLoadOptions{
