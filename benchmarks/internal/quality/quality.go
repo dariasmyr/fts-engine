@@ -1,8 +1,9 @@
 package quality
 
 import (
+	"cmp"
 	"math"
-	"sort"
+	"slices"
 
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
 )
@@ -97,7 +98,7 @@ func idealDCG(relevant map[string]int, k int) float64 {
 			grades = append(grades, grade)
 		}
 	}
-	sort.Sort(sort.Reverse(sort.IntSlice(grades)))
+	slices.SortFunc(grades, func(a, b int) int { return cmp.Compare(b, a) })
 	limit := min(k, len(grades))
 	var sum float64
 	for i, grade := range grades[:limit] {

@@ -8,17 +8,30 @@ import (
 
 type testFrequencyOpener struct {
 	postings []Posting
+	last     *testFrequencyIterator
 	opened   int
 	closed   int
 }
 
 type testFrequencyIterator struct {
 	sliceIterator
-	postings []Posting
-	owner    *testFrequencyOpener
+	postings     []Posting
+	owner        *testFrequencyOpener
+	nextCalls    int
+	advanceCalls int
 }
 
 func (i *testFrequencyIterator) Frequency() uint32 { return i.postings[i.pos].Count }
+
+func (i *testFrequencyIterator) Next() bool {
+	i.nextCalls++
+	return i.sliceIterator.Next()
+}
+
+func (i *testFrequencyIterator) Advance(target Ord) bool {
+	i.advanceCalls++
+	return i.sliceIterator.Advance(target)
+}
 
 func (i *testFrequencyIterator) Close() error {
 	i.owner.closed++
@@ -31,11 +44,13 @@ func (s *testFrequencyOpener) OpenFrequencyPostings(context.Context, string) (Fr
 	for i, posting := range s.postings {
 		ords[i] = posting.Ord
 	}
-	return &testFrequencyIterator{
+	cursor := &testFrequencyIterator{
 		sliceIterator: sliceIterator{ords: ords, pos: -1},
 		postings:      s.postings,
 		owner:         s,
-	}, uint64(len(ords)), nil
+	}
+	s.last = cursor
+	return cursor, uint64(len(ords)), nil
 }
 
 func TestFilterPostings(t *testing.T) {
@@ -72,6 +87,44 @@ func TestFilterPostings(t *testing.T) {
 			}
 			if opener.opened != 1 || opener.closed != 1 {
 				t.Fatalf("iterator opened %d and closed %d times, want 1 and 1", opener.opened, opener.closed)
+			}
+		})
+	}
+}
+
+func TestFilterPostingsAdaptsCandidateDriver(t *testing.T) {
+	postings := make([]Posting, 10)
+	for i := range postings {
+		postings[i] = Posting{Ord: Ord(i), Count: 1}
+	}
+	for _, tt := range []struct {
+		name           string
+		candidates     []Ord
+		wantSequential bool
+	}{
+		{name: "sparse_candidates_use_advance", candidates: []Ord{1, 8}},
+		{name: "equal_size_candidates_keep_advance", candidates: []Ord{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}},
+		{name: "dense_candidates_use_sequential_postings", candidates: []Ord{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, wantSequential: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opener := &testFrequencyOpener{postings: postings}
+			if _, err := FilterPostings(
+				context.Background(),
+				opener,
+				"term",
+				tt.candidates,
+				func(Posting) bool { return true },
+			); err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantSequential {
+				if opener.last.nextCalls == 0 || opener.last.advanceCalls != 0 {
+					t.Fatalf("posting cursor Next=%d Advance=%d, want sequential traversal", opener.last.nextCalls, opener.last.advanceCalls)
+				}
+				return
+			}
+			if opener.last.nextCalls != 0 || opener.last.advanceCalls == 0 {
+				t.Fatalf("posting cursor Next=%d Advance=%d, want candidate-driven traversal", opener.last.nextCalls, opener.last.advanceCalls)
 			}
 		})
 	}

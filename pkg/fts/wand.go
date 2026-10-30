@@ -1,10 +1,11 @@
 package fts
 
 import (
+	"cmp"
 	"container/heap"
 	"context"
 	"math"
-	"sort"
+	"slices"
 )
 
 func (s *Service) tryExecBooleanOrWand(ctx context.Context, candidates *candidateSet, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocOrd]docAccum, bool, error) {
@@ -145,8 +146,8 @@ func (s *Service) tryExecBooleanOrWand(ctx context.Context, candidates *candidat
 			break
 		}
 
-		sort.Slice(clauses, func(i, j int) bool {
-			return clauses[i].currentOrd() < clauses[j].currentOrd()
+		slices.SortFunc(clauses, func(a, b *wandClause) int {
+			return cmp.Compare(a.currentOrd(), b.currentOrd())
 		})
 
 		pivot := -1

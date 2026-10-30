@@ -11,7 +11,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/sealedstate"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
@@ -82,7 +82,7 @@ func saveBundle(w io.Writer, fields map[string]posting.Exporter, multiField bool
 	if opts.KeyGenerator == nil || opts.KeyGenerator.Fingerprint == "" {
 		return fmt.Errorf("segmentbundle: save bundle: key generator descriptor is required")
 	}
-	sort.Strings(fieldNames)
+	slices.Sort(fieldNames)
 
 	bundleFields := make([]bundleField, 0, len(fields))
 	for _, fieldName := range fieldNames {

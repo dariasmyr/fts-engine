@@ -3,7 +3,6 @@ package fts_test
 import (
 	"context"
 	"slices"
-	"sort"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
@@ -65,7 +64,7 @@ func TestSearchBooleanWandTopKMatchesFullResult(t *testing.T) {
 			}
 
 			wantIDs := []string{string(full.Results[0].ID), string(full.Results[1].ID)}
-			sort.Strings(wantIDs)
+			slices.Sort(wantIDs)
 			gotIDs := sortedResultIDs(top)
 			if !slices.Equal(gotIDs, wantIDs) {
 				t.Fatalf("top IDs = %v, want %v", gotIDs, wantIDs)
@@ -107,7 +106,7 @@ func buildBooleanService(t *testing.T, index fts.Index, scored bool) *fts.Servic
 	for id := range corpus {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	for _, id := range ids {
 		if err := svc.Index(ctx, fts.Document{ID: fts.DocID(id), Fields: map[string]fts.Field{fts.DefaultField: {Value: corpus[id]}}}); err != nil {
 			t.Fatalf("Index(%q) error = %v", id, err)
@@ -121,6 +120,6 @@ func sortedResultIDs(res *fts.SearchResult) []string {
 	for _, r := range res.Results {
 		out = append(out, string(r.ID))
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

@@ -1,8 +1,9 @@
 package fts
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"testing"
 )
 
@@ -29,17 +30,17 @@ func scoredResultsFromHits(hits map[DocOrd]docAccum, registry *DocRegistry) []Re
 			Score:         h.Score,
 		})
 	}
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Score != results[j].Score {
-			return results[i].Score > results[j].Score
+	slices.SortFunc(results, func(a, b Result) int {
+		if a.Score != b.Score {
+			return compareFloatDescending(a.Score, b.Score)
 		}
-		if results[i].UniqueMatches != results[j].UniqueMatches {
-			return results[i].UniqueMatches > results[j].UniqueMatches
+		if a.UniqueMatches != b.UniqueMatches {
+			return cmp.Compare(b.UniqueMatches, a.UniqueMatches)
 		}
-		if results[i].TotalMatches != results[j].TotalMatches {
-			return results[i].TotalMatches > results[j].TotalMatches
+		if a.TotalMatches != b.TotalMatches {
+			return cmp.Compare(b.TotalMatches, a.TotalMatches)
 		}
-		return results[i].ID < results[j].ID
+		return cmp.Compare(a.ID, b.ID)
 	})
 	return results
 }

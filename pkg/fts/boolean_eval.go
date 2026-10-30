@@ -1,8 +1,9 @@
 package fts
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 )
 
 func (s *Service) execBoolean(ctx context.Context, candidates *candidateSet, q *BooleanQuery, candidateLimit int, scope queryFieldScope) (map[DocOrd]docAccum, error) {
@@ -63,7 +64,9 @@ func (s *Service) execBoolean(ctx context.Context, candidates *candidateSet, q *
 
 	combined := make(map[DocOrd]docAccum)
 	if len(musts) > 0 {
-		sort.Slice(musts, func(i, j int) bool { return len(musts[i]) < len(musts[j]) })
+		slices.SortFunc(musts, func(a, b map[DocOrd]docAccum) int {
+			return cmp.Compare(len(a), len(b))
+		})
 		for id, baseHit := range musts[0] {
 			if _, skip := exclude[id]; skip {
 				continue

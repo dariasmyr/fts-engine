@@ -2,6 +2,7 @@
 package hamt
 
 import (
+	"cmp"
 	"encoding/gob"
 	"fmt"
 	"io"
@@ -252,7 +253,7 @@ func (t *Index) Search(key string) ([]fts.Posting, error) {
 	}
 
 	out := append([]fts.Posting(nil), docs...)
-	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
+	slices.SortFunc(out, func(a, b fts.Posting) int { return cmp.Compare(a.Ord, b.Ord) })
 	return out, nil
 }
 
@@ -416,7 +417,7 @@ func mergedDocsSlice(merged map[fts.DocOrd]fts.Posting) []fts.Posting {
 	for _, doc := range merged {
 		out = append(out, doc)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
+	slices.SortFunc(out, func(a, b fts.Posting) int { return cmp.Compare(a.Ord, b.Ord) })
 	return out
 }
 

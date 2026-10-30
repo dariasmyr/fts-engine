@@ -2,7 +2,7 @@ package cui
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -484,7 +484,7 @@ func (m model) sectionDiagnostics(width int) string {
 	for key := range m.diagnostics.Timings {
 		timingKeys = append(timingKeys, key)
 	}
-	sort.Strings(timingKeys)
+	slices.Sort(timingKeys)
 	for _, key := range timingKeys {
 		rows = append(rows, kvVal(key, timingValStyle.Render(m.diagnostics.Timings[key])))
 	}

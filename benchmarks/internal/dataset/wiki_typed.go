@@ -1,6 +1,7 @@
 package dataset
 
 import (
+	"cmp"
 	"compress/bzip2"
 	"compress/gzip"
 	"crypto/sha256"
@@ -12,6 +13,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -350,11 +352,11 @@ func buildCorpusStats(docs []harness.Document, cfg WikiTypedConfig) corpusStats 
 	for term, docs := range postings {
 		termFreqs = append(termFreqs, termStat{Term: term, DF: len(docs)})
 	}
-	sort.Slice(termFreqs, func(i, j int) bool {
-		if termFreqs[i].DF == termFreqs[j].DF {
-			return termFreqs[i].Term < termFreqs[j].Term
+	slices.SortFunc(termFreqs, func(a, b termStat) int {
+		if a.DF == b.DF {
+			return cmp.Compare(a.Term, b.Term)
 		}
-		return termFreqs[i].DF > termFreqs[j].DF
+		return cmp.Compare(b.DF, a.DF)
 	})
 
 	highTerms, lowTerms, rareTerms, universe := selectTermBuckets(termFreqs, cfg)
@@ -456,11 +458,11 @@ func buildPhraseQueries(rng *rand.Rand, stats corpusStats, cfg WikiTypedConfig) 
 	if len(phrases) == 0 {
 		return nil, fmt.Errorf("dataset: wiki-typed phrase pool is empty")
 	}
-	sort.Slice(phrases, func(i, j int) bool {
-		if phrases[i].DF == phrases[j].DF {
-			return phrases[i].Text < phrases[j].Text
+	slices.SortFunc(phrases, func(a, b phraseStat) int {
+		if a.DF == b.DF {
+			return cmp.Compare(a.Text, b.Text)
 		}
-		return phrases[i].DF > phrases[j].DF
+		return cmp.Compare(b.DF, a.DF)
 	})
 	if len(phrases) > cfg.LowPool {
 		phrases = phrases[:cfg.LowPool]
@@ -595,11 +597,11 @@ func buildPrefixStats(postings map[string][]int, cfg WikiTypedConfig) ([]prefixS
 		}
 		out = append(out, prefixStat{Prefix: prefix, ExpansionN: expansion})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].ExpansionN == out[j].ExpansionN {
-			return out[i].Prefix < out[j].Prefix
+	slices.SortFunc(out, func(a, b prefixStat) int {
+		if a.ExpansionN == b.ExpansionN {
+			return cmp.Compare(a.Prefix, b.Prefix)
 		}
-		return out[i].ExpansionN > out[j].ExpansionN
+		return cmp.Compare(b.ExpansionN, a.ExpansionN)
 	})
 	prefixTerms := make(map[string][]string, len(out))
 	for _, stat := range out {
@@ -608,7 +610,7 @@ func buildPrefixStats(postings map[string][]int, cfg WikiTypedConfig) ([]prefixS
 		for term := range termsSet {
 			terms = append(terms, term)
 		}
-		sort.Strings(terms)
+		slices.Sort(terms)
 		prefixTerms[stat.Prefix] = terms
 	}
 	return out, prefixTerms

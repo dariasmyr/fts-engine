@@ -2,9 +2,11 @@
 package slicedradix
 
 import (
+	"cmp"
 	"encoding/gob"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"sync"
 
@@ -314,7 +316,7 @@ func (t *Index) ExportPostings(yield func(posting.TermData) error) error {
 
 	terms := make([]exportTermRef, 0, len(t.nodes))
 	terms = t.collectExportTermRefs(t.root, "", terms)
-	sort.Slice(terms, func(i, j int) bool { return terms[i].key < terms[j].key })
+	slices.SortFunc(terms, func(a, b exportTermRef) int { return cmp.Compare(a.key, b.key) })
 	for _, ref := range terms {
 		node := &t.nodes[ref.node]
 		if err := yield(posting.TermData{
@@ -383,7 +385,7 @@ func mergedDocsSlice(merged map[fts.DocOrd]fts.Posting) []fts.Posting {
 	for _, doc := range merged {
 		out = append(out, doc)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
+	slices.SortFunc(out, func(a, b fts.Posting) int { return cmp.Compare(a.Ord, b.Ord) })
 	return out
 }
 
