@@ -53,25 +53,32 @@ func FilterPostingsWithIterator(
 	if opener == nil || yield == nil {
 		return 0, fmt.Errorf("posting: nil posting opener or callback")
 	}
-	postingCursor, count, err := opener.OpenFrequencyPostings(ctx, term)
+	postings, documentFrequency, err := opener.OpenFrequencyPostings(ctx, term)
 	if err != nil {
 		return 0, err
 	}
-	if postingCursor == nil {
+	if postings == nil {
 		return 0, fmt.Errorf("posting: nil posting iterator")
 	}
 	closeCandidates = false
-	return count, FilterPostingIterator(ctx, postingCursor, count, candidates, candidateCount, yield)
+	return documentFrequency, FilterPostingIterator(
+		ctx,
+		postings,
+		documentFrequency,
+		candidates,
+		candidateCount,
+		yield,
+	)
 }
 
 // FilterPostingIterator intersects an already-open frequency iterator with an
 // optional candidate iterator. The counts must be exact. It owns and closes
-// both iterators, allowing callers to use postingCount for result sizing before
-// traversal starts.
+// both iterators, allowing callers to use documentFrequency for result sizing
+// before traversal starts.
 func FilterPostingIterator(
 	ctx context.Context,
-	postingCursor FrequencyIterator,
-	postingCount uint64,
+	postings FrequencyIterator,
+	documentFrequency uint64,
 	candidates OrdinalIterator,
 	candidateCount uint64,
 	yield func(Posting) bool,
@@ -79,32 +86,36 @@ func FilterPostingIterator(
 	if candidates != nil {
 		defer func() { err = errors.Join(err, candidates.Close()) }()
 	}
-	if postingCursor != nil {
-		defer func() { err = errors.Join(err, postingCursor.Close()) }()
+	if postings != nil {
+		defer func() { err = errors.Join(err, postings.Close()) }()
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if postingCursor == nil || yield == nil {
+	if postings == nil || yield == nil {
 		return fmt.Errorf("posting: nil posting iterator or callback")
 	}
-	if postingCount == 0 {
-		return postingCursor.Err()
+	if documentFrequency == 0 {
+		return postings.Err()
 	}
 	if candidates != nil && candidateCount == 0 {
 		return candidates.Err()
 	}
 
-	if candidates == nil {
-		return yieldAllPostings(ctx, postingCursor, yield)
+	switch {
+	case candidates == nil:
+		// Unrestricted term query: every posting is a result, so stream the
+		// posting list sequentially with Next.
+		return yieldAllPostings(ctx, postings, yield)
+	case preferSequentialPostingTraversal(candidateCount, documentFrequency):
+		// Dense candidate filter: there are more candidates than postings, so
+		// scan postings with Next and use candidates only for membership checks.
+		return filterByIteratingPostings(ctx, postings, candidates, yield)
+	default:
+		// Sparse (or equal-size) candidate filter: scan candidates with Next and
+		// address the posting list directly with Advance.
+		return filterByIteratingCandidates(ctx, postings, candidates, yield)
 	}
-
-	// Drive the intersection with the smaller input. The other iterator uses
-	// Advance to skip directly to the current ordinal.
-	if candidateCount >= postingCount {
-		return filterByIteratingPostings(ctx, postingCursor, candidates, yield)
-	}
-	return filterByIteratingCandidates(ctx, postingCursor, candidates, yield)
 }
 
 func yieldAllPostings(
