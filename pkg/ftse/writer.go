@@ -2,8 +2,9 @@ package ftse
 
 import (
 	"bytes"
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
@@ -12,7 +13,7 @@ import (
 // postings within each term must be strictly ordered by ordinal.
 func Build(terms []posting.TermData) ([]byte, error) {
 	sorted := append([]posting.TermData(nil), terms...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Term < sorted[j].Term })
+	slices.SortFunc(sorted, func(a, b posting.TermData) int { return cmp.Compare(a.Term, b.Term) })
 	var out bytes.Buffer
 	if err := Write(context.Background(), &out, termSliceExporter(sorted), BuildOptions{}); err != nil {
 		return nil, err

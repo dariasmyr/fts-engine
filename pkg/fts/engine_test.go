@@ -1,9 +1,10 @@
 package fts
 
 import (
+	"cmp"
 	"context"
 	"errors"
-	"sort"
+	"slices"
 	"testing"
 )
 
@@ -44,7 +45,7 @@ func refsForIDs(reg *DocRegistry, specs ...namedPosting) []Posting {
 		ord := reg.GetOrAssign(spec.id)
 		out = append(out, Posting{Ord: ord, Count: spec.count})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
+	slices.SortFunc(out, func(a, b Posting) int { return cmp.Compare(a.Ord, b.Ord) })
 	return out
 }
 

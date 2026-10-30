@@ -108,12 +108,13 @@ func FilterPostingIterator(
 		// posting list sequentially with Next.
 		return yieldAllPostings(ctx, postings, yield)
 	case preferSequentialPostingTraversal(candidateCount, documentFrequency):
-		// Dense candidate filter: there are more candidates than postings, so
-		// scan postings with Next and use candidates only for membership checks.
+		// Dense candidate filter (candidateCount > DF): there are more candidates
+		// than postings, so scan postings with Next and use candidates only for
+		// membership checks.
 		return filterByIteratingPostings(ctx, postings, candidates, yield)
 	default:
-		// Sparse (or equal-size) candidate filter: scan candidates with Next and
-		// address the posting list directly with Advance.
+		// Sparse or equal-size candidate filter (candidateCount <= DF): scan
+		// candidates with Next and address the posting list directly with Advance.
 		return filterByIteratingCandidates(ctx, postings, candidates, yield)
 	}
 }

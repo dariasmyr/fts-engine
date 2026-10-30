@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/sealedstate"
@@ -163,7 +163,7 @@ func SaveSegment(ctx context.Context, paths SegmentPaths, svc *fts.Service, filt
 	for fieldName := range fields {
 		fieldNames = append(fieldNames, fieldName)
 	}
-	sort.Strings(fieldNames)
+	slices.Sort(fieldNames)
 	manifest := segmentManifest{
 		Version:         segmentManifestVersion,
 		MultiField:      multiField,

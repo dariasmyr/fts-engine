@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -177,7 +176,7 @@ func buildPropertyService(t *testing.T, index fts.Index, corpus map[fts.DocID][]
 	for id := range corpus {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 
 	ctx := context.Background()
 	for _, id := range ids {
@@ -199,7 +198,7 @@ func pickTwoPresentPropertyTerms(seed int64, corpus map[fts.DocID][]string, voca
 	for token := range seen {
 		present = append(present, token)
 	}
-	sort.Strings(present)
+	slices.Sort(present)
 	if len(present) < 2 {
 		return vocab[0], vocab[1]
 	}
@@ -242,6 +241,6 @@ func propertySortedKeys(m map[fts.DocID]bool) []string {
 	for id := range m {
 		out = append(out, string(id))
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

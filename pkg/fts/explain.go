@@ -1,9 +1,10 @@
 package fts
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"sync"
 )
 
@@ -108,20 +109,20 @@ func (e *explanationCollector) snapshot() []ScoreContribution {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	out := append([]ScoreContribution(nil), e.contributions...)
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Field != out[j].Field {
-			return out[i].Field < out[j].Field
+	slices.SortFunc(out, func(a, b ScoreContribution) int {
+		if a.Field != b.Field {
+			return cmp.Compare(a.Field, b.Field)
 		}
-		if out[i].QueryType != out[j].QueryType {
-			return out[i].QueryType < out[j].QueryType
+		if a.QueryType != b.QueryType {
+			return cmp.Compare(a.QueryType, b.QueryType)
 		}
-		if out[i].Term != out[j].Term {
-			return out[i].Term < out[j].Term
+		if a.Term != b.Term {
+			return cmp.Compare(a.Term, b.Term)
 		}
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
+		if a.Score != b.Score {
+			return compareFloatDescending(a.Score, b.Score)
 		}
-		return out[i].BaseScore > out[j].BaseScore
+		return compareFloatDescending(a.BaseScore, b.BaseScore)
 	})
 	return out
 }

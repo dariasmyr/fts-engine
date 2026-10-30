@@ -1,12 +1,13 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -38,7 +39,7 @@ func run(dir string, w io.Writer) error {
 	if len(files) == 0 {
 		return fmt.Errorf("aggregate: no JSON files found in %s (run ./benchmarks/scripts/run-suite.sh first or point to a directory with benchmark -out JSON files)", dir)
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 
 	groups := map[string]map[string][]metrics.Record{}
 	for _, path := range files {
@@ -149,7 +150,9 @@ func renderAxis(w io.Writer, title string, runs map[string][]metrics.Record) {
 	labels := sortedKeys(runs)
 	for _, label := range labels {
 		recs := append([]metrics.Record(nil), runs[label]...)
-		sort.Slice(recs, func(i, j int) bool { return recordLabel(recs[i]) < recordLabel(recs[j]) })
+		slices.SortFunc(recs, func(a, b metrics.Record) int {
+			return cmp.Compare(recordLabel(a), recordLabel(b))
+		})
 		for _, r := range recs {
 			recall, ndcg, mrr := "-", "-", "-"
 			if r.Quality != nil {
@@ -195,7 +198,7 @@ func sortedKeys[M ~map[string]V, V any](m M) []string {
 	for key := range m {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 
@@ -204,7 +207,7 @@ func formatRange(values []float64, decimals int) string {
 		return "-"
 	}
 	sorted := append([]float64(nil), values...)
-	sort.Float64s(sorted)
+	slices.Sort(sorted)
 	med := median(sorted)
 	lo := sorted[0]
 	hi := sorted[len(sorted)-1]

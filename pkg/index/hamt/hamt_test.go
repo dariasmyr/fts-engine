@@ -1,8 +1,9 @@
 package hamt
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
@@ -126,7 +127,7 @@ func TestIndexSearchPositional(t *testing.T) {
 		t.Fatalf("len(docs) = %d, want 2", len(docs))
 	}
 
-	sort.Slice(docs, func(i, j int) bool { return docs[i].Ord < docs[j].Ord })
+	slices.SortFunc(docs, func(a, b fts.PositionalPosting) int { return cmp.Compare(a.Ord, b.Ord) })
 	if docs[0].Ord != 0 {
 		t.Fatalf("docs[0].Ord = %d, want 0", docs[0].Ord)
 	}

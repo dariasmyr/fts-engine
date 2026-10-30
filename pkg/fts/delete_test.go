@@ -1,8 +1,9 @@
 package fts
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,7 @@ func (m *ordAwareMemoryIndex) InsertAt(key string, position uint32, ord DocOrd) 
 		m.positions[key] = make(map[DocOrd][]uint32)
 	}
 	ps := append(m.positions[key][ord], position)
-	sort.Slice(ps, func(i, j int) bool { return ps[i] < ps[j] })
+	slices.Sort(ps)
 	m.positions[key][ord] = ps
 	return nil
 }
@@ -45,7 +46,7 @@ func (m *ordAwareMemoryIndex) bumpCount(key string, ord DocOrd) {
 		}
 	}
 	m.postings[key] = append(entries, Posting{Ord: ord, Count: 1})
-	sort.Slice(m.postings[key], func(i, j int) bool { return m.postings[key][i].Ord < m.postings[key][j].Ord })
+	slices.SortFunc(m.postings[key], func(a, b Posting) int { return cmp.Compare(a.Ord, b.Ord) })
 }
 
 func (m *ordAwareMemoryIndex) Search(key string) ([]Posting, error) {
@@ -70,7 +71,7 @@ func (m *ordAwareMemoryIndex) SearchPrefix(prefix string) ([]Posting, error) {
 	for _, doc := range merged {
 		out = append(out, doc)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
+	slices.SortFunc(out, func(a, b Posting) int { return cmp.Compare(a.Ord, b.Ord) })
 	return out, nil
 }
 

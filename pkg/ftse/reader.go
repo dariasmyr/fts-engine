@@ -2,12 +2,14 @@ package ftse
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"math"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -498,7 +500,7 @@ func (r *Reader) SearchPrefix(prefix string) ([]posting.Posting, error) {
 	for ord, count := range aggregated {
 		out = append(out, posting.Posting{Ord: ord, Count: count})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
+	slices.SortFunc(out, func(a, b posting.Posting) int { return cmp.Compare(a.Ord, b.Ord) })
 	return out, nil
 }
 

@@ -1,10 +1,11 @@
 package fts
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
@@ -235,7 +236,9 @@ func (s *Service) tryExecBooleanAndFast(ctx context.Context, candidates *candida
 		return nil, false, err
 	}
 
-	sort.Slice(mustGroups, func(i, j int) bool { return mustGroups[i].totalDocs < mustGroups[j].totalDocs })
+	slices.SortFunc(mustGroups, func(a, b fastMust) int {
+		return cmp.Compare(a.totalDocs, b.totalDocs)
+	})
 	if allSingleExpansionInSameField(mustGroups) {
 		// Fast path: document ordinals are only comparable within one field index.
 		if exec := diagnosticsFromContext(ctx); exec != nil {

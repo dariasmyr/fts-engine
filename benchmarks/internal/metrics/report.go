@@ -1,11 +1,12 @@
 package metrics
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
 	"runtime"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
@@ -143,16 +144,16 @@ func WriteJSON(w io.Writer, recs []Record) error {
 
 func WriteTable(w io.Writer, recs []Record) error {
 	ordered := append([]Record(nil), recs...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		leftQuery, rightQuery := normalizedQueryClass(ordered[i]), normalizedQueryClass(ordered[j])
+	slices.SortStableFunc(ordered, func(a, b Record) int {
+		leftQuery, rightQuery := normalizedQueryClass(a), normalizedQueryClass(b)
 		leftRank, rightRank := queryClassRank(leftQuery), queryClassRank(rightQuery)
 		if leftRank != rightRank {
-			return leftRank < rightRank
+			return cmp.Compare(leftRank, rightRank)
 		}
 		if leftQuery != rightQuery {
-			return leftQuery < rightQuery
+			return cmp.Compare(leftQuery, rightQuery)
 		}
-		return ordered[i].Engine < ordered[j].Engine
+		return cmp.Compare(a.Engine, b.Engine)
 	})
 
 	if _, err := fmt.Fprintf(w, "%-8s  %-11s  %8s  %7s  %9s  %9s  %10s  %7s  %7s  %7s  %7s  %9s  %7s  %7s\n",
