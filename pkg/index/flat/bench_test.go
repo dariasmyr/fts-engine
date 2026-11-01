@@ -44,20 +44,39 @@ func benchmarkPositionalIndex(b *testing.B, terms, docs int) *Index {
 	return idx
 }
 
-func BenchmarkInsert(b *testing.B) {
-	idx := New()
-	for i := 0; b.Loop(); i++ {
-		if err := idx.Insert(fmt.Sprintf("word%06d", i), fts.DocOrd(i)); err != nil {
-			b.Fatalf("Insert() error = %v", err)
+func benchmarkBuildInput() []string {
+	const postingCount = 10_000
+	words := make([]string, postingCount)
+	for i := range words {
+		words[i] = fmt.Sprintf("word%04d", i%1_000)
+	}
+	return words
+}
+
+func BenchmarkBuild(b *testing.B) {
+	words := benchmarkBuildInput()
+	b.ReportAllocs()
+	b.ReportMetric(float64(len(words)), "postings/op")
+	for b.Loop() {
+		idx := New()
+		for i, word := range words {
+			if err := idx.Insert(word, fts.DocOrd(i/20)); err != nil {
+				b.Fatalf("Insert() error = %v", err)
+			}
 		}
 	}
 }
 
-func BenchmarkInsertAt(b *testing.B) {
-	idx := New()
-	for i := 0; b.Loop(); i++ {
-		if err := idx.InsertAt(fmt.Sprintf("word%06d", i), uint32(i%20), fts.DocOrd(i)); err != nil {
-			b.Fatalf("InsertAt() error = %v", err)
+func BenchmarkBuildPositional(b *testing.B) {
+	words := benchmarkBuildInput()
+	b.ReportAllocs()
+	b.ReportMetric(float64(len(words)), "postings/op")
+	for b.Loop() {
+		idx := New()
+		for i, word := range words {
+			if err := idx.InsertAt(word, uint32(i%20), fts.DocOrd(i/20)); err != nil {
+				b.Fatalf("InsertAt() error = %v", err)
+			}
 		}
 	}
 }
@@ -83,14 +102,28 @@ func BenchmarkSearchPositional(b *testing.B) {
 }
 
 func BenchmarkSearchPrefix(b *testing.B) {
-	idx := benchmarkIndex(b, 500, 500)
-	if _, err := idx.SearchPrefix("word00"); err != nil {
-		b.Fatalf("SearchPrefix() warmup error = %v", err)
-	}
-	b.ResetTimer()
-	for b.Loop() {
-		if _, err := idx.SearchPrefix("word00"); err != nil {
-			b.Fatalf("SearchPrefix() error = %v", err)
+	b.Run("first", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			b.StopTimer()
+			idx := benchmarkIndex(b, 500, 500)
+			b.StartTimer()
+			if _, err := idx.SearchPrefix("word00"); err != nil {
+				b.Fatalf("SearchPrefix() error = %v", err)
+			}
 		}
-	}
+	})
+	b.Run("warm", func(b *testing.B) {
+		idx := benchmarkIndex(b, 500, 500)
+		if _, err := idx.SearchPrefix("word00"); err != nil {
+			b.Fatalf("SearchPrefix() warmup error = %v", err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for b.Loop() {
+			if _, err := idx.SearchPrefix("word00"); err != nil {
+				b.Fatalf("SearchPrefix() error = %v", err)
+			}
+		}
+	})
 }

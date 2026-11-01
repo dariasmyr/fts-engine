@@ -311,7 +311,7 @@ func BenchmarkCandidateMatrix(b *testing.B) {
 						}
 						b.Run(fmt.Sprintf("terms=%d", termCount), func(b *testing.B) {
 							benchmarkMatrixBackend(b, "ftse_reader_reused", ftseData, keys, candidates, candidateCase.count)
-							benchmarkMatrixBackend(b, "ftse_reader_reopened", ftseData, keys, candidates, candidateCase.count)
+							benchmarkMatrixBackend(b, "ftse_open_and_intersect", ftseData, keys, candidates, candidateCase.count)
 							benchmarkMatrixBackend(b, "fpr1", fprData, keys, candidates, candidateCase.count)
 						})
 					}
@@ -399,6 +399,7 @@ func benchmarkMatrixBackend(b *testing.B, mode string, data []byte, keys []strin
 		switch mode {
 		case "fpr1":
 			index, err = Open(data)
+		case "ftse_open_and_intersect":
 		default:
 			index, err = ftse.Open(data)
 		}
@@ -409,10 +410,8 @@ func benchmarkMatrixBackend(b *testing.B, mode string, data []byte, keys []strin
 		b.ReportAllocs()
 		for b.Loop() {
 			current := index
-			if mode == "ftse_reader_reopened" {
-				b.StopTimer()
+			if mode == "ftse_open_and_intersect" {
 				current, err = ftse.Open(data)
-				b.StartTimer()
 				if err != nil {
 					b.Fatal(err)
 				}

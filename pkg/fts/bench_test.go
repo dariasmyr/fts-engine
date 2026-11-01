@@ -38,13 +38,24 @@ func benchSvc(b *testing.B, docs int, wordsPerDoc int, vocab int) (*Service, []s
 }
 
 func BenchmarkServiceIndex(b *testing.B) {
-	idx := newMemoryIndex()
-	svc := New(idx, WordKeys)
+	const documentCount = 1_000
 	ctx := context.Background()
-	content := "alpha beta gamma delta epsilon zeta eta theta iota kappa"
-
-	for i := 0; b.Loop(); i++ {
-		_ = svc.Index(ctx, defaultDoc(DocID(fmt.Sprintf("d-%d", i)), content))
+	docs := make([]Document, documentCount)
+	for i := range docs {
+		docs[i] = defaultDoc(
+			DocID(fmt.Sprintf("d-%05d", i)),
+			fmt.Sprintf("alpha beta gamma delta epsilon shard-%03d", i%100),
+		)
+	}
+	b.ReportAllocs()
+	b.ReportMetric(documentCount, "docs/op")
+	for b.Loop() {
+		svc := New(newMemoryIndex(), WordKeys)
+		for _, doc := range docs {
+			if err := svc.Index(ctx, doc); err != nil {
+				b.Fatalf("Index() error = %v", err)
+			}
+		}
 	}
 }
 

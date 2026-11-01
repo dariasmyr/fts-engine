@@ -28,6 +28,7 @@ type Config struct {
 type Adapter struct {
 	cfg        Config
 	svc        *fts.Service
+	loaded     *ftspersist.LoadedService
 	workDir    string
 	indexBytes int64
 
@@ -81,22 +82,16 @@ func (a *Adapter) Open(_ context.Context, dir string) error {
 	if err != nil {
 		return fmt.Errorf("build filter: %w", err)
 	}
-	opts := make([]*fts.Option, 0, 3)
-	if presetOpt, err := selectPreset(a.cfg.Lang); err != nil {
+	opts, err := a.restoreOptions()
+	if err != nil {
 		return err
-	} else if presetOpt != nil {
-		opts = append(opts, presetOpt)
-	}
-	if scorerOpt, err := selectScorer(a.cfg.Scorer); err != nil {
-		return err
-	} else if scorerOpt != nil {
-		opts = append(opts, scorerOpt)
 	}
 	if flt != nil {
 		opts = append(opts, fts.WithFilter(flt))
 	}
 
 	a.svc = fts.New(index, fts.WordKeys, opts...)
+	a.loaded = nil
 	a.workDir = dir
 	a.indexBytes = 0
 	a.extra = extras{
@@ -220,10 +215,15 @@ func buildFTSAtom(atom harness.Atom) (fts.Query, error) {
 func (a *Adapter) IndexSizeBytes() (int64, error) { return a.indexBytes, nil }
 
 func (a *Adapter) Close() error {
+	var err error
+	if a.loaded != nil && a.loaded.Close != nil {
+		err = a.loaded.Close()
+	}
+	a.loaded = nil
 	a.svc = nil
 	a.workDir = ""
 	a.indexBytes = 0
-	return nil
+	return err
 }
 
 func (a *Adapter) BenchmarkMetadata() map[string]any {
@@ -273,6 +273,22 @@ func (a *Adapter) saveSnapshot() error {
 	if err != nil {
 		return fmt.Errorf("snapshot size: %w", err)
 	}
+	opts, err := a.restoreOptions()
+	if err != nil {
+		return err
+	}
+	loaded, err := ftspersist.LoadSnapshot(
+		paths,
+		fts.WordKeys,
+		ftspersist.SnapshotLoadOptions{Registry: registry},
+		opts...,
+	)
+	if err != nil {
+		return fmt.Errorf("reload snapshot: %w", err)
+	}
+	if err := a.replaceLoadedService(loaded); err != nil {
+		return err
+	}
 	a.indexBytes = size
 	return nil
 }
@@ -293,7 +309,59 @@ func (a *Adapter) saveSegment() error {
 	if err != nil {
 		return fmt.Errorf("segment size: %w", err)
 	}
+	opts, err := a.restoreOptions()
+	if err != nil {
+		return err
+	}
+	loaded, err := ftspersist.LoadSegment(
+		ftspersist.SegmentPaths{Dir: segmentDir},
+		fts.WordKeys,
+		ftspersist.SegmentLoadOptions{Access: ftspersist.AccessFile, Registry: registry},
+		opts...,
+	)
+	if err != nil {
+		return fmt.Errorf("reload segment: %w", err)
+	}
+	if err := a.replaceLoadedService(loaded); err != nil {
+		return err
+	}
 	a.indexBytes = size
+	return nil
+}
+
+func (a *Adapter) restoreOptions() ([]*fts.Option, error) {
+	opts := make([]*fts.Option, 0, 2)
+	presetOpt, err := selectPreset(a.cfg.Lang)
+	if err != nil {
+		return nil, err
+	}
+	if presetOpt != nil {
+		opts = append(opts, presetOpt)
+	}
+	scorerOpt, err := selectScorer(a.cfg.Scorer)
+	if err != nil {
+		return nil, err
+	}
+	if scorerOpt != nil {
+		opts = append(opts, scorerOpt)
+	}
+	return opts, nil
+}
+
+func (a *Adapter) replaceLoadedService(loaded *ftspersist.LoadedService) error {
+	if loaded == nil || loaded.Service == nil {
+		return fmt.Errorf("reload persistence: nil service")
+	}
+	if a.loaded != nil && a.loaded.Close != nil {
+		if err := a.loaded.Close(); err != nil {
+			if loaded.Close != nil {
+				_ = loaded.Close()
+			}
+			return fmt.Errorf("close previous loaded service: %w", err)
+		}
+	}
+	a.loaded = loaded
+	a.svc = loaded.Service
 	return nil
 }
 

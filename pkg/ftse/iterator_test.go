@@ -286,16 +286,14 @@ func BenchmarkServiceSearchCandidateOptions(b *testing.B) {
 				})
 			}
 
-			b.Run("cursor_reader_reopened", func(b *testing.B) {
+			b.Run("cursor_reader_open_and_search", func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					b.StopTimer()
 					coldReader, err := ftse.Open(blob)
 					if err != nil {
 						b.Fatal(err)
 					}
 					service := fts.New(coldReader, fts.WordKeys, options()...)
-					b.StartTimer()
 					result, err := service.SearchQuery(context.Background(), fts.TermQuery{Term: "common"}, fts.SearchOptions{
 						CandidateIDs: candidates,
 					})

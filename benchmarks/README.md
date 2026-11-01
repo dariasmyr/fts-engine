@@ -248,6 +248,10 @@ These matter only for `fts-engine` runs:
 
 Default `fts-engine` persistence in this suite is `snapshot`.
 
+For `snapshot` and `segment`, commit includes saving and reopening the persisted
+service. Measured searches therefore run against the restored snapshot or the
+file-backed sealed segment, not against the mutable service used to build it.
+
 Despite its historical name, `-lang` selects the `fts-engine` analysis preset.
 The `observability` value uses `textproc.ObservabilityPipeline()` and is intended
 for technical identifiers. It affects only `fts-engine`; the Bleve and Bluge
