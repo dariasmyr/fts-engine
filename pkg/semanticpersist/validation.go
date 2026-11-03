@@ -3,9 +3,9 @@ package semanticpersist
 import (
 	"math"
 
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/semanticformat"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 func validateSegmentData(data semantic.SegmentData, config semantic.Config, limits Limits) error {

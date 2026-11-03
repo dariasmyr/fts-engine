@@ -2,17 +2,18 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
 const (
-	rootModule       = "github.com/dariasmyr/fts-engine"
+	rootModule       = "github.com/dariasmyr/fts-engine/v2"
 	demoModule       = "github.com/dariasmyr/fts-engine/demo"
 	benchmarksModule = "github.com/dariasmyr/fts-engine/benchmarks"
 )
@@ -100,14 +101,14 @@ func main() {
 		return
 	}
 
-	sort.Slice(violations, func(i, j int) bool {
-		if violations[i].from != violations[j].from {
-			return violations[i].from < violations[j].from
+	slices.SortFunc(violations, func(a, b violation) int {
+		if a.from != b.from {
+			return cmp.Compare(a.from, b.from)
 		}
-		if violations[i].to != violations[j].to {
-			return violations[i].to < violations[j].to
+		if a.to != b.to {
+			return cmp.Compare(a.to, b.to)
 		}
-		return violations[i].rule < violations[j].rule
+		return cmp.Compare(a.rule, b.rule)
 	})
 
 	for _, v := range violations {

@@ -5,11 +5,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/pkg/semanticpersist"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func TestPublishOpenRestoresHNSWSearch(t *testing.T) {
@@ -59,7 +58,7 @@ func TestPublishOpenRestoresHNSWSearch(t *testing.T) {
 	} {
 		err := index.Add(ctx, item.docID, []semantic.EncodedChunk{{
 			Ref: semantic.Ref{
-				ID:      chunk.ID(item.docID + "-chunk"),
+				ID:      semantic.ChunkID(item.docID + "-chunk"),
 				DocID:   item.docID,
 				Field:   fts.DefaultField,
 				EndByte: 1,

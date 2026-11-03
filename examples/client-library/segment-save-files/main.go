@@ -4,9 +4,9 @@ import (
 	"context"
 	"os"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftspersist"
 )
 
 func main() {
@@ -39,7 +39,7 @@ func main() {
 		panic(err)
 	}
 
-	if err := ftspersist.SaveSegment(ftspersist.SegmentPaths{Dir: "./data/segments/default"}, svc, "bloom", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(context.Background(), ftspersist.SegmentPaths{Dir: "./data/segments/default"}, svc, "bloom", ftspersist.SaveOptions{SyncFile: true, Registry: registry}); err != nil {
 		panic(err)
 	}
 }

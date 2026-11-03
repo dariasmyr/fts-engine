@@ -16,6 +16,16 @@ type PhraseQuery struct {
 
 func (PhraseQuery) isQuery() {}
 
+// NearPhraseQuery matches ordered phrase terms separated by at most Distance
+// intervening positions.
+type NearPhraseQuery struct {
+	Field    string
+	Phrase   string
+	Distance int
+}
+
+func (NearPhraseQuery) isQuery() {}
+
 type PrefixQuery struct {
 	Field  string
 	Prefix string
@@ -72,6 +82,20 @@ func bindDefaultField(q Query, field string) Query {
 		}
 		return query
 	case *PhraseQuery:
+		if query == nil {
+			return nil
+		}
+		bound := *query
+		if bound.Field == "" {
+			bound.Field = field
+		}
+		return &bound
+	case NearPhraseQuery:
+		if query.Field == "" {
+			query.Field = field
+		}
+		return query
+	case *NearPhraseQuery:
 		if query == nil {
 			return nil
 		}

@@ -3,7 +3,7 @@ package fts
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 )
 
 func (s *Service) Index(ctx context.Context, doc Document) error {
@@ -34,26 +34,25 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 		return fmt.Errorf("fts: index document %q: field %q is not available in single-field mode; use %q or fts.NewMultiField", docID, name, DefaultField)
 	}
 
+	pipeline := field.Pipeline
+	if pipeline == nil {
+		pipeline = s.pipelineForField(name)
+	}
+	if err := s.recordFieldPipeline(name, pipeline); err != nil {
+		return fmt.Errorf("fts: index document %q: %w", docID, err)
+	}
+
 	index, err := s.getOrCreateIndex(name)
 	if err != nil {
 		return fmt.Errorf("fts: index document %q: %w", docID, err)
 	}
 
-	pipeline := field.Pipeline
-	if pipeline == nil {
-		s.mu.RLock()
-		pipeline = s.fieldPipelines[name]
-		if pipeline == nil {
-			pipeline = s.pipeline
-		}
-		s.mu.RUnlock()
+	positional, supportsPositions := index.(MutablePositionalIndex)
+	mutable, supportsInsert := index.(MutableIndex)
+	if !supportsPositions && !supportsInsert {
+		return fmt.Errorf("fts: index document %q: field %q index is read-only", docID, name)
 	}
-	if err := s.recordFieldAnalyzer(name, pipeline); err != nil {
-		return fmt.Errorf("fts: index document %q: %w", docID, err)
-	}
-
-	positional, supportsPositions := index.(PositionalIndex)
-	tokens := pipeline.Process(field.Text)
+	tokens := pipeline.Process(field.text())
 	ord := s.registry.GetOrAssign(docID)
 	if s.scorer != nil {
 		s.collection.observe(name, ord, uint32(len(tokens)))
@@ -80,7 +79,7 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 				}
 				continue
 			}
-			if err := index.Insert(key, ord); err != nil {
+			if err := mutable.Insert(key, ord); err != nil {
 				return fmt.Errorf("fts: index document %q field %q: insert: %w", docID, name, err)
 			}
 		}
@@ -101,7 +100,7 @@ func (s *Service) fieldNames() []string {
 	for name := range s.indexes {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 
@@ -137,91 +136,6 @@ func (s *Service) getOrCreateIndex(name string) (Index, error) {
 
 	s.indexes[name] = idx
 	return idx, nil
-}
-
-func (s *Service) searchPhraseFieldsResult(ctx context.Context, fields []string, phrase string, maxResults int) (*SearchResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	ctx, exec := ensureDiagnosticsContext(ctx)
-	exec.setQueryTypeIfEmpty("phrase")
-
-	start := exec.startTimer()
-
-	preStart := exec.startTimer()
-	plan := s.preparePhrase(fields, phrase)
-	exec.observePreprocess(preStart)
-	exec.addFields(len(fields))
-	exec.addTokens(len(plan.tokens))
-
-	if len(plan.tokens) == 0 {
-		exec.setSearchTokensTiming(0)
-		exec.observeTotal(start)
-		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
-	}
-	if plan.fallback != nil {
-		res, err := s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
-		if err != nil {
-			return nil, err
-		}
-		exec.observeTotal(start)
-		return attachDiagnostics(ctx, res), nil
-	}
-	exec.setStrategy(strategyPhraseExact)
-
-	searchStart := exec.startTimer()
-	hits, err := s.evalExactPhraseTokenHits(ctx, fields, plan.tokens)
-	if err != nil {
-		return nil, err
-	}
-
-	exec.observeSearchTokens(searchStart)
-	exec.observeTotal(start)
-	return attachDiagnostics(ctx, searchResultFromOrdHits(hits, maxResults, s.scorer != nil, s.registry)), nil
-}
-
-func (s *Service) searchPhraseNearFieldsResult(ctx context.Context, fields []string, phrase string, distance int, maxResults int) (*SearchResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	ctx, exec := ensureDiagnosticsContext(ctx)
-	exec.setQueryTypeIfEmpty("phrase_near")
-	if distance < 0 {
-		return nil, fmt.Errorf("fts: phrase near search: negative distance %d", distance)
-	}
-
-	start := exec.startTimer()
-
-	preStart := exec.startTimer()
-	plan := s.preparePhrase(fields, phrase)
-	exec.observePreprocess(preStart)
-	exec.addFields(len(fields))
-	exec.addTokens(len(plan.tokens))
-
-	if len(plan.tokens) == 0 {
-		exec.setSearchTokensTiming(0)
-		exec.observeTotal(start)
-		return attachDiagnostics(ctx, &SearchResult{Results: []Result{}}), nil
-	}
-	if plan.fallback != nil {
-		res, err := s.searchResultForQuery(ctx, *plan.fallback, maxResults, newQueryFieldScope(fields))
-		if err != nil {
-			return nil, err
-		}
-		exec.observeTotal(start)
-		return attachDiagnostics(ctx, res), nil
-	}
-	exec.setStrategy(strategyPhraseNear)
-
-	searchStart := exec.startTimer()
-	hits, err := s.evalNearPhraseTokenHits(ctx, fields, plan.tokens, uint32(distance))
-	if err != nil {
-		return nil, err
-	}
-
-	exec.observeSearchTokens(searchStart)
-	exec.observeTotal(start)
-	return attachDiagnostics(ctx, searchResultFromOrdHits(hits, maxResults, s.scorer != nil, s.registry)), nil
 }
 
 func (s *Service) SnapshotFields() (map[string]Index, Filter) {

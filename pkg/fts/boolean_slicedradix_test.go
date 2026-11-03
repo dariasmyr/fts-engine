@@ -3,12 +3,11 @@ package fts_test
 import (
 	"context"
 	"slices"
-	"sort"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/hamt"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/hamt"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
 )
 
 func TestSearchBooleanMustNotExcludes(t *testing.T) {
@@ -20,7 +19,7 @@ func TestSearchBooleanMustNotExcludes(t *testing.T) {
 				fts.MustNotClause(fts.TermQuery{Term: "australia"}),
 			}}
 
-			res, err := svc.Search(context.Background(), q, 10)
+			res, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 10})
 			if err != nil {
 				t.Fatalf("Search() error = %v", err)
 			}
@@ -42,11 +41,11 @@ func TestSearchBooleanWandTopKMatchesFullResult(t *testing.T) {
 				fts.ShouldClause(fts.TermQuery{Term: "doe"}),
 			}}
 
-			full, err := svc.Search(context.Background(), q, 100)
+			full, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 100})
 			if err != nil {
 				t.Fatalf("full Search() error = %v", err)
 			}
-			top, err := svc.Search(context.Background(), q, 2)
+			top, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 2})
 			if err != nil {
 				t.Fatalf("top Search() error = %v", err)
 			}
@@ -65,7 +64,7 @@ func TestSearchBooleanWandTopKMatchesFullResult(t *testing.T) {
 			}
 
 			wantIDs := []string{string(full.Results[0].ID), string(full.Results[1].ID)}
-			sort.Strings(wantIDs)
+			slices.Sort(wantIDs)
 			gotIDs := sortedResultIDs(top)
 			if !slices.Equal(gotIDs, wantIDs) {
 				t.Fatalf("top IDs = %v, want %v", gotIDs, wantIDs)
@@ -88,7 +87,7 @@ func booleanIndexCases() []booleanIndexCase {
 
 func buildBooleanService(t *testing.T, index fts.Index, scored bool) *fts.Service {
 	t.Helper()
-	var opts []fts.Option
+	var opts []*fts.Option
 	if scored {
 		opts = append(opts, fts.WithScorer(fts.BM25()))
 	}
@@ -107,7 +106,7 @@ func buildBooleanService(t *testing.T, index fts.Index, scored bool) *fts.Servic
 	for id := range corpus {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	slices.Sort(ids)
 	for _, id := range ids {
 		if err := svc.Index(ctx, fts.Document{ID: fts.DocID(id), Fields: map[string]fts.FieldData{fts.DefaultField: {Text: corpus[id]}}}); err != nil {
 			t.Fatalf("Index(%q) error = %v", id, err)
@@ -121,6 +120,6 @@ func sortedResultIDs(res *fts.SearchResult) []string {
 	for _, r := range res.Results {
 		out = append(out, string(r.ID))
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

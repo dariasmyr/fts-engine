@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/flat"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/flat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 )
 
 func main() {
@@ -24,7 +24,7 @@ func main() {
 		}
 	}
 
-	res, err := engine.SearchPlainText(ctx, "io.EOF", 10)
+	res, err := engine.SearchQuery(ctx, fts.TermQuery{Term: "io.EOF"}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		panic(err)
 	}

@@ -11,7 +11,7 @@ type prefixFieldDocsResult struct {
 	err       error
 }
 
-func (s *Service) collectPrefixFieldDocs(ctx context.Context, fields []string, prefix string) ([]termExpansion, error) {
+func (s *Service) collectPrefixFieldDocs(ctx context.Context, candidates *candidateSet, fields []string, prefix string) ([]termExpansion, error) {
 	expansions := make([]termExpansion, 0, len(fields))
 	if len(fields) <= 1 {
 		for _, field := range fields {
@@ -24,7 +24,7 @@ func (s *Service) collectPrefixFieldDocs(ctx context.Context, fields []string, p
 				continue
 			}
 
-			expansion, err := s.searchPrefixInField(ctx, field, prefixer, prefix)
+			expansion, err := s.searchPrefixInField(ctx, candidates, field, prefixer, prefix)
 			if err != nil {
 				return nil, err
 			}
@@ -48,7 +48,7 @@ func (s *Service) collectPrefixFieldDocs(ctx context.Context, fields []string, p
 		}
 
 		wg.Go(func() {
-			expansion, err := s.searchPrefixInField(ctx, field, prefixer, prefix)
+			expansion, err := s.searchPrefixInField(ctx, candidates, field, prefixer, prefix)
 			if err != nil {
 				results <- prefixFieldDocsResult{err: err}
 				return
@@ -71,9 +71,12 @@ func (s *Service) collectPrefixFieldDocs(ctx context.Context, fields []string, p
 	return expansions, nil
 }
 
-func (s *Service) searchPrefixInField(ctx context.Context, field string, prefixer PrefixIndex, prefix string) (termExpansion, error) {
+func (s *Service) searchPrefixInField(ctx context.Context, candidates *candidateSet, field string, prefixer PrefixIndex, prefix string) (termExpansion, error) {
 	if err := ctx.Err(); err != nil {
 		return termExpansion{}, err
+	}
+	if candidates.empty() {
+		return termExpansion{}, nil
 	}
 
 	exec := diagnosticsFromContext(ctx)
@@ -100,11 +103,13 @@ func (s *Service) searchPrefixInField(ctx context.Context, field string, prefixe
 		}
 		docs = liveDocs
 	}
-	postingsRead += len(docs)
+	df := len(docs)
+	postingsRead += df
+	docs = candidates.filterPostings(docs)
 	return termExpansion{
 		field:      field,
 		term:       prefix + "*",
-		df:         uint32(len(docs)),
+		df:         uint32(df),
 		fieldStats: s.fieldStatsFor(field),
 		docs:       docs,
 	}, nil

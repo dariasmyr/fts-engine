@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftspersist"
 )
 
 func main() {
@@ -35,7 +35,7 @@ func main() {
 		panic(err)
 	}
 
-	res, err := restored.SearchDocuments(context.Background(), "snapshot", 10)
+	res, err := restored.SearchText(context.Background(), "snapshot", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		panic(err)
 	}

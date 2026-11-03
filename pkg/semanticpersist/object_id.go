@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
 )
 
 const segmentObjectIdentityDomain = "semantic-segment-object-v1"

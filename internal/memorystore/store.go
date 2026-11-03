@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // MemoryVectorStore is immutable prepared vector storage backed by a contiguous

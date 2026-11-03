@@ -4,7 +4,7 @@ import (
 	"math"
 	"slices"
 
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func navigationBetter(a, b searchCandidate) bool {

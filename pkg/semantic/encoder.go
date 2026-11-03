@@ -3,7 +3,7 @@ package semantic
 import (
 	"context"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 // EncodedChunk couples source-chunk metadata with its prepared embedding.

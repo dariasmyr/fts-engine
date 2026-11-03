@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
 type QueryDiagnostics struct {
@@ -15,6 +17,8 @@ type QueryDiagnostics struct {
 	StrategySkipReason string
 	// Boolean stores strategy-specific diagnostics for boolean execution paths.
 	Boolean *BooleanDiagnostics
+	// PostingAccess records how exact-term posting lists were read.
+	PostingAccess PostingAccessDiagnostics
 
 	// ProcessedTokens is the total number of tokens processed across the executed query path.
 	ProcessedTokens int
@@ -66,6 +70,7 @@ const (
 	strategyBoolFallback         = "bool_fallback"
 	strategyBoolOrWAND           = "bool_or_wand"
 	strategyBoolOrFast           = "bool_or_fast"
+	strategyBoolAndIntersect     = "bool_and_posting_intersect"
 	strategyBoolAndFastDriver    = "bool_and_fast_driver"
 	strategyBoolAndFastSortMerge = "bool_and_fast_sort_merge"
 )
@@ -106,6 +111,16 @@ type BooleanDiagnostics struct {
 	AndFast             AndFastDiagnostics
 }
 
+// PostingAccessDiagnostics counts exact-term posting lists by access method.
+type PostingAccessDiagnostics struct {
+	MaterializedPostingLists int
+	CursorPostingLists       int
+	// DecodedBlocks counts physical posting blocks decoded by instrumented storage cursors.
+	DecodedBlocks uint64
+	// DecodedPostings counts all entries decoded in those blocks, including entries skipped by Advance.
+	DecodedPostings uint64
+}
+
 type WANDDiagnostics struct {
 	Eligible           bool
 	Used               bool
@@ -126,6 +141,7 @@ type AndFastDiagnostics struct {
 	DriverGroupSize int
 	OtherGroupCount int
 	CandidateDocs   int
+	UsedIntersect   bool
 	UsedSortMerge   bool
 	BuiltLookupMaps bool
 }
@@ -167,6 +183,10 @@ func attachDiagnostics(ctx context.Context, res *SearchResult) *SearchResult {
 	exec.setCandidateDocs(res.TotalResultsCount)
 	exec.setMatchedDocs(res.TotalResultsCount)
 	exec.setReturnedDocs(len(res.Results))
+	if metrics := posting.TraversalMetricsFromContext(ctx); metrics != nil {
+		snapshot := metrics.Snapshot()
+		exec.setDecodedPostings(snapshot.DecodedBlocks, snapshot.DecodedPostings)
+	}
 	res.Diagnostics = exec.snapshot()
 	return res
 }
@@ -274,6 +294,34 @@ func (q *queryExecContext) addPostingsRead(n int) {
 	}
 	q.mu.Lock()
 	q.d.PostingEntriesRead += n
+	q.mu.Unlock()
+}
+
+func (q *queryExecContext) recordMaterializedPostingList() {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	q.d.PostingAccess.MaterializedPostingLists++
+	q.mu.Unlock()
+}
+
+func (q *queryExecContext) recordCursorPostingList() {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	q.d.PostingAccess.CursorPostingLists++
+	q.mu.Unlock()
+}
+
+func (q *queryExecContext) setDecodedPostings(blocks, postings uint64) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	q.d.PostingAccess.DecodedBlocks = blocks
+	q.d.PostingAccess.DecodedPostings = postings
 	q.mu.Unlock()
 }
 
@@ -391,6 +439,8 @@ func queryTypeOf(q Query) string {
 		return "term"
 	case PhraseQuery, *PhraseQuery:
 		return "phrase"
+	case NearPhraseQuery, *NearPhraseQuery:
+		return "phrase_near"
 	case PrefixQuery, *PrefixQuery:
 		return "prefix"
 	case *BooleanQuery:

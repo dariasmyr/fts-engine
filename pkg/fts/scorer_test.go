@@ -1,8 +1,9 @@
 package fts
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -47,7 +48,7 @@ func (p *prefixMemoryIndex) insert(key string, ord DocOrd, position uint32, hasP
 			return nil
 		}
 	}
-	p.entries[key] = append(entries, Posting{Ord: ord, Count: 1, Seq: uint32(ord)})
+	p.entries[key] = append(entries, Posting{Ord: ord, Count: 1})
 	if hasPosition {
 		p.addPosition(key, ord, position)
 	}
@@ -90,9 +91,9 @@ func (p *prefixMemoryIndex) SearchPrefix(prefix string) ([]Posting, error) {
 
 	out := make([]Posting, 0, len(merged))
 	for ord, count := range merged {
-		out = append(out, Posting{Ord: ord, Count: count, Seq: uint32(ord)})
+		out = append(out, Posting{Ord: ord, Count: count})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
+	slices.SortFunc(out, func(a, b Posting) int { return cmp.Compare(a.Ord, b.Ord) })
 	return out, nil
 }
 
@@ -216,9 +217,9 @@ func TestSearchWithBM25RanksRareDocumentFirst(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchDocuments(ctx, "rosa barge", 10)
+	res, err := svc.SearchText(ctx, "rosa barge", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 	if len(res.Results) < 2 {
 		t.Fatalf("expected at least 2 results, got %+v", res.Results)
@@ -248,9 +249,9 @@ func TestSearchWithTFIDFRanksRareDocumentFirst(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchDocuments(ctx, "rosa barge", 10)
+	res, err := svc.SearchText(ctx, "rosa barge", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 	if len(res.Results) < 2 {
 		t.Fatalf("expected at least 2 results, got %+v", res.Results)
@@ -264,7 +265,7 @@ func TestSearchWithTFIDFRanksRareDocumentFirst(t *testing.T) {
 }
 
 func TestSearchWithWeightedScorerRanksHigherWeightedFieldFirst(t *testing.T) {
-	factory := func(string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	factory := func(string) (MutableIndex, error) { return newPositionalMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys, WithScorer(WeightedScorer{
 		Base: tfScorer{},
 		FieldWeights: FieldWeights{
@@ -284,9 +285,9 @@ func TestSearchWithWeightedScorerRanksHigherWeightedFieldFirst(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchDocuments(ctx, "alpha", 10)
+	res, err := svc.SearchText(ctx, "alpha", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 	if len(res.Results) != 2 {
 		t.Fatalf("expected 2 results, got %+v", res.Results)
@@ -300,7 +301,7 @@ func TestSearchWithWeightedScorerRanksHigherWeightedFieldFirst(t *testing.T) {
 }
 
 func TestSearchWithRankProfileUsesFieldWeights(t *testing.T) {
-	factory := func(string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	factory := func(string) (MutableIndex, error) { return newPositionalMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
 		Name: "docs",
 		Base: tfScorer{},
@@ -321,9 +322,9 @@ func TestSearchWithRankProfileUsesFieldWeights(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchDocuments(ctx, "alpha", 10)
+	res, err := svc.SearchText(ctx, "alpha", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 	if len(res.Results) != 2 {
 		t.Fatalf("expected 2 results, got %+v", res.Results)
@@ -337,7 +338,7 @@ func TestSearchWithRankProfileUsesFieldWeights(t *testing.T) {
 }
 
 func TestSearchWithRankProfileUsesQueryTypeWeights(t *testing.T) {
-	factory := func(string) (Index, error) { return newPrefixMemoryIndex(), nil }
+	factory := func(string) (MutableIndex, error) { return newPrefixMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
 		Name: "docs",
 		Base: tfScorer{},
@@ -358,10 +359,10 @@ func TestSearchWithRankProfileUsesQueryTypeWeights(t *testing.T) {
 		}
 	}
 
-	res, err := svc.Search(ctx, &BooleanQuery{Clauses: []BoolClause{
+	res, err := svc.SearchQuery(ctx, &BooleanQuery{Clauses: []BoolClause{
 		ShouldClause(PhraseQuery{Phrase: "alpha beta"}),
 		ShouldClause(PrefixQuery{Prefix: "alph"}),
-	}}, 10)
+	}}, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -377,7 +378,7 @@ func TestSearchWithRankProfileUsesQueryTypeWeights(t *testing.T) {
 }
 
 func TestExplainWithRankProfileShowsWeightedContribution(t *testing.T) {
-	factory := func(string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	factory := func(string) (MutableIndex, error) { return newPositionalMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
 		Name: "docs",
 		Base: tfScorer{},
@@ -427,7 +428,7 @@ func TestExplainWithRankProfileShowsWeightedContribution(t *testing.T) {
 }
 
 func TestExplainWithRankProfileShowsQueryTypeWeight(t *testing.T) {
-	factory := func(string) (Index, error) { return newPositionalMemoryIndex(), nil }
+	factory := func(string) (MutableIndex, error) { return newPositionalMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys, WithRankProfile(RankProfile{
 		Name:             "docs",
 		Base:             tfScorer{},
@@ -492,7 +493,7 @@ func TestBooleanScoringAppliesShouldBoost(t *testing.T) {
 		ShouldClause(TermQuery{Term: "delta"}),
 	}}
 
-	res, err := svc.Search(context.Background(), q, 10)
+	res, err := svc.SearchQuery(context.Background(), q, SearchOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -507,8 +508,8 @@ func TestBooleanScoringAppliesShouldBoost(t *testing.T) {
 	}
 }
 
-func TestSearchPhraseWithTFIDFScoresAcrossFields(t *testing.T) {
-	factory := func(name string) (Index, error) { return newPositionalMemoryIndex(), nil }
+func TestSearchQueryPhraseWithTFIDFScoresAcrossFields(t *testing.T) {
+	factory := func(name string) (MutableIndex, error) { return newPositionalMemoryIndex(), nil }
 	svc := NewMultiField(factory, WordKeys, WithScorer(TFIDF()))
 
 	ctx := context.Background()
@@ -524,9 +525,9 @@ func TestSearchPhraseWithTFIDFScoresAcrossFields(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchDocuments(ctx, `"james doe"`, 10)
+	res, err := svc.SearchText(ctx, `"james doe"`, SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 	if len(res.Results) != 2 {
 		t.Fatalf("expected 2 phrase hits, got %+v", res.Results)
@@ -553,9 +554,9 @@ func TestSearchWithPrefixScoringRanksHigherFrequencyFirst(t *testing.T) {
 		t.Fatalf("Index(doc-c) error = %v", err)
 	}
 
-	res, err := svc.SearchDocuments(ctx, "bar*", 10)
+	res, err := svc.SearchText(ctx, "bar*", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 	if len(res.Results) != 2 {
 		t.Fatalf("expected 2 prefix hits, got %+v", res.Results)
@@ -576,9 +577,9 @@ func TestSearchScoreStaysZeroWithoutScorer(t *testing.T) {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
 
-	res, err := svc.SearchDocuments(ctx, "alpha", 10)
+	res, err := svc.SearchText(ctx, "alpha", SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchDocuments() error = %v", err)
+		t.Fatalf("SearchText() error = %v", err)
 	}
 	if len(res.Results) != 1 {
 		t.Fatalf("expected 1 result, got %+v", res.Results)

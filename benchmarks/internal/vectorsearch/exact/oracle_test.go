@@ -7,9 +7,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/exact"
-	"github.com/dariasmyr/fts-engine/internal/memorystore"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/vectorsearch/exact"
+	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func TestNewCopiesCompleteVectorSet(t *testing.T) {

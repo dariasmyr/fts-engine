@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 // segmentView binds an immutable physical segment to an immutable local

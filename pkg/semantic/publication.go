@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/internal/contextcheck"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/internal/contextcheck"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // publishSnapshot derives the next immutable snapshot from a committed base.

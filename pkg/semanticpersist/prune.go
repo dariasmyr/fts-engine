@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/semanticformat"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // PruneOptions controls retention and durability during Prune.

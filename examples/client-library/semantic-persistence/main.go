@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/pkg/semanticencode"
-	"github.com/dariasmyr/fts-engine/pkg/semanticpersist"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticencode"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func main() {

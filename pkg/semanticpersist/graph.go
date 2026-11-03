@@ -6,10 +6,10 @@ import (
 	"io"
 	"math"
 
-	"github.com/dariasmyr/fts-engine/internal/hnswmodel"
-	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/semanticformat"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/v2/internal/hnswmodel"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 const maxPersistedHNSWLevel = 63

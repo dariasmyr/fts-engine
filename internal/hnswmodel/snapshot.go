@@ -1,6 +1,6 @@
 package hnswmodel
 
-import "github.com/dariasmyr/fts-engine/pkg/vector"
+import "github.com/dariasmyr/fts-engine/v2/pkg/vector"
 
 // Snapshot is the repository-internal transfer form of immutable HNSW
 // topology. Node positions are vector ordinals; no separate mapping exists.

@@ -3,7 +3,7 @@ package hnsw
 import (
 	"math"
 
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // nodeOrdinal is always equal to the corresponding vector.Ordinal.

@@ -75,8 +75,54 @@ func saveAtomicWithOptions(path string, opts SaveOptions, write func(w io.Writer
 		cleanupTmp()
 		return fmt.Errorf("ftspersist: save atomic: rename temp file: %w", err)
 	}
+	if opts.SyncFile {
+		if err = syncDir(dir); err != nil {
+			return fmt.Errorf("ftspersist: save atomic: sync directory %q: %w", dir, err)
+		}
+	}
 
 	return nil
+}
+
+func syncDir(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	syncErr := dir.Sync()
+	closeErr := dir.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
+}
+
+func readFileLimited(path string, configuredMax, defaultMax int64) ([]byte, error) {
+	maxBytes := configuredMax
+	if maxBytes <= 0 {
+		maxBytes = defaultMax
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > maxBytes {
+		return nil, fmt.Errorf("file size %d exceeds limit %d", info.Size(), maxBytes)
+	}
+	payload, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(payload)) > maxBytes {
+		return nil, fmt.Errorf("file exceeds limit %d", maxBytes)
+	}
+	return payload, nil
 }
 
 type thresholdBufferedWriter struct {

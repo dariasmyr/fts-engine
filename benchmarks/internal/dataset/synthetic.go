@@ -3,11 +3,11 @@ package dataset
 import (
 	"fmt"
 	"math/rand"
-	"sort"
+	"slices"
 	"strings"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/quality"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/harness"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/quality"
 )
 
 type Corpus struct {
@@ -83,7 +83,7 @@ func Synthetic(cfg SyntheticConfig) *Corpus {
 	}
 
 	for term := range postings {
-		sort.Strings(postings[term])
+		slices.Sort(postings[term])
 	}
 
 	return &Corpus{Docs: docs, Queries: queries, Qrels: qrels}

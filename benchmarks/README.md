@@ -31,6 +31,46 @@ Output:
 - plain-text summary table
 - JSON report via `-out`
 
+`results/` contains local benchmark artifacts and is ignored by git. Keep
+summaries in documentation or PR descriptions; attach raw output separately as
+a review or CI artifact when needed.
+
+## Candidate Traversal Regression Runs
+
+Use the reusable runner to capture comparable snapshots before and after future
+posting-traversal or candidate-filtering optimizations:
+
+```bash
+benchmarks/scripts/run-candidate-traversal.sh <snapshot-label>
+```
+
+The script sequentially runs end-to-end Service, prepared Service, candidate
+preparation, direct posting AND, and FTSE/FPR1 control benchmarks. It stores raw
+Go benchmark output and environment metadata under:
+
+```text
+benchmarks/results/<snapshot-label>/
+```
+
+For example:
+
+```bash
+benchmarks/scripts/run-candidate-traversal.sh before-next-optimization
+benchmarks/scripts/run-candidate-traversal.sh after-next-optimization
+```
+
+The default settings are `-benchtime=200ms -count=6`. They can be overridden
+without editing the script:
+
+```bash
+BENCHTIME=500ms COUNT=10 \
+  benchmarks/scripts/run-candidate-traversal.sh longer-validation
+```
+
+Use identical settings for before/after snapshots and do not run them in
+parallel. The generated `benchmarks/results/` directory is local-only and must
+not be committed.
+
 ## Quick Start
 
 Recommended synthetic baseline (heavier comparison run):
@@ -72,7 +112,7 @@ Wiki typed run:
   -wiki-cache-dir=./data/wiki/wiki-typed-cache \
   -max-docs=50000 \
   -typed-queries=200 \
-  -query-types=term,and-hh,and-hl,or-hh,phrase,prefix \
+  -query-types=term,and-hh,and-hl,and-hr,or-hh,phrase,prefix \
   -concurrency=1 \
   -persist=snapshot \
   -out=./results/local/wiki-typed.json \
@@ -140,8 +180,12 @@ Expected files inside `-msmarco-dir`:
 Use when you want:
 
 - typed query classes on real data
-- separate results for `term`, `and-hh`, `and-hl`, `or-hh`, `phrase`, `prefix`
+- separate results for `term`, `and-hh`, `and-hl`, `and-hr`, `or-hh`, `phrase`, `prefix`
 - benchmark-side exact semantics with generated qrels
+
+`and-hr` intersects one high-DF term with one term from the rare tail. The rare
+pool excludes one-off terms (`DF < 2`) and defaults to the last 5000 eligible
+terms, producing strongly skewed posting-list sizes.
 
 Required flags:
 
@@ -164,12 +208,33 @@ Useful flags:
 - `-wiki-cache-dir`
 - `-max-docs`
 - `-typed-queries`
-- `-query-types=term,and-hh,and-hl,or-hh,phrase,prefix`
+- `-query-types=term,and-hh,and-hl,and-hr,or-hh,phrase,prefix`
 - `-high-skip-top`
 - `-high-pool`
 - `-low-pool`
+- `-rare-pool`
 - `-prefix-min-expand`
 - `-prefix-max-expand`
+
+Run only the high/rare intersection workload and repeat the measured query set
+for a more stable latency sample:
+
+```bash
+(cd benchmarks && go run ./cmd/bench \
+  -engines=fts-engine \
+  -dataset=wiki-typed \
+  -wiki-dump=./data/wiki/simplewiki-latest-pages-articles.xml.bz2 \
+  -wiki-cache-dir=./data/wiki/wiki-typed-cache \
+  -max-docs=50000 \
+  -typed-queries=200 \
+  -query-types=and-hr \
+  -rare-pool=5000 \
+  -query-repeats=500 \
+  -concurrency=1 \
+  -persist=snapshot \
+  -out=./results/local/wiki-and-hr.json \
+  -k=10)
+```
 
 Important notes:
 
@@ -194,6 +259,7 @@ Available for all dataset modes:
 - `-batch=1000`
 - `-warmup=0.10`
 - `-concurrency=1`
+- `-query-repeats=1`
 - `-seed=0xC0FFEE`
 
 What they mean:
@@ -206,6 +272,7 @@ What they mean:
 - `-batch`: indexing batch size
 - `-warmup`: fraction of queries used only for warmup
 - `-concurrency`: parallel search workers
+- `-query-repeats`: repetitions of the measured query set; quality is scored once
 - `-seed`: deterministic shuffle and sampling seed
 
 ## `fts-engine` Flags

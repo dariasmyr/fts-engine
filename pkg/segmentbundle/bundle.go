@@ -11,28 +11,30 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/segment"
+	"github.com/dariasmyr/fts-engine/v2/internal/sealedstate"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftse"
+	"github.com/dariasmyr/fts-engine/v2/pkg/posting"
 )
 
-const bundleVersion uint16 = 3
+const bundleVersion uint16 = 6
 
 // BundleSaveOptions controls metadata written into a new bundle.
 type BundleSaveOptions struct {
-	Analyzers    map[string]fts.AnalyzerDescriptor
+	Pipelines    map[string]fts.PipelineDescriptor
 	KeyGenerator *fts.KeyGeneratorDescriptor
 }
 
 // LoadedBundle is a decoded sealed segment bundle.
 type LoadedBundle struct {
-	Segment         *segment.Reader
-	Fields          map[string]*segment.Reader
+	Fields          map[string]*ftse.Reader
+	MultiField      bool
 	CollectionStats *fts.CollectionStatsSnapshot
 	Registry        []fts.DocID
 	Tombstones      []uint64
-	Analyzers       map[string]fts.AnalyzerDescriptor
+	Pipelines       map[string]fts.PipelineDescriptor
 	KeyGenerator    *fts.KeyGeneratorDescriptor
 }
 
@@ -43,46 +45,44 @@ type bundleField struct {
 
 type bundleEnvelope struct {
 	Version         uint16
+	MultiField      bool
 	SegmentPayload  []byte
 	Fields          []bundleField
 	CollectionStats *fts.CollectionStatsSnapshot
 	Registry        []fts.DocID
 	Tombstones      []uint64
-	Analyzers       map[string]fts.AnalyzerDescriptor
+	Pipelines       map[string]fts.PipelineDescriptor
 	KeyGenerator    *fts.KeyGeneratorDescriptor
 }
 
 // SaveBundle writes a single-field sealed segment bundle to w.
-func SaveBundle(w io.Writer, source segment.Source, stats *fts.CollectionStatsSnapshot, registry []fts.DocID, tombstones []uint64, opts BundleSaveOptions) error {
-	return SaveMultiFieldBundle(w, map[string]segment.Source{fts.DefaultField: source}, stats, registry, tombstones, opts)
+func SaveBundle(w io.Writer, source posting.Exporter, stats *fts.CollectionStatsSnapshot, registry []fts.DocID, tombstones []uint64, opts BundleSaveOptions) error {
+	return saveBundle(w, map[string]posting.Exporter{fts.DefaultField: source}, false, stats, registry, tombstones, opts)
 }
 
 // SaveMultiFieldBundle writes a multi-field sealed segment bundle to w.
-func SaveMultiFieldBundle(w io.Writer, fields map[string]segment.Source, stats *fts.CollectionStatsSnapshot, registry []fts.DocID, tombstones []uint64, opts BundleSaveOptions) error {
+func SaveMultiFieldBundle(w io.Writer, fields map[string]posting.Exporter, stats *fts.CollectionStatsSnapshot, registry []fts.DocID, tombstones []uint64, opts BundleSaveOptions) error {
+	return saveBundle(w, fields, true, stats, registry, tombstones, opts)
+}
+
+func saveBundle(w io.Writer, fields map[string]posting.Exporter, multiField bool, stats *fts.CollectionStatsSnapshot, registry []fts.DocID, tombstones []uint64, opts BundleSaveOptions) error {
 	if w == nil {
 		return fmt.Errorf("segmentbundle: save bundle: nil writer")
 	}
-	if len(fields) == 0 {
+	if len(fields) == 0 && !multiField {
 		return fmt.Errorf("segmentbundle: save bundle: no fields")
 	}
-	if len(opts.Analyzers) != len(fields) {
-		return fmt.Errorf("segmentbundle: save bundle: analyzer descriptor is required for every field")
-	}
-	if opts.KeyGenerator == nil || opts.KeyGenerator.Fingerprint == "" {
-		return fmt.Errorf("segmentbundle: save bundle: key generator descriptor is required")
-	}
-	for fieldName := range fields {
-		descriptor, ok := opts.Analyzers[fieldName]
-		if !ok || descriptor.Fingerprint == "" {
-			return fmt.Errorf("segmentbundle: save bundle: analyzer descriptor is required for field %q", fieldName)
-		}
-	}
-
 	fieldNames := make([]string, 0, len(fields))
 	for fieldName := range fields {
 		fieldNames = append(fieldNames, fieldName)
 	}
-	sort.Strings(fieldNames)
+	if err := fts.ValidatePipelineFields(fieldNames, opts.Pipelines); err != nil {
+		return fmt.Errorf("segmentbundle: save bundle: %w", err)
+	}
+	if opts.KeyGenerator == nil || opts.KeyGenerator.Fingerprint == "" {
+		return fmt.Errorf("segmentbundle: save bundle: key generator descriptor is required")
+	}
+	slices.Sort(fieldNames)
 
 	bundleFields := make([]bundleField, 0, len(fields))
 	for _, fieldName := range fieldNames {
@@ -93,7 +93,7 @@ func SaveMultiFieldBundle(w io.Writer, fields map[string]segment.Source, stats *
 		if source == nil {
 			return fmt.Errorf("segmentbundle: save bundle: nil source for field %q", fieldName)
 		}
-		segmentBytes, err := segment.BuildFromSourceWithTombstones(source, tombstones)
+		segmentBytes, err := ftse.BuildFromSourceWithTombstones(source, tombstones)
 		if err != nil {
 			return fmt.Errorf("segmentbundle: save bundle: build segment for field %q: %w", fieldName, err)
 		}
@@ -102,11 +102,12 @@ func SaveMultiFieldBundle(w io.Writer, fields map[string]segment.Source, stats *
 
 	envelope := bundleEnvelope{
 		Version:         bundleVersion,
+		MultiField:      multiField,
 		Fields:          bundleFields,
 		CollectionStats: stats,
 		Registry:        append([]fts.DocID(nil), registry...),
 		Tombstones:      append([]uint64(nil), tombstones...),
-		Analyzers:       cloneAnalyzerDescriptors(opts.Analyzers),
+		Pipelines:       clonePipelineDescriptors(opts.Pipelines),
 		KeyGenerator:    cloneKeyGeneratorDescriptor(opts.KeyGenerator),
 	}
 	if err := gob.NewEncoder(w).Encode(envelope); err != nil {
@@ -126,36 +127,51 @@ func LoadBundle(r io.Reader) (*LoadedBundle, error) {
 		return nil, fmt.Errorf("segmentbundle: load bundle: decode envelope: %w", err)
 	}
 	if envelope.Version != bundleVersion {
+		if envelope.Version > 0 && envelope.Version < bundleVersion {
+			if envelope.Version == bundleVersion-1 {
+				return nil, fmt.Errorf("segmentbundle: load bundle: legacy version %d uses analyzer metadata: %w", envelope.Version, fts.ErrPersistenceRebuildRequired)
+			}
+			return nil, fmt.Errorf("segmentbundle: load bundle: legacy version %d: %w", envelope.Version, fts.ErrPersistenceRebuildRequired)
+		}
 		return nil, fmt.Errorf("segmentbundle: load bundle: unsupported version %d", envelope.Version)
+	}
+	fieldNames := make([]string, 0, len(envelope.Fields))
+	if len(envelope.Fields) == 0 && len(envelope.SegmentPayload) > 0 {
+		fieldNames = append(fieldNames, fts.DefaultField)
+	} else {
+		for _, field := range envelope.Fields {
+			fieldNames = append(fieldNames, field.FieldName)
+		}
+	}
+	if err := fts.ValidatePipelineFields(fieldNames, envelope.Pipelines); err != nil {
+		return nil, fmt.Errorf("segmentbundle: load bundle: %w", err)
 	}
 
 	fields, err := loadBundleReaders(envelope)
 	if err != nil {
 		return nil, err
 	}
-	single := fields[fts.DefaultField]
-
 	return &LoadedBundle{
-		Segment:         single,
 		Fields:          fields,
+		MultiField:      envelope.MultiField,
 		CollectionStats: envelope.CollectionStats,
 		Registry:        append([]fts.DocID(nil), envelope.Registry...),
 		Tombstones:      append([]uint64(nil), envelope.Tombstones...),
-		Analyzers:       cloneAnalyzerDescriptors(envelope.Analyzers),
+		Pipelines:       clonePipelineDescriptors(envelope.Pipelines),
 		KeyGenerator:    cloneKeyGeneratorDescriptor(envelope.KeyGenerator),
 	}, nil
 }
 
 // SaveService writes a complete sealed bundle from an fts.Service.
-// The service must use a described pipeline so the bundle can validate its
-// analyzer identity when restored.
+// The service must use described pipelines so the bundle can validate their
+// identities when restored.
 func SaveService(w io.Writer, service *fts.Service) error {
 	if service == nil {
 		return fmt.Errorf("segmentbundle: save service: nil service")
 	}
-	descriptors, ok := service.AnalyzerDescriptors()
-	if !ok {
-		return fmt.Errorf("segmentbundle: save service: analyzer descriptor is unavailable for every field")
+	descriptors, err := service.PipelineDescriptors()
+	if err != nil {
+		return fmt.Errorf("segmentbundle: save service: %w", err)
 	}
 	keyGenerator, ok := service.KeyGeneratorDescriptor()
 	if !ok {
@@ -163,88 +179,55 @@ func SaveService(w io.Writer, service *fts.Service) error {
 	}
 
 	fields, _ := service.SnapshotFields()
-	if len(fields) == 0 {
+	if len(fields) == 0 && !service.IsMultiField() {
 		return fmt.Errorf("segmentbundle: save service: no fields")
 	}
-	sources := make(map[string]segment.Source, len(fields))
+	sources := make(map[string]posting.Exporter, len(fields))
 	for fieldName, index := range fields {
-		source, ok := index.(segment.Source)
+		source, ok := index.(posting.Exporter)
 		if !ok {
 			return fmt.Errorf("segmentbundle: save service: field %q does not support segment export", fieldName)
 		}
 		sources[fieldName] = source
 	}
 
-	return SaveMultiFieldBundle(
+	return saveBundle(
 		w,
 		sources,
+		service.IsMultiField(),
 		service.SnapshotCollectionStats(),
 		service.SnapshotRegistry(),
 		service.SnapshotTombstones(),
-		BundleSaveOptions{Analyzers: descriptors, KeyGenerator: &keyGenerator},
+		BundleSaveOptions{Pipelines: descriptors, KeyGenerator: &keyGenerator},
 	)
 }
 
 // RestoreService restores an fts.Service from a decoded sealed segment bundle.
-func RestoreService(bundle *LoadedBundle, keyGen fts.KeyGenerator, opts ...fts.Option) (*fts.Service, error) {
+func RestoreService(bundle *LoadedBundle, keyGen fts.KeyGenerator, opts ...*fts.Option) (*fts.Service, error) {
 	if bundle == nil {
 		return nil, fmt.Errorf("segmentbundle: restore service: nil bundle")
 	}
-	if len(bundle.Fields) == 0 {
-		if bundle.Segment == nil {
-			return nil, fmt.Errorf("segmentbundle: restore service: nil segment reader")
-		}
-		bundle.Fields = map[string]*segment.Reader{fts.DefaultField: bundle.Segment}
+	indexes := make(map[string]fts.Index, len(bundle.Fields))
+	for fieldName, reader := range bundle.Fields {
+		indexes[fieldName] = reader
 	}
-
-	builtOpts := append([]fts.Option(nil), opts...)
-	if len(bundle.Registry) > 0 {
-		builtOpts = append(builtOpts, fts.WithDocRegistrySnapshot(bundle.Registry))
-	}
-	if len(bundle.Tombstones) > 0 {
-		builtOpts = append(builtOpts, fts.WithTombstonesSnapshot(bundle.Tombstones))
-	}
-	if bundle.CollectionStats != nil {
-		builtOpts = append(builtOpts, fts.WithCollectionStatsSnapshot(bundle.CollectionStats))
-	}
-	builtOpts = append(builtOpts, fts.WithAnalyzerDescriptors(bundle.Analyzers))
-
-	var service *fts.Service
-	if len(bundle.Fields) == 1 {
-		if reader := bundle.Fields[fts.DefaultField]; reader != nil {
-			service = fts.New(reader, keyGen, builtOpts...)
-		}
-	}
-
-	if service == nil {
-		indexes := make(map[string]fts.Index, len(bundle.Fields))
-		for fieldName, reader := range bundle.Fields {
-			if reader == nil {
-				return nil, fmt.Errorf("segmentbundle: restore service: nil reader for field %q", fieldName)
-			}
-			indexes[fieldName] = reader
-		}
-		service = fts.NewMultiFieldFromIndexes(indexes, keyGen, builtOpts...)
-	}
-
-	if len(bundle.Analyzers) != len(bundle.Fields) {
-		return nil, fmt.Errorf("segmentbundle: restore service: analyzer descriptor is required for every field")
-	}
-	if bundle.KeyGenerator == nil {
-		return nil, fmt.Errorf("segmentbundle: restore service: key generator descriptor is unavailable")
-	}
-	restoredKeyGenerator, ok := service.KeyGeneratorDescriptor()
-	if !ok || restoredKeyGenerator.Fingerprint != bundle.KeyGenerator.Fingerprint {
-		return nil, fmt.Errorf("segmentbundle: restore service: key generator fingerprint mismatch")
-	}
-	if err := service.ValidateAnalyzerDescriptors(bundle.Analyzers); err != nil {
+	service, err := sealedstate.Restore(sealedstate.State{
+		Fields:          indexes,
+		MultiField:      bundle.MultiField,
+		CollectionStats: bundle.CollectionStats,
+		Registry:        bundle.Registry,
+		Tombstones:      bundle.Tombstones,
+		Pipelines:       bundle.Pipelines,
+		KeyGenerator:    bundle.KeyGenerator,
+	}, keyGen, opts...)
+	if err != nil {
 		return nil, fmt.Errorf("segmentbundle: restore service: %w", err)
 	}
 	return service, nil
 }
 
 // SaveBundleToBytes writes a single-field sealed segment bundle to memory.
-func SaveBundleToBytes(source segment.Source, stats *fts.CollectionStatsSnapshot, registry []fts.DocID, tombstones []uint64, opts BundleSaveOptions) ([]byte, error) {
+func SaveBundleToBytes(source posting.Exporter, stats *fts.CollectionStatsSnapshot, registry []fts.DocID, tombstones []uint64, opts BundleSaveOptions) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := SaveBundle(&buf, source, stats, registry, tombstones, opts); err != nil {
 		return nil, err
@@ -252,11 +235,11 @@ func SaveBundleToBytes(source segment.Source, stats *fts.CollectionStatsSnapshot
 	return buf.Bytes(), nil
 }
 
-func cloneAnalyzerDescriptors(descriptors map[string]fts.AnalyzerDescriptor) map[string]fts.AnalyzerDescriptor {
+func clonePipelineDescriptors(descriptors map[string]fts.PipelineDescriptor) map[string]fts.PipelineDescriptor {
 	if descriptors == nil {
 		return nil
 	}
-	cloned := make(map[string]fts.AnalyzerDescriptor, len(descriptors))
+	cloned := make(map[string]fts.PipelineDescriptor, len(descriptors))
 	for fieldName, descriptor := range descriptors {
 		cloned[fieldName] = descriptor
 	}
@@ -271,24 +254,30 @@ func cloneKeyGeneratorDescriptor(descriptor *fts.KeyGeneratorDescriptor) *fts.Ke
 	return &cloned
 }
 
-func loadBundleReaders(envelope bundleEnvelope) (map[string]*segment.Reader, error) {
+func loadBundleReaders(envelope bundleEnvelope) (map[string]*ftse.Reader, error) {
 	if len(envelope.Fields) == 0 {
+		if envelope.MultiField {
+			return map[string]*ftse.Reader{}, nil
+		}
 		if len(envelope.SegmentPayload) == 0 {
 			return nil, fmt.Errorf("segmentbundle: load bundle: empty segment payload")
 		}
-		reader, err := segment.Open(envelope.SegmentPayload)
+		reader, err := ftse.Open(envelope.SegmentPayload)
 		if err != nil {
 			return nil, fmt.Errorf("segmentbundle: load bundle: open segment payload: %w", err)
 		}
-		return map[string]*segment.Reader{fts.DefaultField: reader}, nil
+		return map[string]*ftse.Reader{fts.DefaultField: reader}, nil
 	}
 
-	fields := make(map[string]*segment.Reader, len(envelope.Fields))
+	fields := make(map[string]*ftse.Reader, len(envelope.Fields))
 	for _, field := range envelope.Fields {
 		if field.FieldName == "" {
 			return nil, fmt.Errorf("segmentbundle: load bundle: empty field name")
 		}
-		reader, err := segment.Open(field.Payload)
+		if _, exists := fields[field.FieldName]; exists {
+			return nil, fmt.Errorf("segmentbundle: load bundle: duplicate field %q", field.FieldName)
+		}
+		reader, err := ftse.Open(field.Payload)
 		if err != nil {
 			return nil, fmt.Errorf("segmentbundle: load bundle: open segment for field %q: %w", field.FieldName, err)
 		}

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 // ChunkID identifies a source chunk within its document.

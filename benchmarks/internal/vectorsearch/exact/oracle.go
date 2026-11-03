@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/internal/memorystore"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 var ErrInvalidOptions = errors.New("vectorsearch/exact: invalid search options")

@@ -7,7 +7,7 @@ import (
 
 func TestCollectionStatsObservePerFieldLengths(t *testing.T) {
 	svc := NewMultiField(
-		func(name string) (Index, error) { return newMemoryIndex(), nil },
+		func(name string) (MutableIndex, error) { return newMemoryIndex(), nil },
 		WordKeys,
 		WithScorer(BM25()),
 	)

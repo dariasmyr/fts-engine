@@ -8,7 +8,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/demo/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/demo/internal/utils"
-	pkgfts "github.com/dariasmyr/fts-engine/pkg/fts"
+	pkgfts "github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 func runExperimentMode(ctx context.Context, log *slog.Logger, service *pkgfts.Service, documents []models.Document) {

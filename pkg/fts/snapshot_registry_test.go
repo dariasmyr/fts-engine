@@ -13,7 +13,11 @@ func RegisterFilterSnapshotCodec(name string, saver FilterSnapshotSaver, loader 
 }
 
 func SaveIndexSnapshotWithState(w io.Writer, indexName string, index Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64) error {
-	return testSnapshotRegistry.SaveIndexSnapshotWithState(w, indexName, index, stats, registry, tombstones)
+	return testSnapshotRegistry.SaveIndexSnapshotWithState(
+		w, indexName, index, stats, registry, tombstones,
+		map[string]PipelineDescriptor{DefaultField: defaultPipeline{}.Descriptor()},
+		keyGeneratorDescriptorForTests(),
+	)
 }
 
 func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
@@ -21,7 +25,18 @@ func LoadIndexSnapshot(r io.Reader) (*LoadedIndexSnapshot, error) {
 }
 
 func SaveMultiIndexSnapshotWithState(w io.Writer, fieldCodecs map[string]string, indexes map[string]Index, stats *CollectionStatsSnapshot, registry []DocID, tombstones []uint64) error {
-	return testSnapshotRegistry.SaveMultiIndexSnapshotWithState(w, fieldCodecs, indexes, stats, registry, tombstones)
+	pipelines := make(map[string]PipelineDescriptor, len(indexes))
+	for fieldName := range indexes {
+		pipelines[fieldName] = defaultPipeline{}.Descriptor()
+	}
+	return testSnapshotRegistry.SaveMultiIndexSnapshotWithState(
+		w, fieldCodecs, indexes, stats, registry, tombstones, pipelines, keyGeneratorDescriptorForTests(),
+	)
+}
+
+func keyGeneratorDescriptorForTests() *KeyGeneratorDescriptor {
+	descriptor := NewKeyGeneratorDescriptor("word-keys", 1)
+	return &descriptor
 }
 
 func LoadMultiIndexSnapshot(r io.Reader) (*LoadedMultiIndexSnapshot, error) {

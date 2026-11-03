@@ -3,8 +3,8 @@ package semantic
 import (
 	"context"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // Service provides document-level semantic indexing and search.

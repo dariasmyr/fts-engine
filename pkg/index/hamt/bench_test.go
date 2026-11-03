@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 func benchmarkIndex(b *testing.B, terms int, docs int) *Index {

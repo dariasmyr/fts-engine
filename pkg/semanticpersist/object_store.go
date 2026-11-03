@@ -7,11 +7,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dariasmyr/fts-engine/internal/memorystore"
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/semanticformat"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 type objectStore struct {

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"syscall"
 
-	vectorann "github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	vectorann "github.com/dariasmyr/fts-engine/v2/benchmarks/internal/vectorsearch"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func main() {

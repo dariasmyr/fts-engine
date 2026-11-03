@@ -301,9 +301,9 @@ func (m model) runSearch(query string) tea.Cmd {
 			err          error
 		)
 		if mode == searchModeSyntax {
-			searchResult, err = engine.SearchQueryString(ctx, query, maxResults)
+			searchResult, err = engine.SearchText(ctx, query, maxResults)
 		} else {
-			searchResult, err = engine.SearchPlainText(ctx, query, maxResults)
+			searchResult, err = engine.SearchTerm(ctx, query, maxResults)
 		}
 
 		if err != nil {

@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 const (

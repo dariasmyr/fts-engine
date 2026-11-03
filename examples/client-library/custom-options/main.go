@@ -4,18 +4,22 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/pkg/filter"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
+	"github.com/dariasmyr/fts-engine/v2/pkg/filter"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 )
 
 func main() {
-	pipe := textproc.NewPipeline(
+	pipe, err := textproc.NewNamedPipeline(
+		"custom-options",
 		textproc.AlnumTokenizer{},
 		textproc.LowercaseFilter{},
 		textproc.MinLengthOrNumericFilter{MinLength: 2},
 	)
+	if err != nil {
+		panic(err)
+	}
 
 	bloom := filter.NewBloomFilter(100_000, 10, 7)
 
@@ -29,7 +33,7 @@ func main() {
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "Search with custom index"}}})
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "Another searchable document"}}})
 
-	res, err := engine.SearchDocuments(context.Background(), "searchable", 5)
+	res, err := engine.SearchText(context.Background(), "searchable", fts.SearchOptions{MaxResults: 5})
 	if err != nil {
 		panic(err)
 	}

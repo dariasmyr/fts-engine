@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func TestPruneRetainsCurrentAndLatestValidGenerations(t *testing.T) {
@@ -253,11 +253,41 @@ func publishTestGenerations(t *testing.T, ctx context.Context, root string, inde
 	return result
 }
 
+func newTestIndex(t *testing.T) *semantic.Index {
+	t.Helper()
+
+	embedding, err := semantic.NewEmbeddingDescriptor(
+		"test", "model", "v1", "pipeline-v1", 2, vector.MetricL2Squared, 1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := semantic.NewIndex(semantic.Config{
+		Schema: semantic.Schema{
+			Embedding: embedding,
+			Chunking: semantic.ChunkingDescriptor{
+				ID: "chunks", Version: 1, Fingerprint: "chunks-v1",
+			},
+		},
+		Limits: semantic.Limits{
+			MaxLiveVectors:          16,
+			MaxChunksPerDocument:    2,
+			MaxDocumentsPerSearch:   4,
+			MaxChunkCandidates:      16,
+			MaxChunksPerDocumentHit: 2,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return index
+}
+
 func addTestSegment(t *testing.T, ctx context.Context, index *semantic.Index) {
 	t.Helper()
 
 	err := index.Add(ctx, "doc", []semantic.EncodedChunk{{
-		Ref:    chunk.Ref{ID: "chunk", DocID: fts.DocID("doc"), Field: fts.DefaultField, EndByte: 1},
+		Ref:    semantic.Ref{ID: "chunk", DocID: fts.DocID("doc"), Field: fts.DefaultField, EndByte: 1},
 		Vector: []float32{1, 2},
 	}})
 	if err != nil {

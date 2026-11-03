@@ -1,6 +1,6 @@
 package hnsw
 
-import "github.com/dariasmyr/fts-engine/pkg/vector"
+import "github.com/dariasmyr/fts-engine/v2/pkg/vector"
 
 const (
 	TerminationComplete   = "complete"

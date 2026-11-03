@@ -1,6 +1,6 @@
 package semanticpersist
 
-import "github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/semanticformat"
+import "github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
 
 func fileFormatLimits(limits Limits) semanticformat.FileLimits {
 	return semanticformat.FileLimits{MaxFileBytes: limits.MaxFileBytes, MaxStringBytes: limits.MaxStringBytes}

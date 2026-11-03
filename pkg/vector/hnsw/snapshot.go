@@ -1,8 +1,8 @@
 package hnsw
 
 import (
-	"github.com/dariasmyr/fts-engine/internal/hnswmodel"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/internal/hnswmodel"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // Snapshot returns an internal, detached representation of index topology.

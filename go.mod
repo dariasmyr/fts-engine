@@ -1,4 +1,4 @@
-module github.com/dariasmyr/fts-engine
+module github.com/dariasmyr/fts-engine/v2
 
 go 1.25.0
 

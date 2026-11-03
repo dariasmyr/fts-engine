@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
 )
 
 func main() {
-	engine := fts.NewMultiField(func(string) (fts.Index, error) {
+	engine := fts.NewMultiField(func(string) (fts.MutableIndex, error) {
 		return slicedradix.New(), nil
 	}, fts.WordKeys)
 
@@ -39,11 +39,11 @@ func main() {
 
 	fmt.Printf("fields=%v\n", engine.Fields())
 
-	res, err := engine.SearchFieldClauses(ctx, []fts.FieldQueryClause{
-		fts.MustFieldQuery("title", "distributed"),
-		fts.ShouldFieldQuery("abstract", "consensus"),
-		fts.MustNotFieldQuery("abstract", "draft"),
-	}, 10)
+	res, err := engine.SearchQuery(ctx, &fts.BooleanQuery{Clauses: []fts.BoolClause{
+		fts.MustClause(fts.TermQuery{Field: "title", Term: "distributed"}),
+		fts.ShouldClause(fts.TermQuery{Field: "abstract", Term: "consensus"}),
+		fts.MustNotClause(fts.TermQuery{Field: "abstract", Term: "draft"}),
+	}}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		panic(err)
 	}

@@ -3,7 +3,7 @@ package hnsw
 import (
 	"context"
 
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // builder constructs one HNSW graph. It is single-writer and is not searchable.

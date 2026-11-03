@@ -6,10 +6,17 @@ import (
 )
 
 type Tokenizer interface {
+	// Tokenize returns storage owned by the caller; pipeline filters may mutate it.
 	Tokenize(text string) []string
+	// Fingerprint must cover every tokenizer setting that can affect output.
+	Fingerprint() string
 }
 
 type AlnumTokenizer struct{}
+
+func (AlnumTokenizer) Fingerprint() string {
+	return unicodeFingerprint("alnum-tokenizer/v1")
+}
 
 func (AlnumTokenizer) Tokenize(text string) []string {
 	if text == "" {
@@ -43,6 +50,10 @@ func (AlnumTokenizer) Tokenize(text string) []string {
 // alphanumeric components. For example, "10.0.0.1" produces the complete IP
 // plus 10/0/0/1, while ordinary words are emitted once.
 type ObservabilityTokenizer struct{}
+
+func (ObservabilityTokenizer) Fingerprint() string {
+	return unicodeFingerprint("observability-tokenizer/v1")
+}
 
 func (ObservabilityTokenizer) Tokenize(text string) []string {
 	if text == "" {

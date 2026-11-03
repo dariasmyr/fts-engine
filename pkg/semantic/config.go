@@ -3,7 +3,7 @@ package semantic
 import (
 	"math"
 
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 const (

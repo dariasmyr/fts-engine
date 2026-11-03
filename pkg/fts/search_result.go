@@ -1,6 +1,9 @@
 package fts
 
-import "sort"
+import (
+	"cmp"
+	"slices"
+)
 
 func searchResultFromOrdHits(hits map[DocOrd]docAccum, maxResults int, useScore bool, registry *DocRegistry) *SearchResult {
 	results, totalFound := resultsFromOrdHits(hits, useScore, registry)
@@ -32,18 +35,29 @@ func resultsFromOrdHits(hits map[DocOrd]docAccum, useScore bool, registry *DocRe
 		})
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		if useScore && results[i].Score != results[j].Score {
-			return results[i].Score > results[j].Score
+	slices.SortFunc(results, func(a, b Result) int {
+		if useScore && a.Score != b.Score {
+			return compareFloatDescending(a.Score, b.Score)
 		}
-		if results[i].UniqueMatches != results[j].UniqueMatches {
-			return results[i].UniqueMatches > results[j].UniqueMatches
+		if a.UniqueMatches != b.UniqueMatches {
+			return cmp.Compare(b.UniqueMatches, a.UniqueMatches)
 		}
-		if results[i].TotalMatches != results[j].TotalMatches {
-			return results[i].TotalMatches > results[j].TotalMatches
+		if a.TotalMatches != b.TotalMatches {
+			return cmp.Compare(b.TotalMatches, a.TotalMatches)
 		}
-		return results[i].ID < results[j].ID
+		return cmp.Compare(a.ID, b.ID)
 	})
 
 	return results, len(results)
+}
+
+func compareFloatDescending(a, b float64) int {
+	switch {
+	case a > b:
+		return -1
+	case a < b:
+		return 1
+	default:
+		return 0
+	}
 }

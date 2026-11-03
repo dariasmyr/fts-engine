@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/dariasmyr/fts-engine/internal/contextcheck"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/v2/internal/contextcheck"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 // Snapshot is one immutable committed semantic snapshot. It owns neither

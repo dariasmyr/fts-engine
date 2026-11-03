@@ -5,9 +5,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/internal/memorystore"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 func TestSnapshotRestorePreservesSearchAndOrdinals(t *testing.T) {

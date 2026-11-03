@@ -4,9 +4,9 @@ import (
 	"context"
 	"math"
 
-	"github.com/dariasmyr/fts-engine/internal/contextcheck"
-	"github.com/dariasmyr/fts-engine/internal/memorystore"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/internal/contextcheck"
+	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // Compact rewrites all live rows from the committed snapshot into at most one

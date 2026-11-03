@@ -1,15 +1,16 @@
 package metrics
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
 	"runtime"
-	"sort"
+	"slices"
 	"time"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/quality"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/harness"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/quality"
 )
 
 const SchemaVersion = "benchmarks.v1alpha2"
@@ -32,14 +33,15 @@ type Record struct {
 }
 
 type RunMeta struct {
-	Timestamp   time.Time `json:"timestamp"`
-	GoVersion   string    `json:"go_version"`
-	GOOS        string    `json:"goos"`
-	GOARCH      string    `json:"goarch"`
-	NumCPU      int       `json:"num_cpu"`
-	Concurrency int       `json:"concurrency"`
-	BatchSize   int       `json:"batch_size,omitempty"`
-	WarmupFrac  float64   `json:"warmup_frac,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
+	GoVersion    string    `json:"go_version"`
+	GOOS         string    `json:"goos"`
+	GOARCH       string    `json:"goarch"`
+	NumCPU       int       `json:"num_cpu"`
+	Concurrency  int       `json:"concurrency"`
+	BatchSize    int       `json:"batch_size,omitempty"`
+	WarmupFrac   float64   `json:"warmup_frac,omitempty"`
+	QueryRepeats int       `json:"query_repeats,omitempty"`
 }
 
 type DatasetMeta struct {
@@ -142,16 +144,16 @@ func WriteJSON(w io.Writer, recs []Record) error {
 
 func WriteTable(w io.Writer, recs []Record) error {
 	ordered := append([]Record(nil), recs...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		leftQuery, rightQuery := normalizedQueryClass(ordered[i]), normalizedQueryClass(ordered[j])
+	slices.SortStableFunc(ordered, func(a, b Record) int {
+		leftQuery, rightQuery := normalizedQueryClass(a), normalizedQueryClass(b)
 		leftRank, rightRank := queryClassRank(leftQuery), queryClassRank(rightQuery)
 		if leftRank != rightRank {
-			return leftRank < rightRank
+			return cmp.Compare(leftRank, rightRank)
 		}
 		if leftQuery != rightQuery {
-			return leftQuery < rightQuery
+			return cmp.Compare(leftQuery, rightQuery)
 		}
-		return ordered[i].Engine < ordered[j].Engine
+		return cmp.Compare(a.Engine, b.Engine)
 	})
 
 	if _, err := fmt.Fprintf(w, "%-8s  %-11s  %8s  %7s  %9s  %9s  %10s  %7s  %7s  %7s  %7s  %9s  %7s  %7s\n",
@@ -211,12 +213,14 @@ func queryClassRank(class string) int {
 		return 1
 	case "and-hl":
 		return 2
-	case "or-hh":
+	case "and-hr":
 		return 3
-	case "phrase":
+	case "or-hh":
 		return 4
-	case "prefix":
+	case "phrase":
 		return 5
+	case "prefix":
+		return 6
 	case "-":
 		return 100
 	default:

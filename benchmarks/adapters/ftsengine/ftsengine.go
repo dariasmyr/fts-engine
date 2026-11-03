@@ -7,13 +7,13 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftsbuiltin"
-	"github.com/dariasmyr/fts-engine/pkg/ftspersist"
-	"github.com/dariasmyr/fts-engine/pkg/ftspreset"
-	"github.com/dariasmyr/fts-engine/pkg/textproc"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftsbuiltin"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftspersist"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftspreset"
+	"github.com/dariasmyr/fts-engine/v2/pkg/textproc"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/harness"
 )
 
 type Config struct {
@@ -81,7 +81,7 @@ func (a *Adapter) Open(_ context.Context, dir string) error {
 	if err != nil {
 		return fmt.Errorf("build filter: %w", err)
 	}
-	opts := make([]fts.Option, 0, 3)
+	opts := make([]*fts.Option, 0, 3)
 	if presetOpt, err := selectPreset(a.cfg.Lang); err != nil {
 		return err
 	} else if presetOpt != nil {
@@ -162,19 +162,19 @@ func (a *Adapter) Search(ctx context.Context, q harness.Query) ([]harness.Search
 func (a *Adapter) search(ctx context.Context, q harness.Query) (*fts.SearchResult, error) {
 	switch q.Kind {
 	case "", harness.QueryKindText:
-		return a.svc.SearchPlainText(ctx, q.Text, q.K)
+		return a.svc.SearchQuery(ctx, fts.TermQuery{Term: q.Text}, fts.SearchOptions{MaxResults: q.K})
 	case harness.QueryKindTerm:
-		return a.svc.Search(ctx, fts.TermQuery{Term: q.Text}, q.K)
+		return a.svc.SearchQuery(ctx, fts.TermQuery{Term: q.Text}, fts.SearchOptions{MaxResults: q.K})
 	case harness.QueryKindPhrase:
-		return a.svc.Search(ctx, fts.PhraseQuery{Phrase: q.Text}, q.K)
+		return a.svc.SearchQuery(ctx, fts.PhraseQuery{Phrase: q.Text}, fts.SearchOptions{MaxResults: q.K})
 	case harness.QueryKindPrefix:
-		return a.svc.Search(ctx, fts.PrefixQuery{Prefix: q.Text}, q.K)
+		return a.svc.SearchQuery(ctx, fts.PrefixQuery{Prefix: q.Text}, fts.SearchOptions{MaxResults: q.K})
 	case harness.QueryKindBoolean:
 		fq, err := buildFTSBooleanQuery(q.Boolean)
 		if err != nil {
 			return nil, err
 		}
-		return a.svc.Search(ctx, fq, q.K)
+		return a.svc.SearchQuery(ctx, fq, fts.SearchOptions{MaxResults: q.K})
 	default:
 		return nil, fmt.Errorf("unsupported harness query kind %q", q.Kind)
 	}
@@ -286,7 +286,7 @@ func (a *Adapter) saveSegment() error {
 	if err := os.MkdirAll(segmentDir, 0o755); err != nil {
 		return fmt.Errorf("create segment dir: %w", err)
 	}
-	if err := ftspersist.SaveSegment(ftspersist.SegmentPaths{Dir: segmentDir}, a.svc, filterCodecName(a.cfg.Filter), ftspersist.SaveOptions{Registry: registry}); err != nil {
+	if err := ftspersist.SaveSegment(context.Background(), ftspersist.SegmentPaths{Dir: segmentDir}, a.svc, filterCodecName(a.cfg.Filter), ftspersist.SaveOptions{Registry: registry}); err != nil {
 		return fmt.Errorf("save segment: %w", err)
 	}
 	size, err := pathSize(segmentDir)
@@ -326,7 +326,7 @@ func (a *Adapter) observeDiagnostics(diag *fts.QueryDiagnostics) {
 	}
 }
 
-func selectPreset(lang string) (fts.Option, error) {
+func selectPreset(lang string) (*fts.Option, error) {
 	switch lang {
 	case "", "none":
 		return nil, nil
@@ -343,7 +343,7 @@ func selectPreset(lang string) (fts.Option, error) {
 	}
 }
 
-func selectScorer(kind string) (fts.Option, error) {
+func selectScorer(kind string) (*fts.Option, error) {
 	switch kind {
 	case "", "none":
 		return nil, nil

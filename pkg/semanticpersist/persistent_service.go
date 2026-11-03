@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // PersistentService owns one writable semantic service and the exclusive filesystem lock.

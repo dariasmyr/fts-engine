@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func TestMemoryVectorStoreStoresPreparedRowsWithoutAliasing(t *testing.T) {

@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/dariasmyr/fts-engine/pkg/filter"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/flat"
-	"github.com/dariasmyr/fts-engine/pkg/index/hamt"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/filter"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/flat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/hamt"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
 )
 
 type FilterOptions struct {
@@ -84,7 +84,7 @@ func RegisterFilters(registry *fts.SnapshotRegistry) error {
 	return nil
 }
 
-func BuildIndex(name string) (fts.Index, error) {
+func BuildIndex(name string) (fts.MutableIndex, error) {
 	switch name {
 	case "flat":
 		return flat.New(), nil

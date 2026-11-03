@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // Build constructs one immutable HNSW index from prepared source rows in stable

@@ -5,9 +5,9 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/vectorsearch/exact"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/vectorsearch/exact"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 func recallAtK(got, want []vector.Hit) float64 {

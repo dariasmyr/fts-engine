@@ -23,7 +23,9 @@ For external integrations, prefer these public packages:
 - `pkg/index/flat` - pointer-light exact, positional, and prefix index for high-cardinality data
 - `fts.WordKeys` - default token-to-key generator
 - `pkg/ftspersist` - recommended snapshot and segment persistence API
-- `pkg/segment` - low-level sealed segment format and export contract
+- `pkg/posting` - storage-neutral ordinals, iterators, traversal, and export contracts
+- `pkg/ftse` - low-level FTSE sealed segment reader and writer
+- `pkg/presence` - optional ordinal-only FPR1 presence index
 - `pkg/segmentbundle` - stream/blob bundle API
 - `pkg/textproc` - tokenizers and filters
 - `pkg/ftspreset` - ready-to-use pipeline presets
@@ -43,8 +45,10 @@ For external integrations, prefer these public packages:
 ## Install
 
 ```bash
-go get github.com/dariasmyr/fts-engine@latest
+go get github.com/dariasmyr/fts-engine/v2@latest
 ```
+
+See [`MIGRATION.md`](MIGRATION.md) when upgrading from v1.
 
 ## Quickstart
 
@@ -55,8 +59,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
 )
 
 func main() {
@@ -65,7 +69,9 @@ func main() {
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Wikipedia: Rosa is a French hotel barge"}}})
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "Rosa runs hotel operations in France"}}})
 
-	res, err := engine.SearchDocuments(context.Background(), "french hotel", 10)
+	res, err := engine.SearchText(context.Background(), "french hotel", fts.SearchOptions{
+		MaxResults: 10,
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -211,34 +217,62 @@ Available presets:
 Use `pkg/textproc` when you want an explicit pipeline:
 
 ```go
-pipe := textproc.NewPipeline(
+pipe, err := textproc.NewNamedPipeline(
+	"custom-search",
 	textproc.AlnumTokenizer{},
 	textproc.LowercaseFilter{},
 	textproc.MinLengthOrNumericFilter{MinLength: 2},
 	textproc.EnglishStopwordFilter{},
 	textproc.EnglishStemFilter{},
 )
+if err != nil {
+	return err
+}
 
 engine := fts.New(slicedradix.New(), fts.WordKeys, fts.WithPipeline(pipe))
 ```
 
-Each `fts.Field` can also override the service-level pipeline with its own `Field.Pipeline`.
+Configure field-specific pipelines with `fts.WithFieldPipelines`; other fields use
+the service-level pipeline configured through `fts.WithPipeline`. Indexing and
+query execution use the same configured pipeline for each field.
 
 Use a named pipeline when its output will be persisted in a sealed segment:
 
 ```go
-pipe := textproc.NewNamedPipeline(
+pipe, err := textproc.NewNamedPipeline(
 	"support-events",
-	1,
 	textproc.AlnumTokenizer{},
 	textproc.LowercaseFilter{},
 )
+if err != nil {
+	return err
+}
 ```
 
-The name and version form a caller-owned compatibility identity. Increment the
-version whenever the same input may produce different tokens. `NewPipeline(...)`
-uses the generic identity `custom@0`, so prefer `NewNamedPipeline(...)` for
-persisted indexes.
+`textproc` fingerprints the tokenizer fingerprint and ordered filter fingerprints.
+The pipeline name is diagnostic metadata and does not affect compatibility.
+Built-in components include their effective settings, Unicode table version, and
+the pinned Snowball implementation or dictionary identity. Changing a tokenizer,
+filter order, component setting, or implementation identity changes the pipeline
+fingerprint automatically.
+
+Custom tokenizers and filters implement `Fingerprint() string`. Return a stable,
+self-describing value such as `sha256:<64 lowercase hexadecimal characters>` that
+covers every input affecting token generation. Include a unique component domain,
+an internal configuration version, and all effective settings in the hashed data.
+Use `fts.SHA256Fingerprint` after constructing deterministic configuration bytes.
+No reflection or implementation hashing is used.
+
+External implementations of `fts.Pipeline` construct their own
+`fts.PipelineDescriptor` with a self-describing fingerprint. The engine validates
+the fingerprint format and compares it exactly, but cannot prove that a custom
+implementation honestly fingerprints its behavior.
+
+Current fingerprints use the form `sha256:<digest>`. For `textproc`, the hashed
+canonical stream contains the versioned pipeline domain, tokenizer fingerprint,
+filter count, and filter fingerprints in execution order. Strings and counts are
+length-prefixed so different component sequences cannot produce the same canonical
+bytes through ambiguous concatenation.
 
 ### Observability Pipeline
 
@@ -267,13 +301,14 @@ semantics are not preserved.
 
 ## Search API
 
-Use:
+The v2 API has two search entry points:
 
-- `SearchDocuments(...)` for query-string parsing
-- `SearchPlainText(...)` for bag-of-words input without query syntax
-- `SearchField(...)`, `SearchFields(...)` for field-scoped search
-- `SearchPhrase(...)`, `SearchPhraseNear(...)` and field variants for phrase queries
-- `SearchFieldClauses(...)` when different fields need different subqueries
+- `SearchText(...)` parses query-string syntax;
+- `SearchQuery(...)` executes typed query AST values.
+
+Both accept `SearchOptions` for result limits, candidate IDs, a default field,
+and an optional field subset. For bag-of-words input without query syntax, pass
+`TermQuery` to `SearchQuery`.
 
 Supported query-string syntax:
 
@@ -286,7 +321,42 @@ Supported query-string syntax:
 - `bar*`
 - `+(title:hotel title:french) -market`
 
-Programmatic queries are available through the AST types in `pkg/fts` such as `TermQuery`, `PhraseQuery`, `PrefixQuery`, and `BooleanQuery`.
+Programmatic queries are available through the AST types in `pkg/fts` such as `TermQuery`, `PhraseQuery`, `NearPhraseQuery`, `PrefixQuery`, and `BooleanQuery`.
+
+Candidate-aware searches use the unified options API:
+
+```go
+result, err := engine.SearchText(ctx, "postgres checkpoint", fts.SearchOptions{
+	CandidateIDs: []fts.DocID{"event-10", "event-42"},
+	MaxResults:   100,
+})
+```
+
+Use `SearchQuery` with the same options for a typed query AST. A nil
+`CandidateIDs` slice is unrestricted; a non-nil empty slice matches nothing.
+
+Clients that already own an ordinal mapping and only need streamed exact-term
+presence checks can bypass `Service` and `DocRegistry`:
+
+```go
+candidateCursor := posting.NewBitmapIterator(candidateWords)
+err := posting.IntersectWithIterator(
+	ctx,
+	segmentReader,
+	analyzedKeys,
+	candidateCursor,
+	candidateCardinality,
+	func(ord posting.Ord) bool {
+		// Consume the matching ordinal. Return false to stop successfully.
+		return true
+	},
+)
+```
+
+The bitmap word slice uses little-endian bit numbering within each `uint64`:
+bit `n` represents `DocOrd(n)`. It must remain immutable until the iterator is
+closed. The low-level API does not tokenize, score, hide tombstones, or map
+external document IDs.
 
 Field behavior summary:
 
@@ -295,13 +365,13 @@ Field behavior summary:
 - field indexes in multi-field mode are created lazily on first indexing of that field
 - searching a field that has no index does not return an error; it returns zero matches
 
-What that means for different search entry points:
+What that means for searches:
 
-- `SearchDocuments(...)` on a single-field service searches only `_default`
-- `SearchDocuments(...)` on a multi-field service searches across the currently existing field indexes
-- `SearchField(...)`, `SearchPhraseField(...)`, `SearchPhraseNearField(...)`, and field-scoped query syntax like `title:hotel` return zero matches when that field has never been indexed
-- `SearchFields(...)`, `SearchPhraseFields(...)`, `SearchPhraseNearFields(...)`, and `SearchQueryFields(...)` search only the provided fields that currently exist; missing fields are ignored
-- `SearchFieldClauses(...)` behaves the same way per clause: a clause targeting a missing field contributes no matches
+- an unscoped query on a single-field service searches only `_default`;
+- an unscoped query on a multi-field service searches all existing field indexes;
+- an explicit AST field or query-string field such as `title:hotel` returns no matches when that field has never been indexed;
+- `SearchOptions.Fields` restricts unqualified clauses to the provided existing fields; missing fields are ignored;
+- different field-specific clauses can be combined with a typed `BooleanQuery`;
 - prefix search behaves the same with one extra rule: if the field exists but its index does not support prefix search, that field contributes no prefix matches
 - phrase search behaves the same: if the field exists but its index does not implement `fts.PositionalIndex`, that field contributes no phrase matches
 
@@ -324,7 +394,11 @@ _ = engine.Index(context.Background(), fts.Document{
 	},
 })
 
-res, _ := engine.SearchField(context.Background(), "title", "hotel", 10)
+res, _ := engine.SearchQuery(
+	context.Background(),
+	fts.TermQuery{Field: "title", Term: "hotel"},
+	fts.SearchOptions{MaxResults: 10},
+)
 fmt.Println(res.TotalResultsCount)
 ```
 
@@ -471,38 +545,49 @@ Important details:
 
 - snapshot and segment formats are different and not interchangeable
 - `mmap` is available only for segments via `ftspersist.SegmentLoadOptions{Access: ftspersist.AccessMmap}`
-- `pkg/segment` is a low-level API for raw segments and export contracts; prefer `pkg/ftspersist` for filesystem persistence
+- `pkg/ftse` is a low-level API for raw FTSE segments; prefer `pkg/ftspersist` for filesystem persistence
+- do not mutate a service while `SaveSnapshot(...)` is running; searches may continue concurrently
+- do not mutate a service while `SaveSegment(ctx, ...)` is running; searches may continue concurrently, and the completed immutable generation is published atomically
+- snapshots are written as one atomic bundle containing the index, state, and optional filter; legacy split index/filter snapshots remain readable
+- segment persistence retains the current and immediately previous immutable generations; loaded generations are protected by leases, and unused older generations are pruned before the next generation is published
+- new segment writes use FTSE v3; FTSE v2 is read-only compatibility, and FTSE v1 must be rebuilt from source data
+- FTSE v3 validates lookup metadata on open and data blocks lazily; use `ftse.Reader.VerifyAll(ctx)` for eager full verification
 - `pkg/segmentbundle` stores a complete sealed index as one `io.Reader`/`io.Writer` bundle
 - create one `fts.SnapshotRegistry`, register built-in codecs with `ftsbuiltin.RegisterSnapshotCodecs(registry)`, and pass it through persistence options
 
-Sealed segment manifests store the service's default analyzer descriptor. Supply
-the same pipeline when restoring the service. An optional expected fingerprint
-can reject an incompatible segment before its field files are opened:
+Snapshots, filesystem segment manifests, and segment bundles store one pipeline
+descriptor per indexed field. Supply matching default and field pipelines when
+restoring the service:
 
 ```go
 pipe := textproc.ObservabilityPipeline()
-descriptor := pipe.Descriptor()
-
 loaded, err := ftspersist.LoadSegment(
 	ftspersist.SegmentPaths{Dir: "./data/segments/events"},
 	fts.WordKeys,
 	ftspersist.SegmentLoadOptions{
-		Access:                      ftspersist.AccessFile,
-		ExpectedAnalyzerFingerprint: descriptor.Fingerprint,
+		Access: ftspersist.AccessFile,
 	},
 	fts.WithPipeline(pipe),
 )
 ```
 
-The compatibility gate currently covers sealed segments and the service-level
-default pipeline. It does not describe mutable snapshots, field-level pipeline
-overrides, or the key generator. Rebuild persisted data when any of those token
-or key-generation rules change. Legacy v1 segment manifests remain readable but
-do not contain analyzer metadata.
+Restore validates pipeline fingerprints against the configured pipelines before
+returning the service. Current snapshots and segment manifests require pipeline
+and key-generator metadata; versions containing legacy analyzer metadata must be
+rebuilt. Legacy bare `SHA256(name + "@" + version)` fingerprints are never
+accepted or migrated because they did not record pipeline configuration.
+Callers can detect this condition with
+`errors.Is(err, fts.ErrPersistenceRebuildRequired)`; the demo falls back to a
+fresh service so its normal indexing pass rebuilds persistence from source data.
+Pipeline-bearing single snapshots use format version 5, multi-field snapshots
+use version 6, filesystem segment manifests use version 5, and bundles use
+version 6. Filter snapshot versions are unchanged. New raw FTSE segment writes
+use v3; readers retain v2 compatibility, while v1 indexes must be rebuilt.
 
-`AccessFile` keeps the term table resident and reads matching posting ranges from
-the file. `AccessMmap` maps the segment. Opening either mode validates the segment
-checksum, and callers must close the returned loaded service.
+`AccessFile` keeps the term table resident and reads matching posting blocks from
+the file. `AccessMmap` maps the segment. FTSE v3 open validates lookup metadata;
+block checksums are validated before their data is returned. Callers must close
+the returned loaded service.
 
 Current working persistence examples:
 
@@ -593,16 +678,19 @@ restored, err := segmentbundle.RestoreService(bundle, fts.WordKeys)
 
 This bundle format is separate from `ftspersist.SaveSegment`: it has no
 filesystem manifest, atomic file replacement, or mmap access mode. New bundles
-store an analyzer descriptor for every field and validate them during restore.
+store a pipeline descriptor for every field and validate them during restore.
 Use `fts.WithFieldPipelines` when restoring field-specific pipelines. See
 `examples/client-library/segment-bundle` for a complete round-trip example.
 
-The v3 bundle format requires analyzer metadata; bundles created by older
+The v6 bundle format requires configuration fingerprints; bundles created by older
 formats must be rebuilt.
 
-When exporting custom `segment.Source` values directly, pass analyzer identities
-through `segmentbundle.BundleSaveOptions{Analyzers: ...}` instead of using
+When exporting custom `posting.Exporter` values directly, pass pipeline identities
+through `segmentbundle.BundleSaveOptions{Pipelines: ...}` instead of using
 `SaveService`.
+
+See [`docs/fts-storage-migration.md`](docs/fts-storage-migration.md) for the
+low-level posting API migration table and FTSE format compatibility policy.
 
 ## Diagnostics and Stats
 
@@ -610,7 +698,9 @@ Per-request diagnostics are opt-in:
 
 ```go
 ctx := fts.WithDiagnostics(context.Background())
-res, _ := engine.SearchDocuments(ctx, "postgres checkpoint", 10)
+res, _ := engine.SearchText(ctx, "postgres checkpoint", fts.SearchOptions{
+	MaxResults: 10,
+})
 
 fmt.Println(res.Diagnostics.LogicalQueryType)
 fmt.Println(res.Diagnostics.ExecutionStrategy)
@@ -636,7 +726,7 @@ Runtime diagnostics are separate from `textproc.ObservabilityPipeline()`.
 - `preset` - preset pipeline via `pkg/ftspreset`
 - `custom-options` - custom pipeline and filter
 - `flat-observability` - flat index with technical-token analysis
-- `segment-analyzer-compatibility` - analyzer-compatible sealed segment restore
+- `segment-pipeline-compatibility` - pipeline-compatible sealed segment restore
 - `rank-profile` - multi-field ranking with weighted field scoring
 - `hnsw-build` - observable HNSW build, graph inspection, persistence, and reopen
 - `semantic-publication` - mutable document search with explicit publication visibility

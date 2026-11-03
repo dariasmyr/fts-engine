@@ -1,8 +1,8 @@
 package semantic
 
 import (
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/vector/hnsw"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 // ChunkHit identifies one matching source chunk and its vector distance from

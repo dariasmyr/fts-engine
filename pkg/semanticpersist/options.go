@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 )
 
 type publicationStep string

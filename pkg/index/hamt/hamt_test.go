@@ -1,11 +1,12 @@
 package hamt
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 func insertOrd(t *testing.T, idx *Index, term string, id fts.DocID, ord fts.DocOrd) {
@@ -83,11 +84,11 @@ func TestIndexInsertOutOfOrderKeepsPostingsSorted(t *testing.T) {
 		t.Fatalf("Search() error = %v", err)
 	}
 	want := []fts.Posting{
-		{Ord: 1, Count: 1, Seq: 1},
-		{Ord: 3, Count: 2, Seq: 3},
-		{Ord: 5, Count: 1, Seq: 5},
-		{Ord: 7, Count: 1, Seq: 7},
-		{Ord: 9, Count: 1, Seq: 9},
+		{Ord: 1, Count: 1},
+		{Ord: 3, Count: 2},
+		{Ord: 5, Count: 1},
+		{Ord: 7, Count: 1},
+		{Ord: 9, Count: 1},
 	}
 	if len(docs) != len(want) {
 		t.Fatalf("docs = %+v, want %+v", docs, want)
@@ -126,7 +127,7 @@ func TestIndexSearchPositional(t *testing.T) {
 		t.Fatalf("len(docs) = %d, want 2", len(docs))
 	}
 
-	sort.Slice(docs, func(i, j int) bool { return docs[i].Ord < docs[j].Ord })
+	slices.SortFunc(docs, func(a, b fts.PositionalPosting) int { return cmp.Compare(a.Ord, b.Ord) })
 	if docs[0].Ord != 0 {
 		t.Fatalf("docs[0].Ord = %d, want 0", docs[0].Ord)
 	}
@@ -197,9 +198,9 @@ func TestPhraseSearchWithHAMT(t *testing.T) {
 		}
 	}
 
-	res, err := svc.SearchPhrase(ctx, "hotel barge", 10)
+	res, err := svc.SearchQuery(ctx, fts.PhraseQuery{Phrase: "hotel barge"}, fts.SearchOptions{MaxResults: 10})
 	if err != nil {
-		t.Fatalf("SearchPhrase() error = %v", err)
+		t.Fatalf("SearchQuery() error = %v", err)
 	}
 
 	hits := map[fts.DocID]int{}
@@ -218,7 +219,7 @@ func TestPhraseSearchWithHAMT(t *testing.T) {
 	}
 }
 
-func TestIndexSearchReturnsSeqOrder(t *testing.T) {
+func TestIndexSearchReturnsOrdOrder(t *testing.T) {
 	idx := New()
 
 	insertOrd(t, idx, "hotel", "doc-z", 0)
@@ -231,10 +232,10 @@ func TestIndexSearchReturnsSeqOrder(t *testing.T) {
 	if len(docs) != 2 {
 		t.Fatalf("len(docs) = %d, want 2", len(docs))
 	}
-	if docs[0].Ord != 0 || docs[0].Seq != 0 {
-		t.Fatalf("docs[0] = %+v, want ord=0 seq=0", docs[0])
+	if docs[0].Ord != 0 {
+		t.Fatalf("docs[0] = %+v, want ord=0", docs[0])
 	}
-	if docs[1].Ord != 1 || docs[1].Seq != 1 {
-		t.Fatalf("docs[1] = %+v, want ord=1 seq=1", docs[1])
+	if docs[1].Ord != 1 {
+		t.Fatalf("docs[1] = %+v, want ord=1", docs[1])
 	}
 }

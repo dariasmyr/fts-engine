@@ -8,7 +8,7 @@ import (
 	"math"
 	"unicode/utf8"
 
-	internalformat "github.com/dariasmyr/fts-engine/internal/format"
+	internalformat "github.com/dariasmyr/fts-engine/v2/internal/format"
 )
 
 const (

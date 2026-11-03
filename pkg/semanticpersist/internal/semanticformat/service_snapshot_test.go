@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func TestStateVersionAndLifecycleLimitsRoundTrip(t *testing.T) {

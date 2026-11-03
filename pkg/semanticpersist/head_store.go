@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dariasmyr/fts-engine/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
 )
 
 type headStore struct {

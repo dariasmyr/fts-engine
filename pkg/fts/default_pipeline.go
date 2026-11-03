@@ -7,12 +7,14 @@ import (
 
 type defaultPipeline struct{}
 
-func (defaultPipeline) AnalyzerName() string { return "default" }
-
-func (defaultPipeline) AnalyzerVersion() uint32 { return 1 }
-
-func (defaultPipeline) AnalyzerFingerprint() string {
-	return NewAnalyzerDescriptor("default", 1).Fingerprint
+func (defaultPipeline) Descriptor() PipelineDescriptor {
+	configuration := "fts-engine/default-pipeline/config-v1\x00unicode=" + unicode.Version
+	fingerprint := SHA256Fingerprint([]byte(configuration))
+	descriptor, err := NewPipelineDescriptor("default", fingerprint)
+	if err != nil {
+		panic(err)
+	}
+	return descriptor
 }
 
 func (defaultPipeline) Process(text string) []string {

@@ -10,10 +10,10 @@ import (
 	"slices"
 	"unicode/utf8"
 
-	"github.com/dariasmyr/fts-engine/pkg/chunk"
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 var (
@@ -133,10 +133,14 @@ func (e *DocumentEncoder) chunkDocument(ctx context.Context, document fts.Docume
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if field == "" || value.Text == "" {
+		text := value.Text
+		if text == "" {
+			text = value.Value
+		}
+		if field == "" || text == "" {
 			return nil, ErrInvalidDocument
 		}
-		n := uint64(len(value.Text))
+		n := uint64(len(text))
 		if n > e.limits.MaxSourceBytes-totalBytes {
 			return nil, fmt.Errorf("%w: source bytes exceed %d", ErrLimitExceeded, e.limits.MaxSourceBytes)
 		}
@@ -154,7 +158,11 @@ func (e *DocumentEncoder) chunkDocument(ctx context.Context, document fts.Docume
 		if remaining <= 0 {
 			return nil, fmt.Errorf("%w: chunks exceed %d", ErrLimitExceeded, e.limits.MaxChunks)
 		}
-		text := document.Fields[field].Text
+		value := document.Fields[field]
+		text := value.Text
+		if text == "" {
+			text = value.Value
+		}
 		if !utf8.ValidString(text) {
 			return nil, fmt.Errorf("%w: field %q: invalid UTF-8", ErrInvalidChunk, field)
 		}

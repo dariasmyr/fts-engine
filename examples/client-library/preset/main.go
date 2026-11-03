@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/ftspreset"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/ftspreset"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
 )
 
 func main() {
@@ -19,7 +19,7 @@ func main() {
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "Hotels in France and отели в России"}}})
 	_ = engine.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "Hotel market overview"}}})
 
-	res, err := engine.SearchDocuments(context.Background(), "отели hotel", 10)
+	res, err := engine.SearchText(context.Background(), "отели hotel", fts.SearchOptions{MaxResults: 10})
 	if err != nil {
 		panic(err)
 	}

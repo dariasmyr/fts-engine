@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
 func TestSearchStatsObserveAggregatesByStrategy(t *testing.T) {

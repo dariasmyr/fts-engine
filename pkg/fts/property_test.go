@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"math/rand"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/pkg/fts"
-	"github.com/dariasmyr/fts-engine/pkg/index/hamt"
-	"github.com/dariasmyr/fts-engine/pkg/index/slicedradix"
+	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/hamt"
+	"github.com/dariasmyr/fts-engine/v2/pkg/index/slicedradix"
 )
 
 func TestPropertyAndFastPathMatchesSetSemantics(t *testing.T) {
@@ -31,7 +30,7 @@ func TestPropertyAndFastPathMatchesSetSemantics(t *testing.T) {
 					fts.MustClause(fts.TermQuery{Term: a}),
 					fts.MustClause(fts.TermQuery{Term: b}),
 				}}
-				res, err := svc.Search(context.Background(), q, 1000)
+				res, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 1000})
 				if err != nil {
 					t.Fatalf("iter=%d seed=%d Search() error = %v", i, seed, err)
 				}
@@ -68,7 +67,7 @@ func TestPropertyOrFastPathMatchesSetSemantics(t *testing.T) {
 					fts.ShouldClause(fts.TermQuery{Term: a}),
 					fts.ShouldClause(fts.TermQuery{Term: b}),
 				}}
-				res, err := svc.Search(context.Background(), q, 10000)
+				res, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 10000})
 				if err != nil {
 					t.Fatalf("iter=%d seed=%d Search() error = %v", i, seed, err)
 				}
@@ -106,13 +105,13 @@ func TestPropertyWandSubsetOfFullOr(t *testing.T) {
 					fts.ShouldClause(fts.TermQuery{Term: b}),
 				}}
 
-				full, err := svc.Search(context.Background(), q, 10000)
+				full, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 10000})
 				if err != nil {
 					t.Fatalf("iter=%d seed=%d full Search() error = %v", i, seed, err)
 				}
 				fullSet := propertyIDSet(full)
 
-				top, err := svc.Search(context.Background(), q, 5)
+				top, err := svc.SearchQuery(context.Background(), q, fts.SearchOptions{MaxResults: 5})
 				if err != nil {
 					t.Fatalf("iter=%d seed=%d top Search() error = %v", i, seed, err)
 				}
@@ -177,7 +176,7 @@ func buildPropertyService(t *testing.T, index fts.Index, corpus map[fts.DocID][]
 	for id := range corpus {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 
 	ctx := context.Background()
 	for _, id := range ids {
@@ -199,7 +198,7 @@ func pickTwoPresentPropertyTerms(seed int64, corpus map[fts.DocID][]string, voca
 	for token := range seen {
 		present = append(present, token)
 	}
-	sort.Strings(present)
+	slices.Sort(present)
 	if len(present) < 2 {
 		return vocab[0], vocab[1]
 	}
@@ -242,6 +241,6 @@ func propertySortedKeys(m map[fts.DocID]bool) []string {
 	for id := range m {
 		out = append(out, string(id))
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
