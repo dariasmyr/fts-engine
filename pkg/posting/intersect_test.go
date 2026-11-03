@@ -8,12 +8,13 @@ import (
 )
 
 type testOpener struct {
-	data     map[string][]Ord
-	opened   int
-	closed   int
-	openErr  error
-	readErr  error
-	closeErr error
+	data      map[string][]Ord
+	iterators []*testIterator
+	opened    int
+	closed    int
+	openErr   error
+	readErr   error
+	closeErr  error
 }
 
 func (s *testOpener) OpenOrdinalPostings(_ context.Context, term string) (OrdinalIterator, uint64, error) {
@@ -25,6 +26,7 @@ func (s *testOpener) OpenOrdinalPostings(_ context.Context, term string) (Ordina
 		sliceIterator: sliceIterator{ords: s.data[term], pos: -1},
 		opener:        s,
 	}
+	s.iterators = append(s.iterators, cursor)
 	return cursor, uint64(len(s.data[term])), nil
 }
 
@@ -32,7 +34,19 @@ func (i *testIterator) Err() error { return i.opener.readErr }
 
 type testIterator struct {
 	sliceIterator
-	opener *testOpener
+	opener       *testOpener
+	nextCalls    int
+	advanceCalls int
+}
+
+func (i *testIterator) Next() bool {
+	i.nextCalls++
+	return i.sliceIterator.Next()
+}
+
+func (i *testIterator) Advance(target Ord) bool {
+	i.advanceCalls++
+	return i.sliceIterator.Advance(target)
 }
 
 func (i *testIterator) Close() error {
@@ -77,6 +91,72 @@ func TestIntersect(t *testing.T) {
 				t.Fatalf("iterator lifecycle opened=%d closed=%d", opener.opened, opener.closed)
 			}
 		})
+	}
+}
+
+func TestIntersectAdaptsCandidateDriver(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		candidates     []Ord
+		wantSequential bool
+	}{
+		{name: "sparse_candidates_use_advance", candidates: []Ord{1, 8}},
+		{name: "dense_candidates_use_sequential_postings", candidates: []Ord{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, wantSequential: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opener := &testOpener{data: map[string][]Ord{
+				"term": {0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+			}}
+			if err := Intersect(context.Background(), opener, []string{"term"}, tt.candidates, func(Ord) bool {
+				return true
+			}); err != nil {
+				t.Fatal(err)
+			}
+			cursor := opener.iterators[0]
+			if tt.wantSequential {
+				if cursor.nextCalls == 0 || cursor.advanceCalls != 0 {
+					t.Fatalf("posting cursor Next=%d Advance=%d, want sequential traversal", cursor.nextCalls, cursor.advanceCalls)
+				}
+				return
+			}
+			if cursor.nextCalls != 0 || cursor.advanceCalls == 0 {
+				t.Fatalf("posting cursor Next=%d Advance=%d, want candidate-driven traversal", cursor.nextCalls, cursor.advanceCalls)
+			}
+		})
+	}
+}
+
+func TestIntersectWithoutCandidatesUsesShortestPostingList(t *testing.T) {
+	opener := &testOpener{data: map[string][]Ord{
+		"long":  {0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+		"short": {1, 8},
+	}}
+	var got []Ord
+	if err := Intersect(context.Background(), opener, []string{"long", "short"}, nil, func(ord Ord) bool {
+		got = append(got, ord)
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []Ord{1, 8}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Intersect() = %v, want %v", got, want)
+	}
+
+	longPostings := opener.iterators[0]
+	shortPostings := opener.iterators[1]
+	if shortPostings.nextCalls == 0 || shortPostings.advanceCalls != 0 {
+		t.Fatalf(
+			"short posting list Next=%d Advance=%d, want sequential driver",
+			shortPostings.nextCalls,
+			shortPostings.advanceCalls,
+		)
+	}
+	if longPostings.nextCalls != 0 || longPostings.advanceCalls == 0 {
+		t.Fatalf(
+			"long posting list Next=%d Advance=%d, want aligned iterator",
+			longPostings.nextCalls,
+			longPostings.advanceCalls,
+		)
 	}
 }
 

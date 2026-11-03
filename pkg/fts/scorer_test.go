@@ -1,8 +1,9 @@
 package fts
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -92,7 +93,7 @@ func (p *prefixMemoryIndex) SearchPrefix(prefix string) ([]Posting, error) {
 	for ord, count := range merged {
 		out = append(out, Posting{Ord: ord, Count: count})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Ord < out[j].Ord })
+	slices.SortFunc(out, func(a, b Posting) int { return cmp.Compare(a.Ord, b.Ord) })
 	return out, nil
 }
 

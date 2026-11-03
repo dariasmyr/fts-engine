@@ -1,8 +1,9 @@
 package mock
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
@@ -51,11 +52,18 @@ func (a *Adapter) Search(_ context.Context, q harness.Query) ([]harness.SearchHi
 	for docID, score := range scores {
 		hits = append(hits, harness.SearchHit{DocID: docID, Score: score})
 	}
-	sort.Slice(hits, func(i, j int) bool {
-		if hits[i].Score != hits[j].Score {
-			return hits[i].Score > hits[j].Score
+	slices.SortFunc(hits, func(a, b harness.SearchHit) int {
+		if a.Score != b.Score {
+			switch {
+			case a.Score > b.Score:
+				return -1
+			case a.Score < b.Score:
+				return 1
+			default:
+				return 0
+			}
 		}
-		return hits[i].DocID < hits[j].DocID
+		return cmp.Compare(a.DocID, b.DocID)
 	})
 	if q.K > 0 && len(hits) > q.K {
 		hits = hits[:q.K]

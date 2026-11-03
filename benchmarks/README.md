@@ -31,6 +31,46 @@ Output:
 - plain-text summary table
 - JSON report via `-out`
 
+`results/` contains local benchmark artifacts and is ignored by git. Keep
+summaries in documentation or PR descriptions; attach raw output separately as
+a review or CI artifact when needed.
+
+## Candidate Traversal Regression Runs
+
+Use the reusable runner to capture comparable snapshots before and after future
+posting-traversal or candidate-filtering optimizations:
+
+```bash
+benchmarks/scripts/run-candidate-traversal.sh <snapshot-label>
+```
+
+The script sequentially runs end-to-end Service, prepared Service, candidate
+preparation, direct posting AND, and FTSE/FPR1 control benchmarks. It stores raw
+Go benchmark output and environment metadata under:
+
+```text
+benchmarks/results/<snapshot-label>/
+```
+
+For example:
+
+```bash
+benchmarks/scripts/run-candidate-traversal.sh before-next-optimization
+benchmarks/scripts/run-candidate-traversal.sh after-next-optimization
+```
+
+The default settings are `-benchtime=200ms -count=6`. They can be overridden
+without editing the script:
+
+```bash
+BENCHTIME=500ms COUNT=10 \
+  benchmarks/scripts/run-candidate-traversal.sh longer-validation
+```
+
+Use identical settings for before/after snapshots and do not run them in
+parallel. The generated `benchmarks/results/` directory is local-only and must
+not be committed.
+
 ## Quick Start
 
 Recommended synthetic baseline (heavier comparison run):

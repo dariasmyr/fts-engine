@@ -3,7 +3,7 @@ package fts
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 )
 
 func (s *Service) Index(ctx context.Context, doc Document) error {
@@ -97,7 +97,7 @@ func (s *Service) fieldNames() []string {
 	for name := range s.indexes {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

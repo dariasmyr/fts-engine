@@ -5,7 +5,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"sync"
 )
 
@@ -279,7 +279,7 @@ func (r *SnapshotRegistry) SaveMultiIndexSnapshotWithState(w io.Writer, fieldCod
 	for fieldName := range indexes {
 		fieldNames = append(fieldNames, fieldName)
 	}
-	sort.Strings(fieldNames)
+	slices.Sort(fieldNames)
 	if err := ValidatePipelineFields(fieldNames, pipelines); err != nil {
 		return fmt.Errorf("fts: save multi-index snapshot: %w", err)
 	}

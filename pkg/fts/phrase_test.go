@@ -2,7 +2,7 @@ package fts
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"testing"
 )
 
@@ -29,7 +29,7 @@ func (p *positionalMemoryIndex) InsertAt(key string, pos uint32, ord DocOrd) err
 		p.positions[key] = make(map[DocOrd][]uint32)
 	}
 	ps := append(p.positions[key][ord], pos)
-	sort.Slice(ps, func(i, j int) bool { return ps[i] < ps[j] })
+	slices.Sort(ps)
 	p.positions[key][ord] = ps
 	return nil
 }

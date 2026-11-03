@@ -143,6 +143,7 @@ func BenchmarkBooleanAndPostingIntersect(b *testing.B) {
 	}{
 		{name: "candidates=4", candidates: []DocOrd{0, 100, 5_000, 9_998}},
 		{name: "candidates=1024", candidates: evenlySpacedBenchmarkOrds(documentCount, 1_024)},
+		{name: "candidates=5000", candidates: evenlySpacedBenchmarkOrds(documentCount, 5_000)},
 		{name: "unrestricted"},
 	} {
 		b.Run(benchmark.name, func(b *testing.B) {

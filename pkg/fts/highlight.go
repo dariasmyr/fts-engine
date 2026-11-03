@@ -1,7 +1,8 @@
 package fts
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -77,11 +78,15 @@ func highlight(query, text string, h Highlighter, pipeline Pipeline, keyGen KeyG
 	}
 
 	clusters := clusterMatches(matches, fragSize)
-	sort.SliceStable(clusters, func(i, j int) bool { return len(clusters[i]) > len(clusters[j]) })
+	slices.SortStableFunc(clusters, func(a, b []highlightMatch) int {
+		return cmp.Compare(len(b), len(a))
+	})
 	if len(clusters) > maxFrag {
 		clusters = clusters[:maxFrag]
 	}
-	sort.SliceStable(clusters, func(i, j int) bool { return clusters[i][0].start < clusters[j][0].start })
+	slices.SortStableFunc(clusters, func(a, b []highlightMatch) int {
+		return cmp.Compare(a[0].start, b[0].start)
+	})
 
 	out := make([]Fragment, 0, len(clusters))
 	for _, cluster := range clusters {
@@ -143,11 +148,15 @@ func highlightPlainText(query, text string, h Highlighter, pipeline Pipeline, ke
 	}
 
 	clusters := clusterMatches(matches, fragSize)
-	sort.SliceStable(clusters, func(i, j int) bool { return len(clusters[i]) > len(clusters[j]) })
+	slices.SortStableFunc(clusters, func(a, b []highlightMatch) int {
+		return cmp.Compare(len(b), len(a))
+	})
 	if len(clusters) > maxFrag {
 		clusters = clusters[:maxFrag]
 	}
-	sort.SliceStable(clusters, func(i, j int) bool { return clusters[i][0].start < clusters[j][0].start })
+	slices.SortStableFunc(clusters, func(a, b []highlightMatch) int {
+		return cmp.Compare(a[0].start, b[0].start)
+	})
 
 	out := make([]Fragment, 0, len(clusters))
 	for _, cluster := range clusters {

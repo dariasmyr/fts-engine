@@ -6,7 +6,7 @@ import (
 	"math"
 	"math/rand"
 	"runtime"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 )
@@ -223,7 +223,7 @@ func Percentiles(lats []time.Duration, ps ...float64) []time.Duration {
 		return make([]time.Duration, len(ps))
 	}
 	cp := append([]time.Duration(nil), lats...)
-	sort.Slice(cp, func(i, j int) bool { return cp[i] < cp[j] })
+	slices.Sort(cp)
 	out := make([]time.Duration, len(ps))
 	for i, p := range ps {
 		switch {
