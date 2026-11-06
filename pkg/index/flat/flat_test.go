@@ -201,8 +201,8 @@ func TestPhraseSearchWithFlat(t *testing.T) {
 		"doc-b": "barge speech today hotel was there",
 		"doc-c": "hotel barge said hotel barge again",
 	} {
-		if err := svc.Index(ctx, fts.Document{ID: id, Fields: map[string]fts.Field{
-			fts.DefaultField: {Value: content},
+		if err := svc.Index(ctx, fts.Document{ID: id, Fields: map[string]fts.FieldData{
+			fts.DefaultField: {Text: content},
 		}}); err != nil {
 			t.Fatalf("Index(%q) error = %v", id, err)
 		}

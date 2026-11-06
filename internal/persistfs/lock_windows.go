@@ -1,6 +1,6 @@
 //go:build windows
 
-package ftspersist
+package persistfs
 
 import (
 	"errors"
@@ -20,45 +20,30 @@ var (
 	kernel32ProcUnlockFileEx = syscall.NewLazyDLL("kernel32.dll").NewProc("UnlockFileEx")
 )
 
-type fileLock struct {
+type FileLock struct {
 	file       *os.File
 	overlapped syscall.Overlapped
 }
 
-func acquireFileLock(path string, shared, nonblocking bool) (*fileLock, bool, error) {
-	var file *os.File
-	var err error
-	if shared {
-		file, err = os.Open(path)
-		if errors.Is(err, os.ErrNotExist) {
-			file, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-		}
-	} else {
-		file, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	}
+func AcquireFileLock(path string, options LockOptions) (*FileLock, bool, error) {
+	file, err := openPortableLockFile(path, options)
 	if err != nil {
 		return nil, false, err
 	}
-
-	lock := &fileLock{file: file}
+	lock := &FileLock{file: file}
 	var flags uintptr
-	if !shared {
+	if !options.Shared {
 		flags |= lockfileExclusiveLock
 	}
-	if nonblocking {
+	if options.NonBlocking {
 		flags |= lockfileFailImmediately
 	}
 	result, _, callErr := kernel32ProcLockFileEx.Call(
-		file.Fd(),
-		flags,
-		0,
-		1,
-		0,
-		uintptr(unsafe.Pointer(&lock.overlapped)),
+		file.Fd(), flags, 0, 1, 0, uintptr(unsafe.Pointer(&lock.overlapped)),
 	)
 	if result == 0 {
 		_ = file.Close()
-		if nonblocking && errors.Is(callErr, errorLockViolation) {
+		if options.NonBlocking && errors.Is(callErr, errorLockViolation) {
 			return nil, false, nil
 		}
 		return nil, false, callErr
@@ -66,16 +51,12 @@ func acquireFileLock(path string, shared, nonblocking bool) (*fileLock, bool, er
 	return lock, true, nil
 }
 
-func (l *fileLock) Close() error {
+func (l *FileLock) Close() error {
 	if l == nil || l.file == nil {
 		return nil
 	}
 	result, _, callErr := kernel32ProcUnlockFileEx.Call(
-		l.file.Fd(),
-		0,
-		1,
-		0,
-		uintptr(unsafe.Pointer(&l.overlapped)),
+		l.file.Fd(), 0, 1, 0, uintptr(unsafe.Pointer(&l.overlapped)),
 	)
 	var unlockErr error
 	if result == 0 {

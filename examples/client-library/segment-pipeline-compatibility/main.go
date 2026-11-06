@@ -28,8 +28,8 @@ func main() {
 	engine := fts.New(flat.New(), fts.WordKeys, fts.WithPipeline(pipeline))
 	if err := engine.Index(ctx, fts.Document{
 		ID: "event-1",
-		Fields: map[string]fts.Field{
-			fts.DefaultField: {Value: "checkout-api/v2 failed with io.EOF"},
+		Fields: map[string]fts.FieldData{
+			fts.DefaultField: {Text: "checkout-api/v2 failed with io.EOF"},
 		},
 	}); err != nil {
 		panic(err)
