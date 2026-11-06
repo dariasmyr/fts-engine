@@ -6,14 +6,14 @@ import (
 	"math"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 )
 
 type publisher struct {
 	layout       layout
 	openedLimits Limits
 	generation   Generation
-	reusable     map[semantic.SegmentID]semanticformat.SegmentRef
+	reusable     map[semantic.SegmentID]generationformat.SegmentRef
 }
 
 func (p *publisher) publish(ctx context.Context, index *semantic.Index, options PublishOptions, fullyValidateCurrent bool) (Generation, error) {
@@ -33,13 +33,13 @@ func (p *publisher) publish(ctx context.Context, index *semantic.Index, options 
 		return Generation{}, err
 	}
 	objects := newObjectStore(p.layout, options)
-	segmentRefs := make([]semanticformat.SegmentRef, len(snapshot.segments))
+	segmentRefs := make([]generationformat.SegmentRef, len(snapshot.segments))
 	reused := false
 	for i, segment := range snapshot.segments {
-		if err := validateSegmentData(segment.data, snapshot.state.Config, options.Limits); err != nil {
+		if err := validateSegmentData(segment.checkpoint, snapshot.state.Config, options.Limits); err != nil {
 			return Generation{}, err
 		}
-		if ref, ok := p.reusable[segment.data.ID]; ok {
+		if ref, ok := p.reusable[segment.checkpoint.ID]; ok {
 			if err := objects.verify(ref); err != nil {
 				return Generation{}, err
 			}
@@ -49,7 +49,7 @@ func (p *publisher) publish(ctx context.Context, index *semantic.Index, options 
 		}
 		ref, err := objects.put(
 			ctx,
-			segment.data,
+			segment.checkpoint,
 			snapshot.state.Config.Limits.MaxChunkCandidates,
 		)
 		if err != nil {
@@ -76,14 +76,14 @@ func (p *publisher) publish(ctx context.Context, index *semantic.Index, options 
 		return Generation{}, err
 	}
 	head := newHeadStore(p.layout, options)
-	if err := head.commit(ctx, semanticformat.Head{GenerationID: nextID, ManifestHash: generation.manifestRef.SHA256}); err != nil {
+	if err := head.commit(ctx, generationformat.Head{GenerationID: nextID, ManifestHash: generation.manifestRef.SHA256}); err != nil {
 		return Generation{}, err
 	}
 
 	p.generation = Generation{ID: nextID}
-	p.reusable = make(map[semantic.SegmentID]semanticformat.SegmentRef, len(segmentRefs))
+	p.reusable = make(map[semantic.SegmentID]generationformat.SegmentRef, len(segmentRefs))
 	for i, segment := range snapshot.segments {
-		p.reusable[segment.data.ID] = segmentRefs[i]
+		p.reusable[segment.checkpoint.ID] = segmentRefs[i]
 	}
 	return p.generation, nil
 }

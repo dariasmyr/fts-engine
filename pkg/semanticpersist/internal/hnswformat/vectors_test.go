@@ -1,4 +1,4 @@
-package semanticformat
+package hnswformat
 
 import (
 	"bytes"
@@ -47,10 +47,10 @@ func testVectorFile(t *testing.T, rows, dimensions int) ([]byte, VectorLimits) {
 		t.Fatal(err)
 	}
 	limits := VectorLimits{
-		MaxDimensions: dimensions,
-		MaxVectors: rows,
+		MaxDimensions:  dimensions,
+		MaxVectors:     rows,
 		MaxVectorBytes: uint64(rows * dimensions * float32ByteSize),
-		MaxK: rows,
+		MaxK:           rows,
 	}
 	var output bytes.Buffer
 	if _, err := WriteVectorFile(context.Background(), &output, store, rows, limits); err != nil {
@@ -71,7 +71,7 @@ func newCancelAfterChecksContext(checks int) *cancelAfterChecksContext {
 
 func (c *cancelAfterChecksContext) Deadline() (time.Time, bool) { return time.Time{}, false }
 func (c *cancelAfterChecksContext) Done() <-chan struct{}       { return c.done }
-func (c *cancelAfterChecksContext) Value(any) any                { return nil }
+func (c *cancelAfterChecksContext) Value(any) any               { return nil }
 
 func (c *cancelAfterChecksContext) Err() error {
 	if c.canceled {

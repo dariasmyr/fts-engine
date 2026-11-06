@@ -4,38 +4,37 @@ import (
 	"context"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 )
 
 type segmentSource struct {
-	data          semantic.SegmentData
-	livenessWords []uint64
+	checkpoint semantic.CheckpointSegment
 }
 
 type persistenceSnapshot struct {
-	state    semanticformat.ServiceSnapshot
+	state    generationformat.ServiceSnapshot
 	segments []segmentSource
 }
 
 func buildPersistenceSnapshot(ctx context.Context, service *semantic.Index) (persistenceSnapshot, error) {
-	indexState, err := service.State(ctx)
+	checkpoint, err := service.CreateCheckpoint(ctx)
 	if err != nil {
 		return persistenceSnapshot{}, err
 	}
-	segments := indexState.Segments
+	segments := checkpoint.Segments
 	result := persistenceSnapshot{
-		state: semanticformat.ServiceSnapshot{
-			Config: indexState.Config, Revision: semantic.Revision(indexState.Revision),
-			MaxAllocatedVectorID: indexState.MaxAllocatedVectorID, NextSegmentID: indexState.NextSegmentID,
-			Segments: make([]semanticformat.SegmentState, len(segments)),
+		state: generationformat.ServiceSnapshot{
+			Config: checkpoint.Config, Revision: checkpoint.Revision,
+			MaxAllocatedVectorID: checkpoint.MaxAllocatedVectorID, NextSegmentID: checkpoint.NextSegmentID,
+			Segments: make([]generationformat.SegmentState, len(segments)),
 		},
 		segments: make([]segmentSource, len(segments)),
 	}
 	for i, segment := range segments {
-		data := segment.Data
-		words := segment.LivenessWords
-		result.segments[i] = segmentSource{data: data, livenessWords: words}
-		result.state.Segments[i] = semanticformat.SegmentState{ID: data.ID, Rows: data.Rows, LivenessWords: words}
+		result.segments[i] = segmentSource{checkpoint: segment}
+		result.state.Segments[i] = generationformat.SegmentState{
+			ID: segment.ID, Rows: segment.Rows, LivenessWords: segment.LivenessWords,
+		}
 	}
 	return result, nil
 }

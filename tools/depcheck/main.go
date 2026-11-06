@@ -35,6 +35,16 @@ type importRule struct {
 	hint             string
 }
 
+type architectureRule struct {
+	owner                     string
+	ownerTree                 bool
+	restrictRepositoryImports bool
+	allowedRepositoryImports  []string
+	forbiddenImports          []string
+	rule                      string
+	hint                      string
+}
+
 type violation struct {
 	from   string
 	to     string
@@ -74,6 +84,126 @@ var importRules = []importRule{
 	},
 }
 
+var architectureRules = []architectureRule{
+	repositoryRule(rootModule + "/internal/contextcheck"),
+	repositoryRule(rootModule + "/internal/fnv"),
+	repositoryRule(rootModule + "/internal/format"),
+	repositoryRule(rootModule+"/internal/hnswmodel", rootModule+"/pkg/vector"),
+	repositoryRule(rootModule+"/internal/memorystore", rootModule+"/pkg/vector"),
+	repositoryRule(rootModule + "/internal/persistfs"),
+	repositoryRule(rootModule+"/internal/sealedstate", rootModule+"/pkg/fts"),
+
+	repositoryRule(rootModule + "/pkg/chunk"),
+	repositoryRule(rootModule+"/pkg/filter", rootModule+"/internal/fnv"),
+	repositoryRule(rootModule+"/pkg/fts", rootModule+"/pkg/posting"),
+	repositoryRule(
+		rootModule+"/pkg/ftsbuiltin",
+		rootModule+"/pkg/filter",
+		rootModule+"/pkg/fts",
+		rootModule+"/pkg/index",
+	),
+	repositoryRule(rootModule+"/pkg/ftse", rootModule+"/pkg/posting"),
+	repositoryRule(
+		rootModule+"/pkg/ftspersist",
+		rootModule+"/internal/persistfs",
+		rootModule+"/internal/sealedstate",
+		rootModule+"/pkg/fts",
+		rootModule+"/pkg/ftse",
+		rootModule+"/pkg/posting",
+	),
+	repositoryRule(
+		rootModule+"/pkg/ftspreset",
+		rootModule+"/pkg/fts",
+		rootModule+"/pkg/textproc",
+	),
+	repositoryRule(rootModule+"/pkg/ftsstats", rootModule+"/pkg/fts"),
+	{
+		owner:                     rootModule + "/pkg/index",
+		ownerTree:                 true,
+		restrictRepositoryImports: true,
+		allowedRepositoryImports: []string{
+			rootModule + "/internal/fnv",
+			rootModule + "/pkg/fts",
+			rootModule + "/pkg/posting",
+		},
+		rule: "index implementations may depend only on fts, posting, and internal hashing primitives",
+		hint: "keep index implementations below service, persistence, and adapter packages",
+	},
+	repositoryRule(rootModule + "/pkg/posting"),
+	repositoryRule(rootModule+"/pkg/presence", rootModule+"/pkg/posting"),
+	repositoryRule(
+		rootModule+"/pkg/segmentbundle",
+		rootModule+"/internal/sealedstate",
+		rootModule+"/pkg/fts",
+		rootModule+"/pkg/ftse",
+		rootModule+"/pkg/posting",
+	),
+	repositoryRule(
+		rootModule+"/pkg/semantic",
+		rootModule+"/internal/contextcheck",
+		rootModule+"/internal/memorystore",
+		rootModule+"/pkg/fts",
+		rootModule+"/pkg/vector",
+	),
+	repositoryRule(
+		rootModule+"/pkg/semanticencode",
+		rootModule+"/pkg/chunk",
+		rootModule+"/pkg/fts",
+		rootModule+"/pkg/semantic",
+		rootModule+"/pkg/vector",
+	),
+	repositoryRule(
+		rootModule+"/pkg/semanticpersist",
+		rootModule+"/internal/memorystore",
+		rootModule+"/internal/persistfs",
+		rootModule+"/pkg/semantic",
+		rootModule+"/pkg/semanticpersist/internal",
+		rootModule+"/pkg/vector",
+	),
+	{
+		owner:                     rootModule + "/pkg/semanticpersist/internal/generationformat",
+		restrictRepositoryImports: true,
+		allowedRepositoryImports: []string{
+			rootModule + "/internal/format",
+			rootModule + "/pkg/fts",
+			rootModule + "/pkg/semantic",
+			rootModule + "/pkg/vector",
+		},
+		forbiddenImports: []string{"os", "path/filepath", "syscall"},
+		rule:             "generationformat must contain wire-format logic only",
+		hint:             "move filesystem publication and durability mechanics into pkg/semanticpersist",
+	},
+	{
+		owner:                     rootModule + "/pkg/semanticpersist/internal/hnswformat",
+		restrictRepositoryImports: true,
+		allowedRepositoryImports: []string{
+			rootModule + "/internal/contextcheck",
+			rootModule + "/internal/hnswmodel",
+			rootModule + "/pkg/vector",
+		},
+		forbiddenImports: []string{"os", "path/filepath", "syscall"},
+		rule:             "hnswformat must contain wire-format logic only",
+		hint:             "move filesystem publication and durability mechanics into pkg/semanticpersist",
+	},
+	repositoryRule(rootModule+"/pkg/textproc", rootModule+"/pkg/fts"),
+	repositoryRule(rootModule + "/pkg/vector"),
+	repositoryRule(
+		rootModule+"/pkg/vector/hnsw",
+		rootModule+"/internal/hnswmodel",
+		rootModule+"/pkg/vector",
+	),
+}
+
+func repositoryRule(owner string, allowed ...string) architectureRule {
+	return architectureRule{
+		owner:                     owner,
+		restrictRepositoryImports: true,
+		allowedRepositoryImports:  allowed,
+		rule:                      owner + " has an explicit repository dependency allowlist",
+		hint:                      "add the dependency only after assigning it an intentional architectural direction",
+	}
+}
+
 func main() {
 	rootDir, err := os.Getwd()
 	if err != nil {
@@ -95,6 +225,8 @@ func main() {
 	violations = append(violations, checkImportRules(packagesByModule["."], importRules[1])...)
 	violations = append(violations, checkImportRules(packagesByModule["demo"], importRules[2])...)
 	violations = append(violations, checkImportRules(packagesByModule["benchmarks"], importRules[3])...)
+	violations = append(violations, checkArchitectureRules(packagesByModule["."], architectureRules)...)
+	violations = append(violations, checkArchitectureCoverage(packagesByModule["."], architectureRules)...)
 
 	if len(violations) == 0 {
 		fmt.Println("depcheck: ok")
@@ -157,6 +289,82 @@ func allowedImport(imp string, allowedPrefixes []string) bool {
 		}
 	}
 	return false
+}
+
+func checkArchitectureRules(pkgs []listedPackage, rules []architectureRule) []violation {
+	var violations []violation
+	for _, pkg := range pkgs {
+		for _, rule := range rules {
+			if !ruleOwnsPackage(rule, pkg.ImportPath) {
+				continue
+			}
+			for _, imp := range pkg.Imports {
+				if architectureImportAllowed(rule, imp) {
+					continue
+				}
+				violations = append(violations, violation{
+					from: pkg.ImportPath,
+					to:   imp,
+					rule: rule.rule,
+					hint: rule.hint,
+				})
+			}
+		}
+	}
+	return violations
+}
+
+func ruleOwnsPackage(rule architectureRule, importPath string) bool {
+	if rule.ownerTree {
+		return packageMatches(importPath, rule.owner)
+	}
+	return importPath == rule.owner
+}
+
+func architectureImportAllowed(rule architectureRule, imp string) bool {
+	for _, forbidden := range rule.forbiddenImports {
+		if packageMatches(imp, forbidden) {
+			return false
+		}
+	}
+	if !rule.restrictRepositoryImports || !packageMatches(imp, rootModule) {
+		return true
+	}
+	for _, allowed := range rule.allowedRepositoryImports {
+		if packageMatches(imp, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func checkArchitectureCoverage(pkgs []listedPackage, rules []architectureRule) []violation {
+	var violations []violation
+	for _, pkg := range pkgs {
+		if !packageMatches(pkg.ImportPath, rootModule+"/pkg") &&
+			!packageMatches(pkg.ImportPath, rootModule+"/internal") {
+			continue
+		}
+		covered := false
+		for _, rule := range rules {
+			if ruleOwnsPackage(rule, pkg.ImportPath) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			violations = append(violations, violation{
+				from: pkg.ImportPath,
+				rule: "package has no architecture dependency rule",
+				hint: "add an explicit repository dependency allowlist for the new package",
+			})
+		}
+	}
+	return violations
+}
+
+func packageMatches(importPath, packagePrefix string) bool {
+	return importPath == packagePrefix || strings.HasPrefix(importPath, packagePrefix+"/")
 }
 
 func listPackages(rootDir, moduleDir string) ([]listedPackage, error) {

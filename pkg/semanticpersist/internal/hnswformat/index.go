@@ -1,4 +1,4 @@
-package semanticpersist
+package hnswformat
 
 import (
 	"context"
@@ -7,58 +7,57 @@ import (
 	"math"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/hnswmodel"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 const maxPersistedHNSWLevel = 63
 
-func writeGraphFile(
+func WriteGraphFile(
 	ctx context.Context,
 	writer io.Writer,
 	index *hnsw.Index,
-	vectors semanticformat.FileRef,
-) (semanticformat.Metadata, error) {
+	vectors FileRef,
+) (Metadata, error) {
 	if ctx == nil {
-		return semanticformat.Metadata{}, vector.ErrNilContext
+		return Metadata{}, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
-		return semanticformat.Metadata{}, err
+		return Metadata{}, err
 	}
 	if writer == nil || index == nil || !validGraphReference(vectors) {
-		return semanticformat.Metadata{}, ErrCorrupt
+		return Metadata{}, ErrCorrupt
 	}
 
-	metadata, err := semanticformat.Encode(
+	metadata, err := Encode(
 		contextWriter{ctx: ctx, writer: writer},
 		graphFromSnapshot(hnsw.Snapshot(index), vectors),
 	)
 	if err != nil {
-		return semanticformat.Metadata{}, mapGraphFormatError(err)
+		return Metadata{}, mapGraphFormatError(err)
 	}
 	return metadata, nil
 }
 
-func openGraphFile(
+func OpenGraphFile(
 	ctx context.Context,
 	data []byte,
 	vectors vector.PreparedVectorStore,
-	vectorRef semanticformat.FileRef,
+	vectorRef FileRef,
 	search hnsw.SearchConfig,
-	limits Limits,
-) (*hnsw.Index, semanticformat.Metadata, error) {
+	limits SegmentLimits,
+) (*hnsw.Index, Metadata, error) {
 	if ctx == nil {
-		return nil, semanticformat.Metadata{}, vector.ErrNilContext
+		return nil, Metadata{}, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, semanticformat.Metadata{}, err
+		return nil, Metadata{}, err
 	}
 	if vectors == nil || !validGraphReference(vectorRef) {
-		return nil, semanticformat.Metadata{}, ErrCorrupt
+		return nil, Metadata{}, ErrCorrupt
 	}
 
-	graph, metadata, err := semanticformat.DecodeBytesContext(ctx, data, semanticformat.Limits{
+	graph, metadata, err := DecodeBytesContext(ctx, data, Limits{
 		MaxGraphBytes: min(limits.MaxFileBytes, limits.MaxGraphBytes),
 		MaxVectors:    uint64(limits.MaxVectors),
 		MaxLinks:      limits.MaxGraphLinks,
@@ -66,36 +65,36 @@ func openGraphFile(
 		MaxLevel:      maxPersistedHNSWLevel,
 	})
 	if err != nil {
-		return nil, semanticformat.Metadata{}, mapGraphFormatError(err)
+		return nil, Metadata{}, mapGraphFormatError(err)
 	}
 	if graph.Vectors.Size != vectorRef.Size || graph.Vectors.SHA256 != vectorRef.SHA256 {
-		return nil, semanticformat.Metadata{}, ErrCorrupt
+		return nil, Metadata{}, ErrCorrupt
 	}
 
 	snapshot, err := validateDecodedGraph(ctx, graph, vectors, limits)
 	if err != nil {
-		return nil, semanticformat.Metadata{}, err
+		return nil, Metadata{}, err
 	}
 	index, err := hnsw.Restore(snapshot, vectors, search)
 	if err != nil {
-		return nil, semanticformat.Metadata{}, ErrCorrupt
+		return nil, Metadata{}, ErrCorrupt
 	}
 	return index, metadata, nil
 }
 
-func graphFromSnapshot(snapshot hnswmodel.Snapshot, vectors semanticformat.FileRef) semanticformat.Graph {
+func graphFromSnapshot(snapshot hnswmodel.Snapshot, vectors FileRef) Graph {
 	maxLevel := uint8(0xff)
 	if snapshot.HasEntry {
 		maxLevel = snapshot.Levels[snapshot.Entry]
 	}
-	return semanticformat.Graph{
+	return Graph{
 		Dimensions:    uint32(snapshot.Dimensions),
 		Metric:        uint8(snapshot.Metric),
 		Normalization: uint8(snapshot.Normalization),
 		HasEntry:      snapshot.HasEntry,
 		Entry:         snapshot.Entry,
 		MaxLevel:      maxLevel,
-		Build: semanticformat.BuildInfo{
+		Build: BuildInfo{
 			BuildVersion:          snapshot.BuildVersion,
 			LevelGeneratorVersion: snapshot.LevelGeneratorVersion,
 			MaxNeighbors:          uint32(snapshot.MaxNeighbors),
@@ -103,7 +102,7 @@ func graphFromSnapshot(snapshot hnswmodel.Snapshot, vectors semanticformat.FileR
 			EfConstruction:        uint32(snapshot.EfConstruction),
 			Seed:                  snapshot.Seed,
 		},
-		Vectors: semanticformat.Reference{
+		Vectors: Reference{
 			Size:   vectors.Size,
 			SHA256: vectors.SHA256,
 		},
@@ -116,11 +115,16 @@ func graphFromSnapshot(snapshot hnswmodel.Snapshot, vectors semanticformat.FileR
 	}
 }
 
+// SnapshotEncodedSize returns the encoded graph size for an HNSW snapshot.
+func SnapshotEncodedSize(snapshot hnswmodel.Snapshot, vectors FileRef) (uint64, error) {
+	return EncodedSize(graphFromSnapshot(snapshot, vectors))
+}
+
 func validateDecodedGraph(
 	ctx context.Context,
-	graph semanticformat.Graph,
+	graph Graph,
 	vectors vector.PreparedVectorStore,
-	limits Limits,
+	limits SegmentLimits,
 ) (hnswmodel.Snapshot, error) {
 	if ctx == nil {
 		return hnswmodel.Snapshot{}, vector.ErrNilContext
@@ -137,11 +141,11 @@ func validateDecodedGraph(
 		vectors.Metric() != calculator.Metric() || vectors.Normalization() != calculator.Normalization() {
 		return hnswmodel.Snapshot{}, ErrCorrupt
 	}
-	components, ok := checkedMultiply64(uint64(nodes), uint64(graph.Dimensions))
+	components, ok := checkedMultiply(uint64(nodes), uint64(graph.Dimensions))
 	if !ok {
 		return hnswmodel.Snapshot{}, ErrLimitExceeded
 	}
-	vectorBytes, ok := checkedMultiply64(components, 4)
+	vectorBytes, ok := checkedMultiply(components, 4)
 	if !ok || vectorBytes > limits.MaxVectorBytes {
 		return hnswmodel.Snapshot{}, ErrLimitExceeded
 	}
@@ -180,7 +184,7 @@ func validateDecodedGraph(
 	}, nil
 }
 
-func validateDecodedTopology(ctx context.Context, graph semanticformat.Graph) error {
+func validateDecodedTopology(ctx context.Context, graph Graph) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
@@ -303,7 +307,7 @@ func validateDecodedTopology(ctx context.Context, graph semanticformat.Graph) er
 	return ctx.Err()
 }
 
-func graphNeighbors(graph semanticformat.Graph, node, level int) []uint32 {
+func graphNeighbors(graph Graph, node, level int) []uint32 {
 	if level == 0 {
 		return graph.Level0Links[graph.Level0Offsets[node]:graph.Level0Offsets[node+1]]
 	}
@@ -328,17 +332,17 @@ func validateOffsets(ctx context.Context, offsets []uint32, values int) error {
 	return ctx.Err()
 }
 
-func validGraphReference(reference semanticformat.FileRef) bool {
+func validGraphReference(reference FileRef) bool {
 	return reference.Size != 0 && reference.SHA256 != [32]byte{}
 }
 
 func mapGraphFormatError(err error) error {
 	switch {
-	case errors.Is(err, semanticformat.ErrUnsupportedVersion):
+	case errors.Is(err, ErrUnsupportedVersion):
 		return ErrUnsupportedVersion
-	case errors.Is(err, semanticformat.ErrLimitExceeded):
+	case errors.Is(err, ErrLimitExceeded):
 		return ErrLimitExceeded
-	case errors.Is(err, semanticformat.ErrCorrupt), errors.Is(err, semanticformat.ErrCorruptData):
+	case errors.Is(err, ErrCorrupt), errors.Is(err, ErrCorruptData):
 		return ErrCorrupt
 	default:
 		return err

@@ -1,0 +1,88 @@
+package semantic
+
+import (
+	"context"
+	"testing"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
+)
+
+func TestSnapshotVisitBudgetIsSharedAcrossSegments(t *testing.T) {
+	t.Parallel()
+
+	index := newTestIndex(t)
+	addTestDocument(t, index, "doc-a", testChunk("doc-a", "a-1", 0, 0))
+	mustFlush(t, index)
+	addTestDocument(t, index, "doc-b", testChunk("doc-b", "b-1", 1, 0))
+	mustFlush(t, index)
+
+	tests := []struct {
+		name            string
+		visitLimit      int
+		candidateChunks int
+		wantHits        int
+		wantVisited     int
+		wantIncomplete  bool
+		wantTermination string
+	}{
+		{
+			name:            "one visit reaches one segment",
+			visitLimit:      1,
+			candidateChunks: 2,
+			wantHits:        1,
+			wantVisited:     1,
+			wantIncomplete:  true,
+			wantTermination: hnsw.TerminationVisitLimit,
+		},
+		{
+			name:            "two visits reach both segments",
+			visitLimit:      2,
+			candidateChunks: 2,
+			wantHits:        2,
+			wantVisited:     2,
+			wantIncomplete:  false,
+			wantTermination: hnsw.TerminationComplete,
+		},
+		{
+			name:            "candidate budget truncates merged hits",
+			visitLimit:      2,
+			candidateChunks: 1,
+			wantHits:        1,
+			wantVisited:     2,
+			wantIncomplete:  true,
+			wantTermination: "candidate_limit",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := index.Search(
+				context.Background(),
+				[]EncodedChunk{testChunk("query", "q-1", 0, 0)},
+				2,
+				SearchOptions{
+					CandidateChunks: tt.candidateChunks,
+					EfSearch:        2,
+					VisitLimit:      tt.visitLimit,
+				},
+			)
+			if err != nil {
+				t.Fatalf("Search() error = %v", err)
+			}
+			if len(result.Hits) != tt.wantHits {
+				t.Fatalf("Search() hit count = %d, want %d", len(result.Hits), tt.wantHits)
+			}
+			if result.Stats.VisitedNodes != tt.wantVisited {
+				t.Fatalf("Search() visited nodes = %d, want %d", result.Stats.VisitedNodes, tt.wantVisited)
+			}
+			if result.GroupingIncomplete != tt.wantIncomplete {
+				t.Fatalf("Search() grouping incomplete = %v, want %v", result.GroupingIncomplete, tt.wantIncomplete)
+			}
+			if result.Stats.Termination != tt.wantTermination {
+				t.Fatalf("Search() termination = %q, want %q", result.Stats.Termination, tt.wantTermination)
+			}
+		})
+	}
+}

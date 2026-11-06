@@ -7,17 +7,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 )
 
 const segmentObjectIdentityDomain = "semantic-segment-object-v1"
 
-func segmentObjectID(vectors, graph semanticformat.FileRef) string {
+func segmentObjectID(vectors, graph generationformat.FileRef) string {
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(segmentObjectIdentityDomain))
 
 	var size [8]byte
-	for _, ref := range []semanticformat.FileRef{vectors, graph} {
+	for _, ref := range []generationformat.FileRef{vectors, graph} {
 		binary.LittleEndian.PutUint64(size[:], ref.Size)
 		_, _ = hash.Write(size[:])
 		_, _ = hash.Write(ref.SHA256[:])

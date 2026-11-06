@@ -1,4 +1,4 @@
-package semanticformat
+package generationformat
 
 // FileLimits contains limits shared by the small CRC-protected metadata files.
 type FileLimits struct {
@@ -24,14 +24,6 @@ type StateLimits struct {
 	MaxK                 int
 	MaxEfSearch          int
 	MaxVisitLimit        int
-}
-
-// VectorLimits contains bounds for the SVEC vector payload format.
-type VectorLimits struct {
-	MaxDimensions  int
-	MaxVectors     int
-	MaxVectorBytes uint64
-	MaxK           int
 }
 
 func (l FileLimits) validateFile() error {
@@ -74,13 +66,6 @@ func (l StateLimits) validate() error {
 		l.MaxK <= 0 ||
 		l.MaxEfSearch <= 0 ||
 		l.MaxVisitLimit <= 0 {
-		return ErrLimitExceeded
-	}
-	return nil
-}
-
-func (l VectorLimits) validate() error {
-	if l.MaxDimensions <= 0 || l.MaxVectors <= 0 || l.MaxVectorBytes == 0 || l.MaxK <= 0 {
 		return ErrLimitExceeded
 	}
 	return nil

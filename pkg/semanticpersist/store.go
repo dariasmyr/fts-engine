@@ -9,8 +9,8 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-// PersistentService owns one writable semantic service and the exclusive filesystem lock.
-type PersistentService struct {
+// Store owns one writable semantic index and the exclusive filesystem lock.
+type Store struct {
 	index       *semantic.Index
 	publisher   *publisher
 	serviceLock *serviceLock
@@ -62,7 +62,7 @@ func Publish(ctx context.Context, root string, index *semantic.Index, options Pu
 	return p.publish(ctx, index, options, true)
 }
 
-func Open(ctx context.Context, root string, options OpenOptions) (*PersistentService, error) {
+func Open(ctx context.Context, root string, options OpenOptions) (*Store, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -127,7 +127,7 @@ func Open(ctx context.Context, root string, options OpenOptions) (*PersistentSer
 		return nil, corruptMissingReference(err)
 	}
 
-	return &PersistentService{
+	return &Store{
 		index: restored.index,
 		publisher: &publisher{
 			layout:       l,
@@ -139,7 +139,8 @@ func Open(ctx context.Context, root string, options OpenOptions) (*PersistentSer
 	}, nil
 }
 
-func (s *PersistentService) Index() *semantic.Index {
+// Index returns the mutable semantic index owned by the store.
+func (s *Store) Index() *semantic.Index {
 	if s == nil || s.publisher == nil {
 		return nil
 	}
@@ -147,7 +148,7 @@ func (s *PersistentService) Index() *semantic.Index {
 	return s.index
 }
 
-func (s *PersistentService) Publish(ctx context.Context, options PublishOptions) (Generation, error) {
+func (s *Store) Publish(ctx context.Context, options PublishOptions) (Generation, error) {
 	if ctx == nil {
 		return Generation{}, vector.ErrNilContext
 	}
@@ -171,7 +172,7 @@ func (s *PersistentService) Publish(ctx context.Context, options PublishOptions)
 	return s.publisher.publish(ctx, s.index, options, false)
 }
 
-func (s *PersistentService) Close() error {
+func (s *Store) Close() error {
 	if s == nil || s.publisher == nil {
 		return nil
 	}

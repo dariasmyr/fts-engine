@@ -615,9 +615,9 @@ if err := service.Flush(ctx); err != nil {
 if err := service.Compact(ctx); err != nil {
 	return err
 }
-generation, err := semanticpersist.Publish(ctx, "./data/semantic", service,
-	semanticpersist.Options{
-		ExpectedGeneration: 0,
+generation, err := semanticpersist.Publish(ctx, "./data/semantic", index,
+	semanticpersist.PublishOptions{
+		ExpectedGeneration: &semanticpersist.Generation{ID: 0},
 		Durability:         semanticpersist.DurabilitySynchronous,
 	})
 if err != nil {
@@ -627,7 +627,7 @@ if err != nil {
 
 `Publish` writes the complete ordered segment set, lifecycle state, and ID
 watermarks as an immutable generation. `semanticpersist.Open` returns a locked
-store handle whose `Service()` is immediately searchable and writable. Publish
+`Store` whose `Index()` is immediately searchable and writable. Publish
 later generations with `store.Publish(ctx, options)` and release the lifetime
 writer lock with `store.Close()`.
 See the runnable
@@ -642,7 +642,7 @@ separate operations.
 
 `CURRENT` is the only commit point. `ExpectedGeneration` rejects stale detached
 writers. `Open` holds an exclusive OS file lock until `Store.Close`; publication
-from that service goes through `Store.Publish`. Synchronous durability uses file and directory
+from that store goes through `Store.Publish`. Synchronous durability uses file and directory
 `fsync`, while asynchronous durability guarantees atomic process-visible
 publication but not survival of sudden power loss.
 Writable store locking is supported on Linux, macOS, and FreeBSD.
@@ -651,10 +651,8 @@ Intermediate single-segment semantic formats are rejected rather than migrated.
 Semantic runtime uses HNSW-only immutable segments; exact comparison remains a
 benchmark-owned oracle and is not a production fallback.
 
-See the detailed
-[`semantic persistence guide`](docs/semantic-persistence-format.md) for the store
-layout, locking, checksums, failure handling, and explicit `RepairCurrent`
-recovery flow.
+`RecoverGeneration` provides an explicit recovery flow: it fully validates a
+selected generation and its referenced objects before replacing `CURRENT`.
 
 ### Stream Bundles
 

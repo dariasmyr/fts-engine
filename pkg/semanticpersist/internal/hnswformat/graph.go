@@ -1,5 +1,4 @@
-// Package semanticformat encodes and decodes semantic persistence files.
-package semanticformat
+package hnswformat
 
 import (
 	"context"

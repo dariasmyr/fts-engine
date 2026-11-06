@@ -4,18 +4,23 @@ import (
 	"math"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/hnswformat"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
-func validateSegmentData(data semantic.SegmentData, config semantic.Config, limits Limits) error {
+func validateSegmentData(data semantic.CheckpointSegment, config semantic.Config, limits Limits) error {
 	semanticLimits := config.Limits
 	if data.Vectors == nil || data.Index == nil {
 		return ErrLimitExceeded
 	}
 	dimensions := data.Index.Dimensions()
 	length := data.Index.Len()
-	topology := hnsw.Snapshot(data.Index)
+	index, ok := data.Index.(*hnsw.Index)
+	if !ok || index == nil {
+		return ErrLimitExceeded
+	}
+	topology := hnsw.Snapshot(index)
 	if dimensions <= 0 || dimensions > limits.MaxDimensions || length < 0 || length > limits.MaxVectors ||
 		semanticLimits.MaxLiveVectors <= 0 || semanticLimits.MaxStaleVectors < 0 ||
 		semanticLimits.MaxLiveVectors > limits.MaxVectors-semanticLimits.MaxStaleVectors ||
@@ -40,14 +45,14 @@ func validateSegmentData(data semantic.SegmentData, config semantic.Config, limi
 		directedLinks > limits.MaxGraphLinks {
 		return ErrLimitExceeded
 	}
-	graphBytes, err := semanticformat.EncodedSize(graphFromSnapshot(topology, semanticformat.FileRef{Size: 1, SHA256: [32]byte{1}}))
+	graphBytes, err := hnswformat.SnapshotEncodedSize(topology, hnswformat.FileRef{Size: 1, SHA256: [32]byte{1}})
 	if err != nil || graphBytes > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
 		return ErrLimitExceeded
 	}
 	return nil
 }
 
-func validateOpenReferences(manifestBytes uint64, value semanticformat.GenerationManifest, limits Limits) error {
+func validateOpenReferences(manifestBytes uint64, value generationformat.GenerationManifest, limits Limits) error {
 	if value.State.Size > limits.MaxFileBytes {
 		return ErrLimitExceeded
 	}

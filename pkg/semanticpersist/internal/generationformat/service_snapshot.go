@@ -1,4 +1,4 @@
-package semanticformat
+package generationformat
 
 import (
 	"math"

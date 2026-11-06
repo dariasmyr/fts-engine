@@ -9,52 +9,61 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
-// SegmentData is the persistence transfer value for one immutable physical
-// segment. Vectors and Index are immutable resources and must not be mutated by
-// the persistence layer.
-type SegmentData struct {
-	ID      SegmentID
-	Schema  Schema
-	Rows    []VectorRow
-	Vectors vector.PreparedVectorStore
-	Index   *hnsw.Index
+// CheckpointIndex is the read-only index metadata exposed to checkpoint
+// adapters. The concrete navigation index remains an implementation detail of
+// the semantic index and its persistence codec.
+//
+// Restore accepts only index values originating from this package or from a
+// compatible semantic persistence adapter; callers should not implement this
+// interface themselves.
+type CheckpointIndex interface {
+	Len() int
+	Dimensions() int
+	Metric() vector.Metric
+	Normalization() vector.Normalization
 }
 
-func (s *segment) data() SegmentData {
-	if s == nil {
-		return SegmentData{}
-	}
-	return SegmentData{
-		ID:      s.component,
-		Schema:  s.schema,
-		Rows:    append([]VectorRow(nil), s.rows...),
-		Vectors: s.vectors,
-		Index:   s.index,
-	}
-}
-
-// StateSegment is one persisted immutable segment plus the liveness mask that
-// belongs to the committed Snapshot from which State was created.
-type StateSegment struct {
-	Data          SegmentData
+// CheckpointSegment contains one immutable physical segment and the liveness
+// mask belonging to the committed snapshot. Vectors and Index are immutable
+// resources and must not be mutated by checkpoint adapters.
+type CheckpointSegment struct {
+	ID            SegmentID
+	Schema        Schema
+	Rows          []VectorRow
 	LivenessWords []uint64
+	Vectors       vector.PreparedVectorStore
+	Index         CheckpointIndex
 }
 
-// State is the persistence boundary of semantic.Index. It contains everything
-// required to reconstruct the committed index and continue writing after a
-// process restart. Pending mutations are intentionally excluded.
-type State struct {
+func (s *segment) checkpoint(words []uint64) CheckpointSegment {
+	if s == nil {
+		return CheckpointSegment{}
+	}
+	return CheckpointSegment{
+		ID:            s.component,
+		Schema:        s.schema,
+		Rows:          append([]VectorRow(nil), s.rows...),
+		LivenessWords: append([]uint64(nil), words...),
+		Vectors:       s.vectors,
+		Index:         s.index,
+	}
+}
+
+// IndexCheckpoint contains everything required to reconstruct a committed
+// Index and continue writing after a process restart. Pending mutations are
+// intentionally excluded.
+type IndexCheckpoint struct {
 	Config               Config
 	Revision             Revision
 	MaxAllocatedVectorID VectorID
 	NextSegmentID        SegmentID
-	Segments             []StateSegment
+	Segments             []CheckpointSegment
 }
 
-// State returns a durable representation of the current committed index.
+// CreateCheckpoint returns a persistence-neutral view of the committed index.
 // Pending mutations must be flushed first so the returned value has one clear
 // revision and one matching Snapshot.
-func (i *Index) State(ctx context.Context) (*State, error) {
+func (i *Index) CreateCheckpoint(ctx context.Context) (*IndexCheckpoint, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -73,20 +82,17 @@ func (i *Index) State(ctx context.Context) (*State, error) {
 	nextComponentID := i.state.nextComponentID
 	i.unlockState()
 
-	segments := make([]StateSegment, len(snapshot.segments))
+	segments := make([]CheckpointSegment, len(snapshot.segments))
 	for n, item := range snapshot.segments {
 		if n%16 == 0 {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 		}
-		segments[n] = StateSegment{
-			Data:          item.segment.data(),
-			LivenessWords: item.liveness.SnapshotWords(),
-		}
+		segments[n] = item.segment.checkpoint(item.liveness.SnapshotWords())
 	}
 
-	return &State{
+	return &IndexCheckpoint{
 		Config:               config,
 		Revision:             revision,
 		MaxAllocatedVectorID: maxAllocatedVectorID,
@@ -95,9 +101,9 @@ func (i *Index) State(ctx context.Context) (*State, error) {
 	}, nil
 }
 
-// Open validates persisted committed state and reconstructs a writable Index
-// with an empty pending batch.
-func Open(ctx context.Context, state State) (*Index, error) {
+// Restore validates a checkpoint and reconstructs a writable Index with an
+// empty pending batch.
+func Restore(ctx context.Context, checkpoint IndexCheckpoint) (*Index, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -105,21 +111,21 @@ func Open(ctx context.Context, state State) (*Index, error) {
 		return nil, err
 	}
 
-	config, err := state.Config.normalized()
+	config, err := checkpoint.Config.normalized()
 	if err != nil {
 		return nil, err
 	}
-	if config != state.Config {
+	if config != checkpoint.Config {
 		return nil, ErrInvalidConfig
 	}
-	if state.NextSegmentID == 0 {
+	if checkpoint.NextSegmentID == 0 {
 		return nil, ErrInternalState
 	}
-	if len(state.Segments) > config.Limits.MaxSegments {
+	if len(checkpoint.Segments) > config.Limits.MaxSegments {
 		return nil, ErrCapacityExceeded
 	}
 
-	views := make([]segmentView, len(state.Segments))
+	views := make([]segmentView, len(checkpoint.Segments))
 	locations := make(map[VectorID]vectorLocation)
 	documents := make(map[fts.DocID]documentVectors)
 	type chunkKey struct {
@@ -130,22 +136,22 @@ func Open(ctx context.Context, state State) (*Index, error) {
 	var maxVectorID VectorID
 	var maxComponentID SegmentID
 
-	for segmentIndex, persisted := range state.Segments {
+	for segmentIndex, persisted := range checkpoint.Segments {
 		if segmentIndex%16 == 0 {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 		}
 
-		data := persisted.Data
-		if data.Index == nil || data.Vectors == nil {
+		index, ok := persisted.Index.(*hnsw.Index)
+		if !ok || index == nil || persisted.Vectors == nil {
 			return nil, ErrInvalidSegment
 		}
-		if err := validateSchemaCompatibility(data.Schema, config.Schema); err != nil {
+		if err := validateSchemaCompatibility(persisted.Schema, config.Schema); err != nil {
 			return nil, err
 		}
 
-		physical, err := newSegment(ctx, data.ID, data.Schema, data.Vectors, data.Index, data.Rows)
+		physical, err := newSegment(ctx, persisted.ID, persisted.Schema, persisted.Vectors, index, persisted.Rows)
 		if err != nil {
 			return nil, err
 		}
@@ -184,7 +190,7 @@ func Open(ctx context.Context, state State) (*Index, error) {
 		}
 	}
 
-	if state.MaxAllocatedVectorID < maxVectorID || state.NextSegmentID <= maxComponentID {
+	if checkpoint.MaxAllocatedVectorID < maxVectorID || checkpoint.NextSegmentID <= maxComponentID {
 		return nil, ErrInternalState
 	}
 
@@ -193,7 +199,7 @@ func Open(ctx context.Context, state State) (*Index, error) {
 		return nil, ErrInvalidConfig
 	}
 
-	snapshot, err := newSnapshot(ctx, state.Revision, views, config.Schema, config.searchPolicy(), searchConfig)
+	snapshot, err := newSnapshot(ctx, checkpoint.Revision, views, config.Schema, config.searchPolicy(), searchConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -228,12 +234,12 @@ func Open(ctx context.Context, state State) (*Index, error) {
 		calculator:  calculator,
 		snapshot:    snapshot,
 		state: workingState{
-			revision:             state.Revision,
+			revision:             checkpoint.Revision,
 			documents:            documents,
 			locations:            locations,
 			liveVectorCount:      snapshot.liveCount,
-			maxAllocatedVectorID: state.MaxAllocatedVectorID,
-			nextComponentID:      state.NextSegmentID,
+			maxAllocatedVectorID: checkpoint.MaxAllocatedVectorID,
+			nextComponentID:      checkpoint.NextSegmentID,
 		},
 	}, nil
 }

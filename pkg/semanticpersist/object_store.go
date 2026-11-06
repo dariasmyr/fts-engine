@@ -9,7 +9,8 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/hnswformat"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
@@ -25,10 +26,10 @@ func newObjectStore(l layout, options PublishOptions) objectStore {
 	return objectStore{layout: l, limits: options.Limits, durability: durabilityPolicy{mode: options.Durability}, hooks: options}
 }
 
-func (s objectStore) put(ctx context.Context, data semantic.SegmentData, maxK int) (semanticformat.SegmentRef, error) {
+func (s objectStore) put(ctx context.Context, data semantic.CheckpointSegment, maxK int) (generationformat.SegmentRef, error) {
 	segmentTemp, err := os.MkdirTemp(s.layout.segments, ".tmp-seg-")
 	if err != nil {
-		return semanticformat.SegmentRef{}, fmt.Errorf("semanticpersist: create segment temp: %w", err)
+		return generationformat.SegmentRef{}, fmt.Errorf("semanticpersist: create segment temp: %w", err)
 	}
 	owned := true
 	defer func() {
@@ -38,123 +39,127 @@ func (s objectStore) put(ctx context.Context, data semantic.SegmentData, maxK in
 	}()
 
 	if err := beforeStep(ctx, s.hooks, stepWriteVectors); err != nil {
-		return semanticformat.SegmentRef{}, err
+		return generationformat.SegmentRef{}, err
 	}
 	vectorsRef, err := s.writeVectors(ctx, filepath.Join(segmentTemp, vectorsFileName), data.Vectors, maxK)
 	if err != nil {
-		return semanticformat.SegmentRef{}, err
+		return generationformat.SegmentRef{}, err
 	}
 	if err := afterStep(s.hooks, stepWriteVectors, false); err != nil {
-		return semanticformat.SegmentRef{}, err
+		return generationformat.SegmentRef{}, err
 	}
 
 	if err := beforeStep(ctx, s.hooks, stepWriteGraph); err != nil {
-		return semanticformat.SegmentRef{}, err
+		return generationformat.SegmentRef{}, err
 	}
-	graphRef, err := s.writeGraph(ctx, filepath.Join(segmentTemp, graphFileName), data.Index, vectorsRef)
+	index, ok := data.Index.(*hnsw.Index)
+	if !ok || index == nil {
+		return generationformat.SegmentRef{}, ErrCorrupt
+	}
+	graphRef, err := s.writeGraph(ctx, filepath.Join(segmentTemp, graphFileName), index, vectorsRef)
 	if err != nil {
-		return semanticformat.SegmentRef{}, err
+		return generationformat.SegmentRef{}, err
 	}
 	if err := afterStep(s.hooks, stepWriteGraph, false); err != nil {
-		return semanticformat.SegmentRef{}, err
+		return generationformat.SegmentRef{}, err
 	}
 
 	if s.durability.synchronous() {
 		if err := beforeStep(ctx, s.hooks, stepSyncSegment); err != nil {
-			return semanticformat.SegmentRef{}, err
+			return generationformat.SegmentRef{}, err
 		}
 		if err := s.durability.syncDirectory(segmentTemp); err != nil {
-			return semanticformat.SegmentRef{}, err
+			return generationformat.SegmentRef{}, err
 		}
 		if err := afterStep(s.hooks, stepSyncSegment, false); err != nil {
-			return semanticformat.SegmentRef{}, err
+			return generationformat.SegmentRef{}, err
 		}
 	}
 
-	ref := semanticformat.SegmentRef{ObjectID: segmentObjectID(vectorsRef, graphRef), Vectors: vectorsRef, Graph: graphRef}
+	ref := generationformat.SegmentRef{ObjectID: segmentObjectID(vectorsRef, graphRef), Vectors: vectorsRef, Graph: graphRef}
 	storedPath := s.layout.segment(ref.ObjectID)
 	if err := ensureContained(s.layout.root, storedPath); err != nil {
-		return semanticformat.SegmentRef{}, err
+		return generationformat.SegmentRef{}, err
 	}
 	if err := beforeStep(ctx, s.hooks, stepRenameSegment); err != nil {
-		return semanticformat.SegmentRef{}, err
+		return generationformat.SegmentRef{}, err
 	}
 	if _, err := os.Lstat(storedPath); err == nil {
 		if err := s.verify(ref); err != nil {
-			return semanticformat.SegmentRef{}, err
+			return generationformat.SegmentRef{}, err
 		}
 		if s.durability.synchronous() {
 			if err := s.durability.syncDirectory(s.layout.segments); err != nil {
-				return semanticformat.SegmentRef{}, err
+				return generationformat.SegmentRef{}, err
 			}
 		}
 		if err := os.RemoveAll(segmentTemp); err != nil {
-			return semanticformat.SegmentRef{}, err
+			return generationformat.SegmentRef{}, err
 		}
 		owned = false
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return semanticformat.SegmentRef{}, err
+		return generationformat.SegmentRef{}, err
 	} else {
 		if err := os.Rename(segmentTemp, storedPath); err != nil {
-			return semanticformat.SegmentRef{}, fmt.Errorf("semanticpersist: install segment: %w", err)
+			return generationformat.SegmentRef{}, fmt.Errorf("semanticpersist: install segment: %w", err)
 		}
 		owned = false
 		if err := s.durability.syncDirectory(s.layout.segments); err != nil {
-			return semanticformat.SegmentRef{}, err
+			return generationformat.SegmentRef{}, err
 		}
 	}
 	if err := afterStep(s.hooks, stepRenameSegment, false); err != nil {
-		return semanticformat.SegmentRef{}, err
+		return generationformat.SegmentRef{}, err
 	}
 	return ref, nil
 }
 
-func (s objectStore) writeVectors(ctx context.Context, path string, source vector.PreparedVectorStore, maxK int) (semanticformat.FileRef, error) {
+func (s objectStore) writeVectors(ctx context.Context, path string, source vector.PreparedVectorStore, maxK int) (generationformat.FileRef, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return semanticformat.FileRef{}, err
+		return generationformat.FileRef{}, err
 	}
-	metadata, writeErr := semanticformat.WriteVectorFile(ctx, file, source, maxK, vectorFormatLimits(s.limits))
+	metadata, writeErr := hnswformat.WriteVectorFile(ctx, file, source, maxK, vectorFormatLimits(s.limits))
 	if writeErr == nil {
 		writeErr = s.durability.syncFile(file)
 	}
 	closeErr := file.Close()
 	if writeErr != nil {
-		return semanticformat.FileRef{}, mapFormatError(writeErr)
+		return generationformat.FileRef{}, mapFormatError(writeErr)
 	}
 	if closeErr != nil {
-		return semanticformat.FileRef{}, closeErr
+		return generationformat.FileRef{}, closeErr
 	}
 	if metadata.Size > s.limits.MaxFileBytes || metadata.Size > s.limits.MaxVectorBytes+128 {
-		return semanticformat.FileRef{}, ErrLimitExceeded
+		return generationformat.FileRef{}, ErrLimitExceeded
 	}
-	return metadata.FileRef, nil
+	return generationFileRef(metadata.FileRef), nil
 }
 
-func (s objectStore) writeGraph(ctx context.Context, path string, index *hnsw.Index, vectors semanticformat.FileRef) (semanticformat.FileRef, error) {
+func (s objectStore) writeGraph(ctx context.Context, path string, index *hnsw.Index, vectors generationformat.FileRef) (generationformat.FileRef, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return semanticformat.FileRef{}, err
+		return generationformat.FileRef{}, err
 	}
-	metadata, writeErr := writeGraphFile(ctx, file, index, vectors)
+	metadata, writeErr := hnswformat.WriteGraphFile(ctx, file, index, hnswFileRef(vectors))
 	if writeErr == nil {
 		writeErr = s.durability.syncFile(file)
 	}
 	closeErr := file.Close()
 	if writeErr != nil {
-		return semanticformat.FileRef{}, writeErr
+		return generationformat.FileRef{}, mapFormatError(writeErr)
 	}
 	if closeErr != nil {
-		return semanticformat.FileRef{}, closeErr
+		return generationformat.FileRef{}, closeErr
 	}
-	ref := semanticformat.FileRef{Size: metadata.Size, SHA256: metadata.SHA256}
+	ref := generationformat.FileRef{Size: metadata.Size, SHA256: metadata.SHA256}
 	if ref.Size > min(s.limits.MaxFileBytes, s.limits.MaxGraphBytes) {
-		return semanticformat.FileRef{}, ErrLimitExceeded
+		return generationformat.FileRef{}, ErrLimitExceeded
 	}
 	return ref, nil
 }
 
-func (s objectStore) verify(ref semanticformat.SegmentRef) error {
+func (s objectStore) verify(ref generationformat.SegmentRef) error {
 	if !validObjectID(ref.ObjectID) || ref.ObjectID != segmentObjectID(ref.Vectors, ref.Graph) {
 		return ErrCorrupt
 	}
@@ -174,54 +179,54 @@ func (s objectStore) verify(ref semanticformat.SegmentRef) error {
 	return s.durability.syncDirectory(path)
 }
 
-func (s objectStore) open(ctx context.Context, ref semanticformat.SegmentRef, config semantic.Config, state semanticformat.SegmentState) (semantic.SegmentData, error) {
+func (s objectStore) open(ctx context.Context, ref generationformat.SegmentRef, config semantic.Config, state generationformat.SegmentState) (semantic.CheckpointSegment, error) {
 	if !validObjectID(ref.ObjectID) || ref.ObjectID != segmentObjectID(ref.Vectors, ref.Graph) {
-		return semantic.SegmentData{}, ErrCorrupt
+		return semantic.CheckpointSegment{}, ErrCorrupt
 	}
 	path := s.layout.segment(ref.ObjectID)
 	if err := ensureContained(s.layout.root, path); err != nil {
-		return semantic.SegmentData{}, err
+		return semantic.CheckpointSegment{}, err
 	}
 	if err := validateDirectory(path); err != nil {
-		return semantic.SegmentData{}, corruptMissingReference(err)
+		return semantic.CheckpointSegment{}, corruptMissingReference(err)
 	}
 	vectorsData, err := readReferencedFileWithoutHash(filepath.Join(path, vectorsFileName), ref.Vectors, min(s.limits.MaxFileBytes, s.limits.MaxVectorBytes+128))
 	if err != nil {
-		return semantic.SegmentData{}, err
+		return semantic.CheckpointSegment{}, err
 	}
-	decoded, metadata, err := semanticformat.DecodeVectorFile(ctx, vectorsData, vectorFormatLimits(s.limits))
+	decoded, metadata, err := hnswformat.DecodeVectorFile(ctx, vectorsData, vectorFormatLimits(s.limits))
 	if err != nil {
-		return semantic.SegmentData{}, mapFormatError(err)
+		return semantic.CheckpointSegment{}, mapFormatError(err)
 	}
 	if metadata.Size != ref.Vectors.Size || metadata.SHA256 != ref.Vectors.SHA256 {
-		return semantic.SegmentData{}, ErrCorrupt
+		return semantic.CheckpointSegment{}, ErrCorrupt
 	}
 	vectors, err := memorystore.NewPrepared(decoded.Calculator, decoded.Values)
 	if err != nil {
-		return semantic.SegmentData{}, ErrCorrupt
+		return semantic.CheckpointSegment{}, ErrCorrupt
 	}
 	graphData, err := readReferencedFileWithoutHash(filepath.Join(path, graphFileName), ref.Graph, min(s.limits.MaxFileBytes, s.limits.MaxGraphBytes))
 	if err != nil {
-		return semantic.SegmentData{}, err
+		return semantic.CheckpointSegment{}, err
 	}
-	index, graphMetadata, err := openGraphFile(
+	index, graphMetadata, err := hnswformat.OpenGraphFile(
 		ctx,
 		graphData,
 		vectors,
-		ref.Vectors,
+		hnswFileRef(ref.Vectors),
 		hnsw.SearchConfig{
 			EfSearch:   config.HNSW.DefaultEfSearch,
 			VisitLimit: config.HNSW.DefaultVisitLimit,
 		},
-		s.limits,
+		hnswSegmentLimits(s.limits),
 	)
 	if err != nil {
-		return semantic.SegmentData{}, err
+		return semantic.CheckpointSegment{}, mapFormatError(err)
 	}
 	if graphMetadata.Size != ref.Graph.Size || graphMetadata.SHA256 != ref.Graph.SHA256 {
-		return semantic.SegmentData{}, ErrCorrupt
+		return semantic.CheckpointSegment{}, ErrCorrupt
 	}
-	segment := semantic.SegmentData{
+	segment := semantic.CheckpointSegment{
 		ID:      state.ID,
 		Schema:  config.Schema,
 		Rows:    state.Rows,
@@ -229,7 +234,15 @@ func (s objectStore) open(ctx context.Context, ref semanticformat.SegmentRef, co
 		Index:   index,
 	}
 	if err := validateSegmentData(segment, config, s.limits); err != nil {
-		return semantic.SegmentData{}, err
+		return semantic.CheckpointSegment{}, err
 	}
 	return segment, nil
+}
+
+func hnswFileRef(ref generationformat.FileRef) hnswformat.FileRef {
+	return hnswformat.FileRef{Size: ref.Size, SHA256: ref.SHA256}
+}
+
+func generationFileRef(ref hnswformat.FileRef) generationformat.FileRef {
+	return generationformat.FileRef{Size: ref.Size, SHA256: ref.SHA256}
 }

@@ -4,13 +4,13 @@ import (
 	"context"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 )
 
 type restoreResult struct {
 	index      *semantic.Index
 	generation Generation
-	reusable   map[semantic.SegmentID]semanticformat.SegmentRef
+	reusable   map[semantic.SegmentID]generationformat.SegmentRef
 }
 
 func restoreIndex(
@@ -24,10 +24,10 @@ func restoreIndex(
 		return restoreResult{}, err
 	}
 
-	stored := make([]semantic.StateSegment, len(persisted.state.Segments))
+	segments := make([]semantic.CheckpointSegment, len(persisted.state.Segments))
 
 	reusable := make(
-		map[semantic.SegmentID]semanticformat.SegmentRef,
+		map[semantic.SegmentID]generationformat.SegmentRef,
 		len(persisted.state.Segments),
 	)
 
@@ -44,22 +44,20 @@ func restoreIndex(
 			return restoreResult{}, err
 		}
 
-		stored[i] = semantic.StateSegment{
-			Data:          data,
-			LivenessWords: stateSegment.LivenessWords,
-		}
+		data.LivenessWords = append([]uint64(nil), stateSegment.LivenessWords...)
+		segments[i] = data
 
 		reusable[stateSegment.ID] = ref
 	}
 
-	index, err := semantic.Open(
+	index, err := semantic.Restore(
 		ctx,
-		semantic.State{
+		semantic.IndexCheckpoint{
 			Config:               persisted.state.Config,
 			Revision:             persisted.state.Revision,
 			MaxAllocatedVectorID: persisted.state.MaxAllocatedVectorID,
 			NextSegmentID:        persisted.state.NextSegmentID,
-			Segments:             stored,
+			Segments:             segments,
 		},
 	)
 	if err != nil {

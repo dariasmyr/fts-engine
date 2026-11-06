@@ -172,8 +172,3 @@ func (s *Service) Statistics() Statistics {
 func (s *Service) Snapshot() *Snapshot {
 	return s.index.Snapshot()
 }
-
-// State exports the committed index state for persistence.
-func (s *Service) State(ctx context.Context) (*State, error) {
-	return s.index.State(ctx)
-}

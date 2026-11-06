@@ -49,7 +49,7 @@ func (descriptor ChunkingDescriptor) IsValid() bool {
 }
 
 // Schema identifies the semantic representation stored in an Index. Segments,
-// encoders and persisted State must use exactly the same schema.
+// encoders and restored checkpoints must use exactly the same schema.
 type Schema struct {
 	Embedding EmbeddingDescriptor
 	Chunking  ChunkingDescriptor

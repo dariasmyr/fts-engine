@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -111,7 +111,7 @@ func Prune(ctx context.Context, root string, options PruneOptions) (result Prune
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] > ids[j] })
 
-	retained := map[uint64]semanticformat.GenerationManifest{head.GenerationID: current.manifest}
+	retained := map[uint64]generationformat.GenerationManifest{head.GenerationID: current.manifest}
 	for _, id := range ids {
 		if len(retained) >= options.RetainGenerations || id >= head.GenerationID {
 			continue

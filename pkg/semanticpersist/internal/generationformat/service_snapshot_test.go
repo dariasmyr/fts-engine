@@ -1,4 +1,4 @@
-package semanticformat
+package generationformat
 
 import (
 	"encoding/binary"
@@ -88,7 +88,7 @@ func testServiceSnapshot(t *testing.T) ServiceSnapshot {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := index.State(t.Context())
+	state, err := index.CreateCheckpoint(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

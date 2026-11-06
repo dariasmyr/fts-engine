@@ -3,13 +3,13 @@ package semanticpersist
 import (
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"os"
 	"path/filepath"
 
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/internal/persistfs"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 )
 
 func prepareLayout(l layout) (bool, error) {
@@ -54,17 +54,7 @@ func ensureDirectory(path string) error {
 }
 
 func validateDirectory(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return ErrSymlink
-	}
-	if !info.IsDir() {
-		return ErrCorrupt
-	}
-	return nil
+	return mapPersistFSError(persistfs.ValidateDirectory(path), ErrCorrupt)
 }
 
 func ensureContained(root, path string) error {
@@ -77,43 +67,19 @@ func ensureContained(root, path string) error {
 }
 
 func readRegularFile(path string, limit uint64) ([]byte, error) {
-	if limit >= math.MaxInt64 {
-		return nil, ErrLimitExceeded
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, ErrSymlink
-	}
-	if !info.Mode().IsRegular() || info.Size() < 0 || uint64(info.Size()) > limit {
-		return nil, ErrLimitExceeded
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
-	if err != nil {
-		return nil, fmt.Errorf("semanticpersist: read %q: %w", path, err)
-	}
-	if uint64(len(data)) > limit {
-		return nil, ErrLimitExceeded
-	}
-	return data, nil
+	data, err := persistfs.ReadRegularFile(path, limit)
+	return data, mapPersistFSError(err, ErrLimitExceeded)
 }
 
-func readReferencedFile(path string, ref semanticformat.FileRef, limit uint64) ([]byte, error) {
+func readReferencedFile(path string, ref generationformat.FileRef, limit uint64) ([]byte, error) {
 	return readReferencedFileData(path, ref, limit, true)
 }
 
-func readReferencedFileWithoutHash(path string, ref semanticformat.FileRef, limit uint64) ([]byte, error) {
+func readReferencedFileWithoutHash(path string, ref generationformat.FileRef, limit uint64) ([]byte, error) {
 	return readReferencedFileData(path, ref, limit, false)
 }
 
-func readReferencedFileData(path string, ref semanticformat.FileRef, limit uint64, verifyHash bool) ([]byte, error) {
+func readReferencedFileData(path string, ref generationformat.FileRef, limit uint64, verifyHash bool) ([]byte, error) {
 	if ref.Size == 0 || ref.Size > limit || ref.Size >= math.MaxInt64 {
 		return nil, ErrLimitExceeded
 	}
@@ -142,7 +108,7 @@ func readReferencedFileData(path string, ref semanticformat.FileRef, limit uint6
 	return data, nil
 }
 
-func verifyReferencedFile(path string, ref semanticformat.FileRef, limit uint64, syncFile bool) error {
+func verifyReferencedFile(path string, ref generationformat.FileRef, limit uint64, syncFile bool) error {
 	if ref.Size == 0 || ref.Size > limit || ref.Size >= math.MaxInt64 {
 		return ErrLimitExceeded
 	}
@@ -193,17 +159,7 @@ func equalSHA256(sum []byte, expected [sha256.Size]byte) bool {
 }
 
 func writeAllFile(writer io.Writer, data []byte) error {
-	for len(data) > 0 {
-		n, err := writer.Write(data)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrShortWrite
-		}
-		data = data[n:]
-	}
-	return nil
+	return persistfs.WriteAll(writer, data)
 }
 
 func writeDataFile(path string, data []byte, durability durabilityPolicy) error {
@@ -220,4 +176,28 @@ func writeDataFile(path string, data []byte, durability durabilityPolicy) error 
 		return writeErr
 	}
 	return closeErr
+}
+
+func writeTemporaryData(dir, pattern string, data []byte, durability durabilityPolicy) (string, error) {
+	return persistfs.WriteTempFile(
+		dir,
+		pattern,
+		persistfs.TempFileOptions{Sync: durability.synchronous()},
+		func(writer io.Writer) error { return persistfs.WriteAll(writer, data) },
+	)
+}
+
+func mapPersistFSError(err, invalidType error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, persistfs.ErrSymlink):
+		return ErrSymlink
+	case errors.Is(err, persistfs.ErrLimitExceeded):
+		return ErrLimitExceeded
+	case errors.Is(err, persistfs.ErrNotDirectory), errors.Is(err, persistfs.ErrNotRegular):
+		return invalidType
+	default:
+		return err
+	}
 }

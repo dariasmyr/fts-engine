@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 )
 
 type headStore struct {
@@ -20,49 +20,37 @@ func newHeadStore(l layout, options PublishOptions) headStore {
 	return headStore{layout: l, limits: options.Limits, durability: durabilityPolicy{mode: options.Durability}, hooks: options}
 }
 
-func (s headStore) read(ctx context.Context) (semanticformat.Head, error) {
+func (s headStore) read(ctx context.Context) (generationformat.Head, error) {
 	if err := ctx.Err(); err != nil {
-		return semanticformat.Head{}, err
+		return generationformat.Head{}, err
 	}
 	data, err := readRegularFile(s.layout.current, s.limits.MaxFileBytes)
 	if errors.Is(err, os.ErrNotExist) {
-		return semanticformat.Head{}, ErrCurrentMissing
+		return generationformat.Head{}, ErrCurrentMissing
 	}
 	if err != nil {
-		return semanticformat.Head{}, err
+		return generationformat.Head{}, err
 	}
-	head, err := semanticformat.DecodeHead(data, fileFormatLimits(s.limits))
+	head, err := generationformat.DecodeHead(data, fileFormatLimits(s.limits))
 	if err != nil {
-		return semanticformat.Head{}, mapFormatError(err)
+		return generationformat.Head{}, mapFormatError(err)
 	}
 	return head, nil
 }
 
-func (s headStore) commit(ctx context.Context, head semanticformat.Head) error {
+func (s headStore) commit(ctx context.Context, head generationformat.Head) error {
 	if err := beforeStep(ctx, s.hooks, stepWriteCurrent); err != nil {
 		return err
 	}
-	data, _, err := semanticformat.EncodeHead(head, fileFormatLimits(s.limits))
+	data, _, err := generationformat.EncodeHead(head, fileFormatLimits(s.limits))
 	if err != nil {
 		return mapFormatError(err)
 	}
-	temp, err := os.CreateTemp(s.layout.root, ".tmp-current-")
+	name, err := writeTemporaryData(s.layout.root, ".tmp-current-", data, s.durability)
 	if err != nil {
 		return err
 	}
-	name := temp.Name()
 	defer os.Remove(name)
-	if err := writeAllFile(temp, data); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := s.durability.syncFile(temp); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
 	if err := afterStep(s.hooks, stepWriteCurrent, false); err != nil {
 		return err
 	}
@@ -89,28 +77,16 @@ func (s headStore) commit(ctx context.Context, head semanticformat.Head) error {
 	return nil
 }
 
-func (s headStore) replace(head semanticformat.Head) error {
-	data, _, err := semanticformat.EncodeHead(head, fileFormatLimits(s.limits))
+func (s headStore) replace(head generationformat.Head) error {
+	data, _, err := generationformat.EncodeHead(head, fileFormatLimits(s.limits))
 	if err != nil {
 		return mapFormatError(err)
 	}
-	temp, err := os.CreateTemp(s.layout.root, ".tmp-current-replace-")
+	name, err := writeTemporaryData(s.layout.root, ".tmp-current-replace-", data, s.durability)
 	if err != nil {
 		return err
 	}
-	name := temp.Name()
 	defer os.Remove(name)
-	if err := writeAllFile(temp, data); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := s.durability.syncFile(temp); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
 	if err := atomicReplace(name, s.layout.current); err != nil {
 		return err
 	}

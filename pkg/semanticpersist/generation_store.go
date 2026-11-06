@@ -8,14 +8,14 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 )
 
 type persistedGeneration struct {
 	id          uint64
-	manifest    semanticformat.GenerationManifest
-	manifestRef semanticformat.FileRef
-	state       semanticformat.ServiceSnapshot
+	manifest    generationformat.GenerationManifest
+	manifestRef generationformat.FileRef
+	state       generationformat.ServiceSnapshot
 }
 
 type generationStore struct {
@@ -29,11 +29,11 @@ func newGenerationStore(l layout, options PublishOptions) generationStore {
 	return generationStore{layout: l, limits: options.Limits, durability: durabilityPolicy{mode: options.Durability}, hooks: options}
 }
 
-func (s generationStore) write(ctx context.Context, id uint64, state semanticformat.ServiceSnapshot, segments []semanticformat.SegmentRef) (persistedGeneration, error) {
+func (s generationStore) write(ctx context.Context, id uint64, state generationformat.ServiceSnapshot, segments []generationformat.SegmentRef) (persistedGeneration, error) {
 	if id == 0 || len(state.Segments) != len(segments) {
 		return persistedGeneration{}, ErrCorrupt
 	}
-	manifestPreview := semanticformat.GenerationManifest{GenerationID: id, Segments: segments}
+	manifestPreview := generationformat.GenerationManifest{GenerationID: id, Segments: segments}
 	if err := validateManifestObjectRefs(manifestPreview); err != nil {
 		return persistedGeneration{}, err
 	}
@@ -51,7 +51,7 @@ func (s generationStore) write(ctx context.Context, id uint64, state semanticfor
 	if err := beforeStep(ctx, s.hooks, stepWriteState); err != nil {
 		return persistedGeneration{}, err
 	}
-	stateData, stateRef, err := semanticformat.EncodeState(state, stateFormatLimits(s.limits))
+	stateData, stateRef, err := generationformat.EncodeState(state, stateFormatLimits(s.limits))
 	if err != nil {
 		return persistedGeneration{}, mapFormatError(err)
 	}
@@ -62,11 +62,11 @@ func (s generationStore) write(ctx context.Context, id uint64, state semanticfor
 		return persistedGeneration{}, err
 	}
 
-	manifest := semanticformat.GenerationManifest{GenerationID: id, State: stateRef, Segments: segments}
+	manifest := generationformat.GenerationManifest{GenerationID: id, State: stateRef, Segments: segments}
 	if err := beforeStep(ctx, s.hooks, stepWriteManifest); err != nil {
 		return persistedGeneration{}, err
 	}
-	manifestData, manifestRef, err := semanticformat.EncodeManifest(manifest, manifestFormatLimits(s.limits))
+	manifestData, manifestRef, err := generationformat.EncodeManifest(manifest, manifestFormatLimits(s.limits))
 	if err != nil {
 		return persistedGeneration{}, mapFormatError(err)
 	}
@@ -135,7 +135,7 @@ func (s generationStore) open(ctx context.Context, id uint64, expectedHash *[sha
 	if expectedHash != nil && hash != *expectedHash {
 		return persistedGeneration{}, ErrCorrupt
 	}
-	manifest, err := semanticformat.DecodeManifest(manifestData, manifestFormatLimits(s.limits))
+	manifest, err := generationformat.DecodeManifest(manifestData, manifestFormatLimits(s.limits))
 	if err != nil {
 		return persistedGeneration{}, mapFormatError(err)
 	}
@@ -152,54 +152,54 @@ func (s generationStore) open(ctx context.Context, id uint64, expectedHash *[sha
 	if err != nil {
 		return persistedGeneration{}, err
 	}
-	state, err := semanticformat.DecodeState(stateData, stateFormatLimits(s.limits))
+	state, err := generationformat.DecodeState(stateData, stateFormatLimits(s.limits))
 	if err != nil {
 		return persistedGeneration{}, mapFormatError(err)
 	}
 	if len(state.Segments) != len(manifest.Segments) {
 		return persistedGeneration{}, ErrCorrupt
 	}
-	return persistedGeneration{id: id, manifest: manifest, manifestRef: semanticformat.FileRef{Size: uint64(len(manifestData)), SHA256: hash}, state: state}, nil
+	return persistedGeneration{id: id, manifest: manifest, manifestRef: generationformat.FileRef{Size: uint64(len(manifestData)), SHA256: hash}, state: state}, nil
 }
 
-func (s generationStore) openManifest(ctx context.Context, id uint64, expectedHash [sha256.Size]byte, checkHash bool) (semanticformat.GenerationManifest, semanticformat.FileRef, error) {
+func (s generationStore) openManifest(ctx context.Context, id uint64, expectedHash [sha256.Size]byte, checkHash bool) (generationformat.GenerationManifest, generationformat.FileRef, error) {
 	if err := ctx.Err(); err != nil {
-		return semanticformat.GenerationManifest{}, semanticformat.FileRef{}, err
+		return generationformat.GenerationManifest{}, generationformat.FileRef{}, err
 	}
 	if err := validateDirectory(s.layout.generation(id)); err != nil {
 		if checkHash {
 			err = corruptMissingReference(err)
 		}
-		return semanticformat.GenerationManifest{}, semanticformat.FileRef{}, err
+		return generationformat.GenerationManifest{}, generationformat.FileRef{}, err
 	}
 	data, err := readRegularFile(s.layout.manifest(id), s.limits.MaxFileBytes)
 	if err != nil {
 		if checkHash {
 			err = corruptMissingReference(err)
 		}
-		return semanticformat.GenerationManifest{}, semanticformat.FileRef{}, err
+		return generationformat.GenerationManifest{}, generationformat.FileRef{}, err
 	}
 	hash := sha256.Sum256(data)
 	if checkHash && hash != expectedHash {
-		return semanticformat.GenerationManifest{}, semanticformat.FileRef{}, ErrCorrupt
+		return generationformat.GenerationManifest{}, generationformat.FileRef{}, ErrCorrupt
 	}
-	manifest, err := semanticformat.DecodeManifest(data, manifestFormatLimits(s.limits))
+	manifest, err := generationformat.DecodeManifest(data, manifestFormatLimits(s.limits))
 	if err != nil {
-		return semanticformat.GenerationManifest{}, semanticformat.FileRef{}, mapFormatError(err)
+		return generationformat.GenerationManifest{}, generationformat.FileRef{}, mapFormatError(err)
 	}
 	if manifest.GenerationID != id {
-		return semanticformat.GenerationManifest{}, semanticformat.FileRef{}, ErrCorrupt
+		return generationformat.GenerationManifest{}, generationformat.FileRef{}, ErrCorrupt
 	}
 	if err := validateManifestObjectRefs(manifest); err != nil {
-		return semanticformat.GenerationManifest{}, semanticformat.FileRef{}, err
+		return generationformat.GenerationManifest{}, generationformat.FileRef{}, err
 	}
 	if err := validateOpenReferences(uint64(len(data)), manifest, s.limits); err != nil {
-		return semanticformat.GenerationManifest{}, semanticformat.FileRef{}, err
+		return generationformat.GenerationManifest{}, generationformat.FileRef{}, err
 	}
-	return manifest, semanticformat.FileRef{Size: uint64(len(data)), SHA256: hash}, nil
+	return manifest, generationformat.FileRef{Size: uint64(len(data)), SHA256: hash}, nil
 }
 
-func validateManifestObjectRefs(manifest semanticformat.GenerationManifest) error {
+func validateManifestObjectRefs(manifest generationformat.GenerationManifest) error {
 	for _, segment := range manifest.Segments {
 		if !validObjectID(segment.ObjectID) || segment.ObjectID != segmentObjectID(segment.Vectors, segment.Graph) {
 			return ErrCorrupt

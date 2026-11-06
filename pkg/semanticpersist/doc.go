@@ -1,8 +1,8 @@
-// Package semanticpersist provides durable persistence for semantic.Service.
+// Package semanticpersist provides durable persistence for semantic.Index.
 //
-// The package persists a committed semantic service state as a sequence of
+// The package persists a committed semantic index state as a sequence of
 // immutable generations. A generation references immutable semantic segment
-// objects and contains the logical state required to restore semantic.Service.
+// objects and contains the logical state required to restore semantic.Index.
 //
 // # Storage model
 //
@@ -39,7 +39,7 @@
 // service. Its manifest references the segment objects used by that snapshot
 // and the semantic-state file.
 //
-// semantic-state.bin contains the logical service state required to resume
+// semantic-state.bin contains the logical index state required to resume
 // writes after restore, including configuration, revision and allocation
 // metadata, vector-to-chunk mappings, and liveness information.
 //
@@ -50,7 +50,7 @@
 //
 // Publishing a new generation follows this model:
 //
-//	semantic.Service
+//	semantic.Index
 //	    ↓
 //	committed state
 //	    ↓
@@ -82,19 +82,24 @@
 //	    ↓
 //	semantic.Restore
 //	    ↓
-//	semantic.Service
+//	semantic.Index
 //
 // Normal Open follows CURRENT exactly. It does not scan for newer generations
 // or automatically promote orphan generations.
 //
 // Recovery of an explicitly selected generation is performed separately by
-// OpenByGeneration.
+// RecoverGeneration.
 //
 // # Concurrency
 //
 // A writable store owns an exclusive filesystem lock for its lifetime.
 // This prevents multiple processes from concurrently publishing generations
 // based on the same CURRENT state.
+//
+// Writable locking is supported on Linux, macOS, and FreeBSD. On Windows and
+// other platforms Open, Publish, RecoverGeneration, and Prune return
+// ErrLockUnsupported. This is intentionally stricter than ftspersist, which
+// has a Windows LockFileEx implementation.
 //
 // Publication through an opened Store is additionally serialized within the
 // process.

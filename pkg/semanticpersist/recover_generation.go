@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/semanticformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-// OpenByGeneration explicitly validates and selects generationID. Normal Open
-// never scans for or promotes orphan generations.
-func OpenByGeneration(ctx context.Context, root string, generationID uint64, options PublishOptions) error {
+// RecoverGeneration explicitly validates generationID and makes it current.
+// Normal Open never scans for or promotes orphan generations.
+func RecoverGeneration(ctx context.Context, root string, generationID uint64, options PublishOptions) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
@@ -67,14 +67,14 @@ func OpenByGeneration(ctx context.Context, root string, generationID uint64, opt
 	}
 
 	return newHeadStore(l, options).replace(
-		semanticformat.Head{
+		generationformat.Head{
 			GenerationID: generationID,
 			ManifestHash: persisted.manifestRef.SHA256,
 		},
 	)
 }
 
-func syncPublishedGeneration(l layout, manifest semanticformat.GenerationManifest, mode DurabilityMode) error {
+func syncPublishedGeneration(l layout, manifest generationformat.GenerationManifest, mode DurabilityMode) error {
 	d := durabilityPolicy{mode: mode}
 	if !d.synchronous() {
 		return nil

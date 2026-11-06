@@ -4,55 +4,24 @@ package semanticpersist
 
 import (
 	"errors"
-	"os"
-	"syscall"
+
+	"github.com/dariasmyr/fts-engine/v2/internal/persistfs"
 )
 
-type serviceLock struct {
-	file *os.File
-}
+type serviceLock = persistfs.FileLock
 
 func acquireStoreLock(path string) (*serviceLock, error) {
-	return acquireStoreLockMode(path, syscall.LOCK_EX, true)
-}
-
-func acquireStoreLockMode(path string, mode int, create bool) (*serviceLock, error) {
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+	lock, acquired, err := persistfs.AcquireFileLock(path, persistfs.LockOptions{
+		NonBlocking: true, Create: true, RejectSymlink: true,
+	})
+	if errors.Is(err, persistfs.ErrSymlink) {
 		return nil, ErrSymlink
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
 	}
-	flags := os.O_RDWR | syscall.O_NOFOLLOW
-	if create {
-		flags |= os.O_CREATE
-	}
-	file, err := os.OpenFile(path, flags, 0o600)
 	if err != nil {
-		if errors.Is(err, syscall.ELOOP) {
-			return nil, ErrSymlink
-		}
 		return nil, err
 	}
-	if err := syscall.Flock(int(file.Fd()), mode|syscall.LOCK_NB); err != nil {
-		_ = file.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, ErrStoreLocked
-		}
-		return nil, err
+	if !acquired {
+		return nil, ErrStoreLocked
 	}
-	return &serviceLock{file: file}, nil
-}
-
-func (l *serviceLock) Close() error {
-	if l == nil || l.file == nil {
-		return nil
-	}
-	file := l.file
-	l.file = nil
-	unlockErr := syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-	closeErr := file.Close()
-	if unlockErr != nil {
-		return unlockErr
-	}
-	return closeErr
+	return lock, nil
 }

@@ -2,8 +2,8 @@
 
 package semanticpersist
 
-import "os"
+import "github.com/dariasmyr/fts-engine/v2/internal/persistfs"
 
 func atomicReplace(source, destination string) error {
-	return os.Rename(source, destination)
+	return persistfs.Replace(source, destination)
 }
