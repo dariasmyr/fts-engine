@@ -15,7 +15,8 @@ func TestDecodeVectorFileCancellation(t *testing.T) {
 	data, limits := testVectorFile(t, 1024, 64)
 
 	t.Run("nil context", func(t *testing.T) {
-		if _, _, err := DecodeVectorFile(nil, data, limits); !errors.Is(err, vector.ErrNilContext) {
+		var nilContext context.Context
+		if _, _, err := DecodeVectorFile(nilContext, data, limits); !errors.Is(err, vector.ErrNilContext) {
 			t.Fatalf("DecodeVectorFile error = %v, want vector.ErrNilContext", err)
 		}
 	})

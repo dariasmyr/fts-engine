@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -48,7 +47,7 @@ func New(vectors [][]float32, dimensions int, metric vector.Metric, maxK int) (*
 	if err != nil {
 		return nil, err
 	}
-	store, err := memorystore.New(calculator, vectors)
+	store, err := newPreparedStore(calculator, vectors)
 	if err != nil {
 		return nil, err
 	}
@@ -131,14 +130,47 @@ func (o *Oracle) Search(ctx context.Context, query []float32, k int, options Opt
 // Len returns the number of vectors searched by the oracle.
 func (o *Oracle) Len() int { return o.store.Len() }
 
-// Dimensions returns the vector width searched by the oracle.
-func (o *Oracle) Dimensions() int { return o.store.Dimensions() }
-
-// Metric returns the distance metric used by the oracle.
-func (o *Oracle) Metric() vector.Metric { return o.store.Metric() }
-
 // Store returns the immutable prepared store used by the oracle.
 func (o *Oracle) Store() vector.PreparedVectorStore { return o.store }
+
+type preparedStore struct {
+	calculator vector.Calculator
+	values     []float32
+}
+
+func newPreparedStore(calculator vector.Calculator, values [][]float32) (*preparedStore, error) {
+	flat := make([]float32, len(values)*calculator.Dimensions())
+	for row, value := range values {
+		start := row * calculator.Dimensions()
+		if err := calculator.PrepareInto(flat[start:start+calculator.Dimensions()], value); err != nil {
+			return nil, err
+		}
+	}
+	return &preparedStore{calculator: calculator, values: flat}, nil
+}
+
+func (s *preparedStore) Len() int { return len(s.values) / s.calculator.Dimensions() }
+
+func (s *preparedStore) Dimensions() int { return s.calculator.Dimensions() }
+
+func (s *preparedStore) Metric() vector.Metric { return s.calculator.Metric() }
+
+func (s *preparedStore) Normalization() vector.Normalization { return s.calculator.Normalization() }
+
+func (s *preparedStore) ReadVectorInto(ctx context.Context, ordinal vector.Ordinal, dst []float32) error {
+	if ctx == nil {
+		return vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(dst) != s.Dimensions() || uint64(ordinal) >= uint64(s.Len()) {
+		return ErrInvalidOptions
+	}
+	start := int(ordinal) * s.Dimensions()
+	copy(dst, s.values[start:start+s.Dimensions()])
+	return nil
+}
 
 func allowedCount(rowCount int, filter vector.ResultFilter) (int, error) {
 	if filter == nil {

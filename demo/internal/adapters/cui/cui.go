@@ -77,12 +77,6 @@ func New(ctx context.Context, log *slog.Logger, ftsService SearchEngine, documen
 	}
 }
 
-func (c *CUI) Close() {
-	if c.program != nil {
-		c.program.Quit()
-	}
-}
-
 func (c *CUI) Start() error {
 	m := newModel(c.ctx, c.ftsService, c.documents, c.maxResults, c.mode, c.info)
 	c.program = tea.NewProgram(m, tea.WithAltScreen())

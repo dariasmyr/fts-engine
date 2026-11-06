@@ -73,10 +73,6 @@ type resultHeap struct {
 	capacity int
 }
 
-func newResultHeap(capacity int) resultHeap {
-	return newResultHeapWithBuffer(capacity, nil)
-}
-
 func newResultHeapWithBuffer(capacity int, buffer []searchCandidate) resultHeap {
 	return resultHeap{items: resetSearchCandidates(buffer, capacity), capacity: capacity}
 }

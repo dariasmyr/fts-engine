@@ -102,14 +102,3 @@ func benchmarkBuild(t testing.TB, source vector.PreparedVectorStore, dimensions,
 	}
 	return reader
 }
-
-func readPreparedVector(source vector.PreparedVectorStore, ordinal vector.Ordinal) ([]float32, bool) {
-	if source == nil || uint64(ordinal) >= uint64(source.Len()) {
-		return nil, false
-	}
-	value := make([]float32, source.Dimensions())
-	if err := source.ReadVectorInto(context.Background(), ordinal, value); err != nil {
-		return nil, false
-	}
-	return value, true
-}

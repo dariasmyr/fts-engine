@@ -32,14 +32,6 @@ func (terms termSliceExporter) ExportPostings(yield func(posting.TermData) error
 	return nil
 }
 
-func buildFromExporter(source posting.Exporter, options BuildOptions) ([]byte, error) {
-	var out bytes.Buffer
-	if err := Write(context.Background(), &out, source, options); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
-}
-
 func ordsAreSorted(postings []posting.Posting) bool {
 	for i := 1; i < len(postings); i++ {
 		if postings[i].Ord <= postings[i-1].Ord {

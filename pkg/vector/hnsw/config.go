@@ -64,10 +64,3 @@ type buildInfo struct {
 	efConstruction        int
 	seed                  uint64
 }
-
-func (i buildInfo) neighborLimit(level int) int {
-	if level == 0 {
-		return i.levelZeroMaxNeighbors
-	}
-	return i.maxNeighbors
-}

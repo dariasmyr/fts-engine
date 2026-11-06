@@ -129,13 +129,6 @@ func (s *segment) len() int {
 	return s.index.Len()
 }
 
-func (s *segment) dimensions() int {
-	if s == nil || s.index == nil {
-		return 0
-	}
-	return s.index.Dimensions()
-}
-
 func validateSegmentRowsContext(ctx context.Context, rows []VectorRow) error {
 	if err := ctx.Err(); err != nil {
 		return err

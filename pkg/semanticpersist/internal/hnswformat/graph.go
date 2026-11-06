@@ -173,30 +173,6 @@ func Encode(writer io.Writer, graph Graph) (Metadata, error) {
 	return Metadata{Size: fileSize, CRC32: checksum, SHA256: digest}, nil
 }
 
-func DecodeContext(ctx context.Context, source io.Reader, limits Limits) (Graph, Metadata, error) {
-	if ctx == nil {
-		return Graph{}, Metadata{}, context.Canceled
-	}
-	if source == nil {
-		return Graph{}, Metadata{}, ErrCorruptData
-	}
-	if err := ctx.Err(); err != nil {
-		return Graph{}, Metadata{}, err
-	}
-	limits = normalizeLimits(limits)
-	if limits.MaxGraphBytes < HeaderSize+FooterSize || limits.MaxGraphBytes >= math.MaxInt64 {
-		return Graph{}, Metadata{}, ErrLimitExceeded
-	}
-	data, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, reader: source}, int64(limits.MaxGraphBytes)+1))
-	if err != nil {
-		return Graph{}, Metadata{}, fmt.Errorf("semanticformat: read graph: %w", err)
-	}
-	if uint64(len(data)) > limits.MaxGraphBytes {
-		return Graph{}, Metadata{}, ErrLimitExceeded
-	}
-	return DecodeBytesContext(ctx, data, limits)
-}
-
 func DecodeBytesContext(ctx context.Context, data []byte, limits Limits) (Graph, Metadata, error) {
 	if ctx == nil {
 		return Graph{}, Metadata{}, context.Canceled
@@ -438,16 +414,4 @@ func readUint32s(data []byte, offset int, values []uint32) (int, error) {
 		values[i] = binary.LittleEndian.Uint32(data[offset+i*4:])
 	}
 	return end, nil
-}
-
-type contextReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (r contextReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.reader.Read(p)
 }

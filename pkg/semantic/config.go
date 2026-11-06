@@ -207,10 +207,6 @@ func validVectorCapacity(dimensions, maxVectors int) bool {
 	return n <= math.MaxUint64/(d*4)
 }
 
-func (c Config) schema() Schema {
-	return c.Schema
-}
-
 func (c Config) searchPolicy() searchPolicy {
 	return searchPolicy{
 		MaxDocumentsPerSearch:   c.Limits.MaxDocumentsPerSearch,

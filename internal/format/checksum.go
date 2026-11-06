@@ -12,15 +12,6 @@ func CRC32(data []byte) uint32 {
 	return crc32.ChecksumIEEE(data)
 }
 
-// PutCRC32 writes a little-endian CRC32 footer into dst.
-func PutCRC32(dst []byte, checksum uint32) bool {
-	if len(dst) < CRC32Size {
-		return false
-	}
-	binary.LittleEndian.PutUint32(dst[:CRC32Size], checksum)
-	return true
-}
-
 // ReadCRC32 reads a little-endian CRC32 footer from src.
 func ReadCRC32(src []byte) (uint32, bool) {
 	if len(src) < CRC32Size {

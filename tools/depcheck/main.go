@@ -15,7 +15,7 @@ import (
 const (
 	rootModule       = "github.com/dariasmyr/fts-engine/v2"
 	demoModule       = "github.com/dariasmyr/fts-engine/demo"
-	benchmarksModule = "github.com/dariasmyr/fts-engine/benchmarks"
+	benchmarksModule = "github.com/dariasmyr/fts-engine/v2/benchmarks"
 )
 
 type listedPackage struct {

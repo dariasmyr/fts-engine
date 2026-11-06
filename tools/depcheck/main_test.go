@@ -5,6 +5,14 @@ import (
 	"testing"
 )
 
+func TestBenchmarksModuleMatchesRootMajorVersion(t *testing.T) {
+	t.Parallel()
+
+	if benchmarksModule != rootModule+"/benchmarks" {
+		t.Fatalf("benchmarksModule = %q, want %q", benchmarksModule, rootModule+"/benchmarks")
+	}
+}
+
 func TestArchitectureRulesAllowIntendedDependencies(t *testing.T) {
 	t.Parallel()
 
