@@ -1,5 +1,6 @@
-// Package semanticencode prepares source documents as semantic vectors.
-// It does not own or mutate a semantic index.
+// Package semanticencode provides advanced custom document/query encoders.
+// Normal model-bound services should use semantic.New. This package does not
+// own or mutate a semantic index.
 package semanticencode
 
 import (
@@ -11,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
+	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
@@ -19,80 +21,182 @@ import (
 var (
 	ErrInvalidConfig          = errors.New("semanticencode: invalid configuration")
 	ErrInvalidDocument        = errors.New("semanticencode: invalid document")
+	ErrInvalidQuery           = errors.New("semanticencode: invalid query")
 	ErrLimitExceeded          = errors.New("semanticencode: limit exceeded")
 	ErrInvalidChunk           = errors.New("semanticencode: invalid chunk")
 	ErrEmbeddingCountMismatch = errors.New("semanticencode: embedding count does not match chunks")
 )
 
-// Chunker defines the byte-range splitting behavior required by the encoder.
-type Chunker interface {
-	Split(text string) ([]chunk.Range, error)
-}
+// InputRole selects the model prefix used by a derived encoder.
+type InputRole uint8
 
-// EmbeddingInput is transient provider input. Only Ref is persisted.
-// Text is a view into the document source; providers must not retain it.
-type EmbeddingInput struct {
-	Ref  semantic.Ref
-	Text string
-}
+const (
+	RoleUnspecified InputRole = iota
+	RoleDocument
+	RoleQuery
+)
 
-// EmbeddingProvider returns one embedding per input, preserving order.
-// Implementations must not retain or mutate inputs and must transfer ownership
-// of returned buffers. Concurrent Encode calls require concurrent-safe providers.
-type EmbeddingProvider interface {
-	Embed(context.Context, []EmbeddingInput) ([][]float32, error)
-}
-
-type Limits struct {
+// InputLimits bounds text and vector material created by one encoding call.
+type InputLimits struct {
 	MaxFields         int
 	MaxSourceBytes    uint64
 	MaxChunks         int
 	MaxEmbeddingBytes uint64
 }
 
-type Config struct {
-	Schema   semantic.Schema
-	Limits   Limits
-	Chunker  Chunker
-	Embedder EmbeddingProvider
+// EncoderConfig configures one advanced document or query encoder. Normal
+// model-bound services should use semantic.New instead.
+type EncoderConfig struct {
+	Schema semantic.Schema
+	Metric vector.Metric
+	Role   InputRole
+	Limits InputLimits
+	// Chunker splits document fields into byte ranges. Custom implementations
+	// require an explicit Schema.
+	Chunker semantic.Chunker
+	Client  embedding.Client
 }
 
-func (c Config) Validate() error { _, err := c.calculator(); return err }
+func (c EncoderConfig) Validate() error { _, _, _, err := c.normalized(); return err }
 
-func (c Config) calculator() (vector.Calculator, error) {
-	if c.Embedder == nil || !c.Schema.IsValid() || c.Limits.MaxFields <= 0 ||
+func (c EncoderConfig) normalized() (EncoderConfig, int, string, error) {
+	if c.Client == nil || c.Limits.MaxFields <= 0 ||
 		c.Limits.MaxSourceBytes == 0 || c.Limits.MaxChunks <= 0 || c.Limits.MaxEmbeddingBytes == 0 {
-		return vector.Calculator{}, ErrInvalidConfig
+		return EncoderConfig{}, 0, "", ErrInvalidConfig
 	}
-	calculator, err := c.Schema.Embedding.Calculator()
+	model := c.Client.Model()
+	if model.Validate() != nil {
+		return EncoderConfig{}, 0, "", ErrInvalidConfig
+	}
+	derived := c.Schema == (semantic.Schema{})
+	if derived {
+		chunking, err := deriveChunkingSchema(c.Chunker)
+		if err != nil {
+			return EncoderConfig{}, 0, "", err
+		}
+		schema, err := semantic.DeriveSchema(model, chunking, c.Metric)
+		if err != nil {
+			return EncoderConfig{}, 0, "", fmt.Errorf("%w: derive schema: %v", ErrInvalidConfig, err)
+		}
+		c.Schema = schema
+	}
+	if !c.Schema.IsValid() || model.ID != c.Schema.Embedding.ModelID ||
+		model.Revision != c.Schema.Embedding.ModelRevision ||
+		model.Dimensions != c.Schema.Embedding.Dimensions {
+		return EncoderConfig{}, 0, "", ErrInvalidConfig
+	}
+	space, err := c.Schema.Embedding.VectorSpace()
 	if err != nil {
-		return vector.Calculator{}, fmt.Errorf("%w: embedding schema: %v", ErrInvalidConfig, err)
+		return EncoderConfig{}, 0, "", fmt.Errorf("%w: embedding schema: %v", ErrInvalidConfig, err)
 	}
-	return calculator, nil
+	prefix := ""
+	if c.Role != RoleUnspecified || derived {
+		if c.Role == RoleUnspecified {
+			c.Role = RoleDocument
+		}
+		switch c.Role {
+		case RoleDocument:
+			prefix = model.DocumentPrefix
+		case RoleQuery:
+			prefix = model.QueryPrefix
+		default:
+			return EncoderConfig{}, 0, "", ErrInvalidConfig
+		}
+	}
+	return c, space.Dimensions(), prefix, nil
 }
 
-type DocumentEncoder struct {
-	chunker    Chunker
-	embedder   EmbeddingProvider
-	schema     semantic.Schema
-	limits     Limits
-	calculator vector.Calculator
-}
-
-func New(config Config) (*DocumentEncoder, error) {
-	calculator, err := config.calculator()
-	if err != nil {
-		return nil, err
+func deriveChunkingSchema(chunker semantic.Chunker) (semantic.ChunkingSchema, error) {
+	if chunker == nil {
+		return semantic.ChunkingSchema{
+			ID: chunk.WholeID, Version: chunk.WholeVersion, Fingerprint: chunk.WholeFingerprint(),
+		}, nil
 	}
-	return &DocumentEncoder{
-		chunker: config.Chunker, embedder: config.Embedder,
-		schema: config.Schema, limits: config.Limits, calculator: calculator,
+	splitter, ok := chunker.(*chunk.Splitter)
+	if !ok {
+		return semantic.ChunkingSchema{}, ErrInvalidConfig
+	}
+	config := splitter.Config()
+	fingerprint, err := config.Fingerprint()
+	if err != nil {
+		return semantic.ChunkingSchema{}, fmt.Errorf("%w: chunking config: %v", ErrInvalidConfig, err)
+	}
+	return semantic.ChunkingSchema{
+		ID: chunk.SplitterID, Version: chunk.SplitterVersion, Fingerprint: fingerprint,
 	}, nil
 }
 
-func (e *DocumentEncoder) Descriptor() semantic.Schema { return e.schema }
+// Encoder prepares source documents or queries as semantic vectors.
+type Encoder struct {
+	chunker              semantic.Chunker
+	client               embedding.Client
+	schema               semantic.Schema
+	limits               InputLimits
+	dimensions           int
+	prefix               string
+	retrievalFingerprint string
+}
 
-func (e *DocumentEncoder) Encode(ctx context.Context, document fts.Document) ([]semantic.EncodedChunk, error) {
+// NewEncoder constructs one role-specific encoder.
+func NewEncoder(config EncoderConfig) (*Encoder, error) {
+	config, dimensions, prefix, err := config.normalized()
+	if err != nil {
+		return nil, err
+	}
+	retrievalFingerprint, err := semantic.DeriveRetrievalFingerprint(config.Schema, config.Client.Model())
+	if err != nil {
+		return nil, fmt.Errorf("%w: derive retrieval compatibility: %v", ErrInvalidConfig, err)
+	}
+	return &Encoder{
+		chunker: config.Chunker, client: config.Client,
+		schema: config.Schema, limits: config.Limits, dimensions: dimensions,
+		prefix: prefix, retrievalFingerprint: retrievalFingerprint,
+	}, nil
+}
+
+func (e *Encoder) Schema() semantic.Schema { return e.schema }
+
+// RetrievalFingerprint reports the versioned document/query contract used for
+// evaluation. It is not persisted as document compatibility.
+func (e *Encoder) RetrievalFingerprint() string { return e.retrievalFingerprint }
+
+// EncodeDocument prepares a source document for indexing.
+func (e *Encoder) EncodeDocument(ctx context.Context, document fts.Document) ([]semantic.ChunkEmbedding, error) {
+	return e.encodeDocument(ctx, document)
+}
+
+// EncodeQuery prepares a direct text query as one embedding input. Normal
+// model-bound services should use semantic.New for explicit long-query policy.
+func (e *Encoder) EncodeQuery(ctx context.Context, query string) ([]semantic.ChunkEmbedding, error) {
+	if ctx == nil {
+		return nil, vector.ErrNilContext
+	}
+	if query == "" || !utf8.ValidString(query) {
+		return nil, ErrInvalidQuery
+	}
+	if uint64(len(query)) > e.limits.MaxSourceBytes {
+		return nil, fmt.Errorf("%w: query bytes exceed %d", ErrLimitExceeded, e.limits.MaxSourceBytes)
+	}
+	return e.encodeInputs(ctx, []embeddingInput{{
+		ref: semantic.Ref{
+			ID:      "query-000000",
+			DocID:   "_query",
+			Field:   fts.DefaultField,
+			EndByte: uint64(len(query)),
+		},
+		text: query,
+	}})
+}
+
+// EncodeQueryDocument prepares an advanced structured query document.
+func (e *Encoder) EncodeQueryDocument(
+	ctx context.Context,
+	document fts.Document,
+) ([]semantic.ChunkEmbedding, error) {
+	return e.encodeDocument(ctx, document)
+}
+
+func (e *Encoder) encodeDocument(ctx context.Context, document fts.Document) ([]semantic.ChunkEmbedding, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -100,23 +204,41 @@ func (e *DocumentEncoder) Encode(ctx context.Context, document fts.Document) ([]
 	if err != nil {
 		return nil, err
 	}
+	return e.encodeInputs(ctx, inputs)
+}
+
+func (e *Encoder) encodeInputs(ctx context.Context, inputs []embeddingInput) ([]semantic.ChunkEmbedding, error) {
 	if err := e.validateEmbeddingSize(len(inputs)); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	vectors, err := e.embedder.Embed(ctx, inputs)
+	texts := make([]string, len(inputs))
+	for i, input := range inputs {
+		texts[i] = e.prefix + input.text
+	}
+	vectors, err := e.client.Embed(ctx, texts)
 	if err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return e.makeChunkVectors(ctx, inputs, vectors)
+	return e.makeChunkEmbeddings(ctx, inputs, vectors)
 }
 
-func (e *DocumentEncoder) chunkDocument(ctx context.Context, document fts.Document) ([]EmbeddingInput, error) {
+var (
+	_ semantic.DocumentEncoder = (*Encoder)(nil)
+	_ semantic.QueryEncoder    = (*Encoder)(nil)
+)
+
+type embeddingInput struct {
+	ref  semantic.Ref
+	text string
+}
+
+func (e *Encoder) chunkDocument(ctx context.Context, document fts.Document) ([]embeddingInput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -149,7 +271,7 @@ func (e *DocumentEncoder) chunkDocument(ctx context.Context, document fts.Docume
 	}
 	slices.Sort(fields)
 
-	inputs := make([]EmbeddingInput, 0, min(len(fields), e.limits.MaxChunks))
+	inputs := make([]embeddingInput, 0, min(len(fields), e.limits.MaxChunks))
 	for _, field := range fields {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -205,20 +327,20 @@ func (e *DocumentEncoder) chunkDocument(ctx context.Context, document fts.Docume
 					id = field + "/" + id
 				}
 			}
-			inputs = append(inputs, EmbeddingInput{
-				Ref: semantic.Ref{
+			inputs = append(inputs, embeddingInput{
+				ref: semantic.Ref{
 					ID: semantic.ChunkID(id), DocID: document.ID, Field: field, Ordinal: uint32(i),
 					StartByte: uint64(r.StartByte), EndByte: uint64(r.EndByte),
 				},
-				Text: text[r.StartByte:r.EndByte],
+				text: text[r.StartByte:r.EndByte],
 			})
 		}
 	}
 	return inputs, nil
 }
 
-func (e *DocumentEncoder) validateEmbeddingSize(count int) error {
-	dimensions := uint64(e.calculator.Dimensions())
+func (e *Encoder) validateEmbeddingSize(count int) error {
+	dimensions := uint64(e.dimensions)
 	if dimensions == 0 || dimensions > math.MaxUint64/4 {
 		return fmt.Errorf("%w: invalid embedding dimensions", ErrLimitExceeded)
 	}
@@ -229,20 +351,16 @@ func (e *DocumentEncoder) validateEmbeddingSize(count int) error {
 	return nil
 }
 
-func (e *DocumentEncoder) makeChunkVectors(ctx context.Context, inputs []EmbeddingInput, vectors [][]float32) ([]semantic.EncodedChunk, error) {
+func (e *Encoder) makeChunkEmbeddings(ctx context.Context, inputs []embeddingInput, vectors [][]float32) ([]semantic.ChunkEmbedding, error) {
 	if len(inputs) != len(vectors) {
 		return nil, fmt.Errorf("%w: got %d vectors for %d chunks", ErrEmbeddingCountMismatch, len(vectors), len(inputs))
 	}
-	result := make([]semantic.EncodedChunk, len(inputs))
+	result := make([]semantic.ChunkEmbedding, len(inputs))
 	for i, input := range inputs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		prepared, err := e.calculator.Prepare(vectors[i])
-		if err != nil {
-			return nil, fmt.Errorf("embedding %d: %w", i, err)
-		}
-		result[i] = semantic.EncodedChunk{Ref: input.Ref, Vector: prepared}
+		result[i] = semantic.ChunkEmbedding{Ref: input.ref, Embedding: vectors[i]}
 	}
 	return result, nil
 }

@@ -21,14 +21,14 @@ func BenchmarkBuildPreparedSource(b *testing.B) {
 					values[row][dimension] = float32((row+1)*(dimension+3)%101) / 101
 				}
 			}
-			oracle := benchmarkExactOracle(b, values, vector.MetricL2Squared)
+			searcher := benchmarkExactSearcher(b, values, vector.MetricL2Squared)
 			build := benchmarkBuildConfig(dimensions, rows, vector.MetricL2Squared)
 			search := benchmarkSearchConfig(rows)
 			b.ReportAllocs()
 			b.SetBytes(int64(rows * dimensions * 4))
 			b.ResetTimer()
 			for b.Loop() {
-				if _, err := hnsw.Build(context.Background(), oracle.Store(), build, search); err != nil {
+				if _, err := hnsw.Build(context.Background(), searcher.Store(), build, search); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -45,8 +45,8 @@ func BenchmarkANNAndExactReference(b *testing.B) {
 			values[row][dimension] = float32((row+7)*(dimension+1)%97) / 97
 		}
 	}
-	oracle := benchmarkExactOracle(b, values, vector.MetricL2Squared)
-	reader := benchmarkBuild(b, oracle.Store(), dimensions, rows, vector.MetricL2Squared)
+	searcher := benchmarkExactSearcher(b, values, vector.MetricL2Squared)
+	reader := benchmarkBuild(b, searcher.Store(), dimensions, rows, vector.MetricL2Squared)
 	query := make([]float32, dimensions)
 	b.Run("ann", func(b *testing.B) {
 		b.ReportAllocs()
@@ -59,7 +59,7 @@ func BenchmarkANNAndExactReference(b *testing.B) {
 	b.Run("exact_reference", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			if _, err := oracle.Search(context.Background(), query, 10, exact.Options{}); err != nil {
+			if _, err := searcher.Search(context.Background(), query, 10, exact.Options{}); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -80,13 +80,13 @@ func benchmarkSearchConfig(count int) hnsw.SearchConfig {
 	}
 }
 
-func benchmarkExactOracle(t testing.TB, values [][]float32, metric vector.Metric) *exact.Oracle {
+func benchmarkExactSearcher(t testing.TB, values [][]float32, metric vector.Metric) *exact.Searcher {
 	t.Helper()
-	oracle, err := exact.New(values, len(values[0]), metric, len(values))
+	searcher, err := exact.New(values, len(values[0]), metric, len(values))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return oracle
+	return searcher
 }
 
 func benchmarkBuild(t testing.TB, source vector.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.Index {

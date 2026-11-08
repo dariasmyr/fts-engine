@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestCalculatorDistances(t *testing.T) {
+func TestSpaceDistances(t *testing.T) {
 	tests := []struct {
 		name   string
 		metric Metric
@@ -18,11 +18,11 @@ func TestCalculatorDistances(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			calculator, err := NewCalculator(2, tt.metric)
+			space, err := NewSpace(2, tt.metric)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := calculator.Distance(tt.a, tt.b)
+			got, err := space.Distance(tt.a, tt.b)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -33,24 +33,45 @@ func TestCalculatorDistances(t *testing.T) {
 	}
 }
 
-func TestCalculatorPrepareCopiesAndValidates(t *testing.T) {
-	calculator, err := NewCalculator(2, MetricCosine)
+func TestSpacePrepareCopiesAndValidates(t *testing.T) {
+	space, err := NewSpace(2, MetricCosine)
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := []float32{3, 4}
-	prepared, err := calculator.Prepare(source)
+	prepared, err := space.Prepare(source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	source[0] = 0
-	if math.Abs(float64(prepared[0])-0.6) > 1e-6 || math.Abs(float64(prepared[1])-0.8) > 1e-6 {
-		t.Fatalf("Prepare() = %v, want normalized copy", prepared)
+	values := make([]float32, 2)
+	if err := prepared.CopyTo(values); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := calculator.Prepare([]float32{0, 0}); !errors.Is(err, ErrZeroNorm) {
+	if math.Abs(float64(values[0])-0.6) > 1e-6 || math.Abs(float64(values[1])-0.8) > 1e-6 {
+		t.Fatalf("Prepare() = %v, want normalized copy", values)
+	}
+	values[0] = 99
+	if err := prepared.CopyTo(values); err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(float64(values[0])-0.6) > 1e-6 {
+		t.Fatalf("CopyTo() exposed mutable storage: %v", values)
+	}
+	if err := space.ValidatePreparedVector(prepared); err != nil {
+		t.Fatalf("ValidatePreparedVector() error = %v", err)
+	}
+	otherSpace, err := NewSpace(2, MetricL2Squared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := otherSpace.ValidatePreparedVector(prepared); !errors.Is(err, ErrDimensionMismatch) {
+		t.Fatalf("ValidatePreparedVector() error = %v, want ErrDimensionMismatch", err)
+	}
+	if _, err := space.Prepare([]float32{0, 0}); !errors.Is(err, ErrZeroNorm) {
 		t.Fatalf("Prepare(zero) error = %v, want ErrZeroNorm", err)
 	}
-	if _, err := calculator.Prepare([]float32{float32(math.NaN()), 1}); !errors.Is(err, ErrNonFiniteVector) {
+	if _, err := space.Prepare([]float32{float32(math.NaN()), 1}); !errors.Is(err, ErrNonFiniteVector) {
 		t.Fatalf("Prepare(NaN) error = %v, want ErrNonFiniteVector", err)
 	}
 }

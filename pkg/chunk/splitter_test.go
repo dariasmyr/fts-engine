@@ -7,6 +7,30 @@ import (
 	"testing"
 )
 
+func TestConfigFingerprint(t *testing.T) {
+	config := Config{TargetBytes: 512, MaxBytes: 768, OverlapBytes: 64}
+	first, err := config.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := config.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == "" || first != second {
+		t.Fatalf("Fingerprint() = %q and %q", first, second)
+	}
+	changed := config
+	changed.OverlapBytes++
+	other, err := changed.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other == first {
+		t.Fatal("Fingerprint() did not change with config")
+	}
+}
+
 func TestWhole(t *testing.T) {
 	got, err := Whole("hello")
 	if err != nil || got != (Range{0, 5}) {
@@ -18,7 +42,7 @@ func TestWhole(t *testing.T) {
 }
 
 func TestSplitterOffsetsOverlapUTF8AndDeterminism(t *testing.T) {
-	splitter, err := NewSplitter(Descriptor{TargetBytes: 18, MaxBytes: 28, OverlapBytes: 5})
+	splitter, err := NewSplitter(Config{TargetBytes: 18, MaxBytes: 28, OverlapBytes: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +72,7 @@ func TestSplitterOffsetsOverlapUTF8AndDeterminism(t *testing.T) {
 }
 
 func TestSplitterEmptyShortAndTinyUTF8Window(t *testing.T) {
-	splitter, err := NewSplitter(Descriptor{TargetBytes: 1, MaxBytes: 4})
+	splitter, err := NewSplitter(Config{TargetBytes: 1, MaxBytes: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,10 +113,10 @@ func TestUTF8BoundaryDirectionAndProgress(t *testing.T) {
 }
 
 func TestSplitterRejectsInvalidConfigurationAndInput(t *testing.T) {
-	if _, err := NewSplitter(Descriptor{TargetBytes: 10, MaxBytes: 5}); !errors.Is(err, ErrInvalidSplitConfig) {
+	if _, err := NewSplitter(Config{TargetBytes: 10, MaxBytes: 5}); !errors.Is(err, ErrInvalidSplitConfig) {
 		t.Fatal(err)
 	}
-	splitter, err := NewSplitter(Descriptor{TargetBytes: 10, MaxBytes: 20})
+	splitter, err := NewSplitter(Config{TargetBytes: 10, MaxBytes: 20})
 	if err != nil {
 		t.Fatal(err)
 	}

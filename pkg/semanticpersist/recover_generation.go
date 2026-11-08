@@ -4,81 +4,78 @@ import (
 	"context"
 	"path/filepath"
 
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/internal/persistfs"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/storage"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-// RecoverGeneration explicitly validates generationID and makes it current.
-// Normal Open never scans for or promotes orphan generations.
-func RecoverGeneration(ctx context.Context, root string, generationID uint64, options PublishOptions) error {
+// RecoverGeneration explicitly validates generation and makes it current.
+// Normal Load never scans for or promotes orphan generations.
+func RecoverGeneration(
+	ctx context.Context,
+	root string,
+	generation Generation,
+	limits Limits,
+) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if root == "" || generationID == 0 {
+	if root == "" || generation.ID == 0 {
 		return ErrCorrupt
 	}
-	if err := normalizeOptions(&options); err != nil {
+	cfg, err := newSettings(limits)
+	if err != nil {
 		return err
 	}
 	l := newLayout(root)
-	if err := validateLayout(l); err != nil {
+	if err := l.validate(); err != nil {
 		return err
 	}
-	lock, err := acquireStoreLock(l.lock)
+	lock, err := storage.AcquireOperationLock(l.lock)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
 
-	generations := newGenerationStore(l, options)
+	generations := newGenerationFiles(l, cfg)
 
 	persisted, err := generations.open(
 		ctx,
-		generationID,
+		generation.ID,
 		nil,
 	)
 	if err != nil {
 		return err
 	}
 
-	objects := newObjectStore(l, options)
+	segments := newSegmentStore(l, cfg)
 
 	_, err = restoreIndex(
 		ctx,
-		Generation{ID: generationID},
 		persisted,
-		objects,
-		semantic.Schema{},
+		segments,
 	)
 	if err != nil {
 		return err
 	}
 
-	if err := syncPublishedGeneration(
-		l,
-		persisted.manifest,
-		options.Durability,
-	); err != nil {
+	if err := syncSavedGeneration(l, persisted.manifest); err != nil {
 		return err
 	}
 
-	return newHeadStore(l, options).replace(
+	return newCurrentFile(l, cfg).replace(
 		generationformat.Head{
-			GenerationID: generationID,
+			GenerationID: generation.ID,
 			ManifestHash: persisted.manifestRef.SHA256,
 		},
 	)
 }
 
-func syncPublishedGeneration(l layout, manifest generationformat.GenerationManifest, mode DurabilityMode) error {
-	d := durabilityPolicy{mode: mode}
-	if !d.synchronous() {
-		return nil
-	}
+func syncSavedGeneration(l layout, manifest generationformat.GenerationManifest) error {
 	files := []string{l.state(manifest.GenerationID), l.manifest(manifest.GenerationID)}
 	directories := []string{l.generation(manifest.GenerationID)}
 	for _, segment := range manifest.Segments {
@@ -87,12 +84,12 @@ func syncPublishedGeneration(l layout, manifest generationformat.GenerationManif
 		directories = append(directories, path)
 	}
 	for _, file := range files {
-		if err := d.syncRegularFile(file); err != nil {
+		if err := mapPersistFSError(persistfs.SyncRegularFile(file), ErrCorrupt); err != nil {
 			return err
 		}
 	}
 	for _, dir := range append(directories, l.segments, l.objects, l.generations, l.root) {
-		if err := d.syncDirectory(dir); err != nil {
+		if err := persistfs.SyncDirectory(dir); err != nil {
 			return err
 		}
 	}

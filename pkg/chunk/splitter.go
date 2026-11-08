@@ -1,35 +1,78 @@
 package chunk
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"strings"
 	"unicode/utf8"
 )
 
-// Descriptor configures deterministic byte-range splitting.
-type Descriptor struct {
+const (
+	// SplitterID identifies the deterministic byte-range splitting algorithm.
+	SplitterID      = "byte-splitter"
+	SplitterVersion = uint32(1)
+	WholeID         = "whole-field"
+	WholeVersion    = uint32(1)
+)
+
+// Config configures deterministic byte-range splitting.
+type Config struct {
 	TargetBytes  int
 	MaxBytes     int
 	OverlapBytes int
 }
 
-func (d Descriptor) Validate() error {
+func (d Config) Validate() error {
 	if d.TargetBytes <= 0 || d.MaxBytes < d.TargetBytes || d.OverlapBytes < 0 || d.OverlapBytes >= d.TargetBytes {
 		return ErrInvalidSplitConfig
 	}
 	return nil
 }
 
-// Splitter produces half-open, UTF-8-aligned byte ranges.
-type Splitter struct {
-	descriptor Descriptor
+// Fingerprint returns the versioned canonical fingerprint of the configuration.
+// Version 1 encodes the algorithm ID, version, and three signed 64-bit fields
+// in big-endian order before hashing with SHA-256.
+func (d Config) Fingerprint() (string, error) {
+	if err := d.Validate(); err != nil {
+		return "", err
+	}
+	hash := sha256.New()
+	hash.Write([]byte(SplitterID))
+	var encoded [8]byte
+	binary.BigEndian.PutUint32(encoded[:4], SplitterVersion)
+	hash.Write(encoded[:4])
+	for _, value := range []int{d.TargetBytes, d.MaxBytes, d.OverlapBytes} {
+		binary.BigEndian.PutUint64(encoded[:], uint64(int64(value)))
+		hash.Write(encoded[:])
+	}
+	return "v1:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func NewSplitter(descriptor Descriptor) (*Splitter, error) {
-	if err := descriptor.Validate(); err != nil {
+// WholeFingerprint returns the canonical fingerprint for unsplit fields.
+func WholeFingerprint() string {
+	hash := sha256.New()
+	hash.Write([]byte(WholeID))
+	var encoded [4]byte
+	binary.BigEndian.PutUint32(encoded[:], WholeVersion)
+	hash.Write(encoded[:])
+	return "v1:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+// Splitter produces half-open, UTF-8-aligned byte ranges.
+type Splitter struct {
+	config Config
+}
+
+func NewSplitter(config Config) (*Splitter, error) {
+	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	return &Splitter{descriptor: descriptor}, nil
+	return &Splitter{config: config}, nil
 }
+
+// Config returns the immutable configuration used by the splitter.
+func (s *Splitter) Config() Config { return s.config }
 
 // Split prefers paragraph boundaries near the target and falls back to
 // UTF-8-safe overlapping byte windows. It never retains source text.
@@ -40,14 +83,14 @@ func (s *Splitter) Split(text string) ([]Range, error) {
 	if !utf8.ValidString(text) {
 		return nil, ErrInvalidUTF8
 	}
-	if len(text) <= s.descriptor.TargetBytes {
+	if len(text) <= s.config.TargetBytes {
 		whole, err := Whole(text)
 		if err != nil {
 			return nil, err
 		}
 		return []Range{whole}, nil
 	}
-	ranges := make([]Range, 0, len(text)/s.descriptor.TargetBytes+1)
+	ranges := make([]Range, 0, len(text)/s.config.TargetBytes+1)
 	for start := 0; start < len(text); {
 		end := s.chooseEnd(text, start)
 		if end <= start {
@@ -57,7 +100,7 @@ func (s *Splitter) Split(text string) ([]Range, error) {
 		if end == len(text) {
 			break
 		}
-		next := end - min(s.descriptor.OverlapBytes, end-start-1)
+		next := end - min(s.config.OverlapBytes, end-start-1)
 		for next < len(text) && !utf8.RuneStart(text[next]) {
 			next++
 		}
@@ -70,8 +113,8 @@ func (s *Splitter) Split(text string) ([]Range, error) {
 // If there is none, it uses the last paragraph boundary before target, then
 // falls back to a UTF-8-safe cut near target.
 func (s *Splitter) chooseEnd(text string, start int) int {
-	target := min(start+s.descriptor.TargetBytes, len(text))
-	maximum := min(start+s.descriptor.MaxBytes, len(text))
+	target := min(start+s.config.TargetBytes, len(text))
+	maximum := min(start+s.config.MaxBytes, len(text))
 	if maximum == len(text) {
 		return len(text)
 	}

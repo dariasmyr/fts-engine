@@ -13,9 +13,9 @@ func Snapshot(index *Index) hnswmodel.Snapshot {
 
 	t := index.topology
 	return hnswmodel.Snapshot{
-		Dimensions:            t.calculator.Dimensions(),
-		Metric:                t.calculator.Metric(),
-		Normalization:         t.calculator.Normalization(),
+		Dimensions:            t.space.Dimensions(),
+		Metric:                t.space.Metric(),
+		Normalization:         t.space.Normalization(),
 		BuildVersion:          t.build.buildVersion,
 		LevelGeneratorVersion: t.build.levelGeneratorVersion,
 		MaxNeighbors:          t.build.maxNeighbors,
@@ -36,8 +36,8 @@ func Snapshot(index *Index) hnswmodel.Snapshot {
 // Restore creates an in-memory index from a trusted, repository-internal
 // snapshot. Durable decoders must validate untrusted data before calling it.
 func Restore(snapshot hnswmodel.Snapshot, vectors vector.PreparedVectorStore, search SearchConfig) (*Index, error) {
-	calculator, err := vector.NewCalculator(snapshot.Dimensions, snapshot.Metric)
-	if err != nil || calculator.Normalization() != snapshot.Normalization {
+	space, err := vector.NewSpace(snapshot.Dimensions, snapshot.Metric)
+	if err != nil || space.Normalization() != snapshot.Normalization {
 		return nil, ErrInvalidSource
 	}
 	build := BuildConfig{
@@ -51,7 +51,7 @@ func Restore(snapshot hnswmodel.Snapshot, vectors vector.PreparedVectorStore, se
 	}
 
 	t := topology{
-		calculator: calculator,
+		space: space,
 		build: buildInfo{
 			buildVersion:          snapshot.BuildVersion,
 			levelGeneratorVersion: snapshot.LevelGeneratorVersion,

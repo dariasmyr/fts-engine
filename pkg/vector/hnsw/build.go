@@ -32,11 +32,11 @@ func Build(
 		return nil, err
 	}
 
-	calculator, err := vector.NewCalculator(source.Dimensions(), source.Metric())
+	space, err := vector.NewSpace(source.Dimensions(), source.Metric())
 	if err != nil {
 		return nil, err
 	}
-	if calculator.Normalization() != source.Normalization() {
+	if space.Normalization() != source.Normalization() {
 		return nil, ErrInvalidSource
 	}
 
@@ -44,13 +44,13 @@ func Build(
 	if uint64(vectorCount) >= math.MaxUint32 {
 		return nil, ErrInvalidSource
 	}
-	components, ok := checkedMultiply(uint64(vectorCount), uint64(calculator.Dimensions()))
+	components, ok := checkedMultiply(uint64(vectorCount), uint64(space.Dimensions()))
 	if !ok || components > uint64(math.MaxInt) {
 		return nil, ErrInvalidSource
 	}
 
-	builder := newBuilder(build, calculator, vectorCount, int(components))
-	scratch := make([]float32, calculator.Dimensions())
+	builder := newBuilder(build, space, vectorCount, int(components))
+	scratch := make([]float32, space.Dimensions())
 	for row := range vectorCount {
 		if err := ctx.Err(); err != nil {
 			return nil, err

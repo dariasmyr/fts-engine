@@ -6,241 +6,92 @@ import (
 	"os"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
+	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticencode"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func main() {
 	ctx := context.Background()
-
 	root, err := os.MkdirTemp("", "fts-semantic-persistence-")
 	must(err)
 	defer os.RemoveAll(root)
 
-	embedding, err := semantic.NewEmbeddingDescriptor(
-		"example-provider",
-		"persistence-example",
-		"v1",
-		"persistence-embedding-v1",
-		2,
-		vector.MetricL2Squared,
-		1,
-	)
-	must(err)
-
-	chunking := semantic.ChunkingDescriptor{
-		ID:          "persistence-example-v1",
-		Version:     1,
-		Fingerprint: "persistence-chunks-v1",
+	semanticOptions := []semantic.Option{
+		semantic.WithMetric(vector.MetricL2Squared),
+		semantic.WithChunking(chunk.Config{
+			TargetBytes: 512, MaxBytes: 768, OverlapBytes: 64,
+		}),
+		semantic.WithMaxIndexedVectors(100),
+		semantic.WithMaxChunksPerDocument(10),
+		semantic.WithSearchLimits(semantic.SearchLimits{
+			MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3,
+		}),
 	}
 
-	schema := semantic.Schema{
-		Embedding: embedding,
-		Chunking:  chunking,
-	}
-
-	index, err := semantic.NewIndex(semantic.Config{
-		Schema: schema,
-		Limits: semantic.Limits{
-			MaxLiveVectors:          100,
-			MaxChunksPerDocument:    10,
-			MaxDocumentsPerSearch:   10,
-			MaxChunkCandidates:      100,
-			MaxChunksPerDocumentHit: 3,
-		},
-	})
+	service, err := semantic.New(persistenceEmbedder{}, semanticOptions...)
 	must(err)
 
-	splitter, err := chunk.NewSplitter(chunk.Descriptor{
-		TargetBytes:  512,
-		MaxBytes:     768,
-		OverlapBytes: 64,
-	})
-	must(err)
-
-	encoder, err := semanticencode.New(semanticencode.Config{
-		Chunker:  splitter,
-		Schema:   schema,
-		Embedder: persistenceEmbedder{},
-		Limits: semanticencode.Limits{
-			MaxFields: 10, MaxSourceBytes: 1 << 20, MaxChunks: 10, MaxEmbeddingBytes: 1 << 20,
-		},
-	})
-	must(err)
-
-	addDocument(
-		ctx,
-		index,
-		encoder,
-		fts.Document{
-			ID: "doc-a",
-			Fields: map[string]fts.FieldData{
-				"body": {Text: "a-v1"},
-			},
-		},
-	)
-
-	addDocument(
-		ctx,
-		index,
-		encoder,
-		fts.Document{
-			ID: "doc-b",
-			Fields: map[string]fts.FieldData{
-				"body": {Text: "b"},
-			},
-		},
-	)
-
-	must(index.Flush(ctx))
-
-	generation, err := semanticpersist.Publish(
+	must(service.AddDocument(ctx, document("doc-a", "a-v1")))
+	must(service.AddDocument(ctx, document("doc-b", "b")))
+	generation, err := semanticpersist.CommitAndSave(
 		ctx,
 		root,
-		index,
-		semanticpersist.PublishOptions{
-			ExpectedGeneration: &semanticpersist.Generation{
-				ID: 0,
-			},
-			Durability: semanticpersist.DurabilitySynchronous,
+		service.Index(),
+		semanticpersist.SaveOptions{
+			ExpectedGeneration: &semanticpersist.Generation{},
 		},
 	)
 	must(err)
+	fmt.Printf("initial content generation=%d\n", generation.ID)
+	search(ctx, service, "query-v1", "after commit and save")
 
-	fmt.Printf("initial generation=%d\n", generation.ID)
-
-	store, err := semanticpersist.Open(
+	must(service.ReplaceDocument(ctx, document("doc-a", "a-v2")))
+	generation, err = semanticpersist.CommitAndSave(
 		ctx,
 		root,
-		semanticpersist.OpenOptions{
-			Limits:         semanticpersist.DefaultLimits(),
-			ExpectedSchema: schema,
+		service.Index(),
+		semanticpersist.SaveOptions{
+			ExpectedGeneration: &generation,
 		},
 	)
 	must(err)
-
-	writable := store.Index()
-
-	search(
-		ctx,
-		encoder,
-		writable,
-		"query-v1",
-		"after open",
-	)
-
-	replaceDocument(
-		ctx,
-		writable,
-		encoder,
-		fts.Document{
-			ID: "doc-a",
-			Fields: map[string]fts.FieldData{
-				"body": {Text: "a-v2"},
-			},
-		},
-	)
-
-	must(writable.Flush(ctx))
-
-	generation, err = store.Publish(
-		ctx,
-		semanticpersist.PublishOptions{
-			Durability: semanticpersist.DurabilitySynchronous,
-		},
-	)
-	must(err)
-
 	fmt.Printf("updated generation=%d\n", generation.ID)
 
-	must(store.Close())
-
-	reopened, err := semanticpersist.Open(
+	loaded, _, err := semanticpersist.LoadService(
 		ctx,
 		root,
-		semanticpersist.OpenOptions{
-			Limits:         semanticpersist.DefaultLimits(),
-			ExpectedSchema: schema,
+		persistenceEmbedder{},
+		semanticpersist.LoadOptions{},
+		semanticOptions...,
+	)
+	must(err)
+	search(ctx, loaded, "query-v2", "after reopen")
+}
+
+func document(id fts.DocID, text string) fts.Document {
+	return fts.Document{
+		ID: id,
+		Fields: map[string]fts.FieldData{
+			"body": {Text: text},
 		},
-	)
-	must(err)
-
-	search(
-		ctx,
-		encoder,
-		reopened.Index(),
-		"query-v2",
-		"after reopen",
-	)
-
-	must(reopened.Close())
-}
-
-func addDocument(
-	ctx context.Context,
-	index *semantic.Index,
-	encoder semantic.Encoder,
-	document fts.Document,
-) {
-	encoded, err := encoder.Encode(ctx, document)
-	must(err)
-
-	must(index.Add(
-		ctx,
-		document.ID,
-		encoded,
-	))
-}
-
-func replaceDocument(
-	ctx context.Context,
-	index *semantic.Index,
-	encoder semantic.Encoder,
-	document fts.Document,
-) {
-	encoded, err := encoder.Encode(ctx, document)
-	must(err)
-
-	must(index.Replace(
-		ctx,
-		document.ID,
-		encoded,
-	))
+	}
 }
 
 func search(
 	ctx context.Context,
-	encoder semantic.Encoder,
-	index *semantic.Index,
+	service *semantic.Service,
 	query string,
 	label string,
 ) {
-	document := fts.Document{
-		ID: "query",
-		Fields: map[string]fts.FieldData{
-			"body": {Text: query},
-		},
-	}
-
-	encoded, err := encoder.Encode(ctx, document)
+	result, err := service.Search(ctx, query, 1)
 	must(err)
-
-	result, err := index.Search(
-		ctx,
-		encoded,
-		1,
-		semantic.SearchOptions{},
-	)
-	must(err)
-
 	if len(result.Hits) == 0 {
 		fmt.Printf("%s: no hits\n", label)
 		return
 	}
-
 	fmt.Printf(
 		"%s: doc=%s distance=%.0f\n",
 		label,
@@ -251,25 +102,27 @@ func search(
 
 type persistenceEmbedder struct{}
 
+func (persistenceEmbedder) Model() embedding.Model {
+	return embedding.Model{
+		ID: "persistence-example", Revision: "v1", Dimensions: 2, ContextTokens: 512,
+	}
+}
+
 func (persistenceEmbedder) Embed(
 	_ context.Context,
-	chunks []semanticencode.EmbeddingInput,
+	texts []string,
 ) ([][]float32, error) {
-	result := make([][]float32, len(chunks))
-
-	for i, item := range chunks {
-		switch item.Text {
-		case "a-v1", "query-v1":
+	result := make([][]float32, len(texts))
+	for i, text := range texts {
+		switch text {
+		case "document: a-v1", "query: query-v1":
 			result[i] = []float32{0, 0}
-
-		case "a-v2", "query-v2":
+		case "document: a-v2", "query: query-v2":
 			result[i] = []float32{4, 0}
-
 		default:
 			result[i] = []float32{10, 0}
 		}
 	}
-
 	return result, nil
 }
 

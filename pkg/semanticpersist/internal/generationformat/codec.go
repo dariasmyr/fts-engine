@@ -8,7 +8,7 @@ import (
 	"math"
 	"unicode/utf8"
 
-	internalformat "github.com/dariasmyr/fts-engine/v2/internal/format"
+	"github.com/dariasmyr/fts-engine/v2/internal/format"
 )
 
 const (
@@ -19,20 +19,24 @@ const (
 
 	wireMagicSize              = 4
 	wireHeaderSize             = wireMagicSize + wireUint16Size + wireUint16Size
-	wireChecksumSize           = internalformat.CRC32Size
+	wireChecksumSize           = format.CRC32Size
 	wireStringLengthPrefixSize = wireUint32Size
 )
 
-type categorizedError struct {
-	category error
-	detail   string
+func codecErrorf(category error, format string, args ...any) error {
+	return fmt.Errorf("%w: %s", category, fmt.Sprintf(format, args...))
 }
 
-func (e categorizedError) Error() string        { return e.detail }
-func (e categorizedError) Is(target error) bool { return target == e.category }
+func accumulateEncodedSize(totalBytes *uint64, additionalBytes uint64) bool {
+	if additionalBytes > math.MaxUint64-*totalBytes {
+		return false
+	}
+	*totalBytes += additionalBytes
+	return true
+}
 
-func codecErrorf(category error, format string, args ...any) error {
-	return categorizedError{category: category, detail: fmt.Sprintf(format, args...)}
+func accumulateEncodedStringSize(totalBytes *uint64, value string) bool {
+	return accumulateEncodedSize(totalBytes, wireStringLengthPrefixSize+uint64(len(value)))
 }
 
 type encoder struct {
@@ -105,7 +109,7 @@ func (e *encoder) finish() ([]byte, FileRef, error) {
 	if e.err != nil {
 		return nil, FileRef{}, e.err
 	}
-	checksum := internalformat.CRC32(e.buffer.Bytes())
+	checksum := format.CRC32(e.buffer.Bytes())
 	e.writeUint32(checksum)
 	if e.err != nil {
 		return nil, FileRef{}, e.err
@@ -143,8 +147,8 @@ func newDecoder(data []byte, magic string, version uint16, limits FileLimits) (*
 		return nil, ErrCorrupt
 	}
 
-	checksum, ok := internalformat.ReadCRC32(data[len(data)-wireChecksumSize:])
-	if !ok || internalformat.CRC32(body) != checksum {
+	checksum, ok := format.ReadCRC32(data[len(data)-wireChecksumSize:])
+	if !ok || format.CRC32(body) != checksum {
 		return nil, ErrCorrupt
 	}
 

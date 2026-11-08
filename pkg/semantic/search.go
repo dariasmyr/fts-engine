@@ -37,13 +37,13 @@ func resolveCandidateBudget(candidateChunks, maxCandidates int) (int, error) {
 	if candidateChunks == 0 {
 		return maxCandidates, nil
 	}
-	if candidateChunks < 0 {
+	if candidateChunks < 0 || candidateChunks > maxCandidates {
 		return 0, fmt.Errorf("%w: candidate chunks %d, max %d", ErrInvalidSearchOptions, candidateChunks, maxCandidates)
 	}
-	return min(candidateChunks, maxCandidates), nil
+	return candidateChunks, nil
 }
 
-func searchSegmentChunksPrepared(ctx context.Context, calculator vector.Calculator, view segmentView, query vector.PreparedQuery, k int, searchOptions hnsw.SearchOptions) (chunkSearchResult, error) {
+func searchSegmentChunksPrepared(ctx context.Context, space vector.Space, view segmentView, query vector.PreparedVector, k int, searchOptions hnsw.SearchOptions) (chunkSearchResult, error) {
 	if k <= 0 {
 		return chunkSearchResult{}, fmt.Errorf("%w: got %d", vector.ErrInvalidK, k)
 	}
@@ -53,7 +53,7 @@ func searchSegmentChunksPrepared(ctx context.Context, calculator vector.Calculat
 	if err := ctx.Err(); err != nil {
 		return chunkSearchResult{}, err
 	}
-	if err := calculator.ValidatePreparedQuery(query); err != nil {
+	if err := space.ValidatePreparedVector(query); err != nil {
 		return chunkSearchResult{}, err
 	}
 	if view.liveness.AllowedOrdinalCount() == 0 {

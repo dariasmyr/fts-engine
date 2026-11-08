@@ -8,12 +8,12 @@ import (
 func (b *builder) distanceNodes(a, c nodeOrdinal) float64 {
 	aVector := b.vectorByNode(a)
 	cVector := b.vectorByNode(c)
-	return b.calculator.DistancePrepared(aVector, cVector)
+	return b.space.DistancePrepared(aVector, cVector)
 }
 
 func (b *builder) vectorByNode(node nodeOrdinal) []float32 {
-	start := int(node) * b.calculator.Dimensions()
-	return b.graph.values[start : start+b.calculator.Dimensions()]
+	start := int(node) * b.space.Dimensions()
+	return b.graph.values[start : start+b.space.Dimensions()]
 }
 
 func (b *builder) selectNeighbors(ctx context.Context, candidates []searchCandidate, limit int) ([]nodeOrdinal, error) {

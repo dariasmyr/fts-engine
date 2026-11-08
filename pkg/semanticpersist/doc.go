@@ -1,4 +1,14 @@
-// Package semanticpersist provides durable persistence for semantic.Index.
+// Package semanticpersist provides generation-based persistence for
+// semantic.Index.
+//
+// Save persists one already committed index generation. CommitAndSave prepares
+// the pending revision, persists that candidate under the Index mutation gate,
+// and only then makes its matching view searchable. LoadService reconstructs
+// an in-memory semantic.Service and returns the loaded generation for the next
+// optimistic save. Loading owns no persistent filesystem resources.
+//
+// Save and Load are the lower-level operations for callers that manage
+// semantic.Index directly. Save requires an explicit expected generation.
 //
 // The package persists a committed semantic index state as a sequence of
 // immutable generations. A generation references immutable semantic segment
@@ -6,7 +16,7 @@
 //
 // # Storage model
 //
-// A store has the following logical layout:
+// A persistence root has the following logical layout:
 //
 //	root/
 //	    LOCK
@@ -35,20 +45,20 @@
 // Segment objects are content-addressed and may be reused by multiple
 // generations.
 //
-// A generation represents one complete committed snapshot of the semantic
-// service. Its manifest references the segment objects used by that snapshot
+// A generation represents one complete committed state of the semantic
+// service. Its manifest references the segment objects used by that state
 // and the semantic-state file.
 //
 // semantic-state.bin contains the logical index state required to resume
 // writes after restore, including configuration, revision and allocation
 // metadata, vector-to-chunk mappings, and liveness information.
 //
-// # CURRENT and publication
+// # CURRENT and saving
 //
 // CURRENT identifies the generation visible to readers. It contains the
 // generation ID and the hash of that generation's manifest.
 //
-// Publishing a new generation follows this model:
+// Saving a new generation follows this model:
 //
 //	semantic.Index
 //	    ↓
@@ -67,12 +77,12 @@
 // Installing a generation directory does not make that generation committed.
 // The commit point is the successful replacement of CURRENT.
 //
-// This allows publication to leave an orphan generation after a crash without
-// making partially published state visible.
+// This allows Save to leave an orphan generation after a crash without
+// making partially saved state visible.
 //
-// # Opening a store
+// # Loading
 //
-// Opening performs the reverse operation:
+// Load performs the reverse operation:
 //
 //	CURRENT
 //	    ↓
@@ -84,7 +94,7 @@
 //	    ↓
 //	semantic.Index
 //
-// Normal Open follows CURRENT exactly. It does not scan for newer generations
+// Normal Load follows CURRENT exactly. It does not scan for newer generations
 // or automatically promote orphan generations.
 //
 // Recovery of an explicitly selected generation is performed separately by
@@ -92,31 +102,37 @@
 //
 // # Concurrency
 //
-// A writable store owns an exclusive filesystem lock for its lifetime.
-// This prevents multiple processes from concurrently publishing generations
-// based on the same CURRENT state.
+// CommitAndSave, Save, Load, RecoverGeneration, and Prune hold an exclusive
+// filesystem lock for the duration of their filesystem operation. This
+// prevents CURRENT replacement or pruning while a generation is being loaded.
 //
 // Writable locking is supported on Linux, macOS, and FreeBSD. On Windows and
-// other platforms Open, Publish, RecoverGeneration, and Prune return
+// other platforms CommitAndSave, Save, Load, RecoverGeneration, and Prune return
 // ErrLockUnsupported. This is intentionally stricter than ftspersist, which
 // has a Windows LockFileEx implementation.
 //
-// Publication through an opened Store is additionally serialized within the
-// process.
+// CommitAndSave is the ordinary document-level write flow and requires no
+// caller-side mutex. It holds the mutation gate through candidate preparation,
+// filesystem persistence, and in-memory publication. Concurrent mutations wait;
+// search continues against the previous immutable view until persistence
+// succeeds. Save remains the low-level operation for an index that is already
+// committed and rejects pending mutations.
+//
+// If optimistic generation matching or filesystem persistence fails before
+// CURRENT replacement, the candidate is not searchable and its mutations remain
+// pending for retry. An error after CURRENT replacement may be ErrIndeterminate;
+// the matching candidate is made searchable because CURRENT may already
+// reference it, and a subsequent Load determines which generation is current.
 //
 // Prune acquires the same exclusive filesystem lock. It retains CURRENT and
 // the requested number of valid committed generations, then removes only
 // recognized unreachable storage entries. Unknown entries and symlinks are
 // left untouched.
 //
-// # Durability
+// # Successful writes
 //
-// Synchronous durability fsyncs published files and affected directories
-// before publication is considered durable.
-//
-// Asynchronous durability preserves atomic visibility of generations but does
-// not guarantee that the latest committed generation survives sudden power
-// loss.
+// CommitAndSave, Save, RecoverGeneration, and Prune fsync changed files and
+// affected directories before they return successfully.
 //
 // # Integrity
 //
@@ -126,4 +142,8 @@
 // The package also validates file and directory paths before opening persisted
 // objects and rejects unsupported versions, malformed data, invalid references,
 // symlinks where they are not allowed, and configured resource-limit violations.
+// Checksums provide accidental-corruption detection and integrity between
+// referenced files; they do not authenticate a root controlled by an attacker.
+// Callers must therefore protect the filesystem root from unauthorized or
+// uncoordinated writers.
 package semanticpersist

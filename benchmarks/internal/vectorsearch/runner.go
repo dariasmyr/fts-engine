@@ -100,11 +100,11 @@ func Run(ctx context.Context, config Config) (Report, error) {
 			return Report{}, err
 		}
 		for _, metric := range config.Metrics {
-			oracle, err := exact.New(dataset.Vectors, config.Dimensions, metric, config.VectorCount)
+			searcher, err := exact.New(dataset.Vectors, config.Dimensions, metric, config.VectorCount)
 			if err != nil {
-				return Report{}, fmt.Errorf("vectorsearch: build exact oracle: %w", err)
+				return Report{}, fmt.Errorf("vectorsearch: build exact searcher: %w", err)
 			}
-			truth, err := exactTruthSweeps(ctx, oracle, dataset.Queries, config)
+			truth, err := exactTruthSweeps(ctx, searcher, dataset.Queries, config)
 			if err != nil {
 				return Report{}, err
 			}
@@ -113,7 +113,7 @@ func Run(ctx context.Context, config Config) (Report, error) {
 					for _, efConstruction := range config.EfConstruction {
 						for _, seed := range config.BuildSeeds {
 							buildNumber++
-							runs, err := runBuild(ctx, config, dataset, metric, order, oracle, truth, maxNeighbors, efConstruction, seed, buildNumber, builds)
+							runs, err := runBuild(ctx, config, dataset, metric, order, searcher, truth, maxNeighbors, efConstruction, seed, buildNumber, builds)
 							if err != nil {
 								return Report{}, err
 							}
@@ -127,7 +127,7 @@ func Run(ctx context.Context, config Config) (Report, error) {
 	return report, nil
 }
 
-func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, oracle *exact.Oracle, truth []truthSweep, maxNeighbors, efConstruction int, seed uint64, buildNumber, builds int) ([]RunReport, error) {
+func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, searcher *exact.Searcher, truth []truthSweep, maxNeighbors, efConstruction int, seed uint64, buildNumber, builds int) ([]RunReport, error) {
 	searchConfig := hnsw.SearchConfig{
 		EfSearch:   max(config.K, config.EfSearch[0]),
 		VisitLimit: config.VisitLimit,
@@ -139,7 +139,7 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 		Dataset: dataset.Config.Kind, Metric: metric.String(), Build: buildNumber, Builds: builds,
 		MaxNeighbors: maxNeighbors, EfConstruction: efConstruction, Seed: seed, Order: order,
 	}
-	reader, buildPath, timing, err := buildReader(ctx, oracle, order, buildConfig, searchConfig, progress, config.Progress)
+	reader, buildPath, timing, err := buildReader(ctx, searcher, order, buildConfig, searchConfig, progress, config.Progress)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 	return runs, nil
 }
 
-func buildReader(ctx context.Context, oracle *exact.Oracle, order BuildOrder, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress Progress, callback func(Progress)) (*hnsw.Index, string, buildTiming, error) {
+func buildReader(ctx context.Context, searcher *exact.Searcher, order BuildOrder, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress Progress, callback func(Progress)) (*hnsw.Index, string, buildTiming, error) {
 	buildPath := BuildPathProduction
 	progress.BuildPath = buildPath
 	var callbackDuration time.Duration
@@ -167,7 +167,7 @@ func buildReader(ctx context.Context, oracle *exact.Oracle, order BuildOrder, bu
 	if order.Name != "ascending" {
 		err = fmt.Errorf("vectorsearch: unknown build order %q", order.Name)
 	} else {
-		reader, err = hnsw.Build(ctx, oracle.Store(), buildConfig, searchConfig)
+		reader, err = hnsw.Build(ctx, searcher.Store(), buildConfig, searchConfig)
 	}
 	if callback != nil {
 		callbackStarted := time.Now()
@@ -287,16 +287,16 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 	return run, nil
 }
 
-func exactTruthSweeps(ctx context.Context, oracle *exact.Oracle, queries [][]float32, config Config) ([]truthSweep, error) {
+func exactTruthSweeps(ctx context.Context, searcher *exact.Searcher, queries [][]float32, config Config) ([]truthSweep, error) {
 	truth := make([]truthSweep, 0, len(config.FilterSelectivities))
 	for _, selectivity := range config.FilterSelectivities {
-		filter, report, err := deterministicFilter(oracle.Len(), selectivity, config.FilterSeed)
+		filter, report, err := deterministicFilter(searcher.Len(), selectivity, config.FilterSeed)
 		if err != nil {
 			return nil, err
 		}
 		hits := make([][]vector.Hit, len(queries))
 		for i, query := range queries {
-			result, err := oracle.Search(ctx, query, oracle.Len(), exact.Options{ResultFilter: filter})
+			result, err := searcher.Search(ctx, query, searcher.Len(), exact.Options{ResultFilter: filter})
 			if err != nil {
 				return nil, fmt.Errorf("vectorsearch: exact query %d at selectivity %g: %w", i, selectivity, err)
 			}

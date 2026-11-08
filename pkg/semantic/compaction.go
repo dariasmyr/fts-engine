@@ -9,8 +9,8 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-// Compact rewrites all live rows from the committed snapshot into at most one
-// immutable segment. Pending mutations must be flushed first.
+// Compact rewrites all live rows from the committed view into at most one
+// immutable segment. Pending mutations must be committed first.
 func (i *Index) Compact(ctx context.Context) error {
 	if ctx == nil {
 		return vector.ErrNilContext
@@ -18,27 +18,25 @@ func (i *Index) Compact(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := i.lockPublication(ctx); err != nil {
+	if err := i.lockMutations(ctx); err != nil {
 		return err
 	}
-	defer i.unlockPublication()
+	defer i.unlockMutations()
 
-	if err := i.lockState(ctx); err != nil {
-		return err
-	}
+	i.stateMu.RLock()
 	revision := i.state.revision
-	snapshot := i.snapshot
+	view := i.state.view
 	config := i.config
-	componentID := i.state.nextComponentID
-	hasPending := i.state.revision != i.snapshot.revision
-	i.unlockState()
+	segmentID := i.state.nextSegmentID
+	hasPending := i.state.revision != i.state.view.revision
+	i.stateMu.RUnlock()
 	if hasPending {
 		return ErrPendingMutations
 	}
 
-	if len(snapshot.segments) <= 1 {
+	if len(view.segments) <= 1 {
 		stale := false
-		for _, item := range snapshot.segments {
+		for _, item := range view.segments {
 			stale = stale || item.liveness.AllowedOrdinalCount() != item.segment.len()
 		}
 		if !stale {
@@ -46,51 +44,49 @@ func (i *Index) Compact(ctx context.Context) error {
 		}
 	}
 
-	if snapshot.liveCount > 0 && componentID == SegmentID(math.MaxUint64) {
-		return ErrComponentIDExhausted
+	if view.liveCount > 0 && segmentID == SegmentID(math.MaxUint64) {
+		return ErrSegmentIDExhausted
 	}
-	compactedSnapshot, locations, allocatedComponent, err := compactSnapshot(
-		ctx, snapshot, componentID, config,
+	compactedView, locations, allocatedSegment, err := compactView(
+		ctx, view, segmentID, config,
 	)
 	if err != nil {
 		return err
 	}
 
-	if err := i.lockState(ctx); err != nil {
-		return err
-	}
-	defer i.unlockState()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	i.stateMu.Lock()
+	defer i.stateMu.Unlock()
 	if revision != i.state.revision {
-		return ErrPublicationConflict
+		return ErrInternalState
 	}
-	i.snapshot = compactedSnapshot
+	i.state.view = compactedView
 	i.state.locations = locations
-	if allocatedComponent {
-		i.state.nextComponentID++
+	if allocatedSegment {
+		i.state.nextSegmentID++
 	}
 	return nil
 }
 
-func compactSnapshot(ctx context.Context, snapshot *Snapshot, componentID SegmentID, config Config) (*Snapshot, map[VectorID]vectorLocation, bool, error) {
+func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, config IndexConfig) (*IndexView, map[VectorID]vectorLocation, bool, error) {
 	var compacted *segment
-	if snapshot.liveCount > 0 {
+	if view.liveCount > 0 {
 		var err error
-		compacted, err = buildCompactedSegment(ctx, snapshot, componentID, config)
+		compacted, err = buildCompactedSegment(ctx, view, segmentID, config)
 		if err != nil {
 			return nil, nil, false, err
 		}
 	}
 
-	locations := make(map[VectorID]vectorLocation, snapshot.liveCount)
+	locations := make(map[VectorID]vectorLocation, view.liveCount)
 	if compacted != nil {
 		for ordinal, row := range compacted.rows {
 			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
 				return nil, nil, false, err
 			}
-			locations[row.VectorID] = vectorLocation{component: componentID, ordinal: vector.Ordinal(ordinal)}
+			locations[row.VectorID] = vectorLocation{segment: segmentID, ordinal: vector.Ordinal(ordinal)}
 		}
 	}
 
@@ -105,31 +101,31 @@ func compactSnapshot(ctx context.Context, snapshot *Snapshot, componentID Segmen
 	if !ok {
 		return nil, nil, false, ErrInvalidConfig
 	}
-	compactedSnapshot, err := newTrustedSnapshot(
+	compactedView, err := newIndexView(
 		ctx,
-		snapshot.revision,
+		view.revision,
 		segments,
-		snapshot.schema,
-		config.searchPolicy(),
+		view.schema,
+		config.runtimeLimits().search,
+		config.runtimeLimits().results,
 		searchConfig,
-		snapshot.calculator,
 	)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	return compactedSnapshot, locations, compacted != nil, nil
+	return compactedView, locations, compacted != nil, nil
 }
 
-func buildCompactedSegment(ctx context.Context, snapshot *Snapshot, componentID SegmentID, config Config) (*segment, error) {
-	flatVectors, liveRows, err := materializeLiveRows(ctx, snapshot)
+func buildCompactedSegment(ctx context.Context, view *IndexView, segmentID SegmentID, config IndexConfig) (*segment, error) {
+	flatVectors, liveRows, err := materializeLiveRows(ctx, view)
 	if err != nil {
 		return nil, err
 	}
-	calculator, err := config.Schema.Embedding.Calculator()
+	space, err := config.Schema.Embedding.VectorSpace()
 	if err != nil {
 		return nil, err
 	}
-	source, err := memorystore.NewPrepared(calculator, flatVectors)
+	source, err := memorystore.NewPrepared(space, flatVectors)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +139,7 @@ func buildCompactedSegment(ctx context.Context, snapshot *Snapshot, componentID 
 	}
 	return buildSegment(
 		ctx,
-		componentID,
+		segmentID,
 		config.Schema,
 		source,
 		liveRows,
@@ -152,12 +148,12 @@ func buildCompactedSegment(ctx context.Context, snapshot *Snapshot, componentID 
 	)
 }
 
-func materializeLiveRows(ctx context.Context, snapshot *Snapshot) ([]float32, []VectorRow, error) {
-	dimensions := snapshot.calculator.Dimensions()
-	flatVectors := make([]float32, snapshot.liveCount*dimensions)
-	liveRows := make([]VectorRow, snapshot.liveCount)
+func materializeLiveRows(ctx context.Context, view *IndexView) ([]float32, []VectorRow, error) {
+	dimensions := view.space.Dimensions()
+	flatVectors := make([]float32, view.liveCount*dimensions)
+	liveRows := make([]VectorRow, view.liveCount)
 	liveOrdinal := 0
-	for _, item := range snapshot.segments {
+	for _, item := range view.segments {
 		for ordinal, row := range item.segment.rows {
 			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
 				return nil, nil, err
@@ -174,7 +170,7 @@ func materializeLiveRows(ctx context.Context, snapshot *Snapshot) ([]float32, []
 			liveOrdinal++
 		}
 	}
-	if liveOrdinal != snapshot.liveCount {
+	if liveOrdinal != view.liveCount {
 		return nil, nil, ErrInternalState
 	}
 	return flatVectors, liveRows, nil

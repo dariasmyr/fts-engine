@@ -32,7 +32,7 @@ func EncodeManifest(value GenerationManifest, limits ManifestLimits) ([]byte, Fi
 	if err := limits.validate(); err != nil {
 		return nil, FileRef{}, err
 	}
-	if value.GenerationID == 0 || !validFileRef(value.State) {
+	if value.GenerationID == 0 || !value.State.Valid() {
 		return nil, FileRef{}, ErrCorrupt
 	}
 	if len(value.Segments) > limits.MaxSegments || uint64(len(value.Segments)) > math.MaxUint32 {
@@ -47,11 +47,11 @@ func EncodeManifest(value GenerationManifest, limits ManifestLimits) ([]byte, Fi
 		if len(segment.ObjectID) > limits.MaxStringBytes {
 			return nil, FileRef{}, ErrLimitExceeded
 		}
-		if !validFileRef(segment.Vectors) || !validFileRef(segment.Graph) {
+		if !segment.Vectors.Valid() || !segment.Graph.Valid() {
 			return nil, FileRef{}, codecErrorf(ErrCorrupt, "manifest segment %d has invalid file reference", i)
 		}
-		if !addEncodedSize(&expectedSize, manifestSegmentFixedSize) ||
-			!addEncodedSize(&expectedSize, uint64(len(segment.ObjectID))) {
+		if !accumulateEncodedSize(&expectedSize, manifestSegmentFixedSize) ||
+			!accumulateEncodedSize(&expectedSize, uint64(len(segment.ObjectID))) {
 			return nil, FileRef{}, ErrLimitExceeded
 		}
 	}
@@ -99,7 +99,7 @@ func DecodeManifest(data []byte, limits ManifestLimits) (GenerationManifest, err
 		if err := d.err(); err != nil {
 			return GenerationManifest{}, err
 		}
-		if segment.ObjectID == "" || !validFileRef(segment.Vectors) || !validFileRef(segment.Graph) {
+		if segment.ObjectID == "" || !segment.Vectors.Valid() || !segment.Graph.Valid() {
 			return GenerationManifest{}, ErrCorrupt
 		}
 		value.Segments[i] = segment
@@ -109,7 +109,7 @@ func DecodeManifest(data []byte, limits ManifestLimits) (GenerationManifest, err
 	if err := d.done(); err != nil {
 		return GenerationManifest{}, err
 	}
-	if value.GenerationID == 0 || !validFileRef(value.State) {
+	if value.GenerationID == 0 || !value.State.Valid() {
 		return GenerationManifest{}, ErrCorrupt
 	}
 	return value, nil

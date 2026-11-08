@@ -1,5 +1,9 @@
 // Package semantic implements a mutable document-level semantic index over
-// chunk embeddings. Mutations are staged until Flush publishes an immutable
-// Snapshot; search runs only against committed snapshots. Physical ANN storage
-// is segmented and may be compacted without changing semantic identities.
+// chunk embeddings. Mutations are staged until Commit publishes an immutable
+// IndexView; search runs only against committed views. ExportState returns a
+// CommittedIndexState and rejects pending mutations. CommitAndExportState makes
+// the pending-to-committed transition and exports that exact revision under one
+// mutation gate. CommitWithState lets an external operation accept a prepared
+// state before its matching view becomes searchable. Physical ANN storage is
+// segmented and may be compacted without changing semantic identities.
 package semantic

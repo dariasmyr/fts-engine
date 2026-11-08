@@ -19,7 +19,7 @@ type searchState struct {
 	ctx           context.Context
 	index         *Index
 	preparedQuery []float32
-	reusableQuery *vector.PreparedQuery
+	reusableQuery *vector.PreparedVector
 	filter        vector.ResultFilter
 	visitLimit    int
 	workspace     *searchWorkspace
@@ -72,7 +72,7 @@ func resolveSearchRequest(config SearchConfig, vectorCount, k int, options Searc
 	return searchRequest{k: k, efSearch: efSearch, visitLimit: visitLimit, allowedCount: allowedCount, filter: options.ResultFilter}, nil
 }
 
-func search(ctx context.Context, reader *Index, query []float32, prepared *vector.PreparedQuery, k int, options SearchOptions) (SearchResult, error) {
+func search(ctx context.Context, reader *Index, query []float32, prepared *vector.PreparedVector, k int, options SearchOptions) (SearchResult, error) {
 	if ctx == nil {
 		return SearchResult{}, vector.ErrNilContext
 	}
@@ -82,7 +82,7 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 	if reader == nil {
 		return SearchResult{}, errInvalidGraph
 	}
-	calculator := reader.topology.calculator
+	space := reader.topology.space
 	vectorCount := reader.Len()
 	request, err := resolveSearchRequest(reader.search, vectorCount, k, options)
 	if err != nil {
@@ -91,11 +91,11 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 	workspace := reader.workspaces.acquire()
 	defer reader.workspaces.release(workspace)
 	if prepared == nil {
-		workspace.prepareQuery(calculator.Dimensions())
-		if err := calculator.PrepareInto(workspace.preparedQuery, query); err != nil {
+		workspace.prepareQuery(space.Dimensions())
+		if err := space.PrepareInto(workspace.preparedQuery, query); err != nil {
 			return SearchResult{}, err
 		}
-	} else if err := calculator.ValidatePreparedQuery(*prepared); err != nil {
+	} else if err := space.ValidatePreparedVector(*prepared); err != nil {
 		return SearchResult{}, err
 	}
 	complete := SearchResult{Hits: []vector.Hit{}, Stats: SearchStats{Termination: TerminationComplete}}
@@ -105,7 +105,7 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 		}
 		return complete, nil
 	}
-	workspace.resetSearch(vectorCount, calculator.Dimensions(), request.visitLimit, request.efSearch)
+	workspace.resetSearch(vectorCount, space.Dimensions(), request.visitLimit, request.efSearch)
 	entry, maxLevel, ok := reader.entryPoint()
 	if !ok || maxLevel < 0 || maxLevel > maxLevelLimit || uint64(entry) >= uint64(vectorCount) {
 		return SearchResult{}, errInvalidGraph
@@ -287,9 +287,9 @@ func (state *searchState) score(node nodeOrdinal) (searchCandidate, error) {
 	}
 	var distance float64
 	if state.reusableQuery != nil {
-		distance = state.index.topology.calculator.DistancePreparedQuery(*state.reusableQuery, value)
+		distance = state.index.topology.space.DistancePreparedVector(*state.reusableQuery, value)
 	} else {
-		distance = state.index.topology.calculator.DistancePrepared(state.preparedQuery, value)
+		distance = state.index.topology.space.DistancePrepared(state.preparedQuery, value)
 	}
 	if math.IsNaN(distance) || math.IsInf(distance, 0) {
 		return searchCandidate{}, errInvalidGraph

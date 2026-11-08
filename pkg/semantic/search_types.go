@@ -13,7 +13,7 @@ type ChunkHit struct {
 }
 
 // SearchOptions controls ANN work and document grouping across the complete
-// semantic request, including all encoded query chunks and index segments.
+// semantic request, including all query embeddings and index segments.
 type SearchOptions struct {
 	// EfSearch controls candidate breadth for each underlying HNSW search. Zero
 	// uses the configured HNSW default.
@@ -22,13 +22,14 @@ type SearchOptions struct {
 	// and segments. Zero uses the configured HNSW default as the request budget.
 	VisitLimit int
 	// CandidateChunks bounds the total chunk candidates collected before
-	// document grouping. Zero uses Config.Limits.MaxChunkCandidates.
+	// document grouping. Zero uses the configured service default. Values above
+	// the configured maximum are rejected.
 	CandidateChunks int
 }
 
 // DocumentHit contains the best matching chunks for one document. Distance is
 // the smallest chunk distance. Chunks are ordered by ascending distance and
-// limited by Config.Limits.MaxChunksPerDocumentHit.
+// limited by the configured service limit.
 type DocumentHit struct {
 	DocID    fts.DocID
 	Distance float64

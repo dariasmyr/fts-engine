@@ -1,5 +1,6 @@
-// Package generationformat encodes and decodes semantic store metadata.
+// Package generationformat encodes and decodes semantic persistence metadata.
 //
 // It owns CURRENT, generation manifests, and semantic state files. Filesystem
-// publication and durability remain the responsibility of semanticpersist.
+// saving and filesystem synchronization remain the responsibility of
+// semanticpersist.
 package generationformat

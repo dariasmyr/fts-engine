@@ -27,7 +27,7 @@ func recallAtK(got, want []vector.Hit) float64 {
 	return float64(matched) / float64(len(want))
 }
 
-func TestDifferentialRecallAgainstExactOracleUsingPublicAPIs(t *testing.T) {
+func TestDifferentialRecallAgainstExactSearcherUsingPublicAPIs(t *testing.T) {
 	const rows, dimensions, k = 256, 8, 10
 	rng := rand.New(rand.NewPCG(11, 29))
 	values := make([][]float32, rows)
@@ -37,15 +37,15 @@ func TestDifferentialRecallAgainstExactOracleUsingPublicAPIs(t *testing.T) {
 			values[row][dimension] = rng.Float32()*2 - 1
 		}
 	}
-	oracle := benchmarkExactOracle(t, values, vector.MetricL2Squared)
-	reader := benchmarkBuild(t, oracle.Store(), dimensions, rows, vector.MetricL2Squared)
+	searcher := benchmarkExactSearcher(t, values, vector.MetricL2Squared)
+	reader := benchmarkBuild(t, searcher.Store(), dimensions, rows, vector.MetricL2Squared)
 	var totalRecall float64
 	for range 20 {
 		query := make([]float32, dimensions)
 		for dimension := range dimensions {
 			query[dimension] = rng.Float32()*2 - 1
 		}
-		exactResult, err := oracle.Search(context.Background(), query, k, exact.Options{})
+		exactResult, err := searcher.Search(context.Background(), query, k, exact.Options{})
 		if err != nil {
 			t.Fatal(err)
 		}

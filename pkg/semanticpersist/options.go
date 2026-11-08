@@ -1,70 +1,20 @@
 package semanticpersist
 
-import (
-	"context"
-	"fmt"
+// Generation identifies one persistence generation.
+type Generation struct{ ID uint64 }
 
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-)
-
-type publicationStep string
-
-const (
-	stepWriteVectors       publicationStep = "write_vectors"
-	stepWriteGraph         publicationStep = "write_graph"
-	stepSyncSegment        publicationStep = "sync_segment"
-	stepRenameSegment      publicationStep = "rename_segment"
-	stepSyncReusedSegments publicationStep = "sync_reused_segments"
-	stepWriteState         publicationStep = "write_state"
-	stepWriteManifest      publicationStep = "write_manifest"
-	stepSyncGeneration     publicationStep = "sync_generation"
-	stepRenameGeneration   publicationStep = "rename_generation"
-	stepWriteCurrent       publicationStep = "write_current"
-	stepReplaceCurrent     publicationStep = "replace_current"
-	stepSyncStore          publicationStep = "sync_store"
-)
-
-type PublishOptions struct {
-	Durability         DurabilityMode
-	Limits             Limits
-	beforeStep         func(publicationStep) error
-	afterStep          func(publicationStep) error
+// SaveOptions configures generation validation and persistence limits.
+// ExpectedGeneration is required for optimistic concurrency control.
+type SaveOptions struct {
+	// Limits bounds files and decoded data. Zero fields use DefaultLimits.
+	Limits Limits
+	// ExpectedGeneration must match CURRENT. Use a zero Generation for the first
+	// save and the value returned by Load or the previous save thereafter.
 	ExpectedGeneration *Generation
 }
 
-type OpenOptions struct {
-	Limits         Limits
-	ExpectedSchema semantic.Schema
-}
-
-func normalizeOptions(options *PublishOptions) error {
-	if options.Durability == 0 {
-		options.Durability = DurabilitySynchronous
-	}
-	if options.Durability != DurabilitySynchronous && options.Durability != DurabilityAsynchronous {
-		return ErrCorrupt
-	}
-	options.Limits = normalizeLimits(options.Limits)
-	return validateLimits(options.Limits)
-}
-
-func beforeStep(ctx context.Context, options PublishOptions, step publicationStep) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if options.beforeStep != nil {
-		return options.beforeStep(step)
-	}
-	return nil
-}
-
-func afterStep(options PublishOptions, step publicationStep, committed bool) error {
-	var err error
-	if options.afterStep != nil {
-		err = options.afterStep(step)
-	}
-	if err != nil && committed {
-		return fmt.Errorf("%w: %v", ErrIndeterminate, err)
-	}
-	return err
+// LoadOptions configures validation limits for a persisted generation.
+type LoadOptions struct {
+	// Limits bounds files and decoded data. Zero fields use DefaultLimits.
+	Limits Limits
 }

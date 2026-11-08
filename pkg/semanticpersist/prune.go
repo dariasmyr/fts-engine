@@ -9,17 +9,17 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/internal/persistfs"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/storage"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-// PruneOptions controls retention and durability during Prune.
+// PruneOptions controls retention and safety limits during Prune.
 type PruneOptions struct {
 	// RetainGenerations is the total number of valid committed generations to
 	// retain, including the generation named by CURRENT. It must be positive.
 	RetainGenerations int
-	Durability        DurabilityMode
 	Limits            Limits
 }
 
@@ -31,71 +31,69 @@ type PruneResult struct {
 }
 
 // Prune removes generations outside the retention set, segment objects not
-// reachable from any retained manifest, and recognized publication temporary
-// entries. It holds the store's exclusive lock for the complete operation.
+// reachable from any retained manifest, and recognized save temporary entries.
+// It holds the operation lock for the complete operation.
+func Prune(ctx context.Context, root string, options PruneOptions) (PruneResult, error) {
+	cfg, err := newSettings(options.Limits)
+	if err != nil {
+		return PruneResult{}, err
+	}
+	return prune(ctx, root, options.RetainGenerations, cfg)
+}
+
 // Unknown entries and symlinks are never removed.
-func Prune(ctx context.Context, root string, options PruneOptions) (result PruneResult, err error) {
+func prune(
+	ctx context.Context,
+	root string,
+	retainGenerations int,
+	cfg settings,
+) (result PruneResult, err error) {
 	if ctx == nil {
 		return result, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if root == "" || options.RetainGenerations <= 0 {
+	if root == "" || retainGenerations <= 0 {
 		return result, ErrCorrupt
-	}
-	if options.Durability == 0 {
-		options.Durability = DurabilitySynchronous
-	}
-	if options.Durability != DurabilitySynchronous && options.Durability != DurabilityAsynchronous {
-		return result, ErrCorrupt
-	}
-	options.Limits = normalizeLimits(options.Limits)
-	if err := validateLimits(options.Limits); err != nil {
-		return result, err
 	}
 
 	l := newLayout(root)
-	if err := validateLayout(l); err != nil {
+	if err := l.validate(); err != nil {
 		return result, err
 	}
-	lock, err := acquireStoreLock(l.lock)
+	lock, err := storage.AcquireOperationLock(l.lock)
 	if err != nil {
 		return result, err
 	}
 	defer func() { err = errors.Join(err, lock.Close()) }()
-	if err := validateLayout(l); err != nil {
+	if err := l.validate(); err != nil {
 		return result, err
 	}
 
-	durability := durabilityPolicy{mode: options.Durability}
 	dirtyDirectories := make(map[string]struct{})
 	defer func() {
-		if !durability.synchronous() {
-			return
-		}
 		paths := make([]string, 0, len(dirtyDirectories))
 		for path := range dirtyDirectories {
 			paths = append(paths, path)
 		}
 		sort.Strings(paths)
 		for _, path := range paths {
-			err = errors.Join(err, durability.syncDirectory(path))
+			err = errors.Join(err, persistfs.SyncDirectory(path))
 		}
 	}()
 
-	publishOptions := PublishOptions{Durability: DurabilityAsynchronous, Limits: options.Limits}
-	head, err := newHeadStore(l, publishOptions).read(ctx)
+	head, err := newCurrentFile(l, cfg).read(ctx)
 	if err != nil {
 		return result, err
 	}
-	generations := newGenerationStore(l, publishOptions)
-	objects := newObjectStore(l, publishOptions)
+	generations := newGenerationFiles(l, cfg)
+	segments := newSegmentStore(l, cfg)
 	current, err := generations.open(ctx, head.GenerationID, &head.ManifestHash)
 	if err != nil {
 		return result, corruptMissingReference(err)
 	}
-	if err := validatePruneGeneration(ctx, current, objects); err != nil {
+	if err := validatePruneGeneration(ctx, current, segments); err != nil {
 		return result, corruptMissingReference(err)
 	}
 
@@ -113,12 +111,12 @@ func Prune(ctx context.Context, root string, options PruneOptions) (result Prune
 
 	retained := map[uint64]generationformat.GenerationManifest{head.GenerationID: current.manifest}
 	for _, id := range ids {
-		if len(retained) >= options.RetainGenerations || id >= head.GenerationID {
+		if len(retained) >= retainGenerations || id >= head.GenerationID {
 			continue
 		}
 		persisted, openErr := generations.open(ctx, id, nil)
 		if openErr == nil {
-			openErr = validatePruneGeneration(ctx, persisted, objects)
+			openErr = validatePruneGeneration(ctx, persisted, segments)
 		}
 		if openErr == nil {
 			retained[id] = persisted.manifest
@@ -186,7 +184,7 @@ func Prune(ctx context.Context, root string, options PruneOptions) (result Prune
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		removed, err := removeKnownContainer(path, map[string]struct{}{manifestFileName: {}, stateFileName: {}}, durability)
+		removed, err := removeKnownContainer(path, map[string]struct{}{manifestFileName: {}, stateFileName: {}})
 		if err != nil {
 			return result, err
 		}
@@ -203,7 +201,7 @@ func Prune(ctx context.Context, root string, options PruneOptions) (result Prune
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		removed, err := removeKnownContainer(path, map[string]struct{}{vectorsFileName: {}, graphFileName: {}}, durability)
+		removed, err := removeKnownContainer(path, map[string]struct{}{vectorsFileName: {}, graphFileName: {}})
 		if err != nil {
 			return result, err
 		}
@@ -233,9 +231,18 @@ func Prune(ctx context.Context, root string, options PruneOptions) (result Prune
 	return result, nil
 }
 
-func validatePruneGeneration(ctx context.Context, generation persistedGeneration, objects objectStore) error {
-	_, err := restoreIndex(ctx, Generation{ID: generation.id}, generation, objects, semantic.Schema{})
-	return err
+func validatePruneGeneration(ctx context.Context, generation persistedGeneration, store segmentStore) error {
+	for i, ref := range generation.manifest.Segments {
+		if i%16 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if err := store.verify(ref); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func parseGenerationName(name string) (uint64, bool) {
@@ -250,7 +257,7 @@ func recognizedTempName(name, prefix string) bool {
 	return strings.HasPrefix(name, prefix) && len(name) > len(prefix)
 }
 
-func removeKnownContainer(path string, allowed map[string]struct{}, durability durabilityPolicy) (bool, error) {
+func removeKnownContainer(path string, allowed map[string]struct{}) (bool, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -279,10 +286,10 @@ func removeKnownContainer(path string, allowed map[string]struct{}, durability d
 	}
 	for _, entry := range entries {
 		if err := os.Remove(filepath.Join(path, entry.Name())); err != nil {
-			return false, errors.Join(err, durability.syncDirectory(path))
+			return false, errors.Join(err, persistfs.SyncDirectory(path))
 		}
 	}
-	if err := durability.syncDirectory(path); err != nil {
+	if err := persistfs.SyncDirectory(path); err != nil {
 		return false, err
 	}
 	if err := os.Remove(path); err != nil {

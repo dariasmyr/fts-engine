@@ -9,14 +9,14 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
-// segment searches one immutable HNSW component. The vector source is
+// segment searches one immutable HNSW segment. The vector source is
 // authoritative row storage and the HNSW index contains only navigation topology.
 type segment struct {
-	component SegmentID
-	schema    Schema
-	rows      []VectorRow
-	vectors   vector.PreparedVectorStore
-	index     *hnsw.Index
+	id      SegmentID
+	schema  Schema
+	rows    []VectorRow
+	vectors vector.PreparedVectorStore
+	index   *hnsw.Index
 }
 
 // buildSegment builds the target immutable semantic segment. The HNSW index
@@ -24,7 +24,7 @@ type segment struct {
 // semantic identities.
 func buildSegment(
 	ctx context.Context,
-	component SegmentID,
+	id SegmentID,
 	schema Schema,
 	source vector.PreparedVectorStore,
 	rows []VectorRow,
@@ -39,7 +39,7 @@ func buildSegment(
 		return nil, err
 	}
 
-	if component == 0 || !schema.IsValid() {
+	if id == 0 || !schema.IsValid() {
 		return nil, ErrInvalidSegment
 	}
 
@@ -48,18 +48,18 @@ func buildSegment(
 		return nil, err
 	}
 
-	return newBuiltSegment(component, schema, source, index, rows)
+	return newBuiltSegment(id, schema, source, index, rows)
 }
 
 // newBuiltSegment takes ownership of rows produced together with an index by
 // the package's ingestion or compaction path.
-func newBuiltSegment(component SegmentID, schema Schema, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
+func newBuiltSegment(id SegmentID, schema Schema, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
 	segment := &segment{
-		component: component,
-		schema:    schema,
-		rows:      rows,
-		vectors:   vectors,
-		index:     index,
+		id:      id,
+		schema:  schema,
+		rows:    rows,
+		vectors: vectors,
+		index:   index,
 	}
 	if err := segment.validateContents(); err != nil {
 		return nil, err
@@ -67,14 +67,14 @@ func newBuiltSegment(component SegmentID, schema Schema, vectors vector.Prepared
 	return segment, nil
 }
 
-func newSegment(ctx context.Context, component SegmentID, schema Schema, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
+func newSegment(ctx context.Context, id SegmentID, schema Schema, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if component == 0 || vectors == nil || index == nil || len(rows) != index.Len() {
+	if id == 0 || vectors == nil || index == nil || len(rows) != index.Len() {
 		return nil, ErrInvalidSegment
 	}
 	if err := validateSegmentRowsContext(ctx, rows); err != nil {
@@ -82,11 +82,11 @@ func newSegment(ctx context.Context, component SegmentID, schema Schema, vectors
 	}
 
 	segment := &segment{
-		component: component,
-		schema:    schema,
-		rows:      append([]VectorRow(nil), rows...),
-		vectors:   vectors,
-		index:     index,
+		id:      id,
+		schema:  schema,
+		rows:    append([]VectorRow(nil), rows...),
+		vectors: vectors,
+		index:   index,
 	}
 	if err := segment.validateContents(); err != nil {
 		return nil, err
@@ -94,11 +94,11 @@ func newSegment(ctx context.Context, component SegmentID, schema Schema, vectors
 	return segment, nil
 }
 
-func (s *segment) componentID() SegmentID {
+func (s *segment) segmentID() SegmentID {
 	if s == nil {
 		return 0
 	}
-	return s.component
+	return s.id
 }
 
 func (s *segment) rowAt(index int) (VectorRow, bool) {
@@ -115,7 +115,7 @@ func (s *segment) vectorStore() vector.PreparedVectorStore {
 	return s.vectors
 }
 
-func (s *segment) searchPrepared(ctx context.Context, query vector.PreparedQuery, k int, options hnsw.SearchOptions) (hnsw.SearchResult, error) {
+func (s *segment) searchPrepared(ctx context.Context, query vector.PreparedVector, k int, options hnsw.SearchOptions) (hnsw.SearchResult, error) {
 	if s == nil || s.index == nil {
 		return hnsw.SearchResult{}, ErrInvalidSegment
 	}
@@ -166,10 +166,10 @@ func (s *segment) validateContents() error {
 	if !s.schema.Embedding.IsValid() || !s.schema.Chunking.IsValid() {
 		return ErrInvalidSegment
 	}
-	calculator, err := s.schema.Embedding.Calculator()
-	if err != nil || s.component == 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
-		vectors.Dimensions() != calculator.Dimensions() || vectors.Metric() != calculator.Metric() ||
-		vectors.Normalization() != calculator.Normalization() || s.index.Dimensions() != vectors.Dimensions() ||
+	space, err := s.schema.Embedding.VectorSpace()
+	if err != nil || s.id == 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
+		vectors.Dimensions() != space.Dimensions() || vectors.Metric() != space.Metric() ||
+		vectors.Normalization() != space.Normalization() || s.index.Dimensions() != vectors.Dimensions() ||
 		s.index.Metric() != vectors.Metric() {
 		return ErrInvalidSegment
 	}

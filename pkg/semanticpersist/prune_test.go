@@ -10,6 +10,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/storage"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -19,9 +20,9 @@ func TestPruneRetainsCurrentAndLatestValidGenerations(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	index := newTestIndex(t)
-	generations := publishTestGenerations(t, ctx, root, index, 3)
+	generations := saveTestGenerations(t, ctx, root, index, 3)
 
-	result, err := Prune(ctx, root, PruneOptions{RetainGenerations: 2})
+	result, err := pruneForTest(ctx, root, 2, Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,11 +37,7 @@ func TestPruneRetainsCurrentAndLatestValidGenerations(t *testing.T) {
 			t.Fatalf("retained generation %d: %v", generation.ID, err)
 		}
 	}
-	store, err := Open(ctx, root, OpenOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
+	if _, _, err := Load(ctx, root, LoadOptions{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -50,12 +47,12 @@ func TestPruneSkipsCorruptGenerationWhenSelectingRetention(t *testing.T) {
 
 	ctx := context.Background()
 	root := t.TempDir()
-	generations := publishTestGenerations(t, ctx, root, newTestIndex(t), 3)
+	generations := saveTestGenerations(t, ctx, root, newTestIndex(t), 3)
 	if err := os.WriteFile(newLayout(root).manifest(generations[1].ID), []byte("corrupt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := Prune(ctx, root, PruneOptions{RetainGenerations: 2})
+	result, err := pruneForTest(ctx, root, 2, Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +76,7 @@ func TestPrunePreservesReusedSegmentObject(t *testing.T) {
 	root := t.TempDir()
 	index := newTestIndex(t)
 	addTestSegment(t, ctx, index)
-	publishTestGenerations(t, ctx, root, index, 2)
+	saveTestGenerations(t, ctx, root, index, 2)
 
 	entries, err := os.ReadDir(newLayout(root).segments)
 	if err != nil {
@@ -90,7 +87,7 @@ func TestPrunePreservesReusedSegmentObject(t *testing.T) {
 	}
 	objectPath := newLayout(root).segment(entries[0].Name())
 
-	result, err := Prune(ctx, root, PruneOptions{RetainGenerations: 1})
+	result, err := pruneForTest(ctx, root, 1, Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,12 +104,12 @@ func TestPruneRejectsCorruptCurrentBeforeDeletion(t *testing.T) {
 
 	ctx := context.Background()
 	root := t.TempDir()
-	generations := publishTestGenerations(t, ctx, root, newTestIndex(t), 2)
+	generations := saveTestGenerations(t, ctx, root, newTestIndex(t), 2)
 	if err := os.WriteFile(newLayout(root).manifest(generations[1].ID), []byte("corrupt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := Prune(ctx, root, PruneOptions{RetainGenerations: 1}); !errors.Is(err, ErrCorrupt) {
+	if _, err := pruneForTest(ctx, root, 1, Limits{}); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("Prune error = %v, want ErrCorrupt", err)
 	}
 	if err := validateDirectory(newLayout(root).generation(generations[0].ID)); err != nil {
@@ -125,7 +122,7 @@ func TestPruneRemovesRecognizedOrphansAndTempsOnly(t *testing.T) {
 
 	ctx := context.Background()
 	root := t.TempDir()
-	publishTestGenerations(t, ctx, root, newTestIndex(t), 1)
+	saveTestGenerations(t, ctx, root, newTestIndex(t), 1)
 	l := newLayout(root)
 
 	makeKnownContainer(t, l.generation(2), manifestFileName, stateFileName)
@@ -153,7 +150,7 @@ func TestPruneRemovesRecognizedOrphansAndTempsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := Prune(ctx, root, PruneOptions{RetainGenerations: 1})
+	result, err := pruneForTest(ctx, root, 1, Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,11 +173,11 @@ func TestPruneCancellationDoesNotDelete(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	generations := publishTestGenerations(t, context.Background(), root, newTestIndex(t), 2)
+	generations := saveTestGenerations(t, context.Background(), root, newTestIndex(t), 2)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := Prune(ctx, root, PruneOptions{RetainGenerations: 1}); !errors.Is(err, context.Canceled) {
+	if _, err := pruneForTest(ctx, root, 1, Limits{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Prune error = %v, want context.Canceled", err)
 	}
 	for _, generation := range generations {
@@ -190,20 +187,20 @@ func TestPruneCancellationDoesNotDelete(t *testing.T) {
 	}
 }
 
-func TestPruneRequiresExclusiveStoreLock(t *testing.T) {
+func TestPruneRequiresExclusiveOperationLock(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	root := t.TempDir()
-	generations := publishTestGenerations(t, ctx, root, newTestIndex(t), 2)
-	store, err := Open(ctx, root, OpenOptions{})
+	generations := saveTestGenerations(t, ctx, root, newTestIndex(t), 2)
+	lock, err := storage.AcquireOperationLock(newLayout(root).lock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer lock.Close()
 
-	if _, err := Prune(ctx, root, PruneOptions{RetainGenerations: 1}); !errors.Is(err, ErrStoreLocked) {
-		t.Fatalf("Prune error = %v, want ErrStoreLocked", err)
+	if _, err := pruneForTest(ctx, root, 1, Limits{}); !errors.Is(err, ErrLocked) {
+		t.Fatalf("Prune error = %v, want ErrLocked", err)
 	}
 	for _, generation := range generations {
 		if err := validateDirectory(newLayout(root).generation(generation.ID)); err != nil {
@@ -212,38 +209,72 @@ func TestPruneRequiresExclusiveStoreLock(t *testing.T) {
 	}
 }
 
+func TestLoadRequiresExclusiveOperationLock(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	saveTestGenerations(t, ctx, root, newTestIndex(t), 1)
+	lock, err := storage.AcquireOperationLock(newLayout(root).lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+
+	if _, _, err := Load(ctx, root, LoadOptions{}); !errors.Is(err, ErrLocked) {
+		t.Fatalf("Load() error = %v, want ErrLocked", err)
+	}
+}
+
+func TestSaveRequiresExclusiveOperationLock(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	index := newTestIndex(t)
+	generation := saveTestGenerations(t, ctx, root, index, 1)[0]
+	lock, err := storage.AcquireOperationLock(newLayout(root).lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+
+	_, err = Save(ctx, root, index, SaveOptions{ExpectedGeneration: &generation})
+	if !errors.Is(err, ErrLocked) {
+		t.Fatalf("Save() error = %v, want ErrLocked", err)
+	}
+}
+
 func TestPruneRejectsInvalidOptions(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	publishTestGenerations(t, context.Background(), root, newTestIndex(t), 1)
+	saveTestGenerations(t, context.Background(), root, newTestIndex(t), 1)
 	tests := []struct {
-		name    string
-		options PruneOptions
+		name      string
+		retention int
+		limits    Limits
 	}{
-		{name: "zero retention", options: PruneOptions{}},
-		{name: "negative retention", options: PruneOptions{RetainGenerations: -1}},
-		{name: "durability", options: PruneOptions{RetainGenerations: 1, Durability: DurabilityMode(255)}},
-		{name: "limits", options: PruneOptions{RetainGenerations: 1, Limits: Limits{MaxFileBytes: ^uint64(0)}}},
+		{name: "zero retention"},
+		{name: "negative retention", retention: -1},
+		{name: "limits", retention: 1, limits: Limits{MaxFileBytes: ^uint64(0)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := Prune(context.Background(), root, tt.options); err == nil {
+			if _, err := pruneForTest(context.Background(), root, tt.retention, tt.limits); err == nil {
 				t.Fatal("Prune error = nil, want error")
 			}
 		})
 	}
 }
 
-func publishTestGenerations(t *testing.T, ctx context.Context, root string, index *semantic.Index, count int) []Generation {
+func saveTestGenerations(t *testing.T, ctx context.Context, root string, index *semantic.Index, count int) []Generation {
 	t.Helper()
 
 	result := make([]Generation, 0, count)
 	expected := Generation{}
 	for range count {
-		generation, err := Publish(ctx, root, index, PublishOptions{
-			Durability: DurabilityAsynchronous, ExpectedGeneration: &expected,
-		})
+		generation, err := Save(ctx, root, index, SaveOptions{ExpectedGeneration: &expected})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -253,19 +284,31 @@ func publishTestGenerations(t *testing.T, ctx context.Context, root string, inde
 	return result
 }
 
+func pruneForTest(
+	ctx context.Context,
+	root string,
+	retainGenerations int,
+	limits Limits,
+) (PruneResult, error) {
+	return Prune(ctx, root, PruneOptions{
+		RetainGenerations: retainGenerations,
+		Limits:            limits,
+	})
+}
+
 func newTestIndex(t *testing.T) *semantic.Index {
 	t.Helper()
 
-	embedding, err := semantic.NewEmbeddingDescriptor(
-		"test", "model", "v1", "pipeline-v1", 2, vector.MetricL2Squared, 1,
+	embedding, err := semantic.NewEmbeddingSchema(
+		"model", "v1", "pipeline-v1", 2, vector.MetricL2Squared, 1,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	index, err := semantic.NewIndex(semantic.Config{
+	index, err := semantic.NewIndex(semantic.IndexConfig{
 		Schema: semantic.Schema{
 			Embedding: embedding,
-			Chunking: semantic.ChunkingDescriptor{
+			Chunking: semantic.ChunkingSchema{
 				ID: "chunks", Version: 1, Fingerprint: "chunks-v1",
 			},
 		},
@@ -286,14 +329,14 @@ func newTestIndex(t *testing.T) *semantic.Index {
 func addTestSegment(t *testing.T, ctx context.Context, index *semantic.Index) {
 	t.Helper()
 
-	err := index.Add(ctx, "doc", []semantic.EncodedChunk{{
-		Ref:    semantic.Ref{ID: "chunk", DocID: fts.DocID("doc"), Field: fts.DefaultField, EndByte: 1},
-		Vector: []float32{1, 2},
+	err := index.AddDocument(ctx, "doc", []semantic.ChunkEmbedding{{
+		Ref:       semantic.Ref{ID: "chunk", DocID: fts.DocID("doc"), Field: fts.DefaultField, EndByte: 1},
+		Embedding: []float32{1, 2},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := index.Flush(ctx); err != nil {
+	if err := index.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

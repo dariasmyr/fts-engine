@@ -10,7 +10,7 @@ import (
 )
 
 func TestMemoryVectorStoreStoresPreparedRowsWithoutAliasing(t *testing.T) {
-	space, err := vector.NewCalculator(2, vector.MetricCosine)
+	space, err := vector.NewSpace(2, vector.MetricCosine)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestMemoryVectorStoreStoresPreparedRowsWithoutAliasing(t *testing.T) {
 }
 
 func TestPreparedMemoryVectorStoreValidatesMatrixShape(t *testing.T) {
-	space, err := vector.NewCalculator(2, vector.MetricL2Squared)
+	space, err := vector.NewSpace(2, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestPreparedMemoryVectorStoreValidatesMatrixShape(t *testing.T) {
 }
 
 func TestMemoryVectorStoreOwnershipContracts(t *testing.T) {
-	space, err := vector.NewCalculator(2, vector.MetricL2Squared)
+	space, err := vector.NewSpace(2, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}

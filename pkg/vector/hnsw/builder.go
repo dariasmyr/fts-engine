@@ -8,17 +8,17 @@ import (
 
 // builder constructs one HNSW graph. It is single-writer and is not searchable.
 type builder struct {
-	config     BuildConfig
-	calculator vector.Calculator
-	graph      graphData
-	rng        levelRNG
-	workspace  buildWorkspace
+	config    BuildConfig
+	space     vector.Space
+	graph     graphData
+	rng       levelRNG
+	workspace buildWorkspace
 }
 
-func newBuilder(config BuildConfig, calculator vector.Calculator, vectorCount, components int) *builder {
+func newBuilder(config BuildConfig, space vector.Space, vectorCount, components int) *builder {
 	return &builder{
-		config:     config,
-		calculator: calculator,
+		config: config,
+		space:  space,
 		graph: graphData{
 			values: make([]float32, components),
 			nodes:  make([]mutableNode, 0, vectorCount),
@@ -36,7 +36,7 @@ func (b *builder) add(ctx context.Context, prepared []float32) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := b.calculator.ValidatePrepared(prepared); err != nil {
+	if err := b.space.ValidatePrepared(prepared); err != nil {
 		return err
 	}
 	if len(b.graph.nodes) >= cap(b.graph.nodes) {
@@ -45,8 +45,8 @@ func (b *builder) add(ctx context.Context, prepared []float32) error {
 
 	node := nodeOrdinal(len(b.graph.nodes))
 	level := b.rng.level(b.config.MaxNeighbors)
-	start := int(node) * b.calculator.Dimensions()
-	copy(b.graph.values[start:start+b.calculator.Dimensions()], prepared)
+	start := int(node) * b.space.Dimensions()
+	copy(b.graph.values[start:start+b.space.Dimensions()], prepared)
 	b.graph.nodes = append(b.graph.nodes, mutableNode{
 		level: level,
 		links: make([][]nodeOrdinal, int(level)+1),
@@ -61,7 +61,7 @@ func (b *builder) add(ctx context.Context, prepared []float32) error {
 }
 
 func (b *builder) freeze(source vector.PreparedVectorStore, search SearchConfig) (*Index, error) {
-	topology, err := packGraph(b.calculator, b.config.info(), b.graph)
+	topology, err := packGraph(b.space, b.config.info(), b.graph)
 	if err != nil {
 		return nil, err
 	}

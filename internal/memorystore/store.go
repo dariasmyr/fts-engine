@@ -10,42 +10,42 @@ import (
 // MemoryVectorStore is immutable prepared vector storage backed by a contiguous
 // in-memory matrix. It implements the vector store contract, not search.
 type MemoryVectorStore struct {
-	calculator vector.Calculator
-	vectors    []float32
+	space   vector.Space
+	vectors []float32
 }
 
 // NewMemoryVectorStore prepares and stores a set of vector rows in memory.
-func New(calculator vector.Calculator, vectors [][]float32) (*MemoryVectorStore, error) {
-	flatVectors := make([]float32, len(vectors)*calculator.Dimensions())
+func New(space vector.Space, vectors [][]float32) (*MemoryVectorStore, error) {
+	flatVectors := make([]float32, len(vectors)*space.Dimensions())
 	for row, vector := range vectors {
-		start := row * calculator.Dimensions()
-		if err := calculator.PrepareInto(flatVectors[start:start+calculator.Dimensions()], vector); err != nil {
+		start := row * space.Dimensions()
+		if err := space.PrepareInto(flatVectors[start:start+space.Dimensions()], vector); err != nil {
 			return nil, err
 		}
 	}
-	return NewPrepared(calculator, flatVectors)
+	return NewPrepared(space, flatVectors)
 }
 
 // NewPreparedMemoryVectorStore stores an already prepared contiguous
 // vector matrix without copying it. The caller transfers exclusive ownership
 // of flatVectors and must not access or mutate it after this call.
-func NewPrepared(calculator vector.Calculator, flatVectors []float32) (*MemoryVectorStore, error) {
-	if calculator.Dimensions() <= 0 {
+func NewPrepared(space vector.Space, flatVectors []float32) (*MemoryVectorStore, error) {
+	if space.Dimensions() <= 0 {
 		return nil, vector.ErrInvalidDimensions
 	}
-	if len(flatVectors)%calculator.Dimensions() != 0 {
-		return nil, fmt.Errorf("%w: got %d values for dimension %d", vector.ErrDimensionMismatch, len(flatVectors), calculator.Dimensions())
+	if len(flatVectors)%space.Dimensions() != 0 {
+		return nil, fmt.Errorf("%w: got %d values for dimension %d", vector.ErrDimensionMismatch, len(flatVectors), space.Dimensions())
 	}
-	return &MemoryVectorStore{calculator: calculator, vectors: flatVectors}, nil
+	return &MemoryVectorStore{space: space, vectors: flatVectors}, nil
 }
 
-func (s *MemoryVectorStore) Len() int { return len(s.vectors) / s.calculator.Dimensions() }
+func (s *MemoryVectorStore) Len() int { return len(s.vectors) / s.space.Dimensions() }
 
-func (s *MemoryVectorStore) Dimensions() int { return s.calculator.Dimensions() }
+func (s *MemoryVectorStore) Dimensions() int { return s.space.Dimensions() }
 
-func (s *MemoryVectorStore) Metric() vector.Metric { return s.calculator.Metric() }
+func (s *MemoryVectorStore) Metric() vector.Metric { return s.space.Metric() }
 
-func (s *MemoryVectorStore) Normalization() vector.Normalization { return s.calculator.Normalization() }
+func (s *MemoryVectorStore) Normalization() vector.Normalization { return s.space.Normalization() }
 
 // ReadVectorInto copies one prepared row into dst without exposing storage.
 func (s *MemoryVectorStore) ReadVectorInto(ctx context.Context, ordinal vector.Ordinal, dst []float32) error {

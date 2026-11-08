@@ -13,11 +13,11 @@ import (
 func TestSnapshotRestorePreservesSearchAndOrdinals(t *testing.T) {
 	t.Parallel()
 
-	calculator, err := vector.NewCalculator(2, vector.MetricL2Squared)
+	space, err := vector.NewSpace(2, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectors, err := memorystore.New(calculator, [][]float32{
+	vectors, err := memorystore.New(space, [][]float32{
 		{0, 0},
 		{1, 0},
 		{3, 0},

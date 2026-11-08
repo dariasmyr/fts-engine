@@ -13,9 +13,9 @@ import (
 // collectChunkCandidates is the ANN retrieval layer. It knows nothing about
 // document grouping: it only spends request-wide ANN budgets and returns chunk
 // hits.
-func (s *Snapshot) collectChunkCandidates(
+func (s *IndexView) collectChunkCandidates(
 	ctx context.Context,
-	queries []vector.PreparedQuery,
+	queryVectors []vector.PreparedVector,
 	options SearchOptions,
 ) ([]ChunkHit, DocumentSearchResult, error) {
 	type chunkKey struct {
@@ -23,7 +23,7 @@ func (s *Snapshot) collectChunkCandidates(
 		chunkID    ChunkID
 	}
 	result := DocumentSearchResult{Stats: hnsw.SearchStats{Termination: hnsw.TerminationComplete}}
-	candidateBudget, _ := resolveCandidateBudget(options.CandidateChunks, s.maxCandidates)
+	candidateBudget, _ := resolveCandidateBudget(options.CandidateChunks, s.searchLimits.maxChunkCandidates)
 	visitBudget := options.VisitLimit
 	if visitBudget == 0 {
 		visitBudget = s.searchConfig.VisitLimit
@@ -44,15 +44,21 @@ func (s *Snapshot) collectChunkCandidates(
 			segmentCapacities = append(segmentCapacities, view.segment.len())
 		}
 	}
-	visitShares, err := allocateVisitShares(ctx, len(queries), segmentCapacities, visitBudget)
+	visitShares, err := allocateVisitShares(ctx, len(queryVectors), segmentCapacities, visitBudget)
 	if err != nil {
 		return nil, DocumentSearchResult{}, err
 	}
 
-	merged := make(map[chunkKey]ChunkHit, s.liveCount)
+	mergeCapacity := candidateMergeCapacity(
+		s.liveCount,
+		candidateBudget,
+		len(queryVectors),
+		len(active),
+	)
+	merged := make(map[chunkKey]ChunkHit, mergeCapacity)
 	visitLimited := false
 	mergedHits := 0
-	for queryIndex, query := range queries {
+	for queryIndex, queryVector := range queryVectors {
 		for segmentIndex, view := range active {
 			if err := ctx.Err(); err != nil {
 				return nil, DocumentSearchResult{}, err
@@ -64,9 +70,9 @@ func (s *Snapshot) collectChunkCandidates(
 			}
 			partial, err := searchSegmentChunksPrepared(
 				ctx,
-				s.calculator,
+				s.space,
 				view,
-				query,
+				queryVector,
 				min(candidateBudget, view.liveness.AllowedOrdinalCount()),
 				hnsw.SearchOptions{EfSearch: efSearch, VisitLimit: share},
 			)
@@ -121,4 +127,19 @@ func (s *Snapshot) collectChunkCandidates(
 		result.Stats.Termination = hnsw.TerminationComplete
 	}
 	return candidates, result, nil
+}
+
+func candidateMergeCapacity(liveCount, candidatesPerSearch, queryCount, segmentCount int) int {
+	if liveCount <= 0 || candidatesPerSearch <= 0 || queryCount <= 0 || segmentCount <= 0 {
+		return 0
+	}
+	capacity := min(liveCount, candidatesPerSearch)
+	if capacity >= liveCount || queryCount > liveCount/capacity {
+		return liveCount
+	}
+	capacity *= queryCount
+	if capacity >= liveCount || segmentCount > liveCount/capacity {
+		return liveCount
+	}
+	return capacity * segmentCount
 }

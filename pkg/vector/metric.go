@@ -14,84 +14,94 @@ var (
 	ErrZeroNorm          = errors.New("vector: zero-norm vector is invalid for cosine distance")
 )
 
-// Calculator validates and prepares vectors that share dimensions and a metric.
-// The zero value is invalid; construct a Calculator with NewCalculator.
-type Calculator struct {
+// Space validates and prepares vectors that share dimensions and a metric.
+// The zero value is invalid; construct a Space with NewSpace.
+type Space struct {
 	dimensions    int
 	metric        Metric
 	normalization Normalization
 }
 
-// PreparedQuery is an immutable query reusable by compatible vector indexes.
-type PreparedQuery struct {
+// PreparedVector is an immutable vector owned by a Space. Its components are
+// validated, canonicalized, and normalized for that space. The zero value is
+// invalid.
+type PreparedVector struct {
 	value         []float32
-	dimensions    int
 	metric        Metric
 	normalization Normalization
 }
 
-func NewCalculator(dimensions int, metric Metric) (Calculator, error) {
+// NewSpace creates vector validation, normalization, and distance operations
+// for one dimensions/metric combination.
+func NewSpace(dimensions int, metric Metric) (Space, error) {
 	if dimensions <= 0 {
-		return Calculator{}, ErrInvalidDimensions
+		return Space{}, ErrInvalidDimensions
 	}
 	if !metric.Valid() {
-		return Calculator{}, fmt.Errorf("%w: %d", ErrUnsupportedMetric, metric)
+		return Space{}, fmt.Errorf("%w: %d", ErrUnsupportedMetric, metric)
 	}
 
 	normalization := NormalizationNone
 	if metric == MetricCosine {
 		normalization = NormalizationUnitLength
 	}
-	return Calculator{dimensions: dimensions, metric: metric, normalization: normalization}, nil
+	return Space{dimensions: dimensions, metric: metric, normalization: normalization}, nil
 }
 
-func (s Calculator) Dimensions() int { return s.dimensions }
+func (s Space) Dimensions() int { return s.dimensions }
 
-func (s Calculator) Metric() Metric { return s.metric }
+func (s Space) Metric() Metric { return s.metric }
 
-func (s Calculator) Normalization() Normalization { return s.normalization }
+func (s Space) Normalization() Normalization { return s.normalization }
 
-// Prepare validates value, copies it, canonicalizes signed zero, and applies
-// the calculator's storage normalization.
-func (s Calculator) Prepare(value []float32) ([]float32, error) {
+// Prepare validates value, creates an owned defensive copy,
+// canonicalizes signed zero, and applies the space's storage normalization.
+// Later caller mutations therefore cannot change the prepared vector.
+func (s Space) Prepare(value []float32) (PreparedVector, error) {
 	normSquared, err := s.validate(value)
 	if err != nil {
-		return nil, err
+		return PreparedVector{}, err
 	}
 
 	prepared := make([]float32, len(value))
 	s.prepareIntoValidated(prepared, value, normSquared)
-	return prepared, nil
+	return PreparedVector{
+		value:         prepared,
+		metric:        s.metric,
+		normalization: s.normalization,
+	}, nil
 }
 
-// PrepareQuery creates an immutable reusable query.
-func (s Calculator) PrepareQuery(value []float32) (PreparedQuery, error) {
-	prepared, err := s.Prepare(value)
-	if err != nil {
-		return PreparedQuery{}, err
+// CopyTo copies the prepared components into dst without exposing the owned
+// backing array.
+func (v PreparedVector) CopyTo(dst []float32) error {
+	if len(v.value) == 0 || !v.metric.Valid() || len(dst) != len(v.value) {
+		return fmt.Errorf("%w: destination has %d, want %d", ErrDimensionMismatch, len(dst), len(v.value))
 	}
-	return PreparedQuery{value: prepared, dimensions: s.dimensions, metric: s.metric, normalization: s.normalization}, nil
+	copy(dst, v.value)
+	return nil
 }
 
-// ValidatePreparedQuery checks compatibility without rescanning components.
-func (s Calculator) ValidatePreparedQuery(query PreparedQuery) error {
-	if s.dimensions <= 0 || !s.metric.Valid() || len(query.value) != s.dimensions ||
-		query.dimensions != s.dimensions || query.metric != s.metric || query.normalization != s.normalization {
+// ValidatePreparedVector checks that prepared belongs to this space without
+// rescanning its components.
+func (s Space) ValidatePreparedVector(prepared PreparedVector) error {
+	if !s.compatiblePrepared(prepared) {
 		return ErrDimensionMismatch
 	}
 	return nil
 }
 
-// DistancePreparedQuery calculates distance from a validated prepared query.
-func (s Calculator) DistancePreparedQuery(query PreparedQuery, value []float32) float64 {
-	return s.DistancePrepared(query.value, value)
+// DistancePreparedVector calculates distance from a validated PreparedVector
+// to one row read from a compatible PreparedVectorStore.
+func (s Space) DistancePreparedVector(prepared PreparedVector, stored []float32) float64 {
+	return s.DistancePrepared(prepared.value, stored)
 }
 
 // PrepareInto validates value and writes its copied, canonicalized, normalized
 // representation into dst without allocating. Batch writers can therefore
 // prepare directly into rows of one preallocated contiguous matrix. dst must
-// have Calculator.Dimensions elements and may alias value.
-func (s Calculator) PrepareInto(dst, value []float32) error {
+// have Space.Dimensions elements and may alias value.
+func (s Space) PrepareInto(dst, value []float32) error {
 	if len(dst) != s.dimensions {
 		return fmt.Errorf("%w: destination has %d, want %d", ErrDimensionMismatch, len(dst), s.dimensions)
 	}
@@ -106,7 +116,7 @@ func (s Calculator) PrepareInto(dst, value []float32) error {
 // Distance validates and prepares both values before calculating their
 // distance. Index implementations should prepare stored vectors and queries
 // once, then use DistancePrepared in their hot loops.
-func (s Calculator) Distance(a, b []float32) (float64, error) {
+func (s Space) Distance(a, b []float32) (float64, error) {
 	preparedA, err := s.Prepare(a)
 	if err != nil {
 		return 0, err
@@ -115,13 +125,19 @@ func (s Calculator) Distance(a, b []float32) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return s.DistancePrepared(preparedA, preparedB), nil
+	return s.DistancePrepared(preparedA.value, preparedB.value), nil
+}
+
+func (s Space) compatiblePrepared(prepared PreparedVector) bool {
+	return s.dimensions > 0 && s.metric.Valid() &&
+		len(prepared.value) == s.dimensions &&
+		prepared.metric == s.metric && prepared.normalization == s.normalization
 }
 
 // DistancePrepared calculates distance without validation or allocation. Both
-// vectors must have Calculator.Dimensions elements and must have been produced by
-// Prepare or PrepareInto for this calculator.
-func (s Calculator) DistancePrepared(a, b []float32) float64 {
+// vectors must have Space.Dimensions elements and must have been produced by
+// Prepare or PrepareInto for this space.
+func (s Space) DistancePrepared(a, b []float32) float64 {
 	switch s.metric {
 	case MetricCosine:
 		similarity := dotFloat64(a, b)
@@ -136,20 +152,20 @@ func (s Calculator) DistancePrepared(a, b []float32) float64 {
 		}
 		return distance
 	default:
-		panic("vector: DistancePrepared called with an invalid Calculator")
+		panic("vector: DistancePrepared called with an invalid Space")
 	}
 }
 
-// Validate checks whether value can be prepared for this calculator without
+// Validate checks whether value can be prepared for this space without
 // allocating or retaining it.
-func (s Calculator) Validate(value []float32) error {
+func (s Space) Validate(value []float32) error {
 	_, err := s.validate(value)
 	return err
 }
 
-func (s Calculator) validate(value []float32) (float64, error) {
+func (s Space) validate(value []float32) (float64, error) {
 	if s.dimensions <= 0 || !s.metric.Valid() {
-		return 0, errors.New("vector: invalid calculator")
+		return 0, errors.New("vector: invalid space")
 	}
 	if len(value) != s.dimensions {
 		return 0, fmt.Errorf("%w: got %d, want %d", ErrDimensionMismatch, len(value), s.dimensions)
@@ -176,9 +192,9 @@ func (s Calculator) validate(value []float32) (float64, error) {
 }
 
 // ValidatePrepared validates a canonical stored vector in one component pass.
-func (s Calculator) ValidatePrepared(value []float32) error {
+func (s Space) ValidatePrepared(value []float32) error {
 	if s.dimensions <= 0 || !s.metric.Valid() {
-		return errors.New("vector: invalid calculator")
+		return errors.New("vector: invalid space")
 	}
 	if len(value) != s.dimensions {
 		return fmt.Errorf("%w: got %d, want %d", ErrDimensionMismatch, len(value), s.dimensions)
@@ -202,7 +218,7 @@ func (s Calculator) ValidatePrepared(value []float32) error {
 	return nil
 }
 
-func (s Calculator) prepareIntoValidated(dst, value []float32, normSquared float64) {
+func (s Space) prepareIntoValidated(dst, value []float32, normSquared float64) {
 	copy(dst, value)
 	if s.normalization == NormalizationUnitLength {
 		inverseNorm := 1 / math.Sqrt(normSquared)

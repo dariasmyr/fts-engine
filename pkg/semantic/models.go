@@ -1,5 +1,9 @@
 package semantic
 
+// IndexID identifies one index lineage across save and restore operations.
+// Segment IDs are unique only within an index lineage.
+type IndexID [16]byte
+
 // VectorID is a stable semantic vector identity. It survives compaction even
 // when a vector moves to another segment ordinal.
 type VectorID uint64

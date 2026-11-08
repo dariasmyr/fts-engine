@@ -18,6 +18,12 @@ func TestArchitectureRulesAllowIntendedDependencies(t *testing.T) {
 
 	packages := []listedPackage{
 		{
+			ImportPath: rootModule + "/pkg/embedding/ollama",
+			Imports: []string{
+				rootModule + "/pkg/embedding",
+			},
+		},
+		{
 			ImportPath: rootModule + "/pkg/vector/hnsw",
 			Imports: []string{
 				rootModule + "/internal/hnswmodel",
@@ -36,6 +42,7 @@ func TestArchitectureRulesAllowIntendedDependencies(t *testing.T) {
 			ImportPath: rootModule + "/pkg/semanticencode",
 			Imports: []string{
 				rootModule + "/pkg/chunk",
+				rootModule + "/pkg/embedding",
 				rootModule + "/pkg/fts",
 				rootModule + "/pkg/semantic",
 				rootModule + "/pkg/vector",
@@ -44,12 +51,21 @@ func TestArchitectureRulesAllowIntendedDependencies(t *testing.T) {
 		{
 			ImportPath: rootModule + "/pkg/semanticpersist",
 			Imports: []string{
+				rootModule + "/internal/format",
 				rootModule + "/internal/memorystore",
 				rootModule + "/internal/persistfs",
+				rootModule + "/pkg/embedding",
 				rootModule + "/pkg/semantic",
 				rootModule + "/pkg/semanticpersist/internal/generationformat",
 				rootModule + "/pkg/semanticpersist/internal/hnswformat",
+				rootModule + "/pkg/semanticpersist/internal/storage",
 				rootModule + "/pkg/vector/hnsw",
+			},
+		},
+		{
+			ImportPath: rootModule + "/pkg/semanticpersist/internal/storage",
+			Imports: []string{
+				rootModule + "/internal/persistfs",
 			},
 		},
 		{
@@ -65,6 +81,7 @@ func TestArchitectureRulesAllowIntendedDependencies(t *testing.T) {
 			ImportPath: rootModule + "/pkg/semanticpersist/internal/hnswformat",
 			Imports: []string{
 				"io",
+				rootModule + "/internal/format",
 				rootModule + "/internal/hnswmodel",
 				rootModule + "/pkg/vector/hnsw",
 			},
@@ -108,6 +125,12 @@ func TestArchitectureRulesRejectForbiddenEdges(t *testing.T) {
 			from: rootModule + "/pkg/semantic",
 			to:   rootModule + "/pkg/semanticpersist",
 			rule: "pkg/semantic",
+		},
+		{
+			name: "semantic storage to public persistence",
+			from: rootModule + "/pkg/semanticpersist/internal/storage",
+			to:   rootModule + "/pkg/semanticpersist",
+			rule: "pkg/semanticpersist/internal/storage",
 		},
 		{
 			name: "encoder to persistence",

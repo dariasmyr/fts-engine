@@ -37,13 +37,13 @@ func TestDecodeVectorFileCancellation(t *testing.T) {
 	})
 }
 
-func testVectorFile(t *testing.T, rows, dimensions int) ([]byte, VectorLimits) {
+func testVectorFile(t testing.TB, rows, dimensions int) ([]byte, VectorLimits) {
 	t.Helper()
-	calculator, err := vector.NewCalculator(dimensions, vector.MetricL2Squared)
+	space, err := vector.NewSpace(dimensions, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := memorystore.NewPrepared(calculator, make([]float32, rows*dimensions))
+	store, err := memorystore.NewPrepared(space, make([]float32, rows*dimensions))
 	if err != nil {
 		t.Fatal(err)
 	}

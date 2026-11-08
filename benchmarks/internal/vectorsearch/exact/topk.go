@@ -9,7 +9,9 @@ import (
 
 type topK struct {
 	limit int
-	hits  []vector.Hit
+	// hits is a max-heap: hits[0] is the worst retained result. The heap stays
+	// bounded by limit while Searcher scans the complete vector store.
+	hits []vector.Hit
 }
 
 func newTopK(limit int) *topK {
@@ -33,40 +35,55 @@ func (t *topK) add(hit vector.Hit) {
 	t.siftDown(0)
 }
 
-func (t *topK) siftUp(index int) {
-	for index > 0 {
-		parent := (index - 1) / 2
-		if compareHits(t.hits[parent], t.hits[index]) >= 0 {
+func (t *topK) siftUp(child int) {
+	for child > 0 {
+		parent := heapParent(child)
+		if !isWorse(t.hits[child], t.hits[parent]) {
 			return
 		}
-		t.hits[parent], t.hits[index] = t.hits[index], t.hits[parent]
-		index = parent
+		t.hits[parent], t.hits[child] = t.hits[child], t.hits[parent]
+		child = parent
 	}
 }
 
-func (t *topK) siftDown(index int) {
+func (t *topK) siftDown(parent int) {
 	for {
-		left := index*2 + 1
+		left := heapLeftChild(parent)
 		if left >= len(t.hits) {
 			return
 		}
-		worse := left
+		worstChild := left
 		right := left + 1
-		if right < len(t.hits) && compareHits(t.hits[right], t.hits[left]) > 0 {
-			worse = right
+		if right < len(t.hits) && isWorse(t.hits[right], t.hits[left]) {
+			worstChild = right
 		}
-		if compareHits(t.hits[index], t.hits[worse]) >= 0 {
+		if !isWorse(t.hits[worstChild], t.hits[parent]) {
 			return
 		}
-		t.hits[index], t.hits[worse] = t.hits[worse], t.hits[index]
-		index = worse
+		t.hits[parent], t.hits[worstChild] = t.hits[worstChild], t.hits[parent]
+		parent = worstChild
 	}
 }
 
+// A complete binary tree is stored level by level in the slice:
+//
+//	     0
+//	  1     2
+//	3  4  5  6
+//
+// Consequently, children 1 and 2 have parent 0, children 3 and 4 have parent
+// 1, and so on. Integer division implements exactly that grouping.
+func heapParent(child int) int { return (child - 1) / 2 }
+
+func heapLeftChild(parent int) int { return parent*2 + 1 }
+
+func isWorse(a, b vector.Hit) bool { return compareHits(a, b) > 0 }
+
 func (t *topK) results() []vector.Hit {
-	results := slices.Clone(t.hits)
-	slices.SortFunc(results, compareHits)
-	return results
+	// Heap order is only partial. Searcher is finished adding results, so sort
+	// the retained K hits in place and transfer the slice to the Result.
+	slices.SortFunc(t.hits, compareHits)
+	return t.hits
 }
 
 func compareHits(a, b vector.Hit) int {

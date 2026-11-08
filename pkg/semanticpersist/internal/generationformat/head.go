@@ -12,18 +12,19 @@ type Head struct {
 	ManifestHash [sha256.Size]byte
 }
 
-func EncodeHead(value Head, limits FileLimits) ([]byte, FileRef, error) {
+func EncodeHead(value Head, limits FileLimits) ([]byte, error) {
 	if err := limits.validateFile(); err != nil {
-		return nil, FileRef{}, err
+		return nil, err
 	}
 	if value.GenerationID == 0 {
-		return nil, FileRef{}, ErrCorrupt
+		return nil, ErrCorrupt
 	}
 
 	e := newEncoder("SCUR", headVersion, headEncodedSize, limits)
 	e.writeUint64(value.GenerationID)
 	e.writeBytes(value.ManifestHash[:])
-	return e.finish()
+	data, _, err := e.finish()
+	return data, err
 }
 
 func DecodeHead(data []byte, limits FileLimits) (Head, error) {
