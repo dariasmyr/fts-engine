@@ -84,7 +84,6 @@ func (c IndexConfig) normalized() (IndexConfig, error) {
 		limits.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
 		return IndexConfig{}, ErrInvalidConfig
 	}
-
 	c.HNSW = normalizeHNSWTuning(c.HNSW, limits)
 	if c.HNSW.MaxEfSearch <= 0 || c.HNSW.MaxVisitLimit <= 0 ||
 		c.HNSW.DefaultEfSearch > c.HNSW.MaxEfSearch ||

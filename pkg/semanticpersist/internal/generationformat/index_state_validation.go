@@ -13,6 +13,9 @@ func validateStateAndEncodedSize(value IndexState, limits StateLimits) (uint64, 
 	if err := value.Config.Validate(); err != nil {
 		return 0, codecErrorf(ErrCorrupt, "state config is invalid: %v", err)
 	}
+	if err := value.ModelService.Validate(value.Config.Schema.Chunking); err != nil {
+		return 0, codecErrorf(ErrCorrupt, "model service config is invalid: %v", err)
+	}
 	if value.ID == (semantic.IndexID{}) {
 		return 0, codecErrorf(ErrCorrupt, "state index ID is zero")
 	}

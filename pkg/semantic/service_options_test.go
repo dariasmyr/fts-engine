@@ -72,9 +72,78 @@ func TestNewFromIndexValidatesDerivedSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = NewFromIndex(client, original.Index(), WithMetric(vector.MetricL2Squared))
+	incompatible, err := embedding.NewClient(embedding.Model{
+		ID: "model", Revision: "revision", Dimensions: 2, ContextTokens: 512,
+		DocumentPrefix: "changed: ", QueryPrefix: "query: ",
+	}, func(_ context.Context, texts []string) ([][]float32, error) {
+		return make([][]float32, len(texts)), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewFromIndex(incompatible, original.Index())
 	if !errors.Is(err, ErrEmbeddingMismatch) {
 		t.Fatalf("NewFromIndex() error = %v, want ErrEmbeddingMismatch", err)
+	}
+}
+
+func TestNewFromIndexUsesIndexConfiguration(t *testing.T) {
+	client, _ := modelServiceTestClient(t, 512)
+	original, err := New(
+		client,
+		WithMetric(vector.MetricL2Squared),
+		WithChunking(chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}),
+		WithMaxIndexedVectors(256),
+		WithMaxChunksPerDocument(128),
+		WithSearchLimits(SearchLimits{
+			MaxResults:         12,
+			MaxCandidateChunks: 128,
+			MaxChunksPerResult: 6,
+		}),
+		WithQueryConfig(QueryConfig{MaxBytes: 128, LongQuery: LongQueryTruncate}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	service, err := NewFromIndex(client, original.Index())
+	if err != nil {
+		t.Fatal(err)
+	}
+	documents, ok := service.documentEncoder.(*modelEncoder)
+	if !ok {
+		t.Fatalf("document encoder type = %T", service.documentEncoder)
+	}
+	if documents.limits.maxChunks != 128 {
+		t.Fatalf("document encoder chunk limit = %d, want 128", documents.limits.maxChunks)
+	}
+	if service.Schema().Embedding.Metric != vector.MetricL2Squared {
+		t.Fatalf("service metric = %v, want L2 squared", service.Schema().Embedding.Metric)
+	}
+	documentChunker, ok := documents.chunker.(*chunk.Splitter)
+	if !ok {
+		t.Fatalf("document chunker type = %T", documents.chunker)
+	}
+	wantChunking := chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
+	if documentChunker.Config() != wantChunking {
+		t.Fatalf("document chunk config = %+v, want %+v", documentChunker.Config(), wantChunking)
+	}
+	if documents.queryConfig != (QueryConfig{MaxBytes: 128, LongQuery: LongQueryTruncate}) {
+		t.Fatalf("query config = %+v", documents.queryConfig)
+	}
+}
+
+func TestNewFromIndexRejectsCustomChunkerWithoutImplementation(t *testing.T) {
+	client, _ := modelServiceTestClient(t, 512)
+	original, err := New(client, WithCustomChunker(
+		failingChunker{err: errors.New("unused")},
+		ChunkingSchema{ID: "custom", Version: 1, Fingerprint: "v1:custom"},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewFromIndex(client, original.Index()); !errors.Is(err, ErrModelServiceUnavailable) {
+		t.Fatalf("NewFromIndex() error = %v, want ErrModelServiceUnavailable", err)
 	}
 }
 

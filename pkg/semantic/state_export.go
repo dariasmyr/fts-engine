@@ -41,6 +41,7 @@ func (s *segment) exportState(words []uint64) SegmentState {
 type CommittedIndexState struct {
 	ID                   IndexID
 	Config               IndexConfig
+	ModelService         ModelServiceConfig
 	Revision             Revision
 	MaxAllocatedVectorID VectorID
 	NextSegmentID        SegmentID
@@ -67,6 +68,7 @@ func (i *Index) ExportState(ctx context.Context) (*CommittedIndexState, error) {
 
 	view := i.state.view
 	config := i.config
+	modelService := i.modelService
 	revision := i.state.revision
 	maxAllocatedVectorID := i.state.maxAllocatedVectorID
 	nextSegmentID := i.state.nextSegmentID
@@ -76,6 +78,7 @@ func (i *Index) ExportState(ctx context.Context) (*CommittedIndexState, error) {
 		ctx,
 		i.id,
 		config,
+		modelService,
 		revision,
 		maxAllocatedVectorID,
 		nextSegmentID,
@@ -87,6 +90,7 @@ func exportCommittedState(
 	ctx context.Context,
 	id IndexID,
 	config IndexConfig,
+	modelService ModelServiceConfig,
 	revision Revision,
 	maxAllocatedVectorID VectorID,
 	nextSegmentID SegmentID,
@@ -105,6 +109,7 @@ func exportCommittedState(
 	return &CommittedIndexState{
 		ID:                   id,
 		Config:               config,
+		ModelService:         modelService,
 		Revision:             revision,
 		MaxAllocatedVectorID: maxAllocatedVectorID,
 		NextSegmentID:        nextSegmentID,
@@ -128,6 +133,9 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 	}
 	if config != state.Config {
 		return nil, ErrInvalidConfig
+	}
+	if err := state.ModelService.Validate(config.Schema.Chunking); err != nil {
+		return nil, err
 	}
 	if state.ID == (IndexID{}) || state.NextSegmentID == 0 {
 		return nil, ErrInternalState
@@ -260,6 +268,7 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		mutationGate: make(chan struct{}, 1),
 		id:           state.ID,
 		config:       config,
+		modelService: state.ModelService,
 		limits:       limits,
 		space:        space,
 		state: indexState{

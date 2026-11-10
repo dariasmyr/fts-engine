@@ -20,11 +20,12 @@ type Index struct {
 	mutationGate chan struct{}
 	stateMu      sync.RWMutex
 
-	id     IndexID
-	config IndexConfig
-	limits indexLimits
-	space  vector.Space
-	state  indexState
+	id           IndexID
+	config       IndexConfig
+	modelService ModelServiceConfig
+	limits       indexLimits
+	space        vector.Space
+	state        indexState
 }
 
 func NewIndex(config IndexConfig) (*Index, error) {

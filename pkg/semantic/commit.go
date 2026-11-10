@@ -222,6 +222,7 @@ func (i *Index) exportPreparedCommit(
 		ctx,
 		i.id,
 		prepared.state.config,
+		i.modelService,
 		prepared.state.revision,
 		prepared.state.maxAllocatedVectorID,
 		nextSegmentID,

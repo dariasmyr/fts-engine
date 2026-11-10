@@ -65,7 +65,6 @@ func main() {
 		root,
 		persistenceEmbedder{},
 		semanticpersist.LoadOptions{},
-		semanticOptions...,
 	)
 	must(err)
 	search(ctx, loaded, "query-v2", "after reopen")

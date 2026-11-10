@@ -63,22 +63,23 @@ func Load(
 	return index, Generation{ID: head.GenerationID}, nil
 }
 
-// LoadService loads the current generation and binds its index to a
-// model-derived semantic service. It returns the generation token for the next
-// optimistic Save.
+// LoadService loads the current generation and reconstructs its persisted
+// standard model pipeline. It returns the generation token for the next
+// optimistic Save. Indexes created with a custom chunker must be bound through
+// semantic.NewService because executable chunker implementations are not
+// persisted.
 func LoadService(
 	ctx context.Context,
 	root string,
 	client embedding.Client,
 	options LoadOptions,
-	semanticOptions ...semantic.Option,
 ) (*semantic.Service, Generation, error) {
 	index, generation, err := Load(ctx, root, options)
 	if err != nil {
 		return nil, Generation{}, err
 	}
 
-	service, err := semantic.NewFromIndex(client, index, semanticOptions...)
+	service, err := semantic.NewFromIndex(client, index)
 	if err != nil {
 		return nil, Generation{}, err
 	}

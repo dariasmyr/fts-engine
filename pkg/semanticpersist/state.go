@@ -26,8 +26,8 @@ func buildPersistenceState(
 	segments := committed.Segments
 	result := persistenceState{
 		state: generationformat.IndexState{
-			ID:     committed.ID,
-			Config: committed.Config, Revision: committed.Revision,
+			ID: committed.ID, Config: committed.Config, ModelService: committed.ModelService,
+			Revision:             committed.Revision,
 			MaxAllocatedVectorID: committed.MaxAllocatedVectorID, NextSegmentID: committed.NextSegmentID,
 			Segments: make([]generationformat.SegmentState, len(segments)),
 		},
@@ -74,6 +74,7 @@ func restoreIndex(
 		semantic.CommittedIndexState{
 			ID:                   persisted.state.ID,
 			Config:               persisted.state.Config,
+			ModelService:         persisted.state.ModelService,
 			Revision:             persisted.state.Revision,
 			MaxAllocatedVectorID: persisted.state.MaxAllocatedVectorID,
 			NextSegmentID:        persisted.state.NextSegmentID,

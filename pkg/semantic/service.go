@@ -34,20 +34,20 @@ func New(client embedding.Client, options ...Option) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	index.modelService = components.serviceConfig
 	return NewService(index, components.documents, components.queries)
 }
 
-// NewFromIndex binds a model-derived document/query pipeline to an existing
-// compatible index, including one reconstructed by Restore.
+// NewFromIndex reconstructs the persisted standard model pipeline and binds it
+// to an existing compatible index, including one reconstructed by Restore.
 func NewFromIndex(
 	client embedding.Client,
 	index *Index,
-	options ...Option,
 ) (*Service, error) {
 	if index == nil {
 		return nil, ErrInvalidConfig
 	}
-	components, err := prepareModelService(client, options)
+	components, err := prepareModelServiceFromIndex(client, index.config, index.modelService)
 	if err != nil {
 		return nil, err
 	}

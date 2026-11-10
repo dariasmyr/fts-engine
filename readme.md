@@ -636,8 +636,9 @@ generation, err := semanticpersist.CommitAndSave(
 ```
 
 `CommitAndSave` prepares one revision, persists that exact candidate, and only
-then makes it searchable. Load the current generation and bind it to the same
-model-derived pipeline with `LoadService`:
+then makes it searchable. The standard chunker configuration, query policy,
+metric, and index limits are stored with the index. `LoadService` reconstructs
+that model-derived pipeline without repeating semantic creation options:
 
 ```go
 loaded, generation, err := semanticpersist.LoadService(
@@ -648,6 +649,10 @@ loaded, generation, err := semanticpersist.LoadService(
 )
 service = loaded
 ```
+
+Custom chunker implementations cannot be serialized. Load their index with
+`semanticpersist.Load` and bind application-provided encoders through
+`semantic.NewService`.
 
 See the runnable
 [`semantic-persistence` example](examples/client-library/semantic-persistence/main.go)

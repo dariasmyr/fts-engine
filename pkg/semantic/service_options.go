@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
@@ -40,6 +41,69 @@ type QueryConfig struct {
 	LongQuery LongQueryStrategy
 }
 
+// ChunkerKind identifies how a model service splits document fields.
+type ChunkerKind uint8
+
+const (
+	ChunkerKindUnknown ChunkerKind = iota
+	ChunkerKindByteSplitter
+	ChunkerKindCustom
+)
+
+// ChunkerConfig persists the standard chunker's source configuration. Custom
+// implementations retain only their kind because executable code cannot be
+// reconstructed from persisted data.
+type ChunkerConfig struct {
+	Kind   ChunkerKind
+	Config chunk.Config
+}
+
+// ModelServiceConfig contains the model-bound preparation settings needed to
+// reconstruct the document and query encoders attached to an Index.
+type ModelServiceConfig struct {
+	Chunker ChunkerConfig
+	Query   QueryConfig
+}
+
+// Validate checks that the persisted model service descriptor agrees with the
+// index chunking schema. The zero value is valid for low-level indexes.
+func (c ModelServiceConfig) Validate(schema ChunkingSchema) error {
+	if c == (ModelServiceConfig{}) {
+		return nil
+	}
+	if !c.Query.valid() || uint64(c.Query.MaxBytes) > math.MaxUint32 {
+		return ErrInvalidConfig
+	}
+	switch c.Chunker.Kind {
+	case ChunkerKindByteSplitter:
+		config := c.Chunker.Config
+		if config.TargetBytes < 0 || config.MaxBytes < 0 || config.OverlapBytes < 0 ||
+			uint64(config.TargetBytes) > math.MaxUint32 ||
+			uint64(config.MaxBytes) > math.MaxUint32 ||
+			uint64(config.OverlapBytes) > math.MaxUint32 {
+			return ErrInvalidConfig
+		}
+		_, derived, err := newConfiguredChunker(config)
+		if err != nil {
+			return err
+		}
+		if derived != schema {
+			return ErrChunkingMismatch
+		}
+	case ChunkerKindCustom:
+		if c.Chunker.Config != (chunk.Config{}) {
+			return ErrInvalidConfig
+		}
+	default:
+		return ErrInvalidConfig
+	}
+	return nil
+}
+
+func (c QueryConfig) valid() bool {
+	return c.MaxBytes > 0 && c.LongQuery > LongQueryStrategyUnknown && c.LongQuery <= LongQueryChunk
+}
+
 // SearchLimits defines service-wide ceilings for request-local search options
 // and result shape. Every field is required.
 type SearchLimits struct {
@@ -48,7 +112,7 @@ type SearchLimits struct {
 	MaxChunksPerResult int
 }
 
-// Option configures the high-level semantic service.
+// Option configures a new high-level semantic service.
 type Option func(*serviceOptions) error
 
 type serviceOptions struct {
@@ -59,6 +123,7 @@ type serviceOptions struct {
 	maxLiveVectors       int
 	maxChunksPerDocument int
 	searchLimits         SearchLimits
+	chunkerConfig        ChunkerConfig
 }
 
 // WithMetric selects the vector distance metric. The default is cosine.
@@ -116,6 +181,7 @@ func WithChunking(config chunk.Config) Option {
 		}
 		options.chunker = chunker
 		options.chunking = chunking
+		options.chunkerConfig = ChunkerConfig{Kind: ChunkerKindByteSplitter, Config: config}
 		return nil
 	}
 }
@@ -129,6 +195,7 @@ func WithCustomChunker(chunker Chunker, chunking ChunkingSchema) Option {
 		}
 		options.chunker = chunker
 		options.chunking = chunking
+		options.chunkerConfig = ChunkerConfig{Kind: ChunkerKindCustom}
 		return nil
 	}
 }
@@ -137,7 +204,7 @@ func WithCustomChunker(chunker Chunker, chunking ChunkingSchema) Option {
 // long text queries. Short queries are always embedded as one input.
 func WithQueryConfig(config QueryConfig) Option {
 	return func(options *serviceOptions) error {
-		if config.MaxBytes <= 0 || config.LongQuery <= LongQueryStrategyUnknown || config.LongQuery > LongQueryChunk {
+		if !config.valid() {
 			return ErrInvalidConfig
 		}
 		options.queryConfig = config
@@ -152,11 +219,12 @@ func defaultServiceOptions(model embedding.Model) (serviceOptions, error) {
 	maxChunkBytes := min(model.ContextTokens, 4096)
 	targetBytes := max(1, maxChunkBytes*3/4)
 	overlapBytes := min(targetBytes-1, maxChunkBytes/8)
-	splitter, chunking, err := newConfiguredChunker(chunk.Config{
+	chunkerConfig := chunk.Config{
 		TargetBytes:  targetBytes,
 		MaxBytes:     maxChunkBytes,
 		OverlapBytes: overlapBytes,
-	})
+	}
+	splitter, chunking, err := newConfiguredChunker(chunkerConfig)
 	if err != nil {
 		return serviceOptions{}, fmt.Errorf("default chunking: %w", err)
 	}
@@ -164,6 +232,7 @@ func defaultServiceOptions(model embedding.Model) (serviceOptions, error) {
 		metric:               vector.MetricCosine,
 		chunker:              splitter,
 		chunking:             chunking,
+		chunkerConfig:        ChunkerConfig{Kind: ChunkerKindByteSplitter, Config: chunkerConfig},
 		maxLiveVectors:       defaultMaxLiveVectors,
 		maxChunksPerDocument: defaultMaxChunksPerDocument,
 		searchLimits: SearchLimits{
@@ -206,30 +275,84 @@ func defaultInputLimits(dimensions, maxChunks int) (modelInputLimits, error) {
 }
 
 type modelServiceComponents struct {
-	indexConfig IndexConfig
-	documents   *modelEncoder
-	queries     *modelEncoder
+	indexConfig   IndexConfig
+	serviceConfig ModelServiceConfig
+	documents     *modelEncoder
+	queries       *modelEncoder
 }
 
 func prepareModelService(
 	client embedding.Client,
 	options []Option,
 ) (modelServiceComponents, error) {
-	if client == nil {
-		return modelServiceComponents{}, ErrInvalidConfig
-	}
-	settings, err := defaultServiceOptions(client.Model())
+	settings, err := configuredServiceOptions(client, options)
 	if err != nil {
 		return modelServiceComponents{}, err
 	}
+	return buildModelService(client, settings)
+}
+
+func prepareModelServiceFromIndex(
+	client embedding.Client,
+	indexConfig IndexConfig,
+	serviceConfig ModelServiceConfig,
+) (modelServiceComponents, error) {
+	if client == nil {
+		return modelServiceComponents{}, ErrInvalidConfig
+	}
+	if serviceConfig.Chunker.Kind != ChunkerKindByteSplitter {
+		return modelServiceComponents{}, ErrModelServiceUnavailable
+	}
+	if err := serviceConfig.Validate(indexConfig.Schema.Chunking); err != nil {
+		return modelServiceComponents{}, err
+	}
+	chunker, chunking, err := newConfiguredChunker(serviceConfig.Chunker.Config)
+	if err != nil {
+		return modelServiceComponents{}, err
+	}
+	if chunking != indexConfig.Schema.Chunking {
+		return modelServiceComponents{}, ErrChunkingMismatch
+	}
+	settings := serviceOptions{
+		metric:               indexConfig.Schema.Embedding.Metric,
+		chunker:              chunker,
+		chunking:             chunking,
+		chunkerConfig:        serviceConfig.Chunker,
+		queryConfig:          serviceConfig.Query,
+		maxLiveVectors:       indexConfig.Limits.MaxLiveVectors,
+		maxChunksPerDocument: indexConfig.Limits.MaxChunksPerDocument,
+		searchLimits: SearchLimits{
+			MaxResults:         indexConfig.Limits.MaxDocumentsPerSearch,
+			MaxCandidateChunks: indexConfig.Limits.MaxChunkCandidates,
+			MaxChunksPerResult: indexConfig.Limits.MaxChunksPerDocumentHit,
+		},
+	}
+	return buildModelService(client, settings)
+}
+
+func configuredServiceOptions(client embedding.Client, options []Option) (serviceOptions, error) {
+	if client == nil {
+		return serviceOptions{}, ErrInvalidConfig
+	}
+	settings, err := defaultServiceOptions(client.Model())
+	if err != nil {
+		return serviceOptions{}, err
+	}
 	for _, option := range options {
 		if option == nil {
-			return modelServiceComponents{}, ErrInvalidConfig
+			return serviceOptions{}, ErrInvalidConfig
 		}
 		if err := option(&settings); err != nil {
-			return modelServiceComponents{}, err
+			return serviceOptions{}, err
 		}
 	}
+	return settings, nil
+}
+
+func buildModelService(
+	client embedding.Client,
+	settings serviceOptions,
+) (modelServiceComponents, error) {
 	if settings.queryConfig.MaxBytes > client.Model().ContextTokens {
 		return modelServiceComponents{}, ErrInvalidConfig
 	}
@@ -241,6 +364,10 @@ func prepareModelService(
 	}
 	schema, err := DeriveSchema(client.Model(), settings.chunking, settings.metric)
 	if err != nil {
+		return modelServiceComponents{}, err
+	}
+	serviceConfig := ModelServiceConfig{Chunker: settings.chunkerConfig, Query: settings.queryConfig}
+	if err := serviceConfig.Validate(schema.Chunking); err != nil {
 		return modelServiceComponents{}, err
 	}
 	inputLimits, err := defaultInputLimits(
@@ -273,14 +400,18 @@ func prepareModelService(
 		return modelServiceComponents{}, err
 	}
 	return modelServiceComponents{
-		indexConfig: IndexConfig{Schema: schema, Limits: Limits{
-			MaxLiveVectors:          settings.maxLiveVectors,
-			MaxChunksPerDocument:    inputLimits.maxChunks,
-			MaxDocumentsPerSearch:   settings.searchLimits.MaxResults,
-			MaxChunkCandidates:      settings.searchLimits.MaxCandidateChunks,
-			MaxChunksPerDocumentHit: settings.searchLimits.MaxChunksPerResult,
-		}},
-		documents: documents,
-		queries:   queries,
+		indexConfig: IndexConfig{
+			Schema: schema,
+			Limits: Limits{
+				MaxLiveVectors:          settings.maxLiveVectors,
+				MaxChunksPerDocument:    inputLimits.maxChunks,
+				MaxDocumentsPerSearch:   settings.searchLimits.MaxResults,
+				MaxChunkCandidates:      settings.searchLimits.MaxCandidateChunks,
+				MaxChunksPerDocumentHit: settings.searchLimits.MaxChunksPerResult,
+			},
+		},
+		serviceConfig: serviceConfig,
+		documents:     documents,
+		queries:       queries,
 	}, nil
 }

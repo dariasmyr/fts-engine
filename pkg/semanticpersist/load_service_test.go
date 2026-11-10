@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist"
-	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
@@ -83,11 +83,17 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLoadServiceDerivesCompatibilityFromModelAndSemanticOptions(t *testing.T) {
+func TestLoadServiceRestoresPersistedModelServiceConfig(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
 	client := persistentTestClient(t, "v1")
-	service, err := semantic.New(client)
+	service, err := semantic.New(
+		client,
+		semantic.WithChunking(chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}),
+		semantic.WithQueryConfig(semantic.QueryConfig{
+			MaxBytes: 16, LongQuery: semantic.LongQueryTruncate,
+		}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,23 +111,22 @@ func TestLoadServiceDerivesCompatibilityFromModelAndSemanticOptions(t *testing.T
 		root,
 		client,
 		semanticpersist.LoadOptions{},
-		semantic.WithQueryConfig(semantic.QueryConfig{
-			MaxBytes: 16, LongQuery: semantic.LongQueryTruncate,
-		}),
 	)
 	if err != nil {
-		t.Fatalf("LoadService() with query-only change: %v", err)
+		t.Fatalf("LoadService(): %v", err)
 	}
 	if loaded == nil {
 		t.Fatal("LoadService() returned nil service")
+	}
+	if loaded.RetrievalFingerprint() != service.RetrievalFingerprint() {
+		t.Fatalf("retrieval fingerprint = %q, want %q", loaded.RetrievalFingerprint(), service.RetrievalFingerprint())
 	}
 
 	_, _, err = semanticpersist.LoadService(
 		ctx,
 		root,
-		client,
+		persistentTestClient(t, "v2"),
 		semanticpersist.LoadOptions{},
-		semantic.WithMetric(vector.MetricL2Squared),
 	)
 	if !errors.Is(err, semantic.ErrEmbeddingMismatch) {
 		t.Fatalf("LoadService() mismatch error = %v, want semantic.ErrEmbeddingMismatch", err)

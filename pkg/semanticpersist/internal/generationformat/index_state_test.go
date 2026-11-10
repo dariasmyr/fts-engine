@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/format"
+	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
@@ -17,8 +18,8 @@ func TestStateVersionAndLifecycleLimitsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version := binary.LittleEndian.Uint16(data[4:6]); version != 11 {
-		t.Fatalf("state version = %d, want 11", version)
+	if version := binary.LittleEndian.Uint16(data[4:6]); version != 12 {
+		t.Fatalf("state version = %d, want 12", version)
 	}
 	decoded, err := DecodeState(data, limits)
 	if err != nil {
@@ -31,9 +32,39 @@ func TestStateVersionAndLifecycleLimitsRoundTrip(t *testing.T) {
 		t.Fatalf("decoded index ID = %x, want %x", decoded.ID, value.ID)
 	}
 
-	binary.LittleEndian.PutUint16(data[4:6], 10)
+	binary.LittleEndian.PutUint16(data[4:6], 11)
 	if _, err := DecodeState(data, limits); !errors.Is(err, ErrUnsupportedVersion) {
 		t.Fatalf("DecodeState old version error = %v, want ErrUnsupportedVersion", err)
+	}
+}
+
+func TestStateModelServiceConfigRoundTrip(t *testing.T) {
+	value := testIndexState(t)
+	chunkConfig := chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
+	fingerprint, err := chunkConfig.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	value.Config.Schema.Chunking = semantic.ChunkingSchema{
+		ID: chunk.SplitterID, Version: chunk.SplitterVersion, Fingerprint: fingerprint,
+	}
+	value.ModelService = semantic.ModelServiceConfig{
+		Chunker: semantic.ChunkerConfig{Kind: semantic.ChunkerKindByteSplitter, Config: chunkConfig},
+		Query: semantic.QueryConfig{
+			MaxBytes: 16, LongQuery: semantic.LongQueryTruncate,
+		},
+	}
+
+	data, _, err := EncodeState(value, testStateLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeState(data, testStateLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ModelService != value.ModelService {
+		t.Fatalf("model service config = %+v, want %+v", decoded.ModelService, value.ModelService)
 	}
 }
 
