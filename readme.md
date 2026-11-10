@@ -100,32 +100,43 @@ Notes:
 Embedding providers implement the provider-neutral `embedding.Client` interface.
 Every client is permanently bound to one validated `embedding.Model`; custom
 functions can be adapted with `embedding.NewClient`. `semantic.New` creates the
-document and query paths, applies model prefixes, and derives persisted
-compatibility internally:
+document and query paths, applies model prefixes, and stores one static
+`SemanticConfig` with the index:
 
 ```go
-service, err := semantic.New(client)
+config, err := semantic.DefaultSemanticConfig(client.Model())
+if err != nil {
+	return err
+}
+service, err := semantic.New(client, config)
 if err != nil {
 	return err
 }
 ```
 
-Defaults can be replaced without assembling schemas or encoders. For example,
-the chunk count is one authoritative bound for both embedding memory and index
-ingestion, while search ceilings are configured together:
+All persisted static parameters are configured directly through
+`SemanticConfig`. The chunk count is one authoritative bound for both embedding
+memory and index ingestion, while search ceilings are configured together:
 
 ```go
-service, err := semantic.New(
-	client,
-	semantic.WithMaxIndexedVectors(2_000_000),
-	semantic.WithMaxChunksPerDocument(96),
-	semantic.WithSearchLimits(semantic.SearchLimits{
-		MaxResults:         50,
-		MaxCandidateChunks: 500,
-		MaxChunksPerResult: 3,
-	}),
-)
+config, err := semantic.DefaultSemanticConfig(client.Model())
+if err != nil {
+	return err
+}
+config.Index.Limits.MaxLiveVectors = 2_000_000
+config.Index.Limits.MaxStaleVectors = 2_000_000
+config.Index.Limits.MaxChunksPerDocument = 96
+config.Index.Search = semantic.SearchConfig{
+	MaxResults:         50,
+	MaxCandidateChunks: 500,
+	MaxChunksPerResult: 3,
+}
+service, err := semantic.New(client, config)
 ```
+
+`ChunkSplitter` is not persisted. A custom splitter is accepted only by
+`semantic.NewCustom` (or `NewCustomFromIndex` for an existing index), and its
+config must use `ChunkingKindCustom`.
 
 Index documents, commit pending vectors, and search them:
 
@@ -148,9 +159,11 @@ if err := service.Commit(ctx); err != nil {
 	return err
 }
 
-result, err := service.SearchWithOptions(ctx, "French hotel", 10, semantic.SearchOptions{
-	EfSearch:       64,
-	VisitLimit:     10_000,
+result, err := service.SearchWithConfig(ctx, "French hotel", 10, semantic.QueryConfig{
+	MaxBytes:        512,
+	LongQuery:       semantic.LongQueryTruncate,
+	EfSearch:        64,
+	VisitLimit:      10_000,
 	CandidateChunks: 200,
 })
 if err != nil {
@@ -175,7 +188,7 @@ See the runnable [`semantic-commit` example](examples/client-library/semantic-co
 The runnable
 [`semantic-ollama` example](examples/client-library/semantic-ollama/main.go)
 derives separate document/query input paths from the prefixes in
-`client.Model()` while keeping one persisted document schema. Advanced callers
+`client.Model()` while keeping one persisted semantic config. Advanced callers
 can construct an index and individual encoders explicitly, then bind them with
 `semantic.NewService`.
 
@@ -617,7 +630,11 @@ Create the model-bound service in memory, then atomically commit and capture the
 revision that will be saved:
 
 ```go
-service, err := semantic.New(embeddingClient)
+config, err := semantic.DefaultSemanticConfig(embeddingClient.Model())
+if err != nil {
+	return err
+}
+service, err := semantic.New(embeddingClient, config)
 if err != nil {
 	return err
 }
@@ -636,9 +653,10 @@ generation, err := semanticpersist.CommitAndSave(
 ```
 
 `CommitAndSave` prepares one revision, persists that exact candidate, and only
-then makes it searchable. The standard chunker configuration, query policy,
-metric, and index limits are stored with the index. `LoadService` reconstructs
-that model-derived pipeline without repeating semantic creation options:
+then makes it searchable. The complete static `SemanticConfig`—model,
+chunking, metric, limits, search ceilings, and HNSW settings—is
+stored with the index. `LoadService` reconstructs that model-derived pipeline
+from the persisted config:
 
 ```go
 loaded, generation, err := semanticpersist.LoadService(
@@ -650,9 +668,9 @@ loaded, generation, err := semanticpersist.LoadService(
 service = loaded
 ```
 
-Custom chunker implementations cannot be serialized. Load their index with
-`semanticpersist.Load` and bind application-provided encoders through
-`semantic.NewService`.
+Custom `ChunkSplitter` implementations cannot be serialized. Load their index
+with `semanticpersist.Load` and bind the runtime splitter through
+`semantic.NewCustomFromIndex`.
 
 See the runnable
 [`semantic-persistence` example](examples/client-library/semantic-persistence/main.go)

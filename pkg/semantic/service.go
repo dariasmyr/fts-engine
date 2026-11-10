@@ -9,37 +9,47 @@ import (
 )
 
 // Service provides document-level semantic indexing and text search. New and
-// NewFromIndex own model-bound document/query preparation; NewService accepts
+// NewCustom own model-bound document/query preparation; NewService accepts
 // custom encoders. Index remains independent from document encoding.
 type Service struct {
-	index                *Index
-	documentEncoder      DocumentEncoder
-	queryEncoder         QueryEncoder
-	retrievalFingerprint string
+	index           *Index
+	documentEncoder DocumentEncoder
+	queryEncoder    QueryEncoder
 }
 
-type retrievalDescriber interface {
-	RetrievalFingerprint() string
-}
-
-// New constructs the high-level semantic service from one
-// model-bound embedding client. Model metadata, role prefixes, schemas, and
-// vector-space configuration are derived internally.
-func New(client embedding.Client, options ...Option) (*Service, error) {
-	components, err := prepareModelService(client, options)
+// New constructs a model-backed service with the built-in chunk splitter.
+func New(client embedding.Client, config SemanticConfig) (*Service, error) {
+	components, err := prepareStandardModelService(client, config)
 	if err != nil {
 		return nil, err
 	}
-	index, err := NewIndex(components.indexConfig)
+	index, err := NewIndex(components.config)
 	if err != nil {
 		return nil, err
 	}
-	index.modelService = components.serviceConfig
+	return NewService(index, components.documents, components.queries)
+}
+
+// NewCustom constructs a model-backed service with a runtime chunk splitter.
+// The static config must select ChunkingKindCustom.
+func NewCustom(
+	client embedding.Client,
+	config SemanticConfig,
+	splitter ChunkSplitter,
+) (*Service, error) {
+	components, err := prepareCustomModelService(client, config, splitter)
+	if err != nil {
+		return nil, err
+	}
+	index, err := NewIndex(components.config)
+	if err != nil {
+		return nil, err
+	}
 	return NewService(index, components.documents, components.queries)
 }
 
 // NewFromIndex reconstructs the persisted standard model pipeline and binds it
-// to an existing compatible index, including one reconstructed by Restore.
+// to an existing index, including one reconstructed by Restore.
 func NewFromIndex(
 	client embedding.Client,
 	index *Index,
@@ -47,16 +57,33 @@ func NewFromIndex(
 	if index == nil {
 		return nil, ErrInvalidConfig
 	}
-	components, err := prepareModelServiceFromIndex(client, index.config, index.modelService)
+	components, err := prepareStandardModelService(client, index.config)
 	if err != nil {
-		return nil, err
+		return nil, ErrModelServiceUnavailable
+	}
+	return NewService(index, components.documents, components.queries)
+}
+
+// NewCustomFromIndex binds a runtime chunk splitter to an existing custom
+// index, including one reconstructed by Restore.
+func NewCustomFromIndex(
+	client embedding.Client,
+	index *Index,
+	splitter ChunkSplitter,
+) (*Service, error) {
+	if index == nil {
+		return nil, ErrInvalidConfig
+	}
+	components, err := prepareCustomModelService(client, index.config, splitter)
+	if err != nil {
+		return nil, ErrModelServiceUnavailable
 	}
 	return NewService(index, components.documents, components.queries)
 }
 
 // NewService binds custom document and query encoders to an existing index.
-// Both encoder schemas must match the index schema. When either encoder exposes
-// a retrieval fingerprint, both must expose the same non-empty fingerprint.
+// Encoders are responsible for producing vectors with the dimensions expected
+// by the index; each encoded batch is validated before it is staged or searched.
 func NewService(
 	index *Index,
 	documentEncoder DocumentEncoder,
@@ -65,35 +92,12 @@ func NewService(
 	if index == nil || documentEncoder == nil || queryEncoder == nil {
 		return nil, ErrInvalidConfig
 	}
-	if err := validateSchemaCompatibility(documentEncoder.Schema(), index.Schema()); err != nil {
-		return nil, err
-	}
-	if err := validateSchemaCompatibility(queryEncoder.Schema(), index.Schema()); err != nil {
-		return nil, err
-	}
-	retrievalFingerprint := ""
-	documentRetrieval, documentOK := documentEncoder.(retrievalDescriber)
-	queryRetrieval, queryOK := queryEncoder.(retrievalDescriber)
-	if documentOK != queryOK {
-		return nil, ErrEmbeddingMismatch
-	}
-	if documentOK {
-		retrievalFingerprint = documentRetrieval.RetrievalFingerprint()
-		if retrievalFingerprint == "" || retrievalFingerprint != queryRetrieval.RetrievalFingerprint() {
-			return nil, ErrEmbeddingMismatch
-		}
-	}
 	return &Service{
-		index:                index,
-		documentEncoder:      documentEncoder,
-		queryEncoder:         queryEncoder,
-		retrievalFingerprint: retrievalFingerprint,
+		index:           index,
+		documentEncoder: documentEncoder,
+		queryEncoder:    queryEncoder,
 	}, nil
 }
-
-// RetrievalFingerprint reports the versioned document/query compatibility
-// contract when provided by the configured encoders.
-func (s *Service) RetrievalFingerprint() string { return s.retrievalFingerprint }
 
 // Index returns the underlying semantic index for operations
 // that work directly with prepared embeddings.
@@ -101,10 +105,8 @@ func (s *Service) Index() *Index {
 	return s.index
 }
 
-// Schema returns the semantic compatibility schema.
-func (s *Service) Schema() Schema {
-	return s.index.Schema()
-}
+// Config returns the static semantic configuration.
+func (s *Service) Config() SemanticConfig { return s.index.Config() }
 
 // AddDocument encodes and stages a new document.
 // Changes become searchable after Commit.
@@ -163,21 +165,21 @@ func (s *Service) SearchDocuments(
 	query fts.Document,
 	maxResultCount int,
 ) (DocumentSearchResult, error) {
-	return s.SearchDocumentsWithOptions(
+	return s.SearchDocumentsWithConfig(
 		ctx,
 		query,
 		maxResultCount,
-		SearchOptions{},
+		QueryConfig{},
 	)
 }
 
-// SearchDocumentsWithOptions encodes the query and searches
-// with explicit ANN and grouping options.
-func (s *Service) SearchDocumentsWithOptions(
+// SearchDocumentsWithConfig encodes the query and searches with explicit
+// request-local query configuration.
+func (s *Service) SearchDocumentsWithConfig(
 	ctx context.Context,
 	query fts.Document,
 	maxResultCount int,
-	options SearchOptions,
+	config QueryConfig,
 ) (DocumentSearchResult, error) {
 	if ctx == nil {
 		return DocumentSearchResult{}, vector.ErrNilContext
@@ -186,7 +188,7 @@ func (s *Service) SearchDocumentsWithOptions(
 		return DocumentSearchResult{}, err
 	}
 
-	queries, err := s.queryEncoder.EncodeQueryDocument(ctx, query)
+	queries, err := s.queryEncoder.EncodeQueryDocument(ctx, query, config)
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
@@ -195,7 +197,7 @@ func (s *Service) SearchDocumentsWithOptions(
 		ctx,
 		queries,
 		maxResultCount,
-		options,
+		config,
 	)
 }
 
@@ -205,16 +207,16 @@ func (s *Service) Search(
 	query string,
 	maxResultCount int,
 ) (DocumentSearchResult, error) {
-	return s.SearchWithOptions(ctx, query, maxResultCount, SearchOptions{})
+	return s.SearchWithConfig(ctx, query, maxResultCount, QueryConfig{})
 }
 
-// SearchWithOptions searches one text query with explicit ANN and grouping
-// options. Query input handling is configured when the service is constructed.
-func (s *Service) SearchWithOptions(
+// SearchWithConfig searches one text query with explicit request-local query
+// configuration.
+func (s *Service) SearchWithConfig(
 	ctx context.Context,
 	query string,
 	maxResultCount int,
-	options SearchOptions,
+	config QueryConfig,
 ) (DocumentSearchResult, error) {
 	if ctx == nil {
 		return DocumentSearchResult{}, vector.ErrNilContext
@@ -222,11 +224,11 @@ func (s *Service) SearchWithOptions(
 	if err := ctx.Err(); err != nil {
 		return DocumentSearchResult{}, err
 	}
-	queries, err := s.queryEncoder.EncodeQuery(ctx, query)
+	queries, err := s.queryEncoder.EncodeQuery(ctx, query, config)
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}
-	return s.index.Search(ctx, queries, maxResultCount, options)
+	return s.index.Search(ctx, queries, maxResultCount, config)
 }
 
 // Commit publishes pending document mutations as a searchable view.

@@ -47,14 +47,12 @@ type InputLimits struct {
 // EncoderConfig configures one advanced document or query encoder. Normal
 // model-bound services should use semantic.New instead.
 type EncoderConfig struct {
-	Schema semantic.Schema
 	Metric vector.Metric
 	Role   InputRole
 	Limits InputLimits
-	// Chunker splits document fields into byte ranges. Custom implementations
-	// require an explicit Schema.
-	Chunker semantic.Chunker
-	Client  embedding.Client
+	// Splitter splits document fields into byte ranges.
+	Splitter semantic.ChunkSplitter
+	Client   embedding.Client
 }
 
 func (c EncoderConfig) Validate() error { _, _, _, err := c.normalized(); return err }
@@ -68,73 +66,35 @@ func (c EncoderConfig) normalized() (EncoderConfig, int, string, error) {
 	if model.Validate() != nil {
 		return EncoderConfig{}, 0, "", ErrInvalidConfig
 	}
-	derived := c.Schema == (semantic.Schema{})
-	if derived {
-		chunking, err := deriveChunkingSchema(c.Chunker)
-		if err != nil {
-			return EncoderConfig{}, 0, "", err
-		}
-		schema, err := semantic.DeriveSchema(model, chunking, c.Metric)
-		if err != nil {
-			return EncoderConfig{}, 0, "", fmt.Errorf("%w: derive schema: %v", ErrInvalidConfig, err)
-		}
-		c.Schema = schema
-	}
-	if !c.Schema.IsValid() || model.ID != c.Schema.Embedding.ModelID ||
-		model.Revision != c.Schema.Embedding.ModelRevision ||
-		model.Dimensions != c.Schema.Embedding.Dimensions {
+	if !c.Metric.Valid() {
 		return EncoderConfig{}, 0, "", ErrInvalidConfig
 	}
-	space, err := c.Schema.Embedding.VectorSpace()
+	space, err := vector.NewSpace(model.Dimensions, c.Metric)
 	if err != nil {
-		return EncoderConfig{}, 0, "", fmt.Errorf("%w: embedding schema: %v", ErrInvalidConfig, err)
+		return EncoderConfig{}, 0, "", fmt.Errorf("%w: vector space: %v", ErrInvalidConfig, err)
 	}
 	prefix := ""
-	if c.Role != RoleUnspecified || derived {
-		if c.Role == RoleUnspecified {
-			c.Role = RoleDocument
-		}
-		switch c.Role {
-		case RoleDocument:
-			prefix = model.DocumentPrefix
-		case RoleQuery:
-			prefix = model.QueryPrefix
-		default:
-			return EncoderConfig{}, 0, "", ErrInvalidConfig
-		}
+	if c.Role == RoleUnspecified {
+		c.Role = RoleDocument
+	}
+	switch c.Role {
+	case RoleDocument:
+		prefix = model.DocumentPrefix
+	case RoleQuery:
+		prefix = model.QueryPrefix
+	default:
+		return EncoderConfig{}, 0, "", ErrInvalidConfig
 	}
 	return c, space.Dimensions(), prefix, nil
 }
 
-func deriveChunkingSchema(chunker semantic.Chunker) (semantic.ChunkingSchema, error) {
-	if chunker == nil {
-		return semantic.ChunkingSchema{
-			ID: chunk.WholeID, Version: chunk.WholeVersion, Fingerprint: chunk.WholeFingerprint(),
-		}, nil
-	}
-	splitter, ok := chunker.(*chunk.Splitter)
-	if !ok {
-		return semantic.ChunkingSchema{}, ErrInvalidConfig
-	}
-	config := splitter.Config()
-	fingerprint, err := config.Fingerprint()
-	if err != nil {
-		return semantic.ChunkingSchema{}, fmt.Errorf("%w: chunking config: %v", ErrInvalidConfig, err)
-	}
-	return semantic.ChunkingSchema{
-		ID: chunk.SplitterID, Version: chunk.SplitterVersion, Fingerprint: fingerprint,
-	}, nil
-}
-
 // Encoder prepares source documents or queries as semantic vectors.
 type Encoder struct {
-	chunker              semantic.Chunker
-	client               embedding.Client
-	schema               semantic.Schema
-	limits               InputLimits
-	dimensions           int
-	prefix               string
-	retrievalFingerprint string
+	splitter   semantic.ChunkSplitter
+	client     embedding.Client
+	limits     InputLimits
+	dimensions int
+	prefix     string
 }
 
 // NewEncoder constructs one role-specific encoder.
@@ -143,22 +103,11 @@ func NewEncoder(config EncoderConfig) (*Encoder, error) {
 	if err != nil {
 		return nil, err
 	}
-	retrievalFingerprint, err := semantic.DeriveRetrievalFingerprint(config.Schema, config.Client.Model())
-	if err != nil {
-		return nil, fmt.Errorf("%w: derive retrieval compatibility: %v", ErrInvalidConfig, err)
-	}
 	return &Encoder{
-		chunker: config.Chunker, client: config.Client,
-		schema: config.Schema, limits: config.Limits, dimensions: dimensions,
-		prefix: prefix, retrievalFingerprint: retrievalFingerprint,
+		splitter: config.Splitter, client: config.Client,
+		limits: config.Limits, dimensions: dimensions, prefix: prefix,
 	}, nil
 }
-
-func (e *Encoder) Schema() semantic.Schema { return e.schema }
-
-// RetrievalFingerprint reports the versioned document/query contract used for
-// evaluation. It is not persisted as document compatibility.
-func (e *Encoder) RetrievalFingerprint() string { return e.retrievalFingerprint }
 
 // EncodeDocument prepares a source document for indexing.
 func (e *Encoder) EncodeDocument(ctx context.Context, document fts.Document) ([]semantic.ChunkEmbedding, error) {
@@ -167,7 +116,7 @@ func (e *Encoder) EncodeDocument(ctx context.Context, document fts.Document) ([]
 
 // EncodeQuery prepares a direct text query as one embedding input. Normal
 // model-bound services should use semantic.New for explicit long-query policy.
-func (e *Encoder) EncodeQuery(ctx context.Context, query string) ([]semantic.ChunkEmbedding, error) {
+func (e *Encoder) EncodeQuery(ctx context.Context, query string, _ semantic.QueryConfig) ([]semantic.ChunkEmbedding, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -192,6 +141,7 @@ func (e *Encoder) EncodeQuery(ctx context.Context, query string) ([]semantic.Chu
 func (e *Encoder) EncodeQueryDocument(
 	ctx context.Context,
 	document fts.Document,
+	_ semantic.QueryConfig,
 ) ([]semantic.ChunkEmbedding, error) {
 	return e.encodeDocument(ctx, document)
 }
@@ -290,7 +240,7 @@ func (e *Encoder) chunkDocument(ctx context.Context, document fts.Document) ([]e
 		}
 
 		var ranges []chunk.Range
-		if e.chunker == nil {
+		if e.splitter == nil {
 			whole, err := chunk.Whole(text)
 			if err != nil {
 				return nil, fmt.Errorf("%w: field %q: %v", ErrInvalidChunk, field, err)
@@ -298,7 +248,7 @@ func (e *Encoder) chunkDocument(ctx context.Context, document fts.Document) ([]e
 			ranges = []chunk.Range{whole}
 		} else {
 			var err error
-			ranges, err = e.chunker.Split(text)
+			ranges, err = e.splitter.Split(text)
 			if err != nil {
 				return nil, fmt.Errorf("%w: field %q: %v", ErrInvalidChunk, field, err)
 			}
@@ -317,11 +267,11 @@ func (e *Encoder) chunkDocument(ctx context.Context, document fts.Document) ([]e
 				return nil, fmt.Errorf("%w: field %q: %v", ErrInvalidChunk, field, err)
 			}
 			id := fmt.Sprintf("chunk-%06d", i)
-			if e.chunker == nil {
+			if e.splitter == nil {
 				id = "_whole"
 			}
 			if field != fts.DefaultField {
-				if e.chunker == nil {
+				if e.splitter == nil {
 					id = "_whole/" + field
 				} else {
 					id = field + "/" + id

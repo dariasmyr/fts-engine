@@ -210,7 +210,7 @@ func (s segmentStore) verify(ref generationformat.SegmentRef) error {
 	return persistfs.SyncDirectory(path)
 }
 
-func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef, config semantic.IndexConfig, state generationformat.SegmentState) (semantic.SegmentState, error) {
+func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef, config semantic.SemanticConfig, state generationformat.SegmentState) (semantic.SegmentState, error) {
 	if !validObjectID(ref.ObjectID) || ref.ObjectID != segmentObjectID(ref.Vectors, ref.Graph) {
 		return semantic.SegmentState{}, ErrCorrupt
 	}
@@ -246,8 +246,8 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 		vectors,
 		ref.Vectors,
 		hnsw.SearchConfig{
-			EfSearch:   config.HNSW.DefaultEfSearch,
-			VisitLimit: config.HNSW.DefaultVisitLimit,
+			EfSearch:   config.Index.HNSW.DefaultEfSearch,
+			VisitLimit: config.Index.HNSW.DefaultVisitLimit,
 		},
 		hnswSegmentLimits(s.limits),
 	)
@@ -259,7 +259,6 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 	}
 	segment := semantic.SegmentState{
 		ID:      state.ID,
-		Schema:  config.Schema,
 		Rows:    state.Rows,
 		Vectors: vectors,
 		Index:   index,
@@ -270,8 +269,8 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 	return segment, nil
 }
 
-func validateSegmentData(data semantic.SegmentState, config semantic.IndexConfig, limits Limits) error {
-	semanticLimits := config.Limits
+func validateSegmentData(data semantic.SegmentState, config semantic.SemanticConfig, limits Limits) error {
+	semanticLimits := config.Index.Limits
 	if data.Vectors == nil || data.Index == nil {
 		return ErrLimitExceeded
 	}
@@ -282,9 +281,9 @@ func validateSegmentData(data semantic.SegmentState, config semantic.IndexConfig
 		semanticLimits.MaxLiveVectors <= 0 || semanticLimits.MaxStaleVectors < 0 ||
 		semanticLimits.MaxLiveVectors > limits.MaxVectors-semanticLimits.MaxStaleVectors ||
 		semanticLimits.MaxSegments <= 0 || semanticLimits.MaxSegments > limits.MaxVectors ||
-		semanticLimits.MaxDocumentsPerSearch <= 0 || semanticLimits.MaxDocumentsPerSearch > limits.MaxK ||
-		semanticLimits.MaxChunkCandidates < semanticLimits.MaxDocumentsPerSearch || semanticLimits.MaxChunkCandidates > limits.MaxK ||
-		semanticLimits.MaxChunksPerDocumentHit <= 0 || semanticLimits.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
+		config.Index.Search.MaxResults <= 0 || config.Index.Search.MaxResults > limits.MaxK ||
+		config.Index.Search.MaxCandidateChunks < config.Index.Search.MaxResults || config.Index.Search.MaxCandidateChunks > limits.MaxK ||
+		config.Index.Search.MaxChunksPerResult <= 0 || config.Index.Search.MaxChunksPerResult > limits.MaxChunksPerDocument {
 		return ErrLimitExceeded
 	}
 	components, ok := format.CheckedMultiplyUint64(uint64(length), uint64(dimensions))
@@ -296,9 +295,9 @@ func validateSegmentData(data semantic.SegmentState, config semantic.IndexConfig
 		return ErrLimitExceeded
 	}
 	directedLinks, ok := format.CheckedAddUint64(uint64(len(topology.Level0Links)), uint64(len(topology.UpperLinks)))
-	if !ok || config.HNSW.MaxEfSearch > limits.MaxEfSearch || config.HNSW.MaxVisitLimit > limits.MaxVisitLimit ||
-		topology.MaxNeighbors != config.HNSW.MaxNeighbors || topology.LevelZeroMaxNeighbors != config.HNSW.MaxNeighbors*2 ||
-		topology.EfConstruction != config.HNSW.EfConstruction || topology.Seed != config.HNSW.Seed ||
+	if !ok || config.Index.HNSW.MaxEfSearch > limits.MaxEfSearch || config.Index.HNSW.MaxVisitLimit > limits.MaxVisitLimit ||
+		topology.MaxNeighbors != config.Index.HNSW.MaxNeighbors || topology.LevelZeroMaxNeighbors != config.Index.HNSW.MaxNeighbors*2 ||
+		topology.EfConstruction != config.Index.HNSW.EfConstruction || topology.Seed != config.Index.HNSW.Seed ||
 		directedLinks > limits.MaxGraphLinks {
 		return ErrLimitExceeded
 	}

@@ -107,7 +107,7 @@ type commitState struct {
 	pending              pendingBatch
 	locations            map[VectorID]vectorLocation
 	base                 *IndexView
-	config               IndexConfig
+	config               SemanticConfig
 	limits               indexLimits
 }
 
@@ -222,7 +222,6 @@ func (i *Index) exportPreparedCommit(
 		ctx,
 		i.id,
 		prepared.state.config,
-		i.modelService,
 		prepared.state.revision,
 		prepared.state.maxAllocatedVectorID,
 		nextSegmentID,
@@ -253,11 +252,11 @@ func (i *Index) publishPreparedCommit(prepared preparedCommit) {
 	}
 }
 
-func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pendingVector, config IndexConfig) (*segment, error) {
+func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pendingVector, config SemanticConfig) (*segment, error) {
 	if len(pending) == 0 {
 		return nil, nil
 	}
-	dimensions := config.Schema.Embedding.Dimensions
+	dimensions := config.Model.Dimensions
 	flatVectors := make([]float32, len(pending)*dimensions)
 	rows := make([]VectorRow, len(pending))
 	for n, item := range pending {
@@ -269,7 +268,7 @@ func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pen
 		}
 		rows[n] = item.row
 	}
-	space, err := config.Schema.Embedding.VectorSpace()
+	space, err := vector.NewSpace(config.Model.Dimensions, config.Index.Metric)
 	if err != nil {
 		return nil, err
 	}
@@ -277,19 +276,13 @@ func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pen
 	if err != nil {
 		return nil, err
 	}
-	buildConfig, ok := config.hnswBuildConfig()
-	if !ok {
-		return nil, ErrInvalidConfig
-	}
-	searchConfig, ok := config.hnswSearchConfig()
-	if !ok {
-		return nil, ErrInvalidConfig
-	}
+	buildConfig := config.Index.hnswBuildConfig()
+	searchConfig := config.Index.hnswSearchConfig()
 
 	return buildSegment(
 		ctx,
 		segmentID,
-		config.Schema,
+		space,
 		source,
 		rows,
 		buildConfig,

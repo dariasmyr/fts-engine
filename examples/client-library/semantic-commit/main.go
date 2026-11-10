@@ -15,17 +15,6 @@ import (
 // This example shows that mutations become searchable only after Commit.
 func main() {
 	ctx := context.Background()
-	embeddingSchema, err := semantic.NewEmbeddingSchema("commit-example", "v1", "commit-embedding-v1", 2, vector.MetricL2Squared, 1)
-	if err != nil {
-		panic(err)
-	}
-	chunking := semantic.ChunkingSchema{
-		ID:          "commit-example-v1",
-		Version:     1,
-		Fingerprint: "commit-chunks-fp-v1",
-	}
-	schema := semantic.Schema{Embedding: embeddingSchema, Chunking: chunking}
-
 	splitter, err := chunk.NewSplitter(chunk.Config{
 		TargetBytes:  512,
 		MaxBytes:     768,
@@ -34,9 +23,9 @@ func main() {
 	must(err)
 
 	encoder, err := semanticencode.NewEncoder(semanticencode.EncoderConfig{
-		Schema:  schema,
-		Chunker: splitter,
-		Client:  commitEmbedder{},
+		Metric:   vector.MetricL2Squared,
+		Splitter: splitter,
+		Client:   commitEmbedder{},
 		Limits: semanticencode.InputLimits{
 			MaxFields:         10,
 			MaxSourceBytes:    1 << 20,
@@ -46,15 +35,14 @@ func main() {
 	})
 	must(err)
 
-	index, err := semantic.NewIndex(semantic.IndexConfig{
-		Schema: schema,
-		Limits: semantic.Limits{
-			MaxLiveVectors:          100,
-			MaxChunksPerDocument:    10,
-			MaxDocumentsPerSearch:   10,
-			MaxChunkCandidates:      100,
-			MaxChunksPerDocumentHit: 3,
+	index, err := semantic.NewIndex(semantic.SemanticConfig{
+		Model: semantic.ModelConfig{ID: "commit-example", Revision: "v1", Dimensions: 2, ContextTokens: 512},
+		Index: semantic.IndexConfig{
+			Metric: vector.MetricL2Squared,
+			Limits: semantic.LimitsConfig{MaxLiveVectors: 100, MaxChunksPerDocument: 10},
+			Search: semantic.SearchConfig{MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3},
 		},
+		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindCustom},
 	})
 	must(err)
 	service, err := semantic.NewService(index, encoder, encoder)

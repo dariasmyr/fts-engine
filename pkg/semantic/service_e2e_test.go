@@ -72,14 +72,16 @@ func TestDocumentPipelineFromProviderToSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := semantic.New(embeddingClient, semantic.WithChunking(chunk.Config{
-		TargetBytes: 64, MaxBytes: 96, OverlapBytes: 8,
-	}))
+	config, err := semantic.DefaultSemanticConfig(embeddingClient.Model())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.RetrievalFingerprint() == "" {
-		t.Fatal("RetrievalFingerprint() is empty")
+	config.Chunking.Builtin = chunk.Config{
+		TargetBytes: 64, MaxBytes: 96, OverlapBytes: 8,
+	}
+	service, err := semantic.New(embeddingClient, config)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	for _, document := range []fts.Document{

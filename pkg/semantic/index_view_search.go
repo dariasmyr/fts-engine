@@ -13,12 +13,12 @@ func (s *IndexView) Search(
 	ctx context.Context,
 	queryChunks []ChunkEmbedding,
 	k int,
-	options SearchOptions,
+	config QueryConfig,
 ) (DocumentSearchResult, error) {
 	if s == nil {
 		return DocumentSearchResult{}, ErrInvalidSegment
 	}
-	if err := s.validateSearchLimits(ctx, k, options); err != nil {
+	if err := s.validateSearchLimits(ctx, k, config); err != nil {
 		return DocumentSearchResult{}, err
 	}
 	if len(queryChunks) == 0 || len(queryChunks) > s.searchLimits.maxQueryChunks {
@@ -37,14 +37,14 @@ func (s *IndexView) Search(
 		preparedVectors[i] = preparedVector
 	}
 
-	return s.searchPreparedQueries(ctx, preparedVectors, k, options)
+	return s.searchPreparedQueries(ctx, preparedVectors, k, config)
 }
 
 func (s *IndexView) searchPreparedQueries(
 	ctx context.Context,
 	queryVectors []vector.PreparedVector,
 	k int,
-	options SearchOptions,
+	config QueryConfig,
 ) (DocumentSearchResult, error) {
 	if s.liveCount == 0 {
 		return DocumentSearchResult{
@@ -52,7 +52,7 @@ func (s *IndexView) searchPreparedQueries(
 			Stats: hnsw.SearchStats{Termination: hnsw.TerminationComplete},
 		}, nil
 	}
-	candidates, result, err := s.collectChunkCandidates(ctx, queryVectors, options)
+	candidates, result, err := s.collectChunkCandidates(ctx, queryVectors, config)
 	if err != nil {
 		return DocumentSearchResult{}, err
 	}

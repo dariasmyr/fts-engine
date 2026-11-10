@@ -23,7 +23,9 @@ func main() {
 		QueryPrefix:    "search_query: ",
 	})
 	must(err)
-	service, err := semantic.New(client)
+	config, err := semantic.DefaultSemanticConfig(client.Model())
+	must(err)
+	service, err := semantic.New(client, config)
 	must(err)
 
 	for _, document := range []fts.Document{

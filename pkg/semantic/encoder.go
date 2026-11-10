@@ -18,13 +18,11 @@ type ChunkEmbedding struct {
 // concurrent use.
 type DocumentEncoder interface {
 	EncodeDocument(context.Context, fts.Document) ([]ChunkEmbedding, error)
-	Schema() Schema
 }
 
 // QueryEncoder converts direct text and advanced document queries into raw
 // embeddings. Query preparation may differ from document chunking.
 type QueryEncoder interface {
-	EncodeQuery(context.Context, string) ([]ChunkEmbedding, error)
-	EncodeQueryDocument(context.Context, fts.Document) ([]ChunkEmbedding, error)
-	Schema() Schema
+	EncodeQuery(context.Context, string, QueryConfig) ([]ChunkEmbedding, error)
+	EncodeQueryDocument(context.Context, fts.Document, QueryConfig) ([]ChunkEmbedding, error)
 }

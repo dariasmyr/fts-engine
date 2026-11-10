@@ -3,26 +3,220 @@ package semantic
 import (
 	"math"
 
+	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
+	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 const (
-	maxHNSWNeighbors      = 1024
-	maxHNSWEfConstruction = 1_000_000
+	defaultMaxChunksPerDocument    = 64
+	defaultMaxLiveVectors          = 1_000_000
+	defaultMaxSearchResults        = 20
+	defaultMaxChunkCandidates      = 200
+	defaultMaxChunksPerDocumentHit = 3
 )
 
-// IndexConfig configures the low-level vector index. NewIndex derives
-// vector-space and allocation settings from these values.
-type IndexConfig struct {
-	// Schema is the canonical compatibility contract of the semantic index.
-	Schema Schema
+// LongQueryStrategy controls text queries larger than QueryConfig.MaxBytes.
+type LongQueryStrategy uint8
 
-	Limits Limits
-	HNSW   HNSWTuning
+const (
+	LongQueryStrategyUnknown LongQueryStrategy = iota
+	LongQueryReject
+	LongQueryTruncate
+	LongQueryChunk
+)
+
+// QueryConfig controls one semantic query. Zero values select safe service
+// defaults: the model context limit, rejection of long input, and configured
+// HNSW/search budgets.
+type QueryConfig struct {
+	MaxBytes        int
+	LongQuery       LongQueryStrategy
+	EfSearch        int
+	VisitLimit      int
+	CandidateChunks int
 }
 
-// Limits bounds semantic document lifecycle and result grouping.
-type Limits struct {
+// Validate checks request-local query values independently of service ceilings.
+func (c QueryConfig) Validate() error {
+	if c.MaxBytes < 0 || uint64(c.MaxBytes) > math.MaxUint32 ||
+		c.LongQuery > LongQueryChunk || c.EfSearch < 0 || c.VisitLimit < 0 ||
+		c.CandidateChunks < 0 {
+		return ErrInvalidQueryConfig
+	}
+	return nil
+}
+
+// SearchConfig defines static ceilings for request-local search options and
+// result shape. Every field is required.
+type SearchConfig struct {
+	MaxResults         int
+	MaxCandidateChunks int
+	MaxChunksPerResult int
+}
+
+// Validate checks service-wide search ceilings.
+func (c SearchConfig) Validate() error {
+	if c.MaxResults <= 0 || c.MaxCandidateChunks < c.MaxResults || c.MaxChunksPerResult <= 0 {
+		return ErrInvalidConfig
+	}
+	return nil
+}
+
+// ChunkingKind identifies how document fields are split into chunks.
+type ChunkingKind uint8
+
+const (
+	ChunkingKindUnknown ChunkingKind = iota
+	ChunkingKindByteSplitter
+	ChunkingKindCustom
+)
+
+// ChunkingConfig describes document splitting. Builtin configures the standard
+// splitter. A custom splitter is supplied at construction time and cannot be
+// reconstructed from persisted data.
+type ChunkingConfig struct {
+	Kind    ChunkingKind
+	Builtin chunk.Config
+}
+
+// Validate checks the document splitting configuration.
+func (c ChunkingConfig) Validate() error {
+	switch c.Kind {
+	case ChunkingKindByteSplitter:
+		if c.Builtin.TargetBytes < 0 || c.Builtin.MaxBytes < 0 || c.Builtin.OverlapBytes < 0 ||
+			uint64(c.Builtin.TargetBytes) > math.MaxUint32 ||
+			uint64(c.Builtin.MaxBytes) > math.MaxUint32 ||
+			uint64(c.Builtin.OverlapBytes) > math.MaxUint32 || c.Builtin.Validate() != nil {
+			return ErrInvalidConfig
+		}
+		return nil
+	case ChunkingKindCustom:
+		if c.Builtin != (chunk.Config{}) {
+			return ErrInvalidConfig
+		}
+		return nil
+	default:
+		return ErrInvalidConfig
+	}
+}
+
+// ModelConfig contains the static embedding model contract required to encode
+// inputs and validate vector dimensions.
+type ModelConfig struct {
+	ID             string
+	Revision       string
+	Dimensions     int
+	ContextTokens  int
+	DocumentPrefix string
+	QueryPrefix    string
+}
+
+// Validate checks the model contract.
+func (c ModelConfig) Validate() error {
+	if err := c.model().Validate(); err != nil {
+		return ErrInvalidConfig
+	}
+	return nil
+}
+
+func newModelConfig(model embedding.Model) ModelConfig {
+	return ModelConfig{
+		ID:             model.ID,
+		Revision:       model.Revision,
+		Dimensions:     model.Dimensions,
+		ContextTokens:  model.ContextTokens,
+		DocumentPrefix: model.DocumentPrefix,
+		QueryPrefix:    model.QueryPrefix,
+	}
+}
+
+func (c ModelConfig) model() embedding.Model {
+	return embedding.Model{
+		ID:             c.ID,
+		Revision:       c.Revision,
+		Dimensions:     c.Dimensions,
+		ContextTokens:  c.ContextTokens,
+		DocumentPrefix: c.DocumentPrefix,
+		QueryPrefix:    c.QueryPrefix,
+	}
+}
+
+// SemanticConfig is the single static configuration document for a semantic
+// service and its persisted index.
+type SemanticConfig struct {
+	Model    ModelConfig
+	Index    IndexConfig
+	Chunking ChunkingConfig
+}
+
+// DefaultSemanticConfig returns the validated effective defaults for model.
+func DefaultSemanticConfig(model embedding.Model) (SemanticConfig, error) {
+	if err := model.Validate(); err != nil {
+		return SemanticConfig{}, err
+	}
+	maxChunkBytes := min(model.ContextTokens, 4096)
+	targetBytes := max(1, maxChunkBytes*3/4)
+	overlapBytes := min(targetBytes-1, maxChunkBytes/8)
+	config := SemanticConfig{
+		Model: newModelConfig(model),
+		Index: IndexConfig{
+			Metric: vector.MetricCosine,
+			Limits: LimitsConfig{
+				MaxLiveVectors:       defaultMaxLiveVectors,
+				MaxChunksPerDocument: defaultMaxChunksPerDocument,
+			},
+			Search: SearchConfig{
+				MaxResults:         defaultMaxSearchResults,
+				MaxCandidateChunks: defaultMaxChunkCandidates,
+				MaxChunksPerResult: defaultMaxChunksPerDocumentHit,
+			},
+		},
+		Chunking: ChunkingConfig{
+			Kind: ChunkingKindByteSplitter,
+			Builtin: chunk.Config{
+				TargetBytes: targetBytes, MaxBytes: maxChunkBytes, OverlapBytes: overlapBytes,
+			},
+		},
+	}
+	return config.normalized()
+}
+
+// Validate checks the complete static configuration.
+func (c SemanticConfig) Validate() error {
+	_, err := c.normalized()
+	return err
+}
+
+func (c SemanticConfig) normalized() (SemanticConfig, error) {
+	if err := c.Model.Validate(); err != nil {
+		return SemanticConfig{}, err
+	}
+	if !c.Index.Metric.Valid() {
+		return SemanticConfig{}, ErrInvalidConfig
+	}
+	if err := c.Chunking.Validate(); err != nil {
+		return SemanticConfig{}, err
+	}
+	indexConfig, err := c.Index.normalized(c.Model.Dimensions)
+	if err != nil {
+		return SemanticConfig{}, err
+	}
+	c.Index = indexConfig
+	return c, nil
+}
+
+// IndexConfig configures vector indexing, static search ceilings, and HNSW.
+type IndexConfig struct {
+	Metric vector.Metric
+	Limits LimitsConfig
+	Search SearchConfig
+	HNSW   HNSWConfig
+}
+
+// LimitsConfig bounds semantic document lifecycle and ingestion.
+type LimitsConfig struct {
 	// MaxLiveVectors bounds visible vectors. Stale physical rows remain until
 	// compaction.
 	MaxLiveVectors int
@@ -33,17 +227,21 @@ type Limits struct {
 	MaxSegments int
 	// MaxChunksPerDocument bounds one encoded document mutation or query.
 	MaxChunksPerDocument int
-	// MaxDocumentsPerSearch bounds the public document result count.
-	MaxDocumentsPerSearch int
-	// MaxChunkCandidates bounds chunk hits collected before document grouping.
-	MaxChunkCandidates int
-	// MaxChunksPerDocumentHit bounds explanatory chunks attached to one result.
-	MaxChunksPerDocumentHit int
 }
 
-// HNSWTuning controls graph quality and request work. Zero fields select
-// defaults derived from Limits and the embedding schema.
-type HNSWTuning struct {
+// Validate checks lifecycle and ingestion limits. Zero stale-vector and
+// segment limits select defaults during SemanticConfig normalization.
+func (c LimitsConfig) Validate() error {
+	if c.MaxLiveVectors <= 0 || c.MaxStaleVectors < 0 || c.MaxSegments < 0 ||
+		c.MaxChunksPerDocument <= 0 || c.MaxChunksPerDocument > c.MaxLiveVectors {
+		return ErrInvalidConfig
+	}
+	return nil
+}
+
+// HNSWConfig controls graph quality and request work. Zero fields select
+// defaults derived from LimitsConfig and SearchConfig.
+type HNSWConfig struct {
 	// MaxNeighbors and EfConstruction control graph build quality and cost.
 	MaxNeighbors   int
 	EfConstruction int
@@ -57,12 +255,34 @@ type HNSWTuning struct {
 	MaxVisitLimit     int
 }
 
-func (c IndexConfig) Validate() error {
-	_, err := c.normalized()
+// Validate checks explicitly configured HNSW values. Zero fields select
+// defaults during SemanticConfig normalization.
+func (c HNSWConfig) Validate() error {
+	if c.MaxNeighbors < 0 || c.EfConstruction < 0 || c.DefaultEfSearch < 0 ||
+		c.MaxEfSearch < 0 || c.DefaultVisitLimit < 0 || c.MaxVisitLimit < 0 {
+		return ErrInvalidConfig
+	}
+	if c.DefaultEfSearch > 0 && c.MaxEfSearch > 0 && c.DefaultEfSearch > c.MaxEfSearch {
+		return ErrInvalidConfig
+	}
+	if c.DefaultVisitLimit > 0 && c.MaxVisitLimit > 0 && c.DefaultVisitLimit > c.MaxVisitLimit {
+		return ErrInvalidConfig
+	}
+	return nil
+}
+
+func (c IndexConfig) Validate(dimensions int) error {
+	_, err := c.normalized(dimensions)
 	return err
 }
 
-func (c IndexConfig) normalized() (IndexConfig, error) {
+func (c IndexConfig) normalized(dimensions int) (IndexConfig, error) {
+	if err := c.Limits.Validate(); err != nil {
+		return IndexConfig{}, err
+	}
+	if err := c.HNSW.Validate(); err != nil {
+		return IndexConfig{}, err
+	}
 	limits := c.Limits
 	if limits.MaxStaleVectors == 0 {
 		limits.MaxStaleVectors = limits.MaxLiveVectors
@@ -71,47 +291,35 @@ func (c IndexConfig) normalized() (IndexConfig, error) {
 		limits.MaxSegments = 16
 	}
 	c.Limits = limits
-	if !c.Schema.IsValid() ||
+	if dimensions <= 0 || !c.Metric.Valid() ||
 		limits.MaxLiveVectors <= 0 ||
 		limits.MaxStaleVectors < 0 ||
 		limits.MaxSegments <= 0 ||
 		limits.MaxChunksPerDocument <= 0 ||
-		limits.MaxDocumentsPerSearch <= 0 ||
-		limits.MaxChunkCandidates < limits.MaxDocumentsPerSearch ||
-		limits.MaxChunkCandidates > limits.MaxLiveVectors ||
 		limits.MaxChunksPerDocument > limits.MaxLiveVectors ||
-		limits.MaxChunksPerDocumentHit <= 0 ||
-		limits.MaxChunksPerDocumentHit > limits.MaxChunksPerDocument {
+		c.Search.Validate() != nil ||
+		c.Search.MaxCandidateChunks > limits.MaxLiveVectors ||
+		c.Search.MaxChunksPerResult > limits.MaxChunksPerDocument {
 		return IndexConfig{}, ErrInvalidConfig
 	}
-	c.HNSW = normalizeHNSWTuning(c.HNSW, limits)
+	c.HNSW = normalizeHNSWConfig(c.HNSW, limits, c.Search)
 	if c.HNSW.MaxEfSearch <= 0 || c.HNSW.MaxVisitLimit <= 0 ||
 		c.HNSW.DefaultEfSearch > c.HNSW.MaxEfSearch ||
 		c.HNSW.DefaultVisitLimit > c.HNSW.MaxVisitLimit {
 		return IndexConfig{}, ErrInvalidConfig
 	}
 
-	buildConfig, ok := c.hnswBuildConfig()
-	if !ok {
+	if err := c.hnswBuildConfig().Validate(); err != nil {
 		return IndexConfig{}, ErrInvalidConfig
 	}
 
-	searchConfig, ok := c.hnswSearchConfig()
-	if !ok {
-		return IndexConfig{}, ErrInvalidConfig
-	}
-
-	if err := validateHNSWBuildConfig(buildConfig); err != nil {
-		return IndexConfig{}, ErrInvalidConfig
-	}
-
-	if err := validateHNSWSearchConfig(searchConfig); err != nil {
+	if err := c.hnswSearchConfig().Validate(); err != nil {
 		return IndexConfig{}, ErrInvalidConfig
 	}
 
 	maxInt := int(^uint(0) >> 1)
 	if limits.MaxLiveVectors > maxInt-limits.MaxStaleVectors ||
-		!validVectorCapacity(c.Schema.Embedding.Dimensions, limits.MaxLiveVectors+limits.MaxStaleVectors) {
+		!validVectorCapacity(dimensions, limits.MaxLiveVectors+limits.MaxStaleVectors) {
 		return IndexConfig{}, ErrInvalidConfig
 	}
 	if err := c.runtimeLimits().validate(); err != nil {
@@ -121,7 +329,7 @@ func (c IndexConfig) normalized() (IndexConfig, error) {
 	return c, nil
 }
 
-func normalizeHNSWTuning(tuning HNSWTuning, limits Limits) HNSWTuning {
+func normalizeHNSWConfig(tuning HNSWConfig, limits LimitsConfig, search SearchConfig) HNSWConfig {
 	if tuning.MaxNeighbors == 0 {
 		tuning.MaxNeighbors = 16
 	}
@@ -129,13 +337,13 @@ func normalizeHNSWTuning(tuning HNSWTuning, limits Limits) HNSWTuning {
 		tuning.EfConstruction = max(64, tuning.MaxNeighbors)
 	}
 	if tuning.DefaultEfSearch == 0 {
-		tuning.DefaultEfSearch = max(limits.MaxDocumentsPerSearch, min(limits.MaxChunkCandidates, 64))
+		tuning.DefaultEfSearch = max(search.MaxResults, min(search.MaxCandidateChunks, 64))
 		if tuning.MaxEfSearch > 0 {
 			tuning.DefaultEfSearch = min(tuning.DefaultEfSearch, tuning.MaxEfSearch)
 		}
 	}
 	if tuning.MaxEfSearch == 0 {
-		tuning.MaxEfSearch = max(limits.MaxChunkCandidates, tuning.DefaultEfSearch)
+		tuning.MaxEfSearch = max(search.MaxCandidateChunks, tuning.DefaultEfSearch)
 	}
 	if tuning.DefaultVisitLimit == 0 {
 		tuning.DefaultVisitLimit = limits.MaxLiveVectors
@@ -149,49 +357,19 @@ func normalizeHNSWTuning(tuning HNSWTuning, limits Limits) HNSWTuning {
 	return tuning
 }
 
-func (c IndexConfig) hnswBuildConfig() (hnsw.BuildConfig, bool) {
-	if c.HNSW.MaxNeighbors <= 0 ||
-		c.HNSW.EfConstruction <= 0 {
-		return hnsw.BuildConfig{}, false
-	}
-
+func (c IndexConfig) hnswBuildConfig() hnsw.BuildConfig {
 	return hnsw.BuildConfig{
 		MaxNeighbors:   c.HNSW.MaxNeighbors,
 		EfConstruction: c.HNSW.EfConstruction,
 		Seed:           c.HNSW.Seed,
-	}, true
+	}
 }
 
-func (c IndexConfig) hnswSearchConfig() (hnsw.SearchConfig, bool) {
-	if c.HNSW.DefaultEfSearch <= 0 ||
-		c.HNSW.DefaultVisitLimit <= 0 {
-		return hnsw.SearchConfig{}, false
-	}
-
+func (c IndexConfig) hnswSearchConfig() hnsw.SearchConfig {
 	return hnsw.SearchConfig{
 		EfSearch:   c.HNSW.DefaultEfSearch,
 		VisitLimit: c.HNSW.DefaultVisitLimit,
-	}, true
-}
-
-func validateHNSWBuildConfig(c hnsw.BuildConfig) error {
-	if c.MaxNeighbors < 2 || c.MaxNeighbors > maxHNSWNeighbors {
-		return ErrInvalidConfig
 	}
-
-	if c.EfConstruction < c.MaxNeighbors || c.EfConstruction > maxHNSWEfConstruction {
-		return ErrInvalidConfig
-	}
-
-	return nil
-}
-
-func validateHNSWSearchConfig(c hnsw.SearchConfig) error {
-	if c.EfSearch <= 0 || c.VisitLimit <= 0 {
-		return ErrInvalidConfig
-	}
-
-	return nil
 }
 
 func validVectorCapacity(dimensions, maxVectors int) bool {
@@ -222,7 +400,7 @@ type ingestionLimits struct {
 	maxChunksPerDocument int
 }
 
-// searchBudgetLimits contains immutable service-wide ceilings. SearchOptions
+// searchBudgetLimits contains immutable service-wide ceilings. QueryConfig
 // supplies request-local values within these bounds.
 type searchBudgetLimits struct {
 	maxChunkCandidates int
@@ -253,14 +431,14 @@ func (c IndexConfig) runtimeLimits() indexLimits {
 		lifecycle: lifecycleLimits{maxSegments: c.Limits.MaxSegments},
 		ingestion: ingestionLimits{maxChunksPerDocument: c.Limits.MaxChunksPerDocument},
 		search: searchBudgetLimits{
-			maxChunkCandidates: c.Limits.MaxChunkCandidates,
+			maxChunkCandidates: c.Search.MaxCandidateChunks,
 			maxQueryChunks:     c.Limits.MaxChunksPerDocument,
 			maxEfSearch:        c.HNSW.MaxEfSearch,
 			maxVisitLimit:      c.HNSW.MaxVisitLimit,
 		},
 		results: resultShapeLimits{
-			maxDocumentsPerSearch:   c.Limits.MaxDocumentsPerSearch,
-			maxChunksPerDocumentHit: c.Limits.MaxChunksPerDocumentHit,
+			maxDocumentsPerSearch:   c.Search.MaxResults,
+			maxChunksPerDocumentHit: c.Search.MaxChunksPerResult,
 		},
 	}
 }

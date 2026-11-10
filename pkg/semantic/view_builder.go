@@ -65,7 +65,7 @@ func buildCommittedView(ctx context.Context, base *IndexView, locations map[Vect
 		ctx,
 		revision,
 		segments,
-		base.schema,
+		base.space,
 		base.searchLimits,
 		base.resultLimits,
 		base.searchConfig,

@@ -7,37 +7,26 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-// SSTA wire-format version.
-const stateVersion = uint16(12)
+// SSTA wire-format version. Semantic persistence predates production use, so
+// old semantic state versions are intentionally not migrated.
+const stateVersion = uint16(14)
 
-// Conservative decoder bound before reading a variable-size row.
 const minimumRowBytes = wireUint64Size + 3*wireStringLengthPrefixSize + wireUint32Size + 2*wireUint64Size
 
 const (
-	// Seven index limits and six HNSW integer settings.
-	stateConfigUint32FieldCount = 13
-	// Revision, max allocated vector ID, and next segment ID.
+	stateConfigUint32FieldCount   = 13
 	stateUint64MetadataFieldCount = 3
 	stateIndexIDSize              = 16
 
-	// Compatibility version, dimensions, metric, normalization, reserved flags,
-	// and vector format version.
-	stateEmbeddingFixedSize = 2*wireUint32Size + 2*wireUint8Size + wireUint16Size + wireUint32Size
-	// Chunking version; schema strings are dynamic.
-	stateChunkingFixedSize = wireUint32Size
-	// Integer config fields and HNSW seed.
-	stateConfigFixedSize = stateConfigUint32FieldCount*wireUint32Size + wireUint64Size
-	// Chunker kind, query strategy, reserved flags, four source config fields.
-	stateModelServiceFixedSize = 2*wireUint8Size + wireUint16Size + 4*wireUint32Size
-	// Revision and allocation metadata.
+	// Dimensions, context size, metric, chunking kind, reserved flags, and
+	// built-in chunking values.
+	stateSemanticFixedSize  = 5*wireUint32Size + 2*wireUint8Size + wireUint16Size
+	stateConfigFixedSize    = stateConfigUint32FieldCount*wireUint32Size + wireUint64Size
 	stateUint64MetadataSize = stateUint64MetadataFieldCount * wireUint64Size
-	// File-level fixed fields, segment count, and CRC32.
-	stateFixedEncodedSize = wireHeaderSize + stateIndexIDSize + stateEmbeddingFixedSize + stateChunkingFixedSize + stateModelServiceFixedSize + stateConfigFixedSize + stateUint64MetadataSize + wireUint32Size + wireChecksumSize
+	stateFixedEncodedSize   = wireHeaderSize + stateIndexIDSize + stateSemanticFixedSize + stateConfigFixedSize + stateUint64MetadataSize + wireUint32Size + wireChecksumSize
 
-	// Component ID, row count, and liveness-word count.
 	stateSegmentFixedSize = wireUint64Size + 2*wireUint32Size
-	// Vector ID, ordinal, and chunk byte range.
-	stateRowFixedSize = wireUint64Size + wireUint32Size + 2*wireUint64Size
+	stateRowFixedSize     = wireUint64Size + wireUint32Size + 2*wireUint64Size
 )
 
 type SegmentState struct {
@@ -46,11 +35,9 @@ type SegmentState struct {
 	LivenessWords []uint64
 }
 
-// IndexState is the decoded SSTA payload required to resume semantic writes.
 type IndexState struct {
 	ID                   semantic.IndexID
-	Config               semantic.IndexConfig
-	ModelService         semantic.ModelServiceConfig
+	Config               semantic.SemanticConfig
 	Revision             semantic.Revision
 	MaxAllocatedVectorID semantic.VectorID
 	NextSegmentID        semantic.SegmentID
@@ -65,24 +52,9 @@ func EncodeState(value IndexState, limits StateLimits) ([]byte, FileRef, error) 
 	if err != nil {
 		return nil, FileRef{}, err
 	}
-	c := value.Config
-	space, _ := c.Schema.Embedding.VectorSpace()
 	e := newEncoder("SSTA", stateVersion, expectedSize, limits.FileLimits)
 	e.writeBytes(value.ID[:])
-	e.writeUint32(c.Schema.Embedding.CompatibilityVersion)
-	e.writeUint32(uint32(c.Schema.Embedding.Dimensions))
-	e.writeUint8(uint8(c.Schema.Embedding.Metric))
-	e.writeUint8(uint8(space.Normalization()))
-	e.writeUint16(0)
-	e.writeUint32(c.Schema.Embedding.VectorFormatVersion)
-	e.writeString(c.Schema.Embedding.ModelID, limits.MaxStringBytes)
-	e.writeString(c.Schema.Embedding.ModelRevision, limits.MaxStringBytes)
-	e.writeString(c.Schema.Embedding.PipelineFingerprint, limits.MaxStringBytes)
-	e.writeString(c.Schema.Chunking.ID, limits.MaxStringBytes)
-	e.writeUint32(c.Schema.Chunking.Version)
-	e.writeString(c.Schema.Chunking.Fingerprint, limits.MaxStringBytes)
-	encodeModelServiceConfig(e, value.ModelService)
-	encodeConfig(e, c)
+	encodeSemanticConfig(e, value.Config, limits.MaxStringBytes)
 	e.writeUint64(uint64(value.Revision))
 	e.writeUint64(uint64(value.MaxAllocatedVectorID))
 	e.writeUint64(uint64(value.NextSegmentID))
@@ -112,28 +84,7 @@ func DecodeState(data []byte, limits StateLimits) (IndexState, error) {
 	}
 	value := IndexState{}
 	copy(value.ID[:], d.readBytes(stateIndexIDSize))
-	compatibilityVersion := d.readUint32()
-	if compatibilityVersion != semantic.CompatibilityFormatVersion {
-		return IndexState{}, ErrUnsupportedVersion
-	}
-	dimensions := int(d.readUint32())
-	metric := vector.Metric(d.readUint8())
-	normalization := vector.Normalization(d.readUint8())
-	if d.readUint16() != 0 {
-		return IndexState{}, ErrCorrupt
-	}
-	formatVersion := d.readUint32()
-	embedding := semantic.EmbeddingSchema{
-		CompatibilityVersion: compatibilityVersion,
-		Dimensions:           dimensions,
-		Metric:               metric,
-		VectorFormatVersion:  formatVersion,
-	}
-	embedding.ModelID, embedding.ModelRevision, embedding.PipelineFingerprint = d.readString(), d.readString(), d.readString()
-	chunking := semantic.ChunkingSchema{ID: d.readString(), Version: d.readUint32(), Fingerprint: d.readString()}
-	value.ModelService = decodeModelServiceConfig(d)
-	config := decodeConfig(d, embedding, chunking)
-	value.Config = config
+	value.Config = decodeSemanticConfig(d)
 	value.Revision = semantic.Revision(d.readUint64())
 	value.MaxAllocatedVectorID = semantic.VectorID(d.readUint64())
 	value.NextSegmentID = semantic.SegmentID(d.readUint64())
@@ -141,8 +92,7 @@ func DecodeState(data []byte, limits StateLimits) (IndexState, error) {
 	if countValue > uint64(limits.MaxSegments) || countValue > uint64(d.remaining()/16) {
 		return IndexState{}, ErrLimitExceeded
 	}
-	count := int(countValue)
-	value.Segments = make([]SegmentState, count)
+	value.Segments = make([]SegmentState, int(countValue))
 	totalRows := 0
 	for i := range value.Segments {
 		segment := SegmentState{ID: semantic.SegmentID(d.readUint64())}
@@ -171,58 +121,59 @@ func DecodeState(data []byte, limits StateLimits) (IndexState, error) {
 	if err := d.done(); err != nil {
 		return IndexState{}, err
 	}
-	space, err := vector.NewSpace(dimensions, metric)
-	if err != nil || space.Normalization() != normalization {
-		return IndexState{}, ErrCorrupt
-	}
 	if _, err := validateStateAndEncodedSize(value, limits); err != nil {
 		return IndexState{}, err
 	}
 	return value, nil
 }
 
-func encodeModelServiceConfig(e *encoder, c semantic.ModelServiceConfig) {
-	e.writeUint8(uint8(c.Chunker.Kind))
-	e.writeUint8(uint8(c.Query.LongQuery))
+func encodeSemanticConfig(e *encoder, c semantic.SemanticConfig, maxString int) {
+	e.writeUint32(uint32(c.Model.Dimensions))
+	e.writeUint32(uint32(c.Model.ContextTokens))
+	e.writeUint8(uint8(c.Index.Metric))
+	e.writeUint8(uint8(c.Chunking.Kind))
 	e.writeUint16(0)
-	e.writeUint32(uint32(c.Chunker.Config.TargetBytes))
-	e.writeUint32(uint32(c.Chunker.Config.MaxBytes))
-	e.writeUint32(uint32(c.Chunker.Config.OverlapBytes))
-	e.writeUint32(uint32(c.Query.MaxBytes))
+	e.writeUint32(uint32(c.Chunking.Builtin.TargetBytes))
+	e.writeUint32(uint32(c.Chunking.Builtin.MaxBytes))
+	e.writeUint32(uint32(c.Chunking.Builtin.OverlapBytes))
+	e.writeString(c.Model.ID, maxString)
+	e.writeString(c.Model.Revision, maxString)
+	e.writeString(c.Model.DocumentPrefix, maxString)
+	e.writeString(c.Model.QueryPrefix, maxString)
+	encodeIndexConfig(e, c.Index)
 }
 
-func decodeModelServiceConfig(d *decoder) semantic.ModelServiceConfig {
-	kind := semantic.ChunkerKind(d.readUint8())
-	strategy := semantic.LongQueryStrategy(d.readUint8())
+func decodeSemanticConfig(d *decoder) semantic.SemanticConfig {
+	c := semantic.SemanticConfig{}
+	c.Model.Dimensions = int(d.readUint32())
+	c.Model.ContextTokens = int(d.readUint32())
+	c.Index.Metric = vector.Metric(d.readUint8())
+	c.Chunking.Kind = semantic.ChunkingKind(d.readUint8())
 	if d.readUint16() != 0 {
 		d.decodeErr = ErrCorrupt
-		return semantic.ModelServiceConfig{}
 	}
-	return semantic.ModelServiceConfig{
-		Chunker: semantic.ChunkerConfig{
-			Kind: kind,
-			Config: chunk.Config{
-				TargetBytes:  int(d.readUint32()),
-				MaxBytes:     int(d.readUint32()),
-				OverlapBytes: int(d.readUint32()),
-			},
-		},
-		Query: semantic.QueryConfig{
-			MaxBytes:  int(d.readUint32()),
-			LongQuery: strategy,
-		},
+	c.Chunking.Builtin = chunk.Config{
+		TargetBytes:  int(d.readUint32()),
+		MaxBytes:     int(d.readUint32()),
+		OverlapBytes: int(d.readUint32()),
 	}
+	c.Model.ID = d.readString()
+	c.Model.Revision = d.readString()
+	c.Model.DocumentPrefix = d.readString()
+	c.Model.QueryPrefix = d.readString()
+	c.Index = decodeIndexConfig(d, c.Index.Metric)
+	return c
 }
 
-func encodeConfig(e *encoder, c semantic.IndexConfig) {
+func encodeIndexConfig(e *encoder, c semantic.IndexConfig) {
 	values := []int{
 		c.Limits.MaxLiveVectors,
 		c.Limits.MaxStaleVectors,
 		c.Limits.MaxSegments,
 		c.Limits.MaxChunksPerDocument,
-		c.Limits.MaxDocumentsPerSearch,
-		c.Limits.MaxChunkCandidates,
-		c.Limits.MaxChunksPerDocumentHit,
+		c.Search.MaxResults,
+		c.Search.MaxCandidateChunks,
+		c.Search.MaxChunksPerResult,
 		c.HNSW.MaxNeighbors,
 		c.HNSW.EfConstruction,
 		c.HNSW.DefaultEfSearch,
@@ -236,19 +187,20 @@ func encodeConfig(e *encoder, c semantic.IndexConfig) {
 	e.writeUint64(c.HNSW.Seed)
 }
 
-func decodeConfig(d *decoder, embedding semantic.EmbeddingSchema, chunking semantic.ChunkingSchema) semantic.IndexConfig {
-	schema := semantic.Schema{Embedding: embedding, Chunking: chunking}
-	c := semantic.IndexConfig{Schema: schema}
-	c.Limits = semantic.Limits{
-		MaxLiveVectors:          int(d.readUint32()),
-		MaxStaleVectors:         int(d.readUint32()),
-		MaxSegments:             int(d.readUint32()),
-		MaxChunksPerDocument:    int(d.readUint32()),
-		MaxDocumentsPerSearch:   int(d.readUint32()),
-		MaxChunkCandidates:      int(d.readUint32()),
-		MaxChunksPerDocumentHit: int(d.readUint32()),
+func decodeIndexConfig(d *decoder, metric vector.Metric) semantic.IndexConfig {
+	c := semantic.IndexConfig{Metric: metric}
+	c.Limits = semantic.LimitsConfig{
+		MaxLiveVectors:       int(d.readUint32()),
+		MaxStaleVectors:      int(d.readUint32()),
+		MaxSegments:          int(d.readUint32()),
+		MaxChunksPerDocument: int(d.readUint32()),
 	}
-	c.HNSW = semantic.HNSWTuning{
+	c.Search = semantic.SearchConfig{
+		MaxResults:         int(d.readUint32()),
+		MaxCandidateChunks: int(d.readUint32()),
+		MaxChunksPerResult: int(d.readUint32()),
+	}
+	c.HNSW = semantic.HNSWConfig{
 		MaxNeighbors:      int(d.readUint32()),
 		EfConstruction:    int(d.readUint32()),
 		DefaultEfSearch:   int(d.readUint32()),

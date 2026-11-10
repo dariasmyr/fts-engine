@@ -26,7 +26,7 @@ func BenchmarkIndexSearchSmallCandidateBudget(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		result, err := index.Search(context.Background(), query, 10, SearchOptions{
+		result, err := index.Search(context.Background(), query, 10, QueryConfig{
 			CandidateChunks: 16,
 		})
 		if err != nil {
@@ -58,7 +58,7 @@ func BenchmarkIndexSearchMultiSegmentSmallCandidateBudget(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		result, err := index.Search(context.Background(), query, 10, SearchOptions{
+		result, err := index.Search(context.Background(), query, 10, QueryConfig{
 			CandidateChunks: 16,
 		})
 		if err != nil {
@@ -87,19 +87,12 @@ func BenchmarkIndexCommit(b *testing.B) {
 
 func BenchmarkServiceCommit(b *testing.B) {
 	const documents = 256
-	schema := benchmarkSchema(b)
-
 	b.ReportAllocs()
 	for range b.N {
 		b.StopTimer()
-		encoder := &benchmarkEncoder{schema: schema}
-		index, err := NewIndex(IndexConfig{Schema: schema, Limits: Limits{
-			MaxLiveVectors:          documents,
-			MaxChunksPerDocument:    1,
-			MaxDocumentsPerSearch:   10,
-			MaxChunkCandidates:      64,
-			MaxChunksPerDocumentHit: 1,
-		}})
+		encoder := &benchmarkEncoder{}
+		config := benchmarkConfig(documents, 0, 16)
+		index, err := NewIndex(config)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -155,11 +148,8 @@ func BenchmarkIndexCompact(b *testing.B) {
 }
 
 type benchmarkEncoder struct {
-	schema Schema
-	next   int
+	next int
 }
-
-func (e *benchmarkEncoder) Schema() Schema { return e.schema }
 
 func (e *benchmarkEncoder) EncodeDocument(
 	_ context.Context,
@@ -173,6 +163,7 @@ func (e *benchmarkEncoder) EncodeDocument(
 func (e *benchmarkEncoder) EncodeQuery(
 	_ context.Context,
 	_ string,
+	_ QueryConfig,
 ) ([]ChunkEmbedding, error) {
 	return []ChunkEmbedding{benchmarkChunk("query", 0)}, nil
 }
@@ -180,43 +171,37 @@ func (e *benchmarkEncoder) EncodeQuery(
 func (e *benchmarkEncoder) EncodeQueryDocument(
 	_ context.Context,
 	_ fts.Document,
+	_ QueryConfig,
 ) ([]ChunkEmbedding, error) {
 	return []ChunkEmbedding{benchmarkChunk("query", 0)}, nil
 }
 
 func newBenchmarkIndex(tb testing.TB, maxLive, maxStale, maxSegments int) *Index {
 	tb.Helper()
-	index, err := NewIndex(IndexConfig{
-		Schema: benchmarkSchema(tb),
-		Limits: Limits{
-			MaxLiveVectors: maxLive, MaxStaleVectors: maxStale, MaxSegments: maxSegments,
-			MaxChunksPerDocument: 1, MaxDocumentsPerSearch: 10,
-			MaxChunkCandidates: 64, MaxChunksPerDocumentHit: 1,
-		},
-		HNSW: HNSWTuning{
-			MaxNeighbors: 16, EfConstruction: 64, Seed: 1,
-			DefaultEfSearch: 32, MaxEfSearch: 64,
-			DefaultVisitLimit: maxLive, MaxVisitLimit: maxLive,
-		},
-	})
+	index, err := NewIndex(benchmarkConfig(maxLive, maxStale, maxSegments))
 	if err != nil {
 		tb.Fatal(err)
 	}
 	return index
 }
 
-func benchmarkSchema(tb testing.TB) Schema {
-	tb.Helper()
-	embedding, err := NewEmbeddingSchema(
-		"deterministic", "v1", "benchmark-pipeline-v1",
-		benchmarkDimensions, vector.MetricL2Squared, 1,
-	)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	return Schema{
-		Embedding: embedding,
-		Chunking:  ChunkingSchema{ID: "whole", Version: 1, Fingerprint: "whole-v1"},
+func benchmarkConfig(maxLive, maxStale, maxSegments int) SemanticConfig {
+	return SemanticConfig{
+		Model: ModelConfig{ID: "deterministic", Revision: "v1", Dimensions: benchmarkDimensions, ContextTokens: 16},
+		Index: IndexConfig{
+			Metric: vector.MetricL2Squared,
+			Limits: LimitsConfig{
+				MaxLiveVectors: maxLive, MaxStaleVectors: maxStale, MaxSegments: maxSegments,
+				MaxChunksPerDocument: 1,
+			},
+			Search: SearchConfig{MaxResults: 10, MaxCandidateChunks: 64, MaxChunksPerResult: 1},
+			HNSW: HNSWConfig{
+				MaxNeighbors: 16, EfConstruction: 64, Seed: 1,
+				DefaultEfSearch: 32, MaxEfSearch: 64,
+				DefaultVisitLimit: maxLive, MaxVisitLimit: maxLive,
+			},
+		},
+		Chunking: ChunkingConfig{Kind: ChunkingKindCustom},
 	}
 }
 

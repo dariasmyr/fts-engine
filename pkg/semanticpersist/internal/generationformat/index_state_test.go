@@ -5,8 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/v2/internal/format"
-	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
@@ -18,15 +16,15 @@ func TestStateVersionAndLifecycleLimitsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version := binary.LittleEndian.Uint16(data[4:6]); version != 12 {
-		t.Fatalf("state version = %d, want 12", version)
+	if version := binary.LittleEndian.Uint16(data[4:6]); version != 14 {
+		t.Fatalf("state version = %d, want 14", version)
 	}
 	decoded, err := DecodeState(data, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Config.Limits.MaxStaleVectors != 7 || decoded.Config.Limits.MaxSegments != 3 {
-		t.Fatalf("decoded lifecycle limits = %+v", decoded.Config.Limits)
+	if decoded.Config.Index.Limits.MaxStaleVectors != 7 || decoded.Config.Index.Limits.MaxSegments != 3 {
+		t.Fatalf("decoded lifecycle limits = %+v", decoded.Config.Index.Limits)
 	}
 	if decoded.ID != value.ID {
 		t.Fatalf("decoded index ID = %x, want %x", decoded.ID, value.ID)
@@ -38,22 +36,8 @@ func TestStateVersionAndLifecycleLimitsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestStateModelServiceConfigRoundTrip(t *testing.T) {
+func TestStateSemanticConfigRoundTrip(t *testing.T) {
 	value := testIndexState(t)
-	chunkConfig := chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
-	fingerprint, err := chunkConfig.Fingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	value.Config.Schema.Chunking = semantic.ChunkingSchema{
-		ID: chunk.SplitterID, Version: chunk.SplitterVersion, Fingerprint: fingerprint,
-	}
-	value.ModelService = semantic.ModelServiceConfig{
-		Chunker: semantic.ChunkerConfig{Kind: semantic.ChunkerKindByteSplitter, Config: chunkConfig},
-		Query: semantic.QueryConfig{
-			MaxBytes: 16, LongQuery: semantic.LongQueryTruncate,
-		},
-	}
 
 	data, _, err := EncodeState(value, testStateLimits())
 	if err != nil {
@@ -63,22 +47,8 @@ func TestStateModelServiceConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.ModelService != value.ModelService {
-		t.Fatalf("model service config = %+v, want %+v", decoded.ModelService, value.ModelService)
-	}
-}
-
-func TestStateRejectsUnknownCompatibilityVersion(t *testing.T) {
-	limits := testStateLimits()
-	data, _, err := EncodeState(testIndexState(t), limits)
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary.LittleEndian.PutUint32(data[wireHeaderSize+stateIndexIDSize:], semantic.CompatibilityFormatVersion+1)
-	body := data[:len(data)-wireChecksumSize]
-	binary.LittleEndian.PutUint32(data[len(body):], format.CRC32(body))
-	if _, err := DecodeState(data, limits); !errors.Is(err, ErrUnsupportedVersion) {
-		t.Fatalf("DecodeState() error = %v, want ErrUnsupportedVersion", err)
+	if decoded.Config != value.Config {
+		t.Fatalf("semantic config = %+v, want %+v", decoded.Config, value.Config)
 	}
 }
 
@@ -90,14 +60,14 @@ func TestStateLifecycleLimitsValidation(t *testing.T) {
 		{
 			name: "physical vectors",
 			mutate: func(value *IndexState) {
-				value.Config.Limits.MaxLiveVectors = 100
-				value.Config.Limits.MaxStaleVectors = 100
+				value.Config.Index.Limits.MaxLiveVectors = 100
+				value.Config.Index.Limits.MaxStaleVectors = 100
 			},
 		},
 		{
 			name: "segments",
 			mutate: func(value *IndexState) {
-				value.Config.Limits.MaxSegments = 17
+				value.Config.Index.Limits.MaxSegments = 17
 			},
 		},
 	}
@@ -130,24 +100,16 @@ func TestDecodeStateRejectsSegmentLimit(t *testing.T) {
 
 func testIndexState(t testing.TB) IndexState {
 	t.Helper()
-	embedding, err := semantic.NewEmbeddingSchema("model", "v1", "pipeline-v1", 2, vector.MetricL2Squared, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	config := semantic.IndexConfig{
-		Schema: semantic.Schema{
-			Embedding: embedding,
-			Chunking:  semantic.ChunkingSchema{ID: "chunks", Version: 1, Fingerprint: "chunks-v1"},
+	config := semantic.SemanticConfig{
+		Model: semantic.ModelConfig{ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 16},
+		Index: semantic.IndexConfig{
+			Metric: vector.MetricL2Squared,
+			Limits: semantic.LimitsConfig{
+				MaxLiveVectors: 8, MaxStaleVectors: 7, MaxSegments: 3, MaxChunksPerDocument: 2,
+			},
+			Search: semantic.SearchConfig{MaxResults: 2, MaxCandidateChunks: 8, MaxChunksPerResult: 1},
 		},
-		Limits: semantic.Limits{
-			MaxLiveVectors:          8,
-			MaxStaleVectors:         7,
-			MaxSegments:             3,
-			MaxChunksPerDocument:    2,
-			MaxDocumentsPerSearch:   2,
-			MaxChunkCandidates:      8,
-			MaxChunksPerDocumentHit: 1,
-		},
+		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindCustom},
 	}
 	index, err := semantic.NewIndex(config)
 	if err != nil {

@@ -16,19 +16,19 @@ import (
 func (s *IndexView) collectChunkCandidates(
 	ctx context.Context,
 	queryVectors []vector.PreparedVector,
-	options SearchOptions,
+	config QueryConfig,
 ) ([]ChunkHit, DocumentSearchResult, error) {
 	type chunkKey struct {
 		documentID fts.DocID
 		chunkID    ChunkID
 	}
 	result := DocumentSearchResult{Stats: hnsw.SearchStats{Termination: hnsw.TerminationComplete}}
-	candidateBudget, _ := resolveCandidateBudget(options.CandidateChunks, s.searchLimits.maxChunkCandidates)
-	visitBudget := options.VisitLimit
+	candidateBudget, _ := resolveCandidateBudget(config.CandidateChunks, s.searchLimits.maxChunkCandidates)
+	visitBudget := config.VisitLimit
 	if visitBudget == 0 {
 		visitBudget = s.searchConfig.VisitLimit
 	}
-	efSearch := options.EfSearch
+	efSearch := config.EfSearch
 	if efSearch == 0 {
 		efSearch = s.searchConfig.EfSearch
 	}

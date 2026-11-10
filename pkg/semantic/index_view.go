@@ -15,7 +15,6 @@ type IndexView struct {
 	segments     []segmentView
 	revision     Revision
 	liveCount    int
-	schema       Schema
 	searchLimits searchBudgetLimits
 	resultLimits resultShapeLimits
 	searchConfig hnsw.SearchConfig
@@ -26,7 +25,7 @@ func newIndexView(
 	ctx context.Context,
 	revision Revision,
 	segments []segmentView,
-	schema Schema,
+	space vector.Space,
 	searchLimits searchBudgetLimits,
 	resultLimits resultShapeLimits,
 	search hnsw.SearchConfig,
@@ -37,19 +36,14 @@ func newIndexView(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !schema.IsValid() || searchLimits.maxChunkCandidates < resultLimits.maxDocumentsPerSearch ||
+	if space.Dimensions() <= 0 || searchLimits.maxChunkCandidates < resultLimits.maxDocumentsPerSearch ||
 		searchLimits.maxQueryChunks <= 0 || searchLimits.maxEfSearch <= 0 || searchLimits.maxVisitLimit <= 0 ||
 		resultLimits.maxDocumentsPerSearch <= 0 || resultLimits.maxChunksPerDocumentHit <= 0 {
-		return nil, ErrInvalidConfig
-	}
-	space, err := schema.Embedding.VectorSpace()
-	if err != nil {
 		return nil, ErrInvalidConfig
 	}
 	view := &IndexView{
 		segments:     segments,
 		revision:     revision,
-		schema:       schema,
 		searchLimits: searchLimits,
 		resultLimits: resultLimits,
 		searchConfig: search,

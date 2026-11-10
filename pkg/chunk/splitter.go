@@ -1,19 +1,8 @@
 package chunk
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"strings"
 	"unicode/utf8"
-)
-
-const (
-	// SplitterID identifies the deterministic byte-range splitting algorithm.
-	SplitterID      = "byte-splitter"
-	SplitterVersion = uint32(1)
-	WholeID         = "whole-field"
-	WholeVersion    = uint32(1)
 )
 
 // Config configures deterministic byte-range splitting.
@@ -28,35 +17,6 @@ func (d Config) Validate() error {
 		return ErrInvalidSplitConfig
 	}
 	return nil
-}
-
-// Fingerprint returns the versioned canonical fingerprint of the configuration.
-// Version 1 encodes the algorithm ID, version, and three signed 64-bit fields
-// in big-endian order before hashing with SHA-256.
-func (d Config) Fingerprint() (string, error) {
-	if err := d.Validate(); err != nil {
-		return "", err
-	}
-	hash := sha256.New()
-	hash.Write([]byte(SplitterID))
-	var encoded [8]byte
-	binary.BigEndian.PutUint32(encoded[:4], SplitterVersion)
-	hash.Write(encoded[:4])
-	for _, value := range []int{d.TargetBytes, d.MaxBytes, d.OverlapBytes} {
-		binary.BigEndian.PutUint64(encoded[:], uint64(int64(value)))
-		hash.Write(encoded[:])
-	}
-	return "v1:" + hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-// WholeFingerprint returns the canonical fingerprint for unsplit fields.
-func WholeFingerprint() string {
-	hash := sha256.New()
-	hash.Write([]byte(WholeID))
-	var encoded [4]byte
-	binary.BigEndian.PutUint32(encoded[:], WholeVersion)
-	hash.Write(encoded[:])
-	return "v1:" + hex.EncodeToString(hash.Sum(nil))
 }
 
 // Splitter produces half-open, UTF-8-aligned byte ranges.

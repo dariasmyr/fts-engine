@@ -70,7 +70,7 @@ func (i *Index) Compact(ctx context.Context) error {
 	return nil
 }
 
-func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, config IndexConfig) (*IndexView, map[VectorID]vectorLocation, bool, error) {
+func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, config SemanticConfig) (*IndexView, map[VectorID]vectorLocation, bool, error) {
 	var compacted *segment
 	if view.liveCount > 0 {
 		var err error
@@ -97,17 +97,14 @@ func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, conf
 			liveness: vector.NewFullBitSet(uint32(compacted.len())),
 		}}
 	}
-	searchConfig, ok := config.hnswSearchConfig()
-	if !ok {
-		return nil, nil, false, ErrInvalidConfig
-	}
+	searchConfig := config.Index.hnswSearchConfig()
 	compactedView, err := newIndexView(
 		ctx,
 		view.revision,
 		segments,
-		view.schema,
-		config.runtimeLimits().search,
-		config.runtimeLimits().results,
+		view.space,
+		config.Index.runtimeLimits().search,
+		config.Index.runtimeLimits().results,
 		searchConfig,
 	)
 	if err != nil {
@@ -116,12 +113,12 @@ func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, conf
 	return compactedView, locations, compacted != nil, nil
 }
 
-func buildCompactedSegment(ctx context.Context, view *IndexView, segmentID SegmentID, config IndexConfig) (*segment, error) {
+func buildCompactedSegment(ctx context.Context, view *IndexView, segmentID SegmentID, config SemanticConfig) (*segment, error) {
 	flatVectors, liveRows, err := materializeLiveRows(ctx, view)
 	if err != nil {
 		return nil, err
 	}
-	space, err := config.Schema.Embedding.VectorSpace()
+	space, err := vector.NewSpace(config.Model.Dimensions, config.Index.Metric)
 	if err != nil {
 		return nil, err
 	}
@@ -129,18 +126,12 @@ func buildCompactedSegment(ctx context.Context, view *IndexView, segmentID Segme
 	if err != nil {
 		return nil, err
 	}
-	buildConfig, ok := config.hnswBuildConfig()
-	if !ok {
-		return nil, ErrInvalidConfig
-	}
-	searchConfig, ok := config.hnswSearchConfig()
-	if !ok {
-		return nil, ErrInvalidConfig
-	}
+	buildConfig := config.Index.hnswBuildConfig()
+	searchConfig := config.Index.hnswSearchConfig()
 	return buildSegment(
 		ctx,
 		segmentID,
-		config.Schema,
+		space,
 		source,
 		liveRows,
 		buildConfig,

@@ -14,7 +14,6 @@ import (
 // resources and must not be mutated by state adapters.
 type SegmentState struct {
 	ID            SegmentID
-	Schema        Schema
 	Rows          []VectorRow
 	LivenessWords []uint64
 	Vectors       vector.PreparedVectorStore
@@ -27,7 +26,6 @@ func (s *segment) exportState(words []uint64) SegmentState {
 	}
 	return SegmentState{
 		ID:            s.id,
-		Schema:        s.schema,
 		Rows:          append([]VectorRow(nil), s.rows...),
 		LivenessWords: append([]uint64(nil), words...),
 		Vectors:       s.vectors,
@@ -40,8 +38,7 @@ func (s *segment) exportState(words []uint64) SegmentState {
 // Pending mutations are intentionally excluded.
 type CommittedIndexState struct {
 	ID                   IndexID
-	Config               IndexConfig
-	ModelService         ModelServiceConfig
+	Config               SemanticConfig
 	Revision             Revision
 	MaxAllocatedVectorID VectorID
 	NextSegmentID        SegmentID
@@ -68,7 +65,6 @@ func (i *Index) ExportState(ctx context.Context) (*CommittedIndexState, error) {
 
 	view := i.state.view
 	config := i.config
-	modelService := i.modelService
 	revision := i.state.revision
 	maxAllocatedVectorID := i.state.maxAllocatedVectorID
 	nextSegmentID := i.state.nextSegmentID
@@ -78,7 +74,6 @@ func (i *Index) ExportState(ctx context.Context) (*CommittedIndexState, error) {
 		ctx,
 		i.id,
 		config,
-		modelService,
 		revision,
 		maxAllocatedVectorID,
 		nextSegmentID,
@@ -89,8 +84,7 @@ func (i *Index) ExportState(ctx context.Context) (*CommittedIndexState, error) {
 func exportCommittedState(
 	ctx context.Context,
 	id IndexID,
-	config IndexConfig,
-	modelService ModelServiceConfig,
+	config SemanticConfig,
 	revision Revision,
 	maxAllocatedVectorID VectorID,
 	nextSegmentID SegmentID,
@@ -109,7 +103,6 @@ func exportCommittedState(
 	return &CommittedIndexState{
 		ID:                   id,
 		Config:               config,
-		ModelService:         modelService,
 		Revision:             revision,
 		MaxAllocatedVectorID: maxAllocatedVectorID,
 		NextSegmentID:        nextSegmentID,
@@ -134,16 +127,17 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 	if config != state.Config {
 		return nil, ErrInvalidConfig
 	}
-	if err := state.ModelService.Validate(config.Schema.Chunking); err != nil {
-		return nil, err
-	}
 	if state.ID == (IndexID{}) || state.NextSegmentID == 0 {
 		return nil, ErrInternalState
 	}
-	if len(state.Segments) > config.runtimeLimits().lifecycle.maxSegments {
+	if len(state.Segments) > config.Index.runtimeLimits().lifecycle.maxSegments {
 		return nil, ErrCapacityExceeded
 	}
 
+	space, err := vector.NewSpace(config.Model.Dimensions, config.Index.Metric)
+	if err != nil {
+		return nil, ErrInvalidConfig
+	}
 	views := make([]segmentView, len(state.Segments))
 	locations := make(map[VectorID]vectorLocation)
 	documents := make(map[fts.DocID]documentVectors)
@@ -165,14 +159,10 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		if persisted.Index == nil || persisted.Vectors == nil {
 			return nil, ErrInvalidSegment
 		}
-		if err := validateSchemaCompatibility(persisted.Schema, config.Schema); err != nil {
-			return nil, err
-		}
-
 		physical, err := newSegment(
 			ctx,
 			persisted.ID,
-			persisted.Schema,
+			space,
 			persisted.Vectors,
 			persisted.Index,
 			persisted.Rows,
@@ -219,20 +209,17 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		return nil, ErrInternalState
 	}
 
-	searchConfig, ok := config.hnswSearchConfig()
-	if !ok {
-		return nil, ErrInvalidConfig
-	}
+	searchConfig := config.Index.hnswSearchConfig()
 
-	limits := config.runtimeLimits()
-	if err := validateLoadedSegments(ctx, views, config.Schema); err != nil {
+	limits := config.Index.runtimeLimits()
+	if err := validateLoadedSegments(ctx, views); err != nil {
 		return nil, err
 	}
 	view, err := newIndexView(
 		ctx,
 		state.Revision,
 		views,
-		config.Schema,
+		space,
 		limits.search,
 		limits.results,
 		searchConfig,
@@ -256,10 +243,6 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		}
 	}
 
-	space, err := config.Schema.Embedding.VectorSpace()
-	if err != nil {
-		return nil, ErrInvalidConfig
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -268,7 +251,6 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		mutationGate: make(chan struct{}, 1),
 		id:           state.ID,
 		config:       config,
-		modelService: state.ModelService,
 		limits:       limits,
 		space:        space,
 		state: indexState{

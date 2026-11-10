@@ -21,7 +21,9 @@ type BuildConfig struct {
 	Seed           uint64
 }
 
-func (c BuildConfig) validate() error {
+// Validate checks whether the graph construction configuration is supported by
+// the HNSW implementation.
+func (c BuildConfig) Validate() error {
 	if c.MaxNeighbors < 2 || c.MaxNeighbors > maxSupportedNeighbors {
 		return ErrInvalidConfig
 	}
@@ -49,7 +51,8 @@ type SearchConfig struct {
 	VisitLimit int
 }
 
-func (c SearchConfig) validate() error {
+// Validate checks whether the runtime search defaults are valid for HNSW.
+func (c SearchConfig) Validate() error {
 	if c.EfSearch <= 0 || c.VisitLimit <= 0 {
 		return ErrInvalidConfig
 	}

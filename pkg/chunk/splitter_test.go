@@ -7,30 +7,6 @@ import (
 	"testing"
 )
 
-func TestConfigFingerprint(t *testing.T) {
-	config := Config{TargetBytes: 512, MaxBytes: 768, OverlapBytes: 64}
-	first, err := config.Fingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := config.Fingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first == "" || first != second {
-		t.Fatalf("Fingerprint() = %q and %q", first, second)
-	}
-	changed := config
-	changed.OverlapBytes++
-	other, err := changed.Fingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if other == first {
-		t.Fatal("Fingerprint() did not change with config")
-	}
-}
-
 func TestWhole(t *testing.T) {
 	got, err := Whole("hello")
 	if err != nil || got != (Range{0, 5}) {

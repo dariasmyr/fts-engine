@@ -9,22 +9,25 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-func (v *IndexView) validateSearchLimits(ctx context.Context, maxResultCount int, options SearchOptions) error {
+func (v *IndexView) validateSearchLimits(ctx context.Context, maxResultCount int, config QueryConfig) error {
 	if ctx == nil {
 		return vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := config.Validate(); err != nil {
+		return err
+	}
 	if maxResultCount <= 0 || maxResultCount > v.resultLimits.maxDocumentsPerSearch {
 		return fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, maxResultCount, v.resultLimits.maxDocumentsPerSearch)
 	}
-	if _, err := resolveCandidateBudget(options.CandidateChunks, v.searchLimits.maxChunkCandidates); err != nil {
+	if _, err := resolveCandidateBudget(config.CandidateChunks, v.searchLimits.maxChunkCandidates); err != nil {
 		return err
 	}
-	if options.EfSearch < 0 || options.EfSearch > v.searchLimits.maxEfSearch ||
-		options.VisitLimit < 0 || options.VisitLimit > v.searchLimits.maxVisitLimit {
-		return ErrInvalidSearchOptions
+	if config.EfSearch < 0 || config.EfSearch > v.searchLimits.maxEfSearch ||
+		config.VisitLimit < 0 || config.VisitLimit > v.searchLimits.maxVisitLimit {
+		return ErrInvalidQueryConfig
 	}
 	return nil
 }
@@ -34,7 +37,6 @@ func (v *IndexView) validateSearchLimits(ctx context.Context, maxResultCount int
 func validateLoadedSegments(
 	ctx context.Context,
 	segments []segmentView,
-	schema Schema,
 ) error {
 	segmentIDs := make(map[SegmentID]struct{}, len(segments))
 	type chunkKey struct {
@@ -52,10 +54,6 @@ func validateLoadedSegments(
 		}
 		if item.segment == nil || item.liveness.TotalOrdinalCount() != uint32(item.segment.len()) {
 			return ErrInvalidSegment
-		}
-		got := item.segment.schema
-		if err := validateSchemaCompatibility(got, schema); err != nil {
-			return err
 		}
 		segmentID := item.segment.segmentID()
 		if _, exists := segmentIDs[segmentID]; exists {

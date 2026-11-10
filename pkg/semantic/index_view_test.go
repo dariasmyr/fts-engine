@@ -12,11 +12,11 @@ func TestIndexViewRejectsSearchOverridesAboveConfiguredMaximum(t *testing.T) {
 	index := newTestIndex(t)
 	tests := []struct {
 		name    string
-		options SearchOptions
+		options QueryConfig
 	}{
-		{name: "candidate chunks", options: SearchOptions{CandidateChunks: 17}},
-		{name: "ef search", options: SearchOptions{EfSearch: 17}},
-		{name: "visit limit", options: SearchOptions{VisitLimit: 33}},
+		{name: "candidate chunks", options: QueryConfig{CandidateChunks: 17}},
+		{name: "ef search", options: QueryConfig{EfSearch: 17}},
+		{name: "visit limit", options: QueryConfig{VisitLimit: 33}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -26,8 +26,8 @@ func TestIndexViewRejectsSearchOverridesAboveConfiguredMaximum(t *testing.T) {
 				1,
 				test.options,
 			)
-			if !errors.Is(err, ErrInvalidSearchOptions) {
-				t.Fatalf("Search() error = %v, want ErrInvalidSearchOptions", err)
+			if !errors.Is(err, ErrInvalidQueryConfig) {
+				t.Fatalf("Search() error = %v, want ErrInvalidQueryConfig", err)
 			}
 		})
 	}
@@ -88,7 +88,7 @@ func TestIndexViewVisitBudgetIsSharedAcrossSegments(t *testing.T) {
 				context.Background(),
 				[]ChunkEmbedding{testChunk("query", "q-1", 0, 0)},
 				2,
-				SearchOptions{
+				QueryConfig{
 					CandidateChunks: tt.candidateChunks,
 					EfSearch:        2,
 					VisitLimit:      tt.visitLimit,

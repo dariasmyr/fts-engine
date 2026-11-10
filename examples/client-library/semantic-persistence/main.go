@@ -19,19 +19,21 @@ func main() {
 	must(err)
 	defer os.RemoveAll(root)
 
-	semanticOptions := []semantic.Option{
-		semantic.WithMetric(vector.MetricL2Squared),
-		semantic.WithChunking(chunk.Config{
-			TargetBytes: 512, MaxBytes: 768, OverlapBytes: 64,
-		}),
-		semantic.WithMaxIndexedVectors(100),
-		semantic.WithMaxChunksPerDocument(10),
-		semantic.WithSearchLimits(semantic.SearchLimits{
-			MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3,
-		}),
+	embedder := persistenceEmbedder{}
+	config, err := semantic.DefaultSemanticConfig(embedder.Model())
+	must(err)
+	config.Index.Metric = vector.MetricL2Squared
+	config.Chunking.Builtin = chunk.Config{
+		TargetBytes: 512, MaxBytes: 768, OverlapBytes: 64,
+	}
+	config.Index.Limits.MaxLiveVectors = 100
+	config.Index.Limits.MaxStaleVectors = 100
+	config.Index.Limits.MaxChunksPerDocument = 10
+	config.Index.Search = semantic.SearchConfig{
+		MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3,
 	}
 
-	service, err := semantic.New(persistenceEmbedder{}, semanticOptions...)
+	service, err := semantic.New(embedder, config)
 	must(err)
 
 	must(service.AddDocument(ctx, document("doc-a", "a-v1")))

@@ -45,7 +45,7 @@ func Restore(snapshot hnswmodel.Snapshot, vectors vector.PreparedVectorStore, se
 		EfConstruction: snapshot.EfConstruction,
 		Seed:           snapshot.Seed,
 	}
-	if err := build.validate(); err != nil || snapshot.LevelZeroMaxNeighbors != snapshot.MaxNeighbors*2 ||
+	if err := build.Validate(); err != nil || snapshot.LevelZeroMaxNeighbors != snapshot.MaxNeighbors*2 ||
 		snapshot.BuildVersion == 0 || snapshot.LevelGeneratorVersion == 0 {
 		return nil, errInvalidGraph
 	}

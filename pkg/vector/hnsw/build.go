@@ -25,10 +25,10 @@ func Build(
 	if source == nil || source.Len() < 0 {
 		return nil, ErrInvalidSource
 	}
-	if err := build.validate(); err != nil {
+	if err := build.Validate(); err != nil {
 		return nil, err
 	}
-	if err := search.validate(); err != nil {
+	if err := search.Validate(); err != nil {
 		return nil, err
 	}
 

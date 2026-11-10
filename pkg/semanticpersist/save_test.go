@@ -110,7 +110,7 @@ func TestCommitAndSaveStaleGenerationKeepsMutationPending(t *testing.T) {
 		ctx,
 		[]semantic.ChunkEmbedding{{Embedding: []float32{3, 4}}},
 		2,
-		semantic.SearchOptions{},
+		semantic.QueryConfig{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func TestCommitAndSaveFailureBeforeCurrentKeepsMutationPending(t *testing.T) {
 		ctx,
 		[]semantic.ChunkEmbedding{{Embedding: []float32{3, 4}}},
 		2,
-		semantic.SearchOptions{},
+		semantic.QueryConfig{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -396,7 +396,7 @@ func TestCommitAndSaveBlocksMutationUntilPersistenceCompletes(t *testing.T) {
 		ctx,
 		[]semantic.ChunkEmbedding{{Embedding: []float32{1, 2}}},
 		1,
-		semantic.SearchOptions{},
+		semantic.QueryConfig{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -416,7 +416,7 @@ func TestCommitAndSaveBlocksMutationUntilPersistenceCompletes(t *testing.T) {
 		ctx,
 		[]semantic.ChunkEmbedding{{Embedding: []float32{1, 2}}},
 		1,
-		semantic.SearchOptions{},
+		semantic.QueryConfig{},
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -11,8 +11,7 @@ import (
 )
 
 func TestIndexOwnsMetricPreparation(t *testing.T) {
-	schema := serviceTestSchema(t)
-	index, err := NewIndex(serviceTestConfig(schema))
+	index, err := NewIndex(serviceTestConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +33,7 @@ func TestIndexOwnsMetricPreparation(t *testing.T) {
 	if err := index.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	result, err := index.Search(t.Context(), []ChunkEmbedding{{Embedding: []float32{6, 8}}}, 1, SearchOptions{})
+	result, err := index.Search(t.Context(), []ChunkEmbedding{{Embedding: []float32{6, 8}}}, 1, QueryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +130,7 @@ func TestIndexSearchDuringCommit(t *testing.T) {
 				context.Background(),
 				[]ChunkEmbedding{testChunk("query", "query-1", 0, 0)},
 				1,
-				SearchOptions{},
+				QueryConfig{},
 			)
 			if err != nil {
 				searchDone <- err

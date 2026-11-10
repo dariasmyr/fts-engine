@@ -13,7 +13,7 @@ import (
 // authoritative row storage and the HNSW index contains only navigation topology.
 type segment struct {
 	id      SegmentID
-	schema  Schema
+	space   vector.Space
 	rows    []VectorRow
 	vectors vector.PreparedVectorStore
 	index   *hnsw.Index
@@ -25,7 +25,7 @@ type segment struct {
 func buildSegment(
 	ctx context.Context,
 	id SegmentID,
-	schema Schema,
+	space vector.Space,
 	source vector.PreparedVectorStore,
 	rows []VectorRow,
 	build hnsw.BuildConfig,
@@ -39,7 +39,7 @@ func buildSegment(
 		return nil, err
 	}
 
-	if id == 0 || !schema.IsValid() {
+	if id == 0 || space.Dimensions() <= 0 {
 		return nil, ErrInvalidSegment
 	}
 
@@ -48,15 +48,15 @@ func buildSegment(
 		return nil, err
 	}
 
-	return newBuiltSegment(id, schema, source, index, rows)
+	return newBuiltSegment(id, space, source, index, rows)
 }
 
 // newBuiltSegment takes ownership of rows produced together with an index by
 // the package's ingestion or compaction path.
-func newBuiltSegment(id SegmentID, schema Schema, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
+func newBuiltSegment(id SegmentID, space vector.Space, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
 	segment := &segment{
 		id:      id,
-		schema:  schema,
+		space:   space,
 		rows:    rows,
 		vectors: vectors,
 		index:   index,
@@ -67,7 +67,7 @@ func newBuiltSegment(id SegmentID, schema Schema, vectors vector.PreparedVectorS
 	return segment, nil
 }
 
-func newSegment(ctx context.Context, id SegmentID, schema Schema, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
+func newSegment(ctx context.Context, id SegmentID, space vector.Space, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -83,7 +83,7 @@ func newSegment(ctx context.Context, id SegmentID, schema Schema, vectors vector
 
 	segment := &segment{
 		id:      id,
-		schema:  schema,
+		space:   space,
 		rows:    append([]VectorRow(nil), rows...),
 		vectors: vectors,
 		index:   index,
@@ -163,11 +163,8 @@ func (s *segment) validateContents() error {
 		return ErrInvalidSegment
 	}
 	vectors := s.vectors
-	if !s.schema.Embedding.IsValid() || !s.schema.Chunking.IsValid() {
-		return ErrInvalidSegment
-	}
-	space, err := s.schema.Embedding.VectorSpace()
-	if err != nil || s.id == 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
+	space := s.space
+	if s.id == 0 || space.Dimensions() <= 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
 		vectors.Dimensions() != space.Dimensions() || vectors.Metric() != space.Metric() ||
 		vectors.Normalization() != space.Normalization() || s.index.Dimensions() != vectors.Dimensions() ||
 		s.index.Metric() != vectors.Metric() {

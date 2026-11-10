@@ -82,7 +82,7 @@ func TestIndexExportStateRejectsPendingMutations(t *testing.T) {
 		t.Fatalf("Compact() error = %v, want %v", err, ErrPendingMutations)
 	}
 
-	result, err := index.Search(ctx, []ChunkEmbedding{testChunk("query", "q-1", 0, 0)}, 1, SearchOptions{})
+	result, err := index.Search(ctx, []ChunkEmbedding{testChunk("query", "q-1", 0, 0)}, 1, QueryConfig{})
 	if err != nil {
 		t.Fatalf("Search() before Commit error = %v", err)
 	}
@@ -150,7 +150,7 @@ func TestIndexCommitWithStateRejectsCandidateWithoutPublishing(t *testing.T) {
 			ctx,
 			[]ChunkEmbedding{testChunk("query", "q-1", 0, 0)},
 			1,
-			SearchOptions{},
+			QueryConfig{},
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -240,13 +240,6 @@ func TestRestoreRejectsInvalidCommittedIndexState(t *testing.T) {
 			wantErr: ErrInternalState,
 		},
 		{
-			name: "segment embedding mismatch",
-			mutate: func(state *CommittedIndexState) {
-				state.Segments[0].Schema.Embedding.ModelRevision = "other"
-			},
-			wantErr: ErrEmbeddingMismatch,
-		},
-		{
 			name: "invalid liveness word count",
 			mutate: func(state *CommittedIndexState) {
 				state.Segments[0].LivenessWords = nil
@@ -287,44 +280,20 @@ func cloneTestState(state CommittedIndexState) CommittedIndexState {
 func newTestIndex(t *testing.T) *Index {
 	t.Helper()
 
-	embedding, err := NewEmbeddingSchema(
-		"test-model",
-		"v1",
-		"test-pipeline-v1",
-		2,
-		vector.MetricL2Squared,
-		1,
-	)
-	if err != nil {
-		t.Fatalf("NewEmbeddingSchema() error = %v", err)
-	}
-	index, err := NewIndex(IndexConfig{
-		Schema: Schema{
-			Embedding: embedding,
-			Chunking: ChunkingSchema{
-				ID:          "test-chunks",
-				Version:     1,
-				Fingerprint: "test-chunks-v1",
+	index, err := NewIndex(SemanticConfig{
+		Model: ModelConfig{ID: "test-model", Revision: "v1", Dimensions: 2, ContextTokens: 16},
+		Index: IndexConfig{
+			Metric: vector.MetricL2Squared,
+			Limits: LimitsConfig{
+				MaxLiveVectors: 32, MaxStaleVectors: 32, MaxSegments: 8, MaxChunksPerDocument: 4,
+			},
+			Search: SearchConfig{MaxResults: 4, MaxCandidateChunks: 16, MaxChunksPerResult: 2},
+			HNSW: HNSWConfig{
+				MaxNeighbors: 2, EfConstruction: 4, Seed: 1,
+				DefaultEfSearch: 8, MaxEfSearch: 16, DefaultVisitLimit: 32, MaxVisitLimit: 32,
 			},
 		},
-		Limits: Limits{
-			MaxLiveVectors:          32,
-			MaxStaleVectors:         32,
-			MaxSegments:             8,
-			MaxChunksPerDocument:    4,
-			MaxDocumentsPerSearch:   4,
-			MaxChunkCandidates:      16,
-			MaxChunksPerDocumentHit: 2,
-		},
-		HNSW: HNSWTuning{
-			MaxNeighbors:      2,
-			EfConstruction:    4,
-			Seed:              1,
-			DefaultEfSearch:   8,
-			MaxEfSearch:       16,
-			DefaultVisitLimit: 32,
-			MaxVisitLimit:     32,
-		},
+		Chunking: ChunkingConfig{Kind: ChunkingKindCustom},
 	})
 	if err != nil {
 		t.Fatalf("NewIndex() error = %v", err)
@@ -379,7 +348,7 @@ func assertNearestDocument(t *testing.T, index *Index, query []float32, expected
 		context.Background(),
 		[]ChunkEmbedding{testChunk("query", "query-1", query...)},
 		1,
-		SearchOptions{},
+		QueryConfig{},
 	)
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)

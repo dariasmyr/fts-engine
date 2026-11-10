@@ -52,7 +52,7 @@ func BenchmarkLoadService(b *testing.B) {
 		b.Fatal(err)
 	}
 	client := persistenceBenchmarkClient(b)
-	service, err := semantic.New(client)
+	service, err := semantic.New(client, persistenceBenchmarkConfig(b, client))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func BenchmarkCommitAndSave(b *testing.B) {
 	ctx := context.Background()
 	root := filepath.Join(b.TempDir(), "service")
 	client := persistenceBenchmarkClient(b)
-	service, err := semantic.New(client)
+	service, err := semantic.New(client, persistenceBenchmarkConfig(b, client))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -132,23 +132,16 @@ func BenchmarkCommitAndSave(b *testing.B) {
 
 func newPersistenceBenchmarkIndex(tb testing.TB) *semantic.Index {
 	tb.Helper()
-	embedding, err := semantic.NewEmbeddingSchema(
-		"deterministic", "v1", "benchmark-pipeline-v1",
-		persistenceBenchmarkDimensions, vector.MetricL2Squared, 1,
-	)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	index, err := semantic.NewIndex(semantic.IndexConfig{
-		Schema: semantic.Schema{
-			Embedding: embedding,
-			Chunking:  semantic.ChunkingSchema{ID: "whole", Version: 1, Fingerprint: "whole-v1"},
+	index, err := semantic.NewIndex(semantic.SemanticConfig{
+		Model: semantic.ModelConfig{
+			ID: "deterministic", Revision: "v1", Dimensions: persistenceBenchmarkDimensions, ContextTokens: 16,
 		},
-		Limits: semantic.Limits{
-			MaxLiveVectors:       persistenceBenchmarkDocuments,
-			MaxChunksPerDocument: 1, MaxDocumentsPerSearch: 10,
-			MaxChunkCandidates: 64, MaxChunksPerDocumentHit: 1,
+		Index: semantic.IndexConfig{
+			Metric: vector.MetricL2Squared,
+			Limits: semantic.LimitsConfig{MaxLiveVectors: persistenceBenchmarkDocuments, MaxChunksPerDocument: 1},
+			Search: semantic.SearchConfig{MaxResults: 10, MaxCandidateChunks: 64, MaxChunksPerResult: 1},
 		},
+		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindCustom},
 	})
 	if err != nil {
 		tb.Fatal(err)
@@ -199,4 +192,13 @@ func persistenceBenchmarkClient(tb testing.TB) embedding.Client {
 		tb.Fatal(err)
 	}
 	return client
+}
+
+func persistenceBenchmarkConfig(tb testing.TB, client embedding.Client) semantic.SemanticConfig {
+	tb.Helper()
+	config, err := semantic.DefaultSemanticConfig(client.Model())
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return config
 }

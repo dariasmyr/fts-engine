@@ -29,7 +29,7 @@ func TestConcurrentSearchDuringSave(t *testing.T) {
 		<-start
 		query := []semantic.ChunkEmbedding{{Embedding: []float32{1, 2}}}
 		for range 500 {
-			result, err := index.Search(ctx, query, 1, semantic.SearchOptions{})
+			result, err := index.Search(ctx, query, 1, semantic.QueryConfig{})
 			if err != nil {
 				searchDone <- err
 				return

@@ -17,7 +17,7 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
 	client := persistentTestClient(t, "v1")
-	service, err := semantic.New(client)
+	service, err := semantic.New(client, persistentTestConfig(t, client))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,17 +83,13 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLoadServiceRestoresPersistedModelServiceConfig(t *testing.T) {
+func TestLoadServiceRestoresPersistedSemanticConfig(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
 	client := persistentTestClient(t, "v1")
-	service, err := semantic.New(
-		client,
-		semantic.WithChunking(chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}),
-		semantic.WithQueryConfig(semantic.QueryConfig{
-			MaxBytes: 16, LongQuery: semantic.LongQueryTruncate,
-		}),
-	)
+	config := persistentTestConfig(t, client)
+	config.Chunking.Builtin = chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
+	service, err := semantic.New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,8 +114,8 @@ func TestLoadServiceRestoresPersistedModelServiceConfig(t *testing.T) {
 	if loaded == nil {
 		t.Fatal("LoadService() returned nil service")
 	}
-	if loaded.RetrievalFingerprint() != service.RetrievalFingerprint() {
-		t.Fatalf("retrieval fingerprint = %q, want %q", loaded.RetrievalFingerprint(), service.RetrievalFingerprint())
+	if loaded.Config() != service.Config() {
+		t.Fatalf("loaded config = %+v, want %+v", loaded.Config(), service.Config())
 	}
 
 	_, _, err = semanticpersist.LoadService(
@@ -128,8 +124,8 @@ func TestLoadServiceRestoresPersistedModelServiceConfig(t *testing.T) {
 		persistentTestClient(t, "v2"),
 		semanticpersist.LoadOptions{},
 	)
-	if !errors.Is(err, semantic.ErrEmbeddingMismatch) {
-		t.Fatalf("LoadService() mismatch error = %v, want semantic.ErrEmbeddingMismatch", err)
+	if !errors.Is(err, semantic.ErrModelServiceUnavailable) {
+		t.Fatalf("LoadService() mismatch error = %v, want semantic.ErrModelServiceUnavailable", err)
 	}
 }
 
@@ -147,7 +143,7 @@ func TestLoadServicePreservesCancellationAndPersistenceLimits(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	service, err := semantic.New(client)
+	service, err := semantic.New(client, persistentTestConfig(t, client))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,6 +190,15 @@ func persistentTestClient(t *testing.T, revision string) embedding.Client {
 		t.Fatal(err)
 	}
 	return client
+}
+
+func persistentTestConfig(t *testing.T, client embedding.Client) semantic.SemanticConfig {
+	t.Helper()
+	config, err := semantic.DefaultSemanticConfig(client.Model())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return config
 }
 
 func testDocument(id, text string) fts.Document {

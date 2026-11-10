@@ -38,7 +38,7 @@ func resolveCandidateBudget(candidateChunks, maxCandidates int) (int, error) {
 		return maxCandidates, nil
 	}
 	if candidateChunks < 0 || candidateChunks > maxCandidates {
-		return 0, fmt.Errorf("%w: candidate chunks %d, max %d", ErrInvalidSearchOptions, candidateChunks, maxCandidates)
+		return 0, fmt.Errorf("%w: candidate chunks %d, max %d", ErrInvalidQueryConfig, candidateChunks, maxCandidates)
 	}
 	return candidateChunks, nil
 }

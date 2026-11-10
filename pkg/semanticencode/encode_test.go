@@ -6,7 +6,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
@@ -48,54 +47,7 @@ func TestEncoderRejectsEmbeddingCountMismatch(t *testing.T) {
 	}
 }
 
-func TestNewRejectsClientModelMismatch(t *testing.T) {
-	tests := []struct {
-		name  string
-		model embedding.Model
-	}{
-		{
-			name:  "model id",
-			model: embedding.Model{ID: "other", Revision: "v1", Dimensions: 2, ContextTokens: 512},
-		},
-		{
-			name:  "revision",
-			model: embedding.Model{ID: "model", Revision: "v2", Dimensions: 2, ContextTokens: 512},
-		},
-		{
-			name:  "dimensions",
-			model: embedding.Model{ID: "model", Revision: "v1", Dimensions: 3, ContextTokens: 512},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client, err := embedding.NewClient(tt.model, func(context.Context, []string) ([][]float32, error) {
-				return nil, nil
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			schemaEmbedding, err := semantic.NewEmbeddingSchema(
-				"model", "v1", "pipeline", 2, vector.MetricCosine, 1,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = NewEncoder(EncoderConfig{
-				Schema: semantic.Schema{
-					Embedding: schemaEmbedding,
-					Chunking:  semantic.ChunkingSchema{ID: "whole", Version: 1, Fingerprint: "whole-v1"},
-				},
-				Limits: InputLimits{MaxFields: 1, MaxSourceBytes: 1, MaxChunks: 1, MaxEmbeddingBytes: 16},
-				Client: client,
-			})
-			if !errors.Is(err, ErrInvalidConfig) {
-				t.Fatalf("New() error = %v, want ErrInvalidConfig", err)
-			}
-		})
-	}
-}
-
-func TestNewDerivesCompatibilityAndRolePrefix(t *testing.T) {
+func TestNewUsesRolePrefix(t *testing.T) {
 	model := embedding.Model{
 		ID: "model", Revision: "digest", Dimensions: 2, ContextTokens: 512,
 		DocumentPrefix: "document: ", QueryPrefix: "query: ",
@@ -130,20 +82,11 @@ func TestNewDerivesCompatibilityAndRolePrefix(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queryEncoder.EncodeQuery(t.Context(), "text"); err != nil {
+	if _, err := queryEncoder.EncodeQuery(t.Context(), "text", semantic.QueryConfig{}); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(received, []string{"document: text", "query: text"}) {
 		t.Fatalf("embedded inputs = %q", received)
-	}
-	if documentEncoder.Schema() != queryEncoder.Schema() {
-		t.Fatal("document and query encoders derived different persisted schemas")
-	}
-	if documentEncoder.RetrievalFingerprint() != queryEncoder.RetrievalFingerprint() {
-		t.Fatal("document and query encoders derived different retrieval fingerprints")
-	}
-	if got := documentEncoder.Schema().Chunking; got.ID != chunk.WholeID || got.Version != chunk.WholeVersion {
-		t.Fatalf("derived whole-field chunking = %+v", got)
 	}
 }
 
@@ -160,15 +103,8 @@ func testEmbeddingClient(t testing.TB, embed embedding.ClientFunc) embedding.Cli
 
 func newTestEncoder(t *testing.T, provider embedding.Client) *Encoder {
 	t.Helper()
-	embedding, err := semantic.NewEmbeddingSchema("model", "v1", "pipeline", 2, vector.MetricCosine, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
 	encoder, err := NewEncoder(EncoderConfig{
-		Schema: semantic.Schema{
-			Embedding: embedding,
-			Chunking:  semantic.ChunkingSchema{ID: "whole", Version: 1, Fingerprint: "whole-v1"},
-		},
+		Metric: vector.MetricCosine,
 		Limits: InputLimits{MaxFields: 4, MaxSourceBytes: 1024, MaxChunks: 4, MaxEmbeddingBytes: 1024},
 		Client: provider,
 	})

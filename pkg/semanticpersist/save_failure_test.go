@@ -30,7 +30,11 @@ func TestLowLevelSaveFailureAfterExplicitCommitKeepsPreviousCurrent(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := semantic.New(client)
+	config, err := semantic.DefaultSemanticConfig(client.Model())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := semantic.New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -283,7 +283,7 @@ func (w *generationWriter) write(
 		ref, err := segments.put(
 			ctx,
 			segment.state,
-			state.state.Config.Limits.MaxChunkCandidates,
+			state.state.Config.Index.Search.MaxCandidateChunks,
 		)
 		if err != nil {
 			return 0, err

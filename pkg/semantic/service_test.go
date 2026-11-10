@@ -9,33 +9,23 @@ import (
 )
 
 type serviceTestEncoder struct {
-	schema             Schema
 	value              []float32
 	documentCalls      int
 	queryCalls         int
 	queryDocumentCalls int
 }
 
-type serviceTestRetrievalEncoder struct {
-	*serviceTestEncoder
-	retrieval string
-}
-
-func (e *serviceTestRetrievalEncoder) RetrievalFingerprint() string { return e.retrieval }
-
-func (e *serviceTestEncoder) Schema() Schema { return e.schema }
-
 func (e *serviceTestEncoder) EncodeDocument(_ context.Context, document fts.Document) ([]ChunkEmbedding, error) {
 	e.documentCalls++
 	return e.encoded(document.ID), nil
 }
 
-func (e *serviceTestEncoder) EncodeQuery(_ context.Context, _ string) ([]ChunkEmbedding, error) {
+func (e *serviceTestEncoder) EncodeQuery(_ context.Context, _ string, _ QueryConfig) ([]ChunkEmbedding, error) {
 	e.queryCalls++
 	return e.encoded("_query"), nil
 }
 
-func (e *serviceTestEncoder) EncodeQueryDocument(_ context.Context, document fts.Document) ([]ChunkEmbedding, error) {
+func (e *serviceTestEncoder) EncodeQueryDocument(_ context.Context, document fts.Document, _ QueryConfig) ([]ChunkEmbedding, error) {
 	e.queryDocumentCalls++
 	return e.encoded(document.ID), nil
 }
@@ -48,10 +38,9 @@ func (e *serviceTestEncoder) encoded(docID fts.DocID) []ChunkEmbedding {
 }
 
 func TestServiceUsesSeparateDocumentAndQueryEncoders(t *testing.T) {
-	schema := serviceTestSchema(t)
-	documents := &serviceTestEncoder{schema: schema, value: []float32{1, 0}}
-	queries := &serviceTestEncoder{schema: schema, value: []float32{1, 0}}
-	index, err := NewIndex(serviceTestConfig(schema))
+	documents := &serviceTestEncoder{value: []float32{1, 0}}
+	queries := &serviceTestEncoder{value: []float32{1, 0}}
+	index, err := NewIndex(serviceTestConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,52 +81,14 @@ func TestServiceUsesSeparateDocumentAndQueryEncoders(t *testing.T) {
 	}
 }
 
-func TestNewServiceValidatesSchemas(t *testing.T) {
-	schema := serviceTestSchema(t)
-	index, err := NewIndex(serviceTestConfig(schema))
-	if err != nil {
-		t.Fatal(err)
+func serviceTestConfig() SemanticConfig {
+	return SemanticConfig{
+		Model: ModelConfig{ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 16},
+		Index: IndexConfig{
+			Metric: vector.MetricCosine,
+			Limits: LimitsConfig{MaxLiveVectors: 8, MaxChunksPerDocument: 2},
+			Search: SearchConfig{MaxResults: 2, MaxCandidateChunks: 8, MaxChunksPerResult: 1},
+		},
+		Chunking: ChunkingConfig{Kind: ChunkingKindCustom},
 	}
-	valid := &serviceTestEncoder{schema: schema, value: []float32{1, 0}}
-	invalidSchema := schema
-	invalidSchema.Chunking.Fingerprint = "different"
-	invalid := &serviceTestEncoder{schema: invalidSchema, value: []float32{1, 0}}
-	if _, err := NewService(index, valid, invalid); err == nil {
-		t.Fatal("NewService() error = nil for mismatched query schema")
-	}
-}
-
-func TestNewServiceValidatesRetrievalFingerprint(t *testing.T) {
-	schema := serviceTestSchema(t)
-	index, err := NewIndex(serviceTestConfig(schema))
-	if err != nil {
-		t.Fatal(err)
-	}
-	documents := &serviceTestRetrievalEncoder{
-		serviceTestEncoder: &serviceTestEncoder{schema: schema, value: []float32{1, 0}},
-		retrieval:          "retrieval-v1",
-	}
-	queries := &serviceTestRetrievalEncoder{
-		serviceTestEncoder: &serviceTestEncoder{schema: schema, value: []float32{1, 0}},
-		retrieval:          "retrieval-v2",
-	}
-	if _, err := NewService(index, documents, queries); err != ErrEmbeddingMismatch {
-		t.Fatalf("NewService() error = %v, want ErrEmbeddingMismatch", err)
-	}
-}
-
-func serviceTestSchema(t *testing.T) Schema {
-	t.Helper()
-	embedding, err := NewEmbeddingSchema("model", "v1", "pipeline", 2, vector.MetricCosine, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return Schema{Embedding: embedding, Chunking: ChunkingSchema{ID: "whole", Version: 1, Fingerprint: "whole-v1"}}
-}
-
-func serviceTestConfig(schema Schema) IndexConfig {
-	return IndexConfig{Schema: schema, Limits: Limits{
-		MaxLiveVectors: 8, MaxChunksPerDocument: 2, MaxDocumentsPerSearch: 2,
-		MaxChunkCandidates: 8, MaxChunksPerDocumentHit: 1,
-	}}
 }

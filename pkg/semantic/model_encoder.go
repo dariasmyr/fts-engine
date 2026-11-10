@@ -27,31 +27,27 @@ const (
 )
 
 type modelEncoder struct {
-	role                 modelInputRole
-	chunker              Chunker
-	client               embedding.Client
-	schema               Schema
-	limits               modelInputLimits
-	dimensions           int
-	prefix               string
-	queryConfig          QueryConfig
-	retrievalFingerprint string
+	role          modelInputRole
+	splitter      ChunkSplitter
+	client        embedding.Client
+	limits        modelInputLimits
+	dimensions    int
+	maxQueryBytes int
+	prefix        string
 }
 
 func newModelEncoder(
 	client embedding.Client,
 	role modelInputRole,
-	chunker Chunker,
-	schema Schema,
+	splitter ChunkSplitter,
+	modelConfig ModelConfig,
 	limits modelInputLimits,
-	queryConfig QueryConfig,
 ) (*modelEncoder, error) {
-	if client == nil || !schema.IsValid() {
+	if client == nil || modelConfig.Validate() != nil {
 		return nil, ErrInvalidConfig
 	}
 	model := client.Model()
-	if err := model.Validate(); err != nil || model.ID != schema.Embedding.ModelID ||
-		model.Revision != schema.Embedding.ModelRevision || model.Dimensions != schema.Embedding.Dimensions {
+	if err := model.Validate(); err != nil || newModelConfig(model) != modelConfig {
 		return nil, ErrInvalidConfig
 	}
 	prefix := model.DocumentPrefix
@@ -60,20 +56,12 @@ func newModelEncoder(
 	} else if role != modelInputDocument {
 		return nil, ErrInvalidConfig
 	}
-	retrievalFingerprint, err := deriveRetrievalFingerprint(schema, model, &queryConfig)
-	if err != nil {
-		return nil, err
-	}
 	return &modelEncoder{
-		role: role, chunker: chunker, client: client, schema: schema,
-		limits: limits, dimensions: schema.Embedding.Dimensions, prefix: prefix, queryConfig: queryConfig,
-		retrievalFingerprint: retrievalFingerprint,
+		role: role, splitter: splitter, client: client,
+		limits: limits, dimensions: modelConfig.Dimensions,
+		maxQueryBytes: modelConfig.ContextTokens, prefix: prefix,
 	}, nil
 }
-
-func (e *modelEncoder) Schema() Schema { return e.schema }
-
-func (e *modelEncoder) RetrievalFingerprint() string { return e.retrievalFingerprint }
 
 func (e *modelEncoder) EncodeDocument(ctx context.Context, document fts.Document) ([]ChunkEmbedding, error) {
 	if ctx == nil {
@@ -85,12 +73,15 @@ func (e *modelEncoder) EncodeDocument(ctx context.Context, document fts.Document
 	return e.encodeDocument(ctx, document)
 }
 
-func (e *modelEncoder) EncodeQueryDocument(ctx context.Context, document fts.Document) ([]ChunkEmbedding, error) {
+func (e *modelEncoder) EncodeQueryDocument(ctx context.Context, document fts.Document, config QueryConfig) ([]ChunkEmbedding, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
 	if e.role != modelInputQuery {
 		return nil, ErrInvalidQuery
+	}
+	if _, err := e.resolveQueryConfig(config); err != nil {
+		return nil, err
 	}
 	return e.encodeDocument(ctx, document)
 }
@@ -103,14 +94,18 @@ func (e *modelEncoder) encodeDocument(ctx context.Context, document fts.Document
 	return e.embedInputs(ctx, inputs)
 }
 
-func (e *modelEncoder) EncodeQuery(ctx context.Context, text string) ([]ChunkEmbedding, error) {
+func (e *modelEncoder) EncodeQuery(ctx context.Context, text string, config QueryConfig) ([]ChunkEmbedding, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
 	if e.role != modelInputQuery || text == "" || !utf8.ValidString(text) {
 		return nil, ErrInvalidQuery
 	}
-	inputs, err := e.queryInputs(text)
+	config, err := e.resolveQueryConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	inputs, err := e.queryInputs(text, config)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +159,7 @@ func (e *modelEncoder) documentInputs(ctx context.Context, document fts.Document
 		if text == "" {
 			text = value.Value
 		}
-		ranges, err := e.chunker.Split(text)
+		ranges, err := e.splitter.Split(text)
 		if err != nil {
 			return nil, fmt.Errorf("%w: field %q: %w", ErrInvalidDocument, field, err)
 		}
@@ -194,12 +189,28 @@ func (e *modelEncoder) documentInputs(ctx context.Context, document fts.Document
 	return inputs, nil
 }
 
-func (e *modelEncoder) queryInputs(text string) ([]modelInput, error) {
-	maxBytes := e.queryConfig.MaxBytes
+func (e *modelEncoder) resolveQueryConfig(config QueryConfig) (QueryConfig, error) {
+	if err := config.Validate(); err != nil {
+		return QueryConfig{}, err
+	}
+	if config.MaxBytes == 0 {
+		config.MaxBytes = e.maxQueryBytes
+	}
+	if config.MaxBytes > e.maxQueryBytes {
+		return QueryConfig{}, ErrInvalidQueryConfig
+	}
+	if config.LongQuery == LongQueryStrategyUnknown {
+		config.LongQuery = LongQueryReject
+	}
+	return config, nil
+}
+
+func (e *modelEncoder) queryInputs(text string, config QueryConfig) ([]modelInput, error) {
+	maxBytes := config.MaxBytes
 	if len(text) <= maxBytes {
 		return []modelInput{queryInput(text, 0, len(text), 0)}, nil
 	}
-	switch e.queryConfig.LongQuery {
+	switch config.LongQuery {
 	case LongQueryReject:
 		return nil, fmt.Errorf("%w: query bytes %d exceed %d", ErrInputLimitExceeded, len(text), maxBytes)
 	case LongQueryTruncate:

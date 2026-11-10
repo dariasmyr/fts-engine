@@ -20,34 +20,30 @@ type Index struct {
 	mutationGate chan struct{}
 	stateMu      sync.RWMutex
 
-	id           IndexID
-	config       IndexConfig
-	modelService ModelServiceConfig
-	limits       indexLimits
-	space        vector.Space
-	state        indexState
+	id     IndexID
+	config SemanticConfig
+	limits indexLimits
+	space  vector.Space
+	state  indexState
 }
 
-func NewIndex(config IndexConfig) (*Index, error) {
+func NewIndex(config SemanticConfig) (*Index, error) {
 	config, err := config.normalized()
 	if err != nil {
 		return nil, err
 	}
-	space, err := config.Schema.Embedding.VectorSpace()
+	space, err := vector.NewSpace(config.Model.Dimensions, config.Index.Metric)
 	if err != nil {
 		return nil, ErrInvalidConfig
 	}
-	searchConfig, ok := config.hnswSearchConfig()
-	if !ok {
-		return nil, ErrInvalidConfig
-	}
+	searchConfig := config.Index.hnswSearchConfig()
 
-	limits := config.runtimeLimits()
+	limits := config.Index.runtimeLimits()
 	view, err := newIndexView(
 		context.Background(),
 		0,
 		nil,
-		config.Schema,
+		space,
 		limits.search,
 		limits.results,
 		searchConfig,
@@ -74,7 +70,8 @@ func NewIndex(config IndexConfig) (*Index, error) {
 	}, nil
 }
 
-func (i *Index) Schema() Schema { return i.config.Schema }
+// Config returns the static semantic configuration.
+func (i *Index) Config() SemanticConfig { return i.config }
 
 // AddDocument validates, copies, prepares, and stages one document's raw chunk
 // embeddings. It never retains caller-owned embedding buffers and is invisible
@@ -252,7 +249,7 @@ func (i *Index) Search(
 	ctx context.Context,
 	queries []ChunkEmbedding,
 	k int,
-	options SearchOptions,
+	config QueryConfig,
 ) (DocumentSearchResult, error) {
 	if ctx == nil {
 		return DocumentSearchResult{}, vector.ErrNilContext
@@ -263,5 +260,5 @@ func (i *Index) Search(
 		return DocumentSearchResult{}, err
 	}
 
-	return view.Search(ctx, queries, k, options)
+	return view.Search(ctx, queries, k, config)
 }

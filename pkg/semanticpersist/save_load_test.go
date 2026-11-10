@@ -15,34 +15,14 @@ func TestSaveLoadRestoresHNSWSearch(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	embedding, err := semantic.NewEmbeddingSchema(
-		"model",
-		"v1",
-		"pipeline-v1",
-		2,
-		vector.MetricL2Squared,
-		1,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	schema := semantic.Schema{
-		Embedding: embedding,
-		Chunking: semantic.ChunkingSchema{
-			ID:          "chunks",
-			Version:     1,
-			Fingerprint: "chunks-v1",
+	config := semantic.SemanticConfig{
+		Model: semantic.ModelConfig{ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 16},
+		Index: semantic.IndexConfig{
+			Metric: vector.MetricL2Squared,
+			Limits: semantic.LimitsConfig{MaxLiveVectors: 16, MaxChunksPerDocument: 2},
+			Search: semantic.SearchConfig{MaxResults: 4, MaxCandidateChunks: 16, MaxChunksPerResult: 2},
 		},
-	}
-	config := semantic.IndexConfig{
-		Schema: schema,
-		Limits: semantic.Limits{
-			MaxLiveVectors:          16,
-			MaxChunksPerDocument:    2,
-			MaxDocumentsPerSearch:   4,
-			MaxChunkCandidates:      16,
-			MaxChunksPerDocumentHit: 2,
-		},
+		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindCustom},
 	}
 	index, err := semantic.NewIndex(config)
 	if err != nil {
@@ -73,7 +53,7 @@ func TestSaveLoadRestoresHNSWSearch(t *testing.T) {
 	}
 
 	query := []semantic.ChunkEmbedding{{Embedding: []float32{0.1, 0}}}
-	want, err := index.Search(ctx, query, 2, semantic.SearchOptions{})
+	want, err := index.Search(ctx, query, 2, semantic.QueryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +74,7 @@ func TestSaveLoadRestoresHNSWSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := loaded.Search(ctx, query, 2, semantic.SearchOptions{})
+	got, err := loaded.Search(ctx, query, 2, semantic.QueryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

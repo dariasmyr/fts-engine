@@ -21,7 +21,7 @@ func newIndex(topology topology, vectors vector.PreparedVectorStore, search Sear
 		vectors.Normalization() != topology.space.Normalization() {
 		return nil, ErrInvalidSource
 	}
-	if err := search.validate(); err != nil {
+	if err := search.Validate(); err != nil {
 		return nil, err
 	}
 	return &Index{
