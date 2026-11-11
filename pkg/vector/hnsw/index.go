@@ -10,30 +10,30 @@ import (
 type Index struct {
 	topology   topology
 	vectors    vector.PreparedVectorStore
-	search     SearchConfig
+	config     Config
 	workspaces *searchWorkspacePool
 }
 
-func newIndex(topology topology, vectors vector.PreparedVectorStore, search SearchConfig) (*Index, error) {
+func newIndex(topology topology, vectors vector.PreparedVectorStore, config Config) (*Index, error) {
 	if vectors == nil || vectors.Len() != len(topology.levels) ||
 		vectors.Dimensions() != topology.space.Dimensions() ||
 		vectors.Metric() != topology.space.Metric() ||
 		vectors.Normalization() != topology.space.Normalization() {
 		return nil, ErrInvalidSource
 	}
-	if err := search.Validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		return nil, err
 	}
 	return &Index{
 		topology:   topology,
 		vectors:    vectors,
-		search:     search,
+		config:     config,
 		workspaces: newSearchWorkspacePool(),
 	}, nil
 }
 
-func (i *Index) Search(ctx context.Context, query []float32, k int, options SearchOptions) (SearchResult, error) {
-	return search(ctx, i, query, nil, k, options)
+func (i *Index) Search(ctx context.Context, query []float32, k int, config QueryConfig) (SearchResult, error) {
+	return search(ctx, i, query, nil, k, config)
 }
 
 func (i *Index) PrepareQuery(query []float32) (vector.PreparedVector, error) {
@@ -43,8 +43,8 @@ func (i *Index) PrepareQuery(query []float32) (vector.PreparedVector, error) {
 	return i.topology.space.Prepare(query)
 }
 
-func (i *Index) SearchPrepared(ctx context.Context, query vector.PreparedVector, k int, options SearchOptions) (SearchResult, error) {
-	return search(ctx, i, nil, &query, k, options)
+func (i *Index) SearchPrepared(ctx context.Context, query vector.PreparedVector, k int, config QueryConfig) (SearchResult, error) {
+	return search(ctx, i, nil, &query, k, config)
 }
 
 func (i *Index) Len() int {

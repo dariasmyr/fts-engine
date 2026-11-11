@@ -44,8 +44,8 @@ func OpenGraphFile(
 	data []byte,
 	vectors vector.PreparedVectorStore,
 	vectorRef FileRef,
-	search hnsw.SearchConfig,
-	limits SegmentLimits,
+	config hnsw.Config,
+	limits Config,
 ) (*hnsw.Index, FileMetadata, error) {
 	if ctx == nil {
 		return nil, FileMetadata{}, vector.ErrNilContext
@@ -57,7 +57,7 @@ func OpenGraphFile(
 		return nil, FileMetadata{}, ErrCorrupt
 	}
 
-	graph, metadata, err := decodeGraph(ctx, data, graphLimits{
+	graph, metadata, err := decodeGraph(ctx, data, graphDecodeConfig{
 		MaxGraphBytes: min(limits.MaxFileBytes, limits.MaxGraphBytes),
 		MaxVectors:    uint64(limits.MaxVectors),
 		MaxLinks:      limits.MaxGraphLinks,
@@ -75,7 +75,7 @@ func OpenGraphFile(
 	if err != nil {
 		return nil, FileMetadata{}, err
 	}
-	index, err := hnsw.Restore(snapshot, vectors, search)
+	index, err := hnsw.Restore(snapshot, vectors, config)
 	if err != nil {
 		return nil, FileMetadata{}, ErrCorrupt
 	}
@@ -121,7 +121,7 @@ func validateDecodedGraph(
 	ctx context.Context,
 	graph graph,
 	vectors vector.PreparedVectorStore,
-	limits SegmentLimits,
+	limits Config,
 ) (hnswmodel.Snapshot, error) {
 	if ctx == nil {
 		return hnswmodel.Snapshot{}, vector.ErrNilContext

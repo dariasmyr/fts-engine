@@ -36,7 +36,7 @@ func NewIndex(config SemanticConfig) (*Index, error) {
 	if err != nil {
 		return nil, ErrInvalidConfig
 	}
-	searchConfig := config.Index.hnswSearchConfig()
+	hnswConfig := config.Index.hnswConfig()
 
 	limits := config.Index.runtimeLimits()
 	view, err := newIndexView(
@@ -46,7 +46,7 @@ func NewIndex(config SemanticConfig) (*Index, error) {
 		space,
 		limits.search,
 		limits.results,
-		searchConfig,
+		hnswConfig.Search,
 	)
 	if err != nil {
 		return nil, err

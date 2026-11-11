@@ -37,7 +37,7 @@ func TestDecodeVectorFileCancellation(t *testing.T) {
 	})
 }
 
-func testVectorFile(t testing.TB, rows, dimensions int) ([]byte, VectorLimits) {
+func testVectorFile(t testing.TB, rows, dimensions int) ([]byte, Config) {
 	t.Helper()
 	space, err := vector.NewSpace(dimensions, vector.MetricL2Squared)
 	if err != nil {
@@ -47,7 +47,10 @@ func testVectorFile(t testing.TB, rows, dimensions int) ([]byte, VectorLimits) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits := VectorLimits{
+	limits := Config{
+		MaxFileBytes:   1 << 30,
+		MaxGraphBytes:  1,
+		MaxGraphLinks:  1,
 		MaxDimensions:  dimensions,
 		MaxVectors:     rows,
 		MaxVectorBytes: uint64(rows * dimensions * float32ByteSize),

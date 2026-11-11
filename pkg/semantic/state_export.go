@@ -209,7 +209,7 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		return nil, ErrInternalState
 	}
 
-	searchConfig := config.Index.hnswSearchConfig()
+	hnswConfig := config.Index.hnswConfig()
 
 	limits := config.Index.runtimeLimits()
 	if err := validateLoadedSegments(ctx, views); err != nil {
@@ -222,7 +222,7 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		space,
 		limits.search,
 		limits.results,
-		searchConfig,
+		hnswConfig.Search,
 	)
 	if err != nil {
 		return nil, err

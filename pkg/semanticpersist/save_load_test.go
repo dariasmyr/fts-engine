@@ -58,7 +58,7 @@ func TestSaveLoadRestoresHNSWSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	generation, err := semanticpersist.Save(ctx, root, index, semanticpersist.SaveOptions{
+	generation, err := semanticpersist.Save(ctx, root, index, semanticpersist.SaveConfig{
 		ExpectedGeneration: &semanticpersist.Generation{},
 	})
 	if err != nil {
@@ -68,8 +68,8 @@ func TestSaveLoadRestoresHNSWSearch(t *testing.T) {
 		t.Fatalf("generation ID = %d, want 1", generation.ID)
 	}
 
-	loaded, loadedGeneration, err := semanticpersist.Load(ctx, root, semanticpersist.LoadOptions{
-		Limits: semanticpersist.DefaultLimits(),
+	loaded, loadedGeneration, err := semanticpersist.Load(ctx, root, semanticpersist.LoadConfig{
+		Config: semanticpersist.DefaultConfig(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestSaveLoadRestoresHNSWSearch(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("restored search result = %+v, want %+v", got, want)
 	}
-	next, err := semanticpersist.Save(ctx, root, loaded, semanticpersist.SaveOptions{
+	next, err := semanticpersist.Save(ctx, root, loaded, semanticpersist.SaveConfig{
 		ExpectedGeneration: &loadedGeneration,
 	})
 	if err != nil {

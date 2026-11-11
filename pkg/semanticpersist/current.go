@@ -13,7 +13,7 @@ import (
 
 type currentFile struct {
 	layout layout
-	limits Limits
+	limits Config
 	hooks  saveHooks
 }
 
@@ -32,7 +32,7 @@ func (s currentFile) read(ctx context.Context) (generationformat.Head, error) {
 	if err != nil {
 		return generationformat.Head{}, err
 	}
-	head, err := generationformat.DecodeHead(data, fileFormatLimits(s.limits))
+	head, err := generationformat.DecodeHead(data, generationFormatConfig(s.limits))
 	if err != nil {
 		return generationformat.Head{}, mapFormatError(err)
 	}
@@ -43,7 +43,7 @@ func (s currentFile) commit(ctx context.Context, head generationformat.Head) err
 	if err := beforeStep(ctx, s.hooks, stepWriteCurrent); err != nil {
 		return err
 	}
-	data, err := generationformat.EncodeHead(head, fileFormatLimits(s.limits))
+	data, err := generationformat.EncodeHead(head, generationFormatConfig(s.limits))
 	if err != nil {
 		return mapFormatError(err)
 	}
@@ -77,7 +77,7 @@ func (s currentFile) commit(ctx context.Context, head generationformat.Head) err
 }
 
 func (s currentFile) replace(head generationformat.Head) error {
-	data, err := generationformat.EncodeHead(head, fileFormatLimits(s.limits))
+	data, err := generationformat.EncodeHead(head, generationFormatConfig(s.limits))
 	if err != nil {
 		return mapFormatError(err)
 	}

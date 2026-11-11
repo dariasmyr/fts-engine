@@ -10,9 +10,10 @@ import (
 func TestManifestRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	limits := ManifestLimits{
-		FileLimits:  FileLimits{MaxFileBytes: 4096, MaxStringBytes: 128},
-		MaxSegments: 2,
+	limits := Config{
+		MaxFileBytes:   4096,
+		MaxStringBytes: 128,
+		MaxSegments:    2,
 	}
 	want := GenerationManifest{
 		GenerationID: 3,
@@ -45,9 +46,10 @@ func TestManifestRejectsSegmentLimit(t *testing.T) {
 		Segments:     []SegmentRef{{ObjectID: "one", Vectors: ref, Graph: ref}, {ObjectID: "two", Vectors: ref, Graph: ref}},
 		State:        ref,
 	}
-	limits := ManifestLimits{
-		FileLimits:  FileLimits{MaxFileBytes: 4096, MaxStringBytes: 128},
-		MaxSegments: 1,
+	limits := Config{
+		MaxFileBytes:   4096,
+		MaxStringBytes: 128,
+		MaxSegments:    1,
 	}
 	if _, _, err := EncodeManifest(value, limits); !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("EncodeManifest() error = %v, want ErrLimitExceeded", err)

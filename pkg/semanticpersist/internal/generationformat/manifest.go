@@ -28,8 +28,8 @@ type GenerationManifest struct {
 	State        FileRef
 }
 
-func EncodeManifest(value GenerationManifest, limits ManifestLimits) ([]byte, FileRef, error) {
-	if err := limits.validate(); err != nil {
+func EncodeManifest(value GenerationManifest, limits Config) ([]byte, FileRef, error) {
+	if err := limits.validateManifest(); err != nil {
 		return nil, FileRef{}, err
 	}
 	if value.GenerationID == 0 || !value.State.Valid() {
@@ -56,7 +56,7 @@ func EncodeManifest(value GenerationManifest, limits ManifestLimits) ([]byte, Fi
 		}
 	}
 
-	e := newEncoder("SMAN", manifestVersion, expectedSize, limits.FileLimits)
+	e := newEncoder("SMAN", manifestVersion, expectedSize, limits)
 	e.writeUint64(value.GenerationID)
 	e.writeUint32(uint32(len(value.Segments)))
 	for _, segment := range value.Segments {
@@ -68,12 +68,12 @@ func EncodeManifest(value GenerationManifest, limits ManifestLimits) ([]byte, Fi
 	return e.finish()
 }
 
-func DecodeManifest(data []byte, limits ManifestLimits) (GenerationManifest, error) {
-	if err := limits.validate(); err != nil {
+func DecodeManifest(data []byte, limits Config) (GenerationManifest, error) {
+	if err := limits.validateManifest(); err != nil {
 		return GenerationManifest{}, err
 	}
 
-	d, err := newDecoder(data, "SMAN", manifestVersion, limits.FileLimits)
+	d, err := newDecoder(data, "SMAN", manifestVersion, limits)
 	if err != nil {
 		return GenerationManifest{}, err
 	}

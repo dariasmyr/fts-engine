@@ -22,7 +22,7 @@ func TestPruneRetainsCurrentAndLatestValidGenerations(t *testing.T) {
 	index := newTestIndex(t)
 	generations := saveTestGenerations(t, ctx, root, index, 3)
 
-	result, err := pruneForTest(ctx, root, 2, Limits{})
+	result, err := pruneForTest(ctx, root, 2, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestPruneRetainsCurrentAndLatestValidGenerations(t *testing.T) {
 			t.Fatalf("retained generation %d: %v", generation.ID, err)
 		}
 	}
-	if _, _, err := Load(ctx, root, LoadOptions{}); err != nil {
+	if _, _, err := Load(ctx, root, LoadConfig{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -52,7 +52,7 @@ func TestPruneSkipsCorruptGenerationWhenSelectingRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := pruneForTest(ctx, root, 2, Limits{})
+	result, err := pruneForTest(ctx, root, 2, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestPrunePreservesReusedSegmentObject(t *testing.T) {
 	}
 	objectPath := newLayout(root).segment(entries[0].Name())
 
-	result, err := pruneForTest(ctx, root, 1, Limits{})
+	result, err := pruneForTest(ctx, root, 1, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestPruneRejectsCorruptCurrentBeforeDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := pruneForTest(ctx, root, 1, Limits{}); !errors.Is(err, ErrCorrupt) {
+	if _, err := pruneForTest(ctx, root, 1, Config{}); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("Prune error = %v, want ErrCorrupt", err)
 	}
 	if err := validateDirectory(newLayout(root).generation(generations[0].ID)); err != nil {
@@ -150,7 +150,7 @@ func TestPruneRemovesRecognizedOrphansAndTempsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := pruneForTest(ctx, root, 1, Limits{})
+	result, err := pruneForTest(ctx, root, 1, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestPruneCancellationDoesNotDelete(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := pruneForTest(ctx, root, 1, Limits{}); !errors.Is(err, context.Canceled) {
+	if _, err := pruneForTest(ctx, root, 1, Config{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Prune error = %v, want context.Canceled", err)
 	}
 	for _, generation := range generations {
@@ -199,7 +199,7 @@ func TestPruneRequiresExclusiveOperationLock(t *testing.T) {
 	}
 	defer lock.Close()
 
-	if _, err := pruneForTest(ctx, root, 1, Limits{}); !errors.Is(err, ErrLocked) {
+	if _, err := pruneForTest(ctx, root, 1, Config{}); !errors.Is(err, ErrLocked) {
 		t.Fatalf("Prune error = %v, want ErrLocked", err)
 	}
 	for _, generation := range generations {
@@ -221,7 +221,7 @@ func TestLoadRequiresExclusiveOperationLock(t *testing.T) {
 	}
 	defer lock.Close()
 
-	if _, _, err := Load(ctx, root, LoadOptions{}); !errors.Is(err, ErrLocked) {
+	if _, _, err := Load(ctx, root, LoadConfig{}); !errors.Is(err, ErrLocked) {
 		t.Fatalf("Load() error = %v, want ErrLocked", err)
 	}
 }
@@ -239,7 +239,7 @@ func TestSaveRequiresExclusiveOperationLock(t *testing.T) {
 	}
 	defer lock.Close()
 
-	_, err = Save(ctx, root, index, SaveOptions{ExpectedGeneration: &generation})
+	_, err = Save(ctx, root, index, SaveConfig{ExpectedGeneration: &generation})
 	if !errors.Is(err, ErrLocked) {
 		t.Fatalf("Save() error = %v, want ErrLocked", err)
 	}
@@ -253,11 +253,11 @@ func TestPruneRejectsInvalidOptions(t *testing.T) {
 	tests := []struct {
 		name      string
 		retention int
-		limits    Limits
+		limits    Config
 	}{
 		{name: "zero retention"},
 		{name: "negative retention", retention: -1},
-		{name: "limits", retention: 1, limits: Limits{MaxFileBytes: ^uint64(0)}},
+		{name: "limits", retention: 1, limits: Config{MaxFileBytes: ^uint64(0)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -274,7 +274,7 @@ func saveTestGenerations(t *testing.T, ctx context.Context, root string, index *
 	result := make([]Generation, 0, count)
 	expected := Generation{}
 	for range count {
-		generation, err := Save(ctx, root, index, SaveOptions{ExpectedGeneration: &expected})
+		generation, err := Save(ctx, root, index, SaveConfig{ExpectedGeneration: &expected})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -288,11 +288,11 @@ func pruneForTest(
 	ctx context.Context,
 	root string,
 	retainGenerations int,
-	limits Limits,
+	limits Config,
 ) (PruneResult, error) {
-	return Prune(ctx, root, PruneOptions{
+	return Prune(ctx, root, PruneConfig{
 		RetainGenerations: retainGenerations,
-		Limits:            limits,
+		Config:            limits,
 	})
 }
 

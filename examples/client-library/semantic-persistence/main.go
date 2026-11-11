@@ -42,7 +42,7 @@ func main() {
 		ctx,
 		root,
 		service.Index(),
-		semanticpersist.SaveOptions{
+		semanticpersist.SaveConfig{
 			ExpectedGeneration: &semanticpersist.Generation{},
 		},
 	)
@@ -55,7 +55,7 @@ func main() {
 		ctx,
 		root,
 		service.Index(),
-		semanticpersist.SaveOptions{
+		semanticpersist.SaveConfig{
 			ExpectedGeneration: &generation,
 		},
 	)
@@ -66,7 +66,7 @@ func main() {
 		ctx,
 		root,
 		persistenceEmbedder{},
-		semanticpersist.LoadOptions{},
+		semanticpersist.LoadConfig{},
 	)
 	must(err)
 	search(ctx, loaded, "query-v2", "after reopen")

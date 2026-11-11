@@ -26,17 +26,16 @@ func TestSnapshotRestorePreservesSearchAndOrdinals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	search := hnsw.SearchConfig{EfSearch: 4, VisitLimit: 4}
-	index, err := hnsw.Build(context.Background(), vectors, hnsw.BuildConfig{
-		MaxNeighbors:   2,
-		EfConstruction: 4,
-		Seed:           7,
-	}, search)
+	config := hnsw.Config{
+		Build:  hnsw.BuildConfig{MaxNeighbors: 2, EfConstruction: 4, Seed: 7},
+		Search: hnsw.SearchConfig{EfSearch: 4, VisitLimit: 4},
+	}
+	index, err := hnsw.Build(context.Background(), vectors, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	want, err := index.Search(context.Background(), []float32{1.1, 0}, 4, hnsw.SearchOptions{})
+	want, err := index.Search(context.Background(), []float32{1.1, 0}, 4, hnsw.QueryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,11 +43,11 @@ func TestSnapshotRestorePreservesSearchAndOrdinals(t *testing.T) {
 	if len(snapshot.Levels) != vectors.Len() {
 		t.Fatalf("snapshot nodes = %d, vector rows = %d", len(snapshot.Levels), vectors.Len())
 	}
-	restored, err := hnsw.Restore(snapshot, vectors, search)
+	restored, err := hnsw.Restore(snapshot, vectors, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := restored.Search(context.Background(), []float32{1.1, 0}, 4, hnsw.SearchOptions{})
+	got, err := restored.Search(context.Background(), []float32{1.1, 0}, 4, hnsw.QueryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

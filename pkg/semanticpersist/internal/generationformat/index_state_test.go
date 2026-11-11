@@ -128,9 +128,10 @@ func testIndexState(t testing.TB) IndexState {
 	}
 }
 
-func testStateLimits() StateLimits {
-	return StateLimits{
-		FileLimits:           FileLimits{MaxFileBytes: 1 << 20, MaxStringBytes: 1024},
+func testStateLimits() Config {
+	return Config{
+		MaxFileBytes:         1 << 20,
+		MaxStringBytes:       1024,
 		MaxVectorBytes:       1 << 20,
 		MaxDimensions:        128,
 		MaxVectors:           128,

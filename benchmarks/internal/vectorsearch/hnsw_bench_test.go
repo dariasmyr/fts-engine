@@ -22,13 +22,15 @@ func BenchmarkBuildPreparedSource(b *testing.B) {
 				}
 			}
 			searcher := benchmarkExactSearcher(b, values, vector.MetricL2Squared)
-			build := benchmarkBuildConfig(dimensions, rows, vector.MetricL2Squared)
-			search := benchmarkSearchConfig(rows)
+			config := hnsw.Config{
+				Build:  benchmarkBuildConfig(dimensions, rows, vector.MetricL2Squared),
+				Search: benchmarkSearchConfig(rows),
+			}
 			b.ReportAllocs()
 			b.SetBytes(int64(rows * dimensions * 4))
 			b.ResetTimer()
 			for b.Loop() {
-				if _, err := hnsw.Build(context.Background(), searcher.Store(), build, search); err != nil {
+				if _, err := hnsw.Build(context.Background(), searcher.Store(), config); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -51,7 +53,7 @@ func BenchmarkANNAndExactReference(b *testing.B) {
 	b.Run("ann", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			if _, err := reader.Search(context.Background(), query, 10, hnsw.SearchOptions{EfSearch: 64}); err != nil {
+			if _, err := reader.Search(context.Background(), query, 10, hnsw.QueryConfig{EfSearch: 64}); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -94,8 +96,10 @@ func benchmarkBuild(t testing.TB, source vector.PreparedVectorStore, dimensions,
 	reader, err := hnsw.Build(
 		context.Background(),
 		source,
-		benchmarkBuildConfig(dimensions, count, metric),
-		benchmarkSearchConfig(count),
+		hnsw.Config{
+			Build:  benchmarkBuildConfig(dimensions, count, metric),
+			Search: benchmarkSearchConfig(count),
+		},
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -43,7 +43,7 @@ func resolveCandidateBudget(candidateChunks, maxCandidates int) (int, error) {
 	return candidateChunks, nil
 }
 
-func searchSegmentChunksPrepared(ctx context.Context, space vector.Space, view segmentView, query vector.PreparedVector, k int, searchOptions hnsw.SearchOptions) (chunkSearchResult, error) {
+func searchSegmentChunksPrepared(ctx context.Context, space vector.Space, view segmentView, query vector.PreparedVector, k int, searchOptions hnsw.QueryConfig) (chunkSearchResult, error) {
 	if k <= 0 {
 		return chunkSearchResult{}, fmt.Errorf("%w: got %d", vector.ErrInvalidK, k)
 	}

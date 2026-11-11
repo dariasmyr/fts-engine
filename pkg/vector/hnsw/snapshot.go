@@ -35,7 +35,7 @@ func Snapshot(index *Index) hnswmodel.Snapshot {
 
 // Restore creates an in-memory index from a trusted, repository-internal
 // snapshot. Durable decoders must validate untrusted data before calling it.
-func Restore(snapshot hnswmodel.Snapshot, vectors vector.PreparedVectorStore, search SearchConfig) (*Index, error) {
+func Restore(snapshot hnswmodel.Snapshot, vectors vector.PreparedVectorStore, config Config) (*Index, error) {
 	space, err := vector.NewSpace(snapshot.Dimensions, snapshot.Metric)
 	if err != nil || space.Normalization() != snapshot.Normalization {
 		return nil, ErrInvalidSource
@@ -45,7 +45,8 @@ func Restore(snapshot hnswmodel.Snapshot, vectors vector.PreparedVectorStore, se
 		EfConstruction: snapshot.EfConstruction,
 		Seed:           snapshot.Seed,
 	}
-	if err := build.Validate(); err != nil || snapshot.LevelZeroMaxNeighbors != snapshot.MaxNeighbors*2 ||
+	if err := config.Validate(); err != nil || config.Build != build ||
+		snapshot.LevelZeroMaxNeighbors != snapshot.MaxNeighbors*2 ||
 		snapshot.BuildVersion == 0 || snapshot.LevelGeneratorVersion == 0 {
 		return nil, errInvalidGraph
 	}
@@ -69,5 +70,5 @@ func Restore(snapshot hnswmodel.Snapshot, vectors vector.PreparedVectorStore, se
 		upperLinkOffsets: append([]uint32(nil), snapshot.UpperLinkOffsets...),
 		upperNeighbors:   append([]uint32(nil), snapshot.UpperLinks...),
 	}
-	return newIndex(t, vectors, search)
+	return newIndex(t, vectors, config)
 }

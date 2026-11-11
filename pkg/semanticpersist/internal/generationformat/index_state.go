@@ -44,15 +44,15 @@ type IndexState struct {
 	Segments             []SegmentState
 }
 
-func EncodeState(value IndexState, limits StateLimits) ([]byte, FileRef, error) {
-	if err := limits.validate(); err != nil {
+func EncodeState(value IndexState, limits Config) ([]byte, FileRef, error) {
+	if err := limits.validateState(); err != nil {
 		return nil, FileRef{}, err
 	}
 	expectedSize, err := validateStateAndEncodedSize(value, limits)
 	if err != nil {
 		return nil, FileRef{}, err
 	}
-	e := newEncoder("SSTA", stateVersion, expectedSize, limits.FileLimits)
+	e := newEncoder("SSTA", stateVersion, expectedSize, limits)
 	e.writeBytes(value.ID[:])
 	encodeSemanticConfig(e, value.Config, limits.MaxStringBytes)
 	e.writeUint64(uint64(value.Revision))
@@ -74,11 +74,11 @@ func EncodeState(value IndexState, limits StateLimits) ([]byte, FileRef, error) 
 	return e.finish()
 }
 
-func DecodeState(data []byte, limits StateLimits) (IndexState, error) {
-	if err := limits.validate(); err != nil {
+func DecodeState(data []byte, limits Config) (IndexState, error) {
+	if err := limits.validateState(); err != nil {
 		return IndexState{}, err
 	}
-	d, err := newDecoder(data, "SSTA", stateVersion, limits.FileLimits)
+	d, err := newDecoder(data, "SSTA", stateVersion, limits)
 	if err != nil {
 		return IndexState{}, err
 	}

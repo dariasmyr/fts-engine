@@ -54,7 +54,7 @@ func validObjectID(id string) bool {
 
 type segmentStore struct {
 	layout layout
-	limits Limits
+	limits Config
 	hooks  saveHooks
 }
 
@@ -150,7 +150,7 @@ func (s segmentStore) writeVectors(ctx context.Context, path string, source vect
 	if err != nil {
 		return generationformat.FileRef{}, err
 	}
-	metadata, writeErr := hnswformat.WriteVectorFile(ctx, file, source, maxK, vectorFormatLimits(s.limits))
+	metadata, writeErr := hnswformat.WriteVectorFile(ctx, file, source, maxK, hnswFormatConfig(s.limits))
 	if writeErr == nil {
 		writeErr = persistfs.SyncFile(file)
 	}
@@ -225,7 +225,7 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 	if err != nil {
 		return semantic.SegmentState{}, err
 	}
-	decoded, metadata, err := hnswformat.DecodeVectorFile(ctx, vectorsData, vectorFormatLimits(s.limits))
+	decoded, metadata, err := hnswformat.DecodeVectorFile(ctx, vectorsData, hnswFormatConfig(s.limits))
 	if err != nil {
 		return semantic.SegmentState{}, mapFormatError(err)
 	}
@@ -245,11 +245,18 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 		graphData,
 		vectors,
 		ref.Vectors,
-		hnsw.SearchConfig{
-			EfSearch:   config.Index.HNSW.DefaultEfSearch,
-			VisitLimit: config.Index.HNSW.DefaultVisitLimit,
+		hnsw.Config{
+			Build: hnsw.BuildConfig{
+				MaxNeighbors:   config.Index.HNSW.MaxNeighbors,
+				EfConstruction: config.Index.HNSW.EfConstruction,
+				Seed:           config.Index.HNSW.Seed,
+			},
+			Search: hnsw.SearchConfig{
+				EfSearch:   config.Index.HNSW.DefaultEfSearch,
+				VisitLimit: config.Index.HNSW.DefaultVisitLimit,
+			},
 		},
-		hnswSegmentLimits(s.limits),
+		hnswFormatConfig(s.limits),
 	)
 	if err != nil {
 		return semantic.SegmentState{}, mapFormatError(err)
@@ -269,7 +276,7 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 	return segment, nil
 }
 
-func validateSegmentData(data semantic.SegmentState, config semantic.SemanticConfig, limits Limits) error {
+func validateSegmentData(data semantic.SegmentState, config semantic.SemanticConfig, limits Config) error {
 	semanticLimits := config.Index.Limits
 	if data.Vectors == nil || data.Index == nil {
 		return ErrLimitExceeded

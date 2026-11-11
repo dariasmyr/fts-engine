@@ -646,7 +646,7 @@ generation, err := semanticpersist.CommitAndSave(
 	ctx,
 	"./data/semantic",
 	service.Index(),
-	semanticpersist.SaveOptions{
+	semanticpersist.SaveConfig{
 		ExpectedGeneration: &semanticpersist.Generation{},
 	},
 )
@@ -663,7 +663,7 @@ loaded, generation, err := semanticpersist.LoadService(
 	ctx,
 	"./data/semantic",
 	embeddingClient,
-	semanticpersist.LoadOptions{},
+	semanticpersist.LoadConfig{},
 )
 service = loaded
 ```

@@ -7,8 +7,8 @@ const (
 	TerminationVisitLimit = "visit_limit"
 )
 
-// SearchOptions contains request-local HNSW tuning.
-type SearchOptions struct {
+// QueryConfig contains request-local HNSW tuning.
+type QueryConfig struct {
 	EfSearch     int
 	VisitLimit   int
 	ResultFilter vector.ResultFilter

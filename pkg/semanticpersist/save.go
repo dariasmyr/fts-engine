@@ -25,16 +25,16 @@ func Save(
 	ctx context.Context,
 	root string,
 	index *semantic.Index,
-	options SaveOptions,
+	config SaveConfig,
 ) (Generation, error) {
-	if options.ExpectedGeneration == nil {
+	if config.ExpectedGeneration == nil {
 		return Generation{}, ErrExpectedGenerationRequired
 	}
-	cfg, err := newSettings(options.Limits)
+	cfg, err := newSettings(config.Config)
 	if err != nil {
 		return Generation{}, err
 	}
-	generationID, err := save(ctx, root, index, options.ExpectedGeneration.ID, cfg)
+	generationID, err := save(ctx, root, index, config.ExpectedGeneration.ID, cfg)
 	return Generation{ID: generationID}, err
 }
 
@@ -46,12 +46,12 @@ func CommitAndSave(
 	ctx context.Context,
 	root string,
 	index *semantic.Index,
-	options SaveOptions,
+	config SaveConfig,
 ) (Generation, error) {
-	if options.ExpectedGeneration == nil {
+	if config.ExpectedGeneration == nil {
 		return Generation{}, ErrExpectedGenerationRequired
 	}
-	cfg, err := newSettings(options.Limits)
+	cfg, err := newSettings(config.Config)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -59,7 +59,7 @@ func CommitAndSave(
 		ctx,
 		root,
 		index,
-		options.ExpectedGeneration.ID,
+		config.ExpectedGeneration.ID,
 		cfg,
 	)
 	return Generation{ID: generationID}, err

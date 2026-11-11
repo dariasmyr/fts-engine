@@ -9,7 +9,7 @@ import (
 func TestHeadRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	limits := FileLimits{MaxFileBytes: 1024}
+	limits := Config{MaxFileBytes: 1024}
 	want := Head{GenerationID: 7, ManifestHash: sha256.Sum256([]byte("manifest"))}
 	data, err := EncodeHead(want, limits)
 	if err != nil {
@@ -27,7 +27,7 @@ func TestHeadRoundTrip(t *testing.T) {
 func TestHeadRejectsZeroGeneration(t *testing.T) {
 	t.Parallel()
 
-	if _, err := EncodeHead(Head{}, FileLimits{MaxFileBytes: 1024}); !errors.Is(err, ErrCorrupt) {
+	if _, err := EncodeHead(Head{}, Config{MaxFileBytes: 1024}); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("EncodeHead() error = %v, want ErrCorrupt", err)
 	}
 }

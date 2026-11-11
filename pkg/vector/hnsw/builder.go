@@ -60,12 +60,12 @@ func (b *builder) add(ctx context.Context, prepared []float32) error {
 	return b.insert(ctx, node)
 }
 
-func (b *builder) freeze(source vector.PreparedVectorStore, search SearchConfig) (*Index, error) {
+func (b *builder) freeze(source vector.PreparedVectorStore, config Config) (*Index, error) {
 	topology, err := packGraph(b.space, b.config.info(), b.graph)
 	if err != nil {
 		return nil, err
 	}
-	return newIndex(topology, source, search)
+	return newIndex(topology, source, config)
 }
 
 func (b *builder) insert(ctx context.Context, node nodeOrdinal) error {

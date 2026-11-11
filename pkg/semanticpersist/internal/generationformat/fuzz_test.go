@@ -7,7 +7,7 @@ import (
 )
 
 func FuzzDecodeHead(f *testing.F) {
-	limits := FileLimits{MaxFileBytes: 1 << 20}
+	limits := Config{MaxFileBytes: 1 << 20}
 	hash := sha256.Sum256([]byte("manifest"))
 	seed, err := EncodeHead(Head{GenerationID: 1, ManifestHash: hash}, limits)
 	if err != nil {
@@ -32,9 +32,10 @@ func FuzzDecodeHead(f *testing.F) {
 }
 
 func FuzzDecodeManifest(f *testing.F) {
-	limits := ManifestLimits{
-		FileLimits:  FileLimits{MaxFileBytes: 1 << 20, MaxStringBytes: 1024},
-		MaxSegments: 16,
+	limits := Config{
+		MaxFileBytes:   1 << 20,
+		MaxStringBytes: 1024,
+		MaxSegments:    16,
 	}
 	vectorHash := sha256.Sum256([]byte("vectors"))
 	graphHash := sha256.Sum256([]byte("graph"))

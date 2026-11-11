@@ -28,7 +28,7 @@ func FuzzDecodeVectorFile(f *testing.F) {
 }
 
 func FuzzDecodeGraph(f *testing.F) {
-	limits := graphLimits{
+	limits := graphDecodeConfig{
 		MaxGraphBytes: 1 << 20,
 		MaxVectors:    128,
 		MaxLinks:      4096,

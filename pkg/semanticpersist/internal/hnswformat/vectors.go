@@ -50,7 +50,7 @@ func WriteVectorFile(
 	writer io.Writer,
 	source vector.PreparedVectorStore,
 	maxK int,
-	limits VectorLimits,
+	limits Config,
 ) (FileMetadata, error) {
 	if ctx == nil {
 		return FileMetadata{}, vector.ErrNilContext
@@ -144,7 +144,7 @@ func WriteVectorFile(
 }
 
 // DecodeVectorFile validates and decodes one complete SVEC file.
-func DecodeVectorFile(ctx context.Context, data []byte, limits VectorLimits) (VectorData, FileMetadata, error) {
+func DecodeVectorFile(ctx context.Context, data []byte, limits Config) (VectorData, FileMetadata, error) {
 	if ctx == nil {
 		return VectorData{}, FileMetadata{}, vector.ErrNilContext
 	}

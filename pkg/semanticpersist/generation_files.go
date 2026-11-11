@@ -22,7 +22,7 @@ type persistedGeneration struct {
 
 type generationFiles struct {
 	layout layout
-	limits Limits
+	limits Config
 	hooks  saveHooks
 }
 
@@ -52,7 +52,7 @@ func (s generationFiles) write(ctx context.Context, id uint64, state generationf
 	if err := beforeStep(ctx, s.hooks, stepWriteState); err != nil {
 		return persistedGeneration{}, err
 	}
-	stateData, stateRef, err := generationformat.EncodeState(state, stateFormatLimits(s.limits))
+	stateData, stateRef, err := generationformat.EncodeState(state, generationFormatConfig(s.limits))
 	if err != nil {
 		return persistedGeneration{}, mapFormatError(err)
 	}
@@ -67,7 +67,7 @@ func (s generationFiles) write(ctx context.Context, id uint64, state generationf
 	if err := beforeStep(ctx, s.hooks, stepWriteManifest); err != nil {
 		return persistedGeneration{}, err
 	}
-	manifestData, manifestRef, err := generationformat.EncodeManifest(manifest, manifestFormatLimits(s.limits))
+	manifestData, manifestRef, err := generationformat.EncodeManifest(manifest, generationFormatConfig(s.limits))
 	if err != nil {
 		return persistedGeneration{}, mapFormatError(err)
 	}
@@ -134,7 +134,7 @@ func (s generationFiles) open(ctx context.Context, id uint64, expectedHash *[sha
 	if expectedHash != nil && hash != *expectedHash {
 		return persistedGeneration{}, ErrCorrupt
 	}
-	manifest, err := generationformat.DecodeManifest(manifestData, manifestFormatLimits(s.limits))
+	manifest, err := generationformat.DecodeManifest(manifestData, generationFormatConfig(s.limits))
 	if err != nil {
 		return persistedGeneration{}, mapFormatError(err)
 	}
@@ -151,7 +151,7 @@ func (s generationFiles) open(ctx context.Context, id uint64, expectedHash *[sha
 	if err != nil {
 		return persistedGeneration{}, err
 	}
-	state, err := generationformat.DecodeState(stateData, stateFormatLimits(s.limits))
+	state, err := generationformat.DecodeState(stateData, generationFormatConfig(s.limits))
 	if err != nil {
 		return persistedGeneration{}, mapFormatError(err)
 	}
@@ -161,7 +161,7 @@ func (s generationFiles) open(ctx context.Context, id uint64, expectedHash *[sha
 	return persistedGeneration{id: id, manifest: manifest, manifestRef: generationformat.FileRef{Size: uint64(len(manifestData)), SHA256: hash}, state: state}, nil
 }
 
-func validateOpenReferences(manifestBytes uint64, value generationformat.GenerationManifest, limits Limits) error {
+func validateOpenReferences(manifestBytes uint64, value generationformat.GenerationManifest, limits Config) error {
 	if value.State.Size > limits.MaxFileBytes {
 		return ErrLimitExceeded
 	}

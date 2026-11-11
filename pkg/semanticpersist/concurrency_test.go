@@ -16,7 +16,7 @@ func TestConcurrentSearchDuringSave(t *testing.T) {
 	index := newTestIndex(t)
 	addTestSegment(t, ctx, index)
 
-	generation, err := Save(ctx, root, index, SaveOptions{
+	generation, err := Save(ctx, root, index, SaveConfig{
 		ExpectedGeneration: &Generation{},
 	})
 	if err != nil {
@@ -44,7 +44,7 @@ func TestConcurrentSearchDuringSave(t *testing.T) {
 
 	close(start)
 	for range 3 {
-		generation, err = Save(ctx, root, index, SaveOptions{
+		generation, err = Save(ctx, root, index, SaveConfig{
 			ExpectedGeneration: &generation,
 		})
 		if err != nil {

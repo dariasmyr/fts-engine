@@ -49,7 +49,7 @@ func TestDifferentialRecallAgainstExactSearcherUsingPublicAPIs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ann, err := reader.Search(context.Background(), query, k, hnsw.SearchOptions{EfSearch: 64, VisitLimit: rows})
+		ann, err := reader.Search(context.Background(), query, k, hnsw.QueryConfig{EfSearch: 64, VisitLimit: rows})
 		if err != nil {
 			t.Fatal(err)
 		}

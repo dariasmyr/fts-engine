@@ -12,7 +12,7 @@ type Head struct {
 	ManifestHash [sha256.Size]byte
 }
 
-func EncodeHead(value Head, limits FileLimits) ([]byte, error) {
+func EncodeHead(value Head, limits Config) ([]byte, error) {
 	if err := limits.validateFile(); err != nil {
 		return nil, err
 	}
@@ -27,7 +27,7 @@ func EncodeHead(value Head, limits FileLimits) ([]byte, error) {
 	return data, err
 }
 
-func DecodeHead(data []byte, limits FileLimits) (Head, error) {
+func DecodeHead(data []byte, limits Config) (Head, error) {
 	if err := limits.validateFile(); err != nil {
 		return Head{}, err
 	}

@@ -74,7 +74,7 @@ func (s *IndexView) collectChunkCandidates(
 				view,
 				queryVector,
 				min(candidateBudget, view.liveness.AllowedOrdinalCount()),
-				hnsw.SearchOptions{EfSearch: efSearch, VisitLimit: share},
+				hnsw.QueryConfig{EfSearch: efSearch, VisitLimit: share},
 			)
 			if err != nil {
 				return nil, DocumentSearchResult{}, err

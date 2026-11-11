@@ -97,7 +97,7 @@ func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, conf
 			liveness: vector.NewFullBitSet(uint32(compacted.len())),
 		}}
 	}
-	searchConfig := config.Index.hnswSearchConfig()
+	hnswConfig := config.Index.hnswConfig()
 	compactedView, err := newIndexView(
 		ctx,
 		view.revision,
@@ -105,7 +105,7 @@ func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, conf
 		view.space,
 		config.Index.runtimeLimits().search,
 		config.Index.runtimeLimits().results,
-		searchConfig,
+		hnswConfig.Search,
 	)
 	if err != nil {
 		return nil, nil, false, err
@@ -126,16 +126,14 @@ func buildCompactedSegment(ctx context.Context, view *IndexView, segmentID Segme
 	if err != nil {
 		return nil, err
 	}
-	buildConfig := config.Index.hnswBuildConfig()
-	searchConfig := config.Index.hnswSearchConfig()
+	hnswConfig := config.Index.hnswConfig()
 	return buildSegment(
 		ctx,
 		segmentID,
 		space,
 		source,
 		liveRows,
-		buildConfig,
-		searchConfig,
+		hnswConfig,
 	)
 }
 

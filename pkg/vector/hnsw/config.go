@@ -13,6 +13,20 @@ const (
 
 var ErrInvalidConfig = errors.New("vector/hnsw: invalid configuration")
 
+// Config is the complete static HNSW configuration.
+type Config struct {
+	Build  BuildConfig
+	Search SearchConfig
+}
+
+// Validate checks the complete static HNSW configuration.
+func (c Config) Validate() error {
+	if err := c.Build.Validate(); err != nil {
+		return err
+	}
+	return c.Search.Validate()
+}
+
 // BuildConfig controls only HNSW graph construction.
 // It affects the resulting topology.
 type BuildConfig struct {

@@ -28,16 +28,16 @@ type saveHooks struct {
 }
 
 type settings struct {
-	limits Limits
+	limits Config
 	hooks  saveHooks
 }
 
-func newSettings(limits Limits) (settings, error) {
-	limits = normalizeLimits(limits)
-	if err := validateLimits(limits); err != nil {
+func newSettings(config Config) (settings, error) {
+	config, err := config.normalized()
+	if err != nil {
 		return settings{}, err
 	}
-	return settings{limits: limits}, nil
+	return settings{limits: config}, nil
 }
 
 func beforeStep(ctx context.Context, hooks saveHooks, step saveStep) error {

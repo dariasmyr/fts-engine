@@ -24,16 +24,15 @@ func TestGraphFileRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	search := hnsw.SearchConfig{EfSearch: 4, VisitLimit: 4}
-	index, err := hnsw.Build(ctx, vectors, hnsw.BuildConfig{
-		MaxNeighbors:   2,
-		EfConstruction: 4,
-		Seed:           7,
-	}, search)
+	config := hnsw.Config{
+		Build:  hnsw.BuildConfig{MaxNeighbors: 2, EfConstruction: 4, Seed: 7},
+		Search: hnsw.SearchConfig{EfSearch: 4, VisitLimit: 4},
+	}
+	index, err := hnsw.Build(ctx, vectors, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := index.Search(ctx, []float32{1.1, 0}, 4, hnsw.SearchOptions{})
+	want, err := index.Search(ctx, []float32{1.1, 0}, 4, hnsw.QueryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,22 +43,23 @@ func TestGraphFileRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits := SegmentLimits{
+	limits := Config{
 		MaxFileBytes:   1 << 20,
 		MaxGraphBytes:  1 << 20,
 		MaxVectorBytes: 1 << 20,
 		MaxVectors:     16,
 		MaxGraphLinks:  1024,
 		MaxDimensions:  16,
+		MaxK:           16,
 	}
-	restored, decodedMetadata, err := OpenGraphFile(ctx, encoded.Bytes(), vectors, vectorRef, search, limits)
+	restored, decodedMetadata, err := OpenGraphFile(ctx, encoded.Bytes(), vectors, vectorRef, config, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if decodedMetadata != metadata {
 		t.Fatalf("decoded metadata = %+v, want %+v", decodedMetadata, metadata)
 	}
-	got, err := restored.Search(ctx, []float32{1.1, 0}, 4, hnsw.SearchOptions{})
+	got, err := restored.Search(ctx, []float32{1.1, 0}, 4, hnsw.QueryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

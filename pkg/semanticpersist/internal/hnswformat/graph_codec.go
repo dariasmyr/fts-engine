@@ -50,7 +50,7 @@ type graph struct {
 	UpperLinks       []uint32
 }
 
-type graphLimits struct {
+type graphDecodeConfig struct {
 	MaxGraphBytes uint64
 	MaxVectors    uint64
 	MaxLinks      uint64
@@ -145,7 +145,7 @@ func encodeGraph(writer io.Writer, graph graph) (FileMetadata, error) {
 	return FileMetadata{FileRef: FileRef{Size: fileSize, SHA256: digest}, CRC32: checksum}, nil
 }
 
-func decodeGraph(ctx context.Context, data []byte, limits graphLimits) (graph, FileMetadata, error) {
+func decodeGraph(ctx context.Context, data []byte, limits graphDecodeConfig) (graph, FileMetadata, error) {
 	if ctx == nil {
 		return graph{}, FileMetadata{}, vector.ErrNilContext
 	}

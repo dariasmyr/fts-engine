@@ -276,8 +276,7 @@ func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pen
 	if err != nil {
 		return nil, err
 	}
-	buildConfig := config.Index.hnswBuildConfig()
-	searchConfig := config.Index.hnswSearchConfig()
+	hnswConfig := config.Index.hnswConfig()
 
 	return buildSegment(
 		ctx,
@@ -285,7 +284,6 @@ func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pen
 		space,
 		source,
 		rows,
-		buildConfig,
-		searchConfig,
+		hnswConfig,
 	)
 }

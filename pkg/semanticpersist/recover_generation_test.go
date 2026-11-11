@@ -15,11 +15,11 @@ func TestRecoverGenerationMakesValidatedGenerationCurrent(t *testing.T) {
 	root := t.TempDir()
 	generations := saveTestGenerations(t, ctx, root, newTestIndex(t), 2)
 
-	cfg, err := newSettings(Limits{})
+	cfg, err := newSettings(Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := RecoverGeneration(ctx, root, Generation{ID: generations[0].ID}, Limits{}); err != nil {
+	if err := RecoverGeneration(ctx, root, RecoverConfig{Generation: Generation{ID: generations[0].ID}}); err != nil {
 		t.Fatal(err)
 	}
 	head, err := newCurrentFile(newLayout(root), cfg).read(ctx)
@@ -43,7 +43,7 @@ func TestRecoverGenerationRequiresExclusiveOperationLock(t *testing.T) {
 	}
 	defer lock.Close()
 
-	if err := RecoverGeneration(ctx, root, Generation{ID: generation.ID}, Limits{}); !errors.Is(err, ErrLocked) {
+	if err := RecoverGeneration(ctx, root, RecoverConfig{Generation: Generation{ID: generation.ID}}); !errors.Is(err, ErrLocked) {
 		t.Fatalf("RecoverGeneration() error = %v, want ErrLocked", err)
 	}
 }
@@ -56,14 +56,14 @@ func TestSaveContinuesAfterRecoveringOlderGeneration(t *testing.T) {
 	index := newTestIndex(t)
 	generations := saveTestGenerations(t, ctx, root, index, 2)
 
-	if err := RecoverGeneration(ctx, root, Generation{ID: generations[0].ID}, Limits{}); err != nil {
+	if err := RecoverGeneration(ctx, root, RecoverConfig{Generation: Generation{ID: generations[0].ID}}); err != nil {
 		t.Fatal(err)
 	}
-	loaded, loadedGeneration, err := Load(ctx, root, LoadOptions{})
+	loaded, loadedGeneration, err := Load(ctx, root, LoadConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := Save(ctx, root, loaded, SaveOptions{ExpectedGeneration: &loadedGeneration})
+	next, err := Save(ctx, root, loaded, SaveConfig{ExpectedGeneration: &loadedGeneration})
 	if err != nil {
 		t.Fatal(err)
 	}

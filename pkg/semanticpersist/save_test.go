@@ -23,7 +23,7 @@ func TestSaveRejectsPendingMutations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := Save(ctx, root, index, SaveOptions{
+	_, err := Save(ctx, root, index, SaveConfig{
 		ExpectedGeneration: &Generation{},
 	})
 	if !errors.Is(err, semantic.ErrPendingMutations) {
@@ -44,7 +44,7 @@ func TestCommitAndSavePersistsPendingRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	generation, err := CommitAndSave(ctx, root, index, SaveOptions{
+	generation, err := CommitAndSave(ctx, root, index, SaveConfig{
 		ExpectedGeneration: &Generation{},
 	})
 	if err != nil {
@@ -54,7 +54,7 @@ func TestCommitAndSavePersistsPendingRevision(t *testing.T) {
 		t.Fatalf("generation = %d, want 1", generation.ID)
 	}
 
-	loaded, loadedGeneration, err := Load(ctx, root, LoadOptions{})
+	loaded, loadedGeneration, err := Load(ctx, root, LoadConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestCommitAndSaveStaleGenerationKeepsMutationPending(t *testing.T) {
 	if err := stageTestDocument(ctx, index, "persisted", []float32{1, 2}); err != nil {
 		t.Fatal(err)
 	}
-	persistedGeneration, err := CommitAndSave(ctx, root, index, SaveOptions{
+	persistedGeneration, err := CommitAndSave(ctx, root, index, SaveConfig{
 		ExpectedGeneration: &Generation{},
 	})
 	if err != nil {
@@ -96,7 +96,7 @@ func TestCommitAndSaveStaleGenerationKeepsMutationPending(t *testing.T) {
 	if err := stageTestDocument(ctx, index, "memory-only", []float32{3, 4}); err != nil {
 		t.Fatal(err)
 	}
-	_, err = CommitAndSave(ctx, root, index, SaveOptions{
+	_, err = CommitAndSave(ctx, root, index, SaveConfig{
 		ExpectedGeneration: &Generation{},
 	})
 	if !errors.Is(err, ErrStaleGeneration) {
@@ -121,7 +121,7 @@ func TestCommitAndSaveStaleGenerationKeepsMutationPending(t *testing.T) {
 		}
 	}
 
-	loaded, loadedGeneration, err := Load(ctx, root, LoadOptions{})
+	loaded, loadedGeneration, err := Load(ctx, root, LoadConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestCommitAndSaveStaleGenerationKeepsMutationPending(t *testing.T) {
 	if err := stageTestDocument(ctx, index, "next", []float32{5, 6}); err != nil {
 		t.Fatal(err)
 	}
-	nextGeneration, err := CommitAndSave(ctx, root, index, SaveOptions{
+	nextGeneration, err := CommitAndSave(ctx, root, index, SaveConfig{
 		ExpectedGeneration: &persistedGeneration,
 	})
 	if err != nil {
@@ -172,7 +172,7 @@ func TestCommitAndSaveFailureBeforeCurrentKeepsMutationPending(t *testing.T) {
 	if err := stageTestDocument(ctx, index, "persisted", []float32{1, 2}); err != nil {
 		t.Fatal(err)
 	}
-	previous, err := CommitAndSave(ctx, root, index, SaveOptions{
+	previous, err := CommitAndSave(ctx, root, index, SaveConfig{
 		ExpectedGeneration: &Generation{},
 	})
 	if err != nil {
@@ -183,7 +183,7 @@ func TestCommitAndSaveFailureBeforeCurrentKeepsMutationPending(t *testing.T) {
 	}
 
 	failed := errors.New("injected save failure")
-	cfg, err := newSettings(Limits{})
+	cfg, err := newSettings(Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestCommitAndSaveFailureBeforeCurrentKeepsMutationPending(t *testing.T) {
 		}
 	}
 
-	loaded, loadedGeneration, err := Load(ctx, root, LoadOptions{})
+	loaded, loadedGeneration, err := Load(ctx, root, LoadConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestCommitAndSaveFailureBeforeCurrentKeepsMutationPending(t *testing.T) {
 		t.Fatalf("loaded revision = %d, want 1", loadedState.Revision)
 	}
 
-	if _, err := CommitAndSave(ctx, root, index, SaveOptions{
+	if _, err := CommitAndSave(ctx, root, index, SaveConfig{
 		ExpectedGeneration: &previous,
 	}); err != nil {
 		t.Fatalf("CommitAndSave() retry error = %v", err)
@@ -255,7 +255,7 @@ func TestCommitAndSaveIndeterminateOutcomePublishesCandidate(t *testing.T) {
 	}
 
 	failed := errors.New("after CURRENT replacement")
-	cfg, err := newSettings(Limits{})
+	cfg, err := newSettings(Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestCommitAndSaveIndeterminateOutcomePublishesCandidate(t *testing.T) {
 		t.Fatalf("in-memory revision = %d, want 1", committed.Revision)
 	}
 
-	loaded, loadedGeneration, err := Load(ctx, root, LoadOptions{})
+	loaded, loadedGeneration, err := Load(ctx, root, LoadConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestSaveSameCommittedRevisionReusesSegmentObject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := CommitAndSave(ctx, root, index, SaveOptions{
+	first, err := CommitAndSave(ctx, root, index, SaveConfig{
 		ExpectedGeneration: &Generation{},
 	})
 	if err != nil {
@@ -318,7 +318,7 @@ func TestSaveSameCommittedRevisionReusesSegmentObject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second, err := Save(ctx, root, index, SaveOptions{ExpectedGeneration: &first})
+	second, err := Save(ctx, root, index, SaveConfig{ExpectedGeneration: &first})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestSaveSameCommittedRevisionReusesSegmentObject(t *testing.T) {
 		t.Fatalf("segment objects after repeat save = %d, want %d", len(objectsAfter), len(objectsBefore))
 	}
 
-	loaded, _, err := Load(ctx, root, LoadOptions{})
+	loaded, _, err := Load(ctx, root, LoadConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestCommitAndSaveBlocksMutationUntilPersistenceCompletes(t *testing.T) {
 	release := func() { releaseOnce.Do(func() { close(releaseWrite) }) }
 	defer release()
 
-	cfg, err := newSettings(Limits{})
+	cfg, err := newSettings(Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +428,7 @@ func TestCommitAndSaveBlocksMutationUntilPersistenceCompletes(t *testing.T) {
 		t.Fatalf("ExportState() error = %v, want pending mutation", err)
 	}
 
-	loaded, _, err := Load(ctx, root, LoadOptions{})
+	loaded, _, err := Load(ctx, root, LoadConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

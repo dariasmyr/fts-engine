@@ -128,18 +128,19 @@ func Run(ctx context.Context, config Config) (Report, error) {
 }
 
 func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, searcher *exact.Searcher, truth []truthSweep, maxNeighbors, efConstruction int, seed uint64, buildNumber, builds int) ([]RunReport, error) {
-	searchConfig := hnsw.SearchConfig{
-		EfSearch:   max(config.K, config.EfSearch[0]),
-		VisitLimit: config.VisitLimit,
-	}
-	buildConfig := hnsw.BuildConfig{
-		MaxNeighbors: maxNeighbors, EfConstruction: efConstruction, Seed: seed,
+	hnswConfig := hnsw.Config{
+		Build: hnsw.BuildConfig{
+			MaxNeighbors: maxNeighbors, EfConstruction: efConstruction, Seed: seed,
+		},
+		Search: hnsw.SearchConfig{
+			EfSearch: max(config.K, config.EfSearch[0]), VisitLimit: config.VisitLimit,
+		},
 	}
 	progress := Progress{
 		Dataset: dataset.Config.Kind, Metric: metric.String(), Build: buildNumber, Builds: builds,
 		MaxNeighbors: maxNeighbors, EfConstruction: efConstruction, Seed: seed, Order: order,
 	}
-	reader, buildPath, timing, err := buildReader(ctx, searcher, order, buildConfig, searchConfig, progress, config.Progress)
+	reader, buildPath, timing, err := buildReader(ctx, searcher, order, hnswConfig, progress, config.Progress)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +148,7 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 	runs := make([]RunReport, 0, len(config.EfSearch)*len(truth))
 	for _, requestedEfSearch := range config.EfSearch {
 		for _, filteredTruth := range truth {
-			run, err := runQueries(ctx, config, dataset, metric, order, buildPath, reader, filteredTruth, buildConfig, searchConfig, timing, requestedEfSearch)
+			run, err := runQueries(ctx, config, dataset, metric, order, buildPath, reader, filteredTruth, hnswConfig, timing, requestedEfSearch)
 			if err != nil {
 				return nil, err
 			}
@@ -157,7 +158,7 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 	return runs, nil
 }
 
-func buildReader(ctx context.Context, searcher *exact.Searcher, order BuildOrder, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, progress Progress, callback func(Progress)) (*hnsw.Index, string, buildTiming, error) {
+func buildReader(ctx context.Context, searcher *exact.Searcher, order BuildOrder, config hnsw.Config, progress Progress, callback func(Progress)) (*hnsw.Index, string, buildTiming, error) {
 	buildPath := BuildPathProduction
 	progress.BuildPath = buildPath
 	var callbackDuration time.Duration
@@ -167,7 +168,7 @@ func buildReader(ctx context.Context, searcher *exact.Searcher, order BuildOrder
 	if order.Name != "ascending" {
 		err = fmt.Errorf("vectorsearch: unknown build order %q", order.Name)
 	} else {
-		reader, err = hnsw.Build(ctx, searcher.Store(), buildConfig, searchConfig)
+		reader, err = hnsw.Build(ctx, searcher.Store(), config)
 	}
 	if callback != nil {
 		callbackStarted := time.Now()
@@ -197,12 +198,12 @@ func ordinalOrder(count int, seed uint64) []int {
 	return order
 }
 
-func runQueries(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, buildPath string, reader *hnsw.Index, truth truthSweep, buildConfig hnsw.BuildConfig, searchConfig hnsw.SearchConfig, timing buildTiming, requestedEfSearch int) (RunReport, error) {
+func runQueries(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, buildPath string, reader *hnsw.Index, truth truthSweep, hnswConfig hnsw.Config, timing buildTiming, requestedEfSearch int) (RunReport, error) {
 	effectiveEfSearch := max(config.K, requestedEfSearch)
 	latencies := make([]time.Duration, len(dataset.Queries))
 	var recall, documentRecall, exactDocuments, annDocuments float64
 	var visited, expanded, distances, rejected, incomplete, visitLimit int
-	request := hnsw.SearchOptions{EfSearch: effectiveEfSearch, VisitLimit: config.VisitLimit, ResultFilter: truth.filter}
+	request := hnsw.QueryConfig{EfSearch: effectiveEfSearch, VisitLimit: config.VisitLimit, ResultFilter: truth.filter}
 	for i, query := range dataset.Queries {
 		started := time.Now()
 		result, err := reader.Search(ctx, query, config.K, request)
@@ -238,8 +239,8 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 		BuildPath:  buildPath,
 		BuildParameters: BuildParameters{
 			Dimensions: dataset.Config.Dimensions, Metric: metric.String(), MaxVectors: config.VectorCount,
-			MaxVectorBytes: uint64(config.VectorCount) * uint64(dataset.Config.Dimensions) * 4, MaxNeighbors: buildConfig.MaxNeighbors,
-			EfConstruction: buildConfig.EfConstruction, Seed: buildConfig.Seed,
+			MaxVectorBytes: uint64(config.VectorCount) * uint64(dataset.Config.Dimensions) * 4, MaxNeighbors: hnswConfig.Build.MaxNeighbors,
+			EfConstruction: hnswConfig.Build.EfConstruction, Seed: hnswConfig.Build.Seed,
 		},
 		BuildInfo: BuildInfoReport{
 			BuildVersion: buildInfo.BuildVersion, LevelGeneratorVersion: buildInfo.LevelGeneratorVersion,
@@ -247,8 +248,8 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 			EfConstruction: buildInfo.EfConstruction, Seed: buildInfo.Seed,
 		},
 		SearchParameters: SearchParameters{
-			DefaultEfSearch: searchConfig.EfSearch, MaxEfSearch: maxSlice(config.EfSearch),
-			DefaultVisitLimit: searchConfig.VisitLimit, MaxVisitLimit: config.VisitLimit, MaxK: config.K,
+			DefaultEfSearch: hnswConfig.Search.EfSearch, MaxEfSearch: maxSlice(config.EfSearch),
+			DefaultVisitLimit: hnswConfig.Search.VisitLimit, MaxVisitLimit: config.VisitLimit, MaxK: config.K,
 		},
 		Request: RequestParameters{
 			K: config.K, RequestedEfSearch: requestedEfSearch, EffectiveEfSearch: effectiveEfSearch,

@@ -14,7 +14,7 @@ import (
 func Load(
 	ctx context.Context,
 	root string,
-	options LoadOptions,
+	config LoadConfig,
 ) (*semantic.Index, Generation, error) {
 	if ctx == nil {
 		return nil, Generation{}, vector.ErrNilContext
@@ -25,7 +25,7 @@ func Load(
 	if root == "" {
 		return nil, Generation{}, ErrCorrupt
 	}
-	cfg, err := newSettings(options.Limits)
+	cfg, err := newSettings(config.Config)
 	if err != nil {
 		return nil, Generation{}, err
 	}
@@ -72,9 +72,9 @@ func LoadService(
 	ctx context.Context,
 	root string,
 	client embedding.Client,
-	options LoadOptions,
+	config LoadConfig,
 ) (*semantic.Service, Generation, error) {
-	index, generation, err := Load(ctx, root, options)
+	index, generation, err := Load(ctx, root, config)
 	if err != nil {
 		return nil, Generation{}, err
 	}

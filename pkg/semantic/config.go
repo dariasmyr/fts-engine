@@ -309,11 +309,7 @@ func (c IndexConfig) normalized(dimensions int) (IndexConfig, error) {
 		return IndexConfig{}, ErrInvalidConfig
 	}
 
-	if err := c.hnswBuildConfig().Validate(); err != nil {
-		return IndexConfig{}, ErrInvalidConfig
-	}
-
-	if err := c.hnswSearchConfig().Validate(); err != nil {
+	if err := c.hnswConfig().Validate(); err != nil {
 		return IndexConfig{}, ErrInvalidConfig
 	}
 
@@ -357,18 +353,17 @@ func normalizeHNSWConfig(tuning HNSWConfig, limits LimitsConfig, search SearchCo
 	return tuning
 }
 
-func (c IndexConfig) hnswBuildConfig() hnsw.BuildConfig {
-	return hnsw.BuildConfig{
-		MaxNeighbors:   c.HNSW.MaxNeighbors,
-		EfConstruction: c.HNSW.EfConstruction,
-		Seed:           c.HNSW.Seed,
-	}
-}
-
-func (c IndexConfig) hnswSearchConfig() hnsw.SearchConfig {
-	return hnsw.SearchConfig{
-		EfSearch:   c.HNSW.DefaultEfSearch,
-		VisitLimit: c.HNSW.DefaultVisitLimit,
+func (c IndexConfig) hnswConfig() hnsw.Config {
+	return hnsw.Config{
+		Build: hnsw.BuildConfig{
+			MaxNeighbors:   c.HNSW.MaxNeighbors,
+			EfConstruction: c.HNSW.EfConstruction,
+			Seed:           c.HNSW.Seed,
+		},
+		Search: hnsw.SearchConfig{
+			EfSearch:   c.HNSW.DefaultEfSearch,
+			VisitLimit: c.HNSW.DefaultVisitLimit,
+		},
 	}
 }
 

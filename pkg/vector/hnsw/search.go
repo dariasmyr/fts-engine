@@ -34,45 +34,45 @@ type searchRequest struct {
 	filter       vector.ResultFilter
 }
 
-func resolveSearchRequest(config SearchConfig, vectorCount, k int, options SearchOptions) (searchRequest, error) {
+func resolveSearchRequest(defaults SearchConfig, vectorCount, k int, config QueryConfig) (searchRequest, error) {
 	if k <= 0 {
 		return searchRequest{}, vector.ErrInvalidK
 	}
-	if options.EfSearch < 0 || options.VisitLimit < 0 {
-		return searchRequest{}, ErrInvalidSearchOptions
+	if config.EfSearch < 0 || config.VisitLimit < 0 {
+		return searchRequest{}, ErrInvalidQueryConfig
 	}
 
-	efSearch := options.EfSearch
+	efSearch := config.EfSearch
 	if efSearch == 0 {
-		efSearch = config.EfSearch
+		efSearch = defaults.EfSearch
 	}
 	efSearch = max(k, efSearch)
 	if vectorCount > 0 {
 		efSearch = min(efSearch, vectorCount)
 	}
 
-	visitLimit := options.VisitLimit
+	visitLimit := config.VisitLimit
 	if visitLimit == 0 {
-		visitLimit = config.VisitLimit
+		visitLimit = defaults.VisitLimit
 	}
 	if vectorCount > 0 {
 		visitLimit = min(visitLimit, vectorCount)
 	}
 
 	allowedCount := vectorCount
-	if options.ResultFilter != nil {
-		if options.ResultFilter.TotalOrdinalCount() != uint32(vectorCount) {
-			return searchRequest{}, fmt.Errorf("%w: got %d, want %d", vector.ErrResultFilterSizeMismatch, options.ResultFilter.TotalOrdinalCount(), vectorCount)
+	if config.ResultFilter != nil {
+		if config.ResultFilter.TotalOrdinalCount() != uint32(vectorCount) {
+			return searchRequest{}, fmt.Errorf("%w: got %d, want %d", vector.ErrResultFilterSizeMismatch, config.ResultFilter.TotalOrdinalCount(), vectorCount)
 		}
-		allowedCount = options.ResultFilter.AllowedOrdinalCount()
+		allowedCount = config.ResultFilter.AllowedOrdinalCount()
 		if allowedCount < 0 || allowedCount > vectorCount {
-			return searchRequest{}, ErrInvalidSearchOptions
+			return searchRequest{}, ErrInvalidQueryConfig
 		}
 	}
-	return searchRequest{k: k, efSearch: efSearch, visitLimit: visitLimit, allowedCount: allowedCount, filter: options.ResultFilter}, nil
+	return searchRequest{k: k, efSearch: efSearch, visitLimit: visitLimit, allowedCount: allowedCount, filter: config.ResultFilter}, nil
 }
 
-func search(ctx context.Context, reader *Index, query []float32, prepared *vector.PreparedVector, k int, options SearchOptions) (SearchResult, error) {
+func search(ctx context.Context, reader *Index, query []float32, prepared *vector.PreparedVector, k int, config QueryConfig) (SearchResult, error) {
 	if ctx == nil {
 		return SearchResult{}, vector.ErrNilContext
 	}
@@ -84,7 +84,7 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 	}
 	space := reader.topology.space
 	vectorCount := reader.Len()
-	request, err := resolveSearchRequest(reader.search, vectorCount, k, options)
+	request, err := resolveSearchRequest(reader.config.Search, vectorCount, k, config)
 	if err != nil {
 		return SearchResult{}, err
 	}

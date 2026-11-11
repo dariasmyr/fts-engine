@@ -23,11 +23,11 @@ func TestSaveDoesNotReuseSegmentFromIndependentIndex(t *testing.T) {
 
 	second := newTestIndex(t)
 	addTestSegmentWithVector(t, ctx, second, []float32{9, 8})
-	if _, err := Save(ctx, root, second, SaveOptions{ExpectedGeneration: &generation}); err != nil {
+	if _, err := Save(ctx, root, second, SaveConfig{ExpectedGeneration: &generation}); err != nil {
 		t.Fatal(err)
 	}
 
-	loaded, _, err := Load(ctx, root, LoadOptions{})
+	loaded, _, err := Load(ctx, root, LoadConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestSaveChecksExpectedGenerationBeforeSegmentObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = Save(ctx, root, index, SaveOptions{ExpectedGeneration: &Generation{}})
+	_, err = Save(ctx, root, index, SaveConfig{ExpectedGeneration: &Generation{}})
 	if !errors.Is(err, ErrStaleGeneration) {
 		t.Fatalf("Save() error = %v, want ErrStaleGeneration", err)
 	}
@@ -101,7 +101,7 @@ func TestSaveFailureBeforeCurrentReplacementKeepsPreviousGeneration(t *testing.T
 			addTestDocumentSegment(t, ctx, index, "doc-2", []float32{3, 4})
 
 			failed := errors.New("injected save failure")
-			cfg, err := newSettings(Limits{})
+			cfg, err := newSettings(Config{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -127,7 +127,7 @@ func TestSaveFailureBeforeCurrentReplacementKeepsPreviousGeneration(t *testing.T
 				t.Fatalf("CURRENT generation = %d, want %d", head.GenerationID, previous.ID)
 			}
 
-			_, loadedGeneration, err := Load(ctx, root, LoadOptions{})
+			_, loadedGeneration, err := Load(ctx, root, LoadConfig{})
 			if err != nil {
 				t.Fatalf("Load() after failed save: %v", err)
 			}
@@ -148,7 +148,7 @@ func TestSaveRetrySkipsInstalledOrphanGeneration(t *testing.T) {
 	previous := saveTestGenerations(t, ctx, root, index, 1)[0]
 
 	failed := errors.New("after generation rename")
-	cfg, err := newSettings(Limits{})
+	cfg, err := newSettings(Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestSaveRetrySkipsInstalledOrphanGeneration(t *testing.T) {
 		t.Fatalf("save() error = %v, want injected failure", err)
 	}
 
-	next, err := Save(ctx, root, index, SaveOptions{ExpectedGeneration: &previous})
+	next, err := Save(ctx, root, index, SaveConfig{ExpectedGeneration: &previous})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestSaveFailureAfterCurrentReplacementIsIndeterminate(t *testing.T) {
 			previous := saveTestGenerations(t, ctx, root, index, 1)[0]
 
 			failed := errors.New("injected committed failure")
-			cfg, err := newSettings(Limits{})
+			cfg, err := newSettings(Config{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -210,7 +210,7 @@ func TestSaveFailureAfterCurrentReplacementIsIndeterminate(t *testing.T) {
 			if _, err := save(ctx, root, index, previous.ID, cfg); !errors.Is(err, ErrIndeterminate) {
 				t.Fatalf("save() error = %v, want ErrIndeterminate", err)
 			}
-			_, generation, err := Load(ctx, root, LoadOptions{})
+			_, generation, err := Load(ctx, root, LoadConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -232,7 +232,7 @@ func TestSaveRejectsExhaustedGenerationID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Save(ctx, root, index, SaveOptions{ExpectedGeneration: &previous}); !errors.Is(err, ErrGenerationExhausted) {
+	if _, err := Save(ctx, root, index, SaveConfig{ExpectedGeneration: &previous}); !errors.Is(err, ErrGenerationExhausted) {
 		t.Fatalf("Save() error = %v, want ErrGenerationExhausted", err)
 	}
 }

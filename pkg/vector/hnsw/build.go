@@ -13,8 +13,7 @@ import (
 func Build(
 	ctx context.Context,
 	source vector.PreparedVectorStore,
-	build BuildConfig,
-	search SearchConfig,
+	config Config,
 ) (*Index, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
@@ -25,10 +24,7 @@ func Build(
 	if source == nil || source.Len() < 0 {
 		return nil, ErrInvalidSource
 	}
-	if err := build.Validate(); err != nil {
-		return nil, err
-	}
-	if err := search.Validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -49,7 +45,7 @@ func Build(
 		return nil, ErrInvalidSource
 	}
 
-	builder := newBuilder(build, space, vectorCount, int(components))
+	builder := newBuilder(config.Build, space, vectorCount, int(components))
 	scratch := make([]float32, space.Dimensions())
 	for row := range vectorCount {
 		if err := ctx.Err(); err != nil {
@@ -63,7 +59,7 @@ func Build(
 			return nil, fmt.Errorf("vector/hnsw: add source row %d: %w", ordinal, err)
 		}
 	}
-	return builder.freeze(source, search)
+	return builder.freeze(source, config)
 }
 
 func checkedMultiply(a, b uint64) (uint64, bool) {

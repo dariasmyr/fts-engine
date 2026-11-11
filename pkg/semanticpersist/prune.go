@@ -15,14 +15,6 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-// PruneOptions controls retention and safety limits during Prune.
-type PruneOptions struct {
-	// RetainGenerations is the total number of valid committed generations to
-	// retain, including the generation named by CURRENT. It must be positive.
-	RetainGenerations int
-	Limits            Limits
-}
-
 // PruneResult reports entries completely removed by Prune.
 type PruneResult struct {
 	RemovedGenerations      int
@@ -33,12 +25,12 @@ type PruneResult struct {
 // Prune removes generations outside the retention set, segment objects not
 // reachable from any retained manifest, and recognized save temporary entries.
 // It holds the operation lock for the complete operation.
-func Prune(ctx context.Context, root string, options PruneOptions) (PruneResult, error) {
-	cfg, err := newSettings(options.Limits)
+func Prune(ctx context.Context, root string, config PruneConfig) (PruneResult, error) {
+	cfg, err := newSettings(config.Config)
 	if err != nil {
 		return PruneResult{}, err
 	}
-	return prune(ctx, root, options.RetainGenerations, cfg)
+	return prune(ctx, root, config.RetainGenerations, cfg)
 }
 
 // Unknown entries and symlinks are never removed.

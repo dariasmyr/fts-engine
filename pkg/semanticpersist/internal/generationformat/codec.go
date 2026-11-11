@@ -45,7 +45,7 @@ type encoder struct {
 	err    error
 }
 
-func newEncoder(magic string, version uint16, expectedSize uint64, limits FileLimits) *encoder {
+func newEncoder(magic string, version uint16, expectedSize uint64, limits Config) *encoder {
 	e := &encoder{limit: limits.MaxFileBytes}
 	if err := limits.validateFile(); err != nil {
 		e.err = err
@@ -125,7 +125,7 @@ type decoder struct {
 	decodeErr      error
 }
 
-func newDecoder(data []byte, magic string, version uint16, limits FileLimits) (*decoder, error) {
+func newDecoder(data []byte, magic string, version uint16, limits Config) (*decoder, error) {
 	if err := limits.validateFile(); err != nil {
 		return nil, err
 	}

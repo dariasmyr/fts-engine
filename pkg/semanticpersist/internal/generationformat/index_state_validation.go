@@ -9,7 +9,7 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 )
 
-func validateStateAndEncodedSize(value IndexState, limits StateLimits) (uint64, error) {
+func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error) {
 	if err := value.Config.Validate(); err != nil {
 		return 0, codecErrorf(ErrCorrupt, "state config is invalid: %v", err)
 	}

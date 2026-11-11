@@ -28,8 +28,7 @@ func buildSegment(
 	space vector.Space,
 	source vector.PreparedVectorStore,
 	rows []VectorRow,
-	build hnsw.BuildConfig,
-	search hnsw.SearchConfig,
+	config hnsw.Config,
 ) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
@@ -43,7 +42,7 @@ func buildSegment(
 		return nil, ErrInvalidSegment
 	}
 
-	index, err := hnsw.Build(ctx, source, build, search)
+	index, err := hnsw.Build(ctx, source, config)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +114,7 @@ func (s *segment) vectorStore() vector.PreparedVectorStore {
 	return s.vectors
 }
 
-func (s *segment) searchPrepared(ctx context.Context, query vector.PreparedVector, k int, options hnsw.SearchOptions) (hnsw.SearchResult, error) {
+func (s *segment) searchPrepared(ctx context.Context, query vector.PreparedVector, k int, options hnsw.QueryConfig) (hnsw.SearchResult, error) {
 	if s == nil || s.index == nil {
 		return hnsw.SearchResult{}, ErrInvalidSegment
 	}
