@@ -176,34 +176,21 @@ func TestNewFromIndexRejectsCustomSplitterWithoutImplementation(t *testing.T) {
 	}
 }
 
-func TestNewLongQueryConfig(t *testing.T) {
-	tests := []struct {
-		name     string
-		strategy LongQueryStrategy
-		want     []string
-		wantErr  error
-	}{
-		{name: "reject", strategy: LongQueryReject, wantErr: ErrInputLimitExceeded},
-		{name: "truncate", strategy: LongQueryTruncate, want: []string{"query: éa"}},
-		{name: "chunk", strategy: LongQueryChunk, want: []string{"query: éa", "query: bcd"}},
+func TestNewSplitsQueriesWithDocumentSplitter(t *testing.T) {
+	client, received := modelServiceTestClient(t, 512)
+	config := defaultModelServiceConfig(t, client)
+	config.Chunking.Builtin = chunk.Config{TargetBytes: 4, MaxBytes: 6, OverlapBytes: 1}
+	service, err := New(client, config)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			client, received := modelServiceTestClient(t, 512)
-			service, err := New(client, defaultModelServiceConfig(t, client))
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = service.SearchWithConfig(t.Context(), "éabcd", 1, QueryConfig{
-				MaxBytes: 3, LongQuery: test.strategy,
-			})
-			if !errors.Is(err, test.wantErr) {
-				t.Fatalf("Search() error = %v, want %v", err, test.wantErr)
-			}
-			if !slices.Equal(*received, test.want) {
-				t.Fatalf("embedded inputs = %q, want %q", *received, test.want)
-			}
-		})
+
+	if _, err := service.Search(t.Context(), "abcdefghij", 1); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"query: abcd", "query: defg", "query: ghij"}
+	if !slices.Equal(*received, want) {
+		t.Fatalf("embedded inputs = %q, want %q", *received, want)
 	}
 }
 
@@ -214,29 +201,31 @@ func TestQueryConfigIsRequestLocal(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := service.Config()
-	_, _ = service.SearchWithConfig(t.Context(), "query", 1, QueryConfig{
-		MaxBytes: 16, LongQuery: LongQueryTruncate,
-	})
+	_, _ = service.SearchWithConfig(t.Context(), "query", 1, QueryConfig{CandidateChunks: 10})
 	if service.Config() != before {
 		t.Fatal("request-local query config changed static semantic config")
 	}
 }
 
-func TestQueryConfigMaxBytesUsesModelContextCeiling(t *testing.T) {
+func TestNewBoundsAutomaticallySplitQueries(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
-	service, err := New(client, defaultModelServiceConfig(t, client))
+	config := defaultModelServiceConfig(t, client)
+	config.Chunking.Builtin = chunk.Config{TargetBytes: 4, MaxBytes: 6, OverlapBytes: 1}
+	config.Index.Limits.MaxChunksPerDocument = 2
+	config.Index.Search.MaxChunksPerResult = 2
+	service, err := New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = service.SearchWithConfig(t.Context(), "query", 1, QueryConfig{MaxBytes: 513})
-	if !errors.Is(err, ErrInvalidQueryConfig) {
-		t.Fatalf("SearchWithConfig() error = %v, want ErrInvalidQueryConfig", err)
+	_, err = service.Search(t.Context(), "abcdefghij", 1)
+	if !errors.Is(err, ErrInputLimitExceeded) {
+		t.Fatalf("Search() chunk-limit error = %v, want ErrInputLimitExceeded", err)
 	}
 
-	_, err = service.SearchWithConfig(t.Context(), strings.Repeat("a", 513), 1, QueryConfig{})
+	_, err = service.Search(t.Context(), strings.Repeat("a", int(defaultMaxSourceBytes)+1), 1)
 	if !errors.Is(err, ErrInputLimitExceeded) {
-		t.Fatalf("SearchWithConfig() error = %v, want ErrInputLimitExceeded", err)
+		t.Fatalf("Search() source-limit error = %v, want ErrInputLimitExceeded", err)
 	}
 }
 
@@ -282,6 +271,10 @@ func TestNewPreservesSplitterErrors(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidDocument) || !errors.Is(err, splitError) {
 		t.Fatalf("AddDocument() error = %v, want invalid document and split errors", err)
+	}
+	_, err = service.Search(t.Context(), "query", 1)
+	if !errors.Is(err, ErrInvalidQuery) || !errors.Is(err, splitError) {
+		t.Fatalf("Search() error = %v, want invalid query and split errors", err)
 	}
 }
 

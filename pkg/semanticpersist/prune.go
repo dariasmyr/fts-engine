@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -99,7 +100,16 @@ func prune(
 			ids = append(ids, id)
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] > ids[j] })
+	slices.SortFunc(ids, func(a, b uint64) int {
+		switch {
+		case a < b:
+			return -1
+		case a > b:
+			return 1
+		default:
+			return 0
+		}
+	})
 
 	retained := map[uint64]generationformat.GenerationManifest{head.GenerationID: current.manifest}
 	for _, id := range ids {

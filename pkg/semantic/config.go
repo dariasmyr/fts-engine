@@ -17,22 +17,9 @@ const (
 	defaultMaxChunksPerDocumentHit = 3
 )
 
-// LongQueryStrategy controls text queries larger than QueryConfig.MaxBytes.
-type LongQueryStrategy uint8
-
-const (
-	LongQueryStrategyUnknown LongQueryStrategy = iota
-	LongQueryReject
-	LongQueryTruncate
-	LongQueryChunk
-)
-
-// QueryConfig controls one semantic query. Zero values select safe service
-// defaults: the model context limit, rejection of long input, and configured
-// HNSW/search budgets.
+// QueryConfig controls request-local semantic search budgets. Text queries are
+// split with the same chunk splitter used to encode indexed documents.
 type QueryConfig struct {
-	MaxBytes        int
-	LongQuery       LongQueryStrategy
 	EfSearch        int
 	VisitLimit      int
 	CandidateChunks int
@@ -40,9 +27,7 @@ type QueryConfig struct {
 
 // Validate checks request-local query values independently of service ceilings.
 func (c QueryConfig) Validate() error {
-	if c.MaxBytes < 0 || uint64(c.MaxBytes) > math.MaxUint32 ||
-		c.LongQuery > LongQueryChunk || c.EfSearch < 0 || c.VisitLimit < 0 ||
-		c.CandidateChunks < 0 {
+	if c.EfSearch < 0 || c.VisitLimit < 0 || c.CandidateChunks < 0 {
 		return ErrInvalidQueryConfig
 	}
 	return nil

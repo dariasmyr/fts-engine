@@ -160,8 +160,6 @@ if err := service.Commit(ctx); err != nil {
 }
 
 result, err := service.SearchWithConfig(ctx, "French hotel", 10, semantic.QueryConfig{
-	MaxBytes:        512,
-	LongQuery:       semantic.LongQueryTruncate,
 	EfSearch:        64,
 	VisitLimit:      10_000,
 	CandidateChunks: 200,
@@ -173,6 +171,9 @@ for _, hit := range result.Hits {
 	fmt.Printf("doc=%s distance=%.4f\n", hit.DocID, hit.Distance)
 }
 ```
+
+Text queries use the same splitter as indexed documents. Short queries produce
+one embedding; long queries are split into overlapping chunks automatically.
 
 `AddDocument`, `ReplaceDocument`, and `DeleteDocument` queue mutations. They
 become visible to the committed read view after `Commit`. Replacement and

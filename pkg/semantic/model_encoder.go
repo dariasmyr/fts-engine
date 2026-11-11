@@ -27,13 +27,12 @@ const (
 )
 
 type modelEncoder struct {
-	role          modelInputRole
-	splitter      ChunkSplitter
-	client        embedding.Client
-	limits        modelInputLimits
-	dimensions    int
-	maxQueryBytes int
-	prefix        string
+	role       modelInputRole
+	splitter   ChunkSplitter
+	client     embedding.Client
+	limits     modelInputLimits
+	dimensions int
+	prefix     string
 }
 
 func newModelEncoder(
@@ -59,7 +58,7 @@ func newModelEncoder(
 	return &modelEncoder{
 		role: role, splitter: splitter, client: client,
 		limits: limits, dimensions: modelConfig.Dimensions,
-		maxQueryBytes: modelConfig.ContextTokens, prefix: prefix,
+		prefix: prefix,
 	}, nil
 }
 
@@ -80,7 +79,7 @@ func (e *modelEncoder) EncodeQueryDocument(ctx context.Context, document fts.Doc
 	if e.role != modelInputQuery {
 		return nil, ErrInvalidQuery
 	}
-	if _, err := e.resolveQueryConfig(config); err != nil {
+	if err := config.Validate(); err != nil {
 		return nil, err
 	}
 	return e.encodeDocument(ctx, document)
@@ -101,11 +100,10 @@ func (e *modelEncoder) EncodeQuery(ctx context.Context, text string, config Quer
 	if e.role != modelInputQuery || text == "" || !utf8.ValidString(text) {
 		return nil, ErrInvalidQuery
 	}
-	config, err := e.resolveQueryConfig(config)
-	if err != nil {
+	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	inputs, err := e.queryInputs(text, config)
+	inputs, err := e.queryInputs(ctx, text)
 	if err != nil {
 		return nil, err
 	}
@@ -189,53 +187,35 @@ func (e *modelEncoder) documentInputs(ctx context.Context, document fts.Document
 	return inputs, nil
 }
 
-func (e *modelEncoder) resolveQueryConfig(config QueryConfig) (QueryConfig, error) {
-	if err := config.Validate(); err != nil {
-		return QueryConfig{}, err
+func (e *modelEncoder) queryInputs(ctx context.Context, text string) ([]modelInput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	if config.MaxBytes == 0 {
-		config.MaxBytes = e.maxQueryBytes
+	if uint64(len(text)) > e.limits.maxSourceBytes {
+		return nil, fmt.Errorf("%w: query bytes exceed %d", ErrInputLimitExceeded, e.limits.maxSourceBytes)
 	}
-	if config.MaxBytes > e.maxQueryBytes {
-		return QueryConfig{}, ErrInvalidQueryConfig
+	ranges, err := e.splitter.Split(text)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidQuery, err)
 	}
-	if config.LongQuery == LongQueryStrategyUnknown {
-		config.LongQuery = LongQueryReject
+	if len(ranges) == 0 {
+		return nil, ErrInvalidQuery
 	}
-	return config, nil
-}
+	if len(ranges) > e.limits.maxChunks || uint64(len(ranges)-1) > math.MaxUint32 {
+		return nil, fmt.Errorf("%w: query chunks exceed %d", ErrInputLimitExceeded, e.limits.maxChunks)
+	}
 
-func (e *modelEncoder) queryInputs(text string, config QueryConfig) ([]modelInput, error) {
-	maxBytes := config.MaxBytes
-	if len(text) <= maxBytes {
-		return []modelInput{queryInput(text, 0, len(text), 0)}, nil
-	}
-	switch config.LongQuery {
-	case LongQueryReject:
-		return nil, fmt.Errorf("%w: query bytes %d exceed %d", ErrInputLimitExceeded, len(text), maxBytes)
-	case LongQueryTruncate:
-		end := utf8AlignedEnd(text, maxBytes)
-		if end == 0 {
-			return nil, ErrInvalidQuery
+	inputs := make([]modelInput, len(ranges))
+	for i, byteRange := range ranges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		return []modelInput{queryInput(text, 0, end, 0)}, nil
-	case LongQueryChunk:
-		inputs := make([]modelInput, 0, (len(text)-1)/maxBytes+1)
-		for start := 0; start < len(text); {
-			end := utf8AlignedEnd(text[start:], maxBytes) + start
-			if end <= start {
-				return nil, ErrInvalidQuery
-			}
-			inputs = append(inputs, queryInput(text, start, end, len(inputs)))
-			if len(inputs) > e.limits.maxChunks {
-				return nil, fmt.Errorf("%w: query chunks exceed %d", ErrInputLimitExceeded, e.limits.maxChunks)
-			}
-			start = end
+		if err := byteRange.Validate(text); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidQuery, err)
 		}
-		return inputs, nil
-	default:
-		return nil, ErrInvalidConfig
+		inputs[i] = queryInput(text, byteRange.StartByte, byteRange.EndByte, i)
 	}
+	return inputs, nil
 }
 
 func queryInput(text string, start, end, ordinal int) modelInput {
@@ -247,14 +227,6 @@ func queryInput(text string, start, end, ordinal int) modelInput {
 		},
 		text: text[start:end],
 	}
-}
-
-func utf8AlignedEnd(text string, maxBytes int) int {
-	end := min(len(text), maxBytes)
-	for end > 0 && end < len(text) && !utf8.RuneStart(text[end]) {
-		end--
-	}
-	return end
 }
 
 func (e *modelEncoder) embedInputs(ctx context.Context, inputs []modelInput) ([]ChunkEmbedding, error) {
