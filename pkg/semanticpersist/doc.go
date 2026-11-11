@@ -114,7 +114,7 @@
 //
 // CommitAndSaveService is the ordinary model-backed document-level write flow
 // and requires no caller-side mutex. It holds the mutation gate through
-// candidate preparation, filesystem persistence, and in-memory publication.
+// candidate preparation, storage publish, and in-memory publish.
 // Concurrent mutations wait; search continues against the previous immutable
 // view until persistence succeeds. Save and CommitAndSave remain the low-level
 // operations for raw indexes and external encoder pipelines.

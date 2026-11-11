@@ -39,7 +39,7 @@ func (s currentFile) read(ctx context.Context) (generationformat.Head, error) {
 	return head, nil
 }
 
-func (s currentFile) commit(ctx context.Context, head generationformat.Head) error {
+func (s currentFile) publishToStorage(ctx context.Context, head generationformat.Head) error {
 	if err := s.checkpoints.before(ctx, checkpointWriteCurrent); err != nil {
 		return err
 	}

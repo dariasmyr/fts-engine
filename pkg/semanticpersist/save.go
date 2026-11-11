@@ -392,7 +392,7 @@ func (w *generationWriter) write(
 	if err != nil {
 		return 0, err
 	}
-	err = newCurrentFile(w.layout, cfg).commit(ctx, generationformat.Head{
+	err = newCurrentFile(w.layout, cfg).publishToStorage(ctx, generationformat.Head{
 		GenerationID: nextID,
 		ManifestHash: generation.manifestRef.SHA256,
 	})

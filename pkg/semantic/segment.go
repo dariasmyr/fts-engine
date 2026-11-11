@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/contextcheck"
+	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
@@ -48,6 +49,24 @@ func buildSegment(
 	}
 
 	return newBuiltSegment(id, space, source, index, rows)
+}
+
+func buildMaterializedSegment(
+	ctx context.Context,
+	id SegmentID,
+	values []float32,
+	rows []VectorRow,
+	config IndexConfig,
+) (*segment, error) {
+	space, err := vector.NewSpace(config.Dimensions, config.Metric)
+	if err != nil {
+		return nil, err
+	}
+	source, err := memorystore.NewPrepared(space, values)
+	if err != nil {
+		return nil, err
+	}
+	return buildSegment(ctx, id, space, source, rows, config.hnswConfig())
 }
 
 // newBuiltSegment takes ownership of rows produced together with an index by

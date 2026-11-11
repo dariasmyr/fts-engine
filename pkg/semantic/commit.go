@@ -5,7 +5,6 @@ import (
 	"math"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/contextcheck"
-	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -23,11 +22,11 @@ func (i *Index) Commit(ctx context.Context) error {
 		return err
 	}
 	defer i.unlockMutations()
-	prepared, err := i.preparePendingCommit(ctx)
+	candidate, err := i.prepareCommitCandidate(ctx)
 	if err != nil {
 		return err
 	}
-	if err := i.validatePreparedCommit(prepared); err != nil {
+	if err := i.validateCandidate(candidate.target); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -36,7 +35,7 @@ func (i *Index) Commit(ctx context.Context) error {
 
 	// State transition: the prepared view becomes searchable only after all
 	// fallible construction and validation have completed.
-	i.publishPreparedCommit(prepared)
+	i.publishToMemory(candidate.target)
 	return nil
 }
 
@@ -60,7 +59,7 @@ func (i *Index) CommitAndExportState(ctx context.Context) (*CommittedIndexState,
 // the previous view remains searchable and the pending batch remains available
 // for retry.
 //
-// Once accept returns nil, publication is an in-memory, non-failing state
+// Once accept returns nil, the in-memory publish is a non-failing state
 // transition. Callers must therefore return nil only after any external commit
 // point associated with the candidate state has completed. The callback may
 // search the index but must not call mutation, Commit, or Compact methods on it.
@@ -79,16 +78,16 @@ func (i *Index) CommitWithState(
 	}
 	defer i.unlockMutations()
 
-	prepared, err := i.preparePendingCommit(ctx)
+	candidate, err := i.prepareCommitCandidate(ctx)
 	if err != nil {
 		return err
 	}
 	// Validation boundary: reject any mismatch between the prepared candidate
 	// and the mutable state before invoking a callback with external side effects.
-	if err := i.validatePreparedCommit(prepared); err != nil {
+	if err := i.validateCandidate(candidate.target); err != nil {
 		return err
 	}
-	committed, err := i.exportPreparedCommit(ctx, prepared)
+	committed, err := i.exportCommitCandidate(ctx, candidate)
 	if err != nil {
 		return err
 	}
@@ -99,51 +98,50 @@ func (i *Index) CommitWithState(
 		return err
 	}
 
-	// State transition: after accept succeeds, publication cannot be canceled or
-	// fail without diverging from the externally committed state.
-	i.publishPreparedCommit(prepared)
+	// State transition: after accept succeeds, the in-memory publish cannot be
+	// canceled or fail without diverging from the externally committed state.
+	i.publishToMemory(candidate.target)
 	return nil
 }
 
 type commitState struct {
-	revision             Revision
-	segmentID            SegmentID
-	maxAllocatedVectorID VectorID
-	pending              pendingBatch
-	locations            map[VectorID]vectorLocation
-	base                 *IndexView
-	config               IndexConfig
-	limits               indexLimits
+	candidatePreconditions
+	pending   pendingBatch
+	locations map[VectorID]vectorLocation
+	config    IndexConfig
+	limits    indexLimits
 }
 
-type preparedCommit struct {
-	state            commitState
-	view             *IndexView
-	locations        map[VectorID]vectorLocation
-	allocatedSegment bool
+type commitCandidate struct {
+	source commitState
+	target stateCandidate
 }
 
-func (i *Index) preparePendingCommit(ctx context.Context) (preparedCommit, error) {
+func (i *Index) prepareCommitCandidate(ctx context.Context) (commitCandidate, error) {
 	if err := ctx.Err(); err != nil {
-		return preparedCommit{}, err
+		return commitCandidate{}, err
 	}
 	state, err := i.captureCommitState(ctx)
 	if err != nil {
-		return preparedCommit{}, err
+		return commitCandidate{}, err
 	}
 	if state.revision == state.base.revision {
-		return preparedCommit{
-			state:     state,
-			view:      state.base,
-			locations: state.locations,
+		return commitCandidate{
+			source: state,
+			target: stateCandidate{
+				preconditions: state.candidatePreconditions,
+				view:          state.base,
+				locations:     state.locations,
+				resetPending:  true,
+			},
 		}, nil
 	}
 	if len(state.pending.additions) > 0 && state.segmentID == SegmentID(math.MaxUint64) {
-		return preparedCommit{}, ErrSegmentIDExhausted
+		return commitCandidate{}, ErrSegmentIDExhausted
 	}
 	pendingSegment, err := buildPendingSegment(ctx, state.segmentID, state.pending.additions, state.config)
 	if err != nil {
-		return preparedCommit{}, err
+		return commitCandidate{}, err
 	}
 	view, locations, err := buildCommittedView(
 		ctx,
@@ -155,25 +153,29 @@ func (i *Index) preparePendingCommit(ctx context.Context) (preparedCommit, error
 		state.revision,
 	)
 	if err != nil {
-		return preparedCommit{}, err
+		return commitCandidate{}, err
 	}
 	allocatedSegment := pendingSegment != nil
 	if exceedsLifecycleBounds(view, state.limits.capacity, state.limits.lifecycle) {
 		if view.liveCount > 0 && state.segmentID == SegmentID(math.MaxUint64) {
-			return preparedCommit{}, ErrSegmentIDExhausted
+			return commitCandidate{}, ErrSegmentIDExhausted
 		}
 		view, locations, allocatedSegment, err = compactView(
 			ctx, view, state.segmentID, state.config,
 		)
 		if err != nil {
-			return preparedCommit{}, err
+			return commitCandidate{}, err
 		}
 	}
-	return preparedCommit{
-		state:            state,
-		view:             view,
-		locations:        locations,
-		allocatedSegment: allocatedSegment,
+	return commitCandidate{
+		source: state,
+		target: stateCandidate{
+			preconditions:    state.candidatePreconditions,
+			view:             view,
+			locations:        locations,
+			allocatedSegment: allocatedSegment,
+			resetPending:     true,
+		},
 	}, nil
 }
 
@@ -201,60 +203,34 @@ func (i *Index) captureCommitState(ctx context.Context) (commitState, error) {
 		return commitState{}, err
 	}
 	return commitState{
-		revision:             i.state.revision,
-		segmentID:            i.state.nextSegmentID,
-		maxAllocatedVectorID: i.state.maxAllocatedVectorID,
+		candidatePreconditions: i.candidatePreconditionsLocked(),
 		pending: pendingBatch{
 			additions: append([]pendingVector(nil), i.state.pending.additions...),
 			removals:  append([]VectorID(nil), i.state.pending.removals...),
 		},
 		locations: locations,
-		base:      i.state.view,
 		config:    i.config,
 		limits:    i.limits,
 	}, nil
 }
 
-func (i *Index) exportPreparedCommit(
+func (i *Index) exportCommitCandidate(
 	ctx context.Context,
-	prepared preparedCommit,
+	candidate commitCandidate,
 ) (*CommittedIndexState, error) {
-	nextSegmentID := prepared.state.segmentID
-	if prepared.allocatedSegment {
+	nextSegmentID := candidate.source.segmentID
+	if candidate.target.allocatedSegment {
 		nextSegmentID++
 	}
 	return exportCommittedState(
 		ctx,
 		i.id,
-		prepared.state.config,
-		prepared.state.revision,
-		prepared.state.maxAllocatedVectorID,
+		candidate.source.config,
+		candidate.source.revision,
+		candidate.source.maxAllocatedVectorID,
 		nextSegmentID,
-		prepared.view,
+		candidate.target.view,
 	)
-}
-
-func (i *Index) validatePreparedCommit(prepared preparedCommit) error {
-	i.stateMu.RLock()
-	defer i.stateMu.RUnlock()
-	if prepared.state.revision != i.state.revision ||
-		prepared.state.segmentID != i.state.nextSegmentID ||
-		prepared.state.maxAllocatedVectorID != i.state.maxAllocatedVectorID ||
-		prepared.state.base != i.state.view {
-		return ErrInternalState
-	}
-	return nil
-}
-
-func (i *Index) publishPreparedCommit(prepared preparedCommit) {
-	i.stateMu.Lock()
-	defer i.stateMu.Unlock()
-	i.state.view = prepared.view
-	i.state.locations = prepared.locations
-	i.state.pending.reset()
-	if prepared.allocatedSegment {
-		i.state.nextSegmentID++
-	}
 }
 
 func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pendingVector, config IndexConfig) (*segment, error) {
@@ -273,22 +249,5 @@ func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pen
 		}
 		rows[n] = item.row
 	}
-	space, err := vector.NewSpace(config.Dimensions, config.Metric)
-	if err != nil {
-		return nil, err
-	}
-	source, err := memorystore.NewPrepared(space, flatVectors)
-	if err != nil {
-		return nil, err
-	}
-	hnswConfig := config.hnswConfig()
-
-	return buildSegment(
-		ctx,
-		segmentID,
-		space,
-		source,
-		rows,
-		hnswConfig,
-	)
+	return buildMaterializedSegment(ctx, segmentID, flatVectors, rows, config)
 }

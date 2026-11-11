@@ -678,7 +678,11 @@ Replacement and deletion leave stale physical vectors in the service until
 `service.Compact(ctx)` is called. Compaction preserves stable `VectorID` values
 and removes stale rows from the new committed in-memory view. Persistence does
 not delete old on-disk generations; retention and garbage collection are
-separate operations.
+separate operations. `Compact` publishes the rewritten layout in memory without
+persistence I/O. Call `semanticpersist.Save` or `semanticpersist.SaveService`
+afterward to persist that layout. A crash before that save restores the previous
+layout; if the current logical revision was already durable, only the compaction
+work is lost.
 
 `CommitAndSave` holds the index mutation gate through preparation, persistence,
 and publication. Concurrent mutations wait, while searches continue against the

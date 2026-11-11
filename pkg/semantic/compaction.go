@@ -5,7 +5,6 @@ import (
 	"math"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/contextcheck"
-	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -25,11 +24,11 @@ func (i *Index) Compact(ctx context.Context) error {
 	defer i.unlockMutations()
 
 	i.stateMu.RLock()
-	revision := i.state.revision
-	view := i.state.view
+	preconditions := i.candidatePreconditionsLocked()
+	view := preconditions.base
 	config := i.config
-	segmentID := i.state.nextSegmentID
-	hasPending := i.state.revision != i.state.view.revision
+	segmentID := preconditions.segmentID
+	hasPending := preconditions.revision != view.revision
 	i.stateMu.RUnlock()
 	if hasPending {
 		return ErrPendingMutations
@@ -58,16 +57,16 @@ func (i *Index) Compact(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	i.stateMu.Lock()
-	defer i.stateMu.Unlock()
-	if revision != i.state.revision {
-		return ErrInternalState
+	candidate := stateCandidate{
+		preconditions:    preconditions,
+		view:             compactedView,
+		locations:        locations,
+		allocatedSegment: allocatedSegment,
 	}
-	i.state.view = compactedView
-	i.state.locations = locations
-	if allocatedSegment {
-		i.state.nextSegmentID++
+	if err := i.validateCandidate(candidate); err != nil {
+		return err
 	}
+	i.publishToMemory(candidate)
 	return nil
 }
 
@@ -119,23 +118,7 @@ func buildCompactedSegment(ctx context.Context, view *IndexView, segmentID Segme
 	if err != nil {
 		return nil, err
 	}
-	space, err := vector.NewSpace(config.Dimensions, config.Metric)
-	if err != nil {
-		return nil, err
-	}
-	source, err := memorystore.NewPrepared(space, flatVectors)
-	if err != nil {
-		return nil, err
-	}
-	hnswConfig := config.hnswConfig()
-	return buildSegment(
-		ctx,
-		segmentID,
-		space,
-		source,
-		liveRows,
-		hnswConfig,
-	)
+	return buildMaterializedSegment(ctx, segmentID, flatVectors, liveRows, config)
 }
 
 func materializeLiveRows(ctx context.Context, view *IndexView) ([]float32, []VectorRow, error) {
