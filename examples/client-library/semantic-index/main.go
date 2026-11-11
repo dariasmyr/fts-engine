@@ -13,20 +13,15 @@ import (
 // embedding and passes ready-to-index vectors to the low-level API.
 func main() {
 	ctx := context.Background()
-	index, err := semantic.NewIndex(semantic.SemanticConfig{
-		Model: semantic.ModelConfig{
-			ID: "raw-vector-example", Revision: "v1", Dimensions: 2, ContextTokens: 512,
+	index, err := semantic.NewIndex(semantic.IndexConfig{
+		Dimensions: 2,
+		Metric:     vector.MetricCosine,
+		Limits: semantic.LimitsConfig{
+			MaxLiveVectors: 100, MaxStaleVectors: 100, MaxChunksPerDocument: 10,
 		},
-		Index: semantic.IndexConfig{
-			Metric: vector.MetricCosine,
-			Limits: semantic.LimitsConfig{
-				MaxLiveVectors: 100, MaxStaleVectors: 100, MaxChunksPerDocument: 10,
-			},
-			Search: semantic.SearchConfig{
-				MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3,
-			},
+		Search: semantic.SearchConfig{
+			MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3,
 		},
-		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindExternal},
 	})
 	must(err)
 

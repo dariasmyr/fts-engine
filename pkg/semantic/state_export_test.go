@@ -7,6 +7,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 func TestCommittedIndexStateRestoreRoundTripPreservesCommittedIndex(t *testing.T) {
@@ -280,20 +281,17 @@ func cloneTestState(state CommittedIndexState) CommittedIndexState {
 func newTestIndex(t *testing.T) *Index {
 	t.Helper()
 
-	index, err := NewIndex(SemanticConfig{
-		Model: ModelConfig{ID: "test-model", Revision: "v1", Dimensions: 2, ContextTokens: 16},
-		Index: IndexConfig{
-			Metric: vector.MetricL2Squared,
-			Limits: LimitsConfig{
-				MaxLiveVectors: 32, MaxStaleVectors: 32, MaxSegments: 8, MaxChunksPerDocument: 4,
-			},
-			Search: SearchConfig{MaxResults: 4, MaxCandidateChunks: 16, MaxChunksPerResult: 2},
-			HNSW: HNSWConfig{
-				MaxNeighbors: 2, EfConstruction: 4, Seed: 1,
-				DefaultEfSearch: 8, MaxEfSearch: 16, DefaultVisitLimit: 32, MaxVisitLimit: 32,
-			},
+	index, err := NewIndex(IndexConfig{
+		Dimensions: 2,
+		Metric:     vector.MetricL2Squared,
+		Limits: LimitsConfig{
+			MaxLiveVectors: 32, MaxStaleVectors: 32, MaxSegments: 8, MaxChunksPerDocument: 4,
 		},
-		Chunking: ChunkingConfig{Kind: ChunkingKindExternal},
+		Search: SearchConfig{MaxResults: 4, MaxCandidateChunks: 16, MaxChunksPerResult: 2},
+		HNSW: hnsw.Config{
+			Build:  hnsw.BuildConfig{MaxNeighbors: 2, EfConstruction: 4, Seed: 1},
+			Search: hnsw.SearchConfig{EfSearch: 8, VisitLimit: 32},
+		},
 	})
 	if err != nil {
 		t.Fatalf("NewIndex() error = %v", err)

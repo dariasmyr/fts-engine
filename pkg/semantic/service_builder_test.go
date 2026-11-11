@@ -50,25 +50,30 @@ func TestNewIndexesCommitsAndSearchesText(t *testing.T) {
 	}
 }
 
-func TestNewAcceptsCompleteSemanticConfig(t *testing.T) {
+func TestNewAcceptsCompleteServiceConfig(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
-	config, err := DefaultSemanticConfig(client.Model())
+	config, err := DefaultServiceConfig(client.Model())
 	if err != nil {
 		t.Fatal(err)
 	}
 	config.Index.Metric = vector.MetricL2Squared
-	config.Chunking.Builtin = chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
+	config.Chunking = chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
 	config.Index.Limits.MaxLiveVectors = 256
 	config.Index.Limits.MaxStaleVectors = 256
 	config.Index.Limits.MaxChunksPerDocument = 128
-	config.Index.Search = SearchConfig{MaxResults: 12, MaxCandidateChunks: 128, MaxChunksPerResult: 6}
+	config.Encoding.MaxEmbeddingBytes = uint64(128 * client.Model().Dimensions * 4)
+	config.Index.Search = SearchConfig{
+		MaxResults: 12, MaxCandidateChunks: 128, MaxChunksPerResult: 6,
+		MaxQueryChunks: 128, MaxEfSearch: 128, MaxVisitLimit: config.Index.HNSW.Search.VisitLimit,
+	}
 
 	service, err := New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.index.config != config {
-		t.Fatalf("config = %+v, want %+v", service.index.config, config)
+	got, ok := service.Config()
+	if !ok || got != config || service.index.config != config.Index {
+		t.Fatalf("config = %+v/%+v, want %+v", got, service.index.config, config)
 	}
 }
 
@@ -79,7 +84,7 @@ func TestNewFromIndexBindsExistingIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service, err := NewFromIndex(client, original.Index())
+	service, err := NewFromIndex(client, original.Index(), originalConfig(t, original))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +109,22 @@ func TestNewFromIndexValidatesModelConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = NewFromIndex(incompatible, original.Index())
+	_, err = NewFromIndex(incompatible, original.Index(), originalConfig(t, original))
 	if !errors.Is(err, ErrModelServiceUnavailable) {
+		t.Fatalf("NewFromIndex() error = %v, want ErrModelServiceUnavailable", err)
+	}
+}
+
+func TestNewFromIndexValidatesIndexConfig(t *testing.T) {
+	client, _ := modelServiceTestClient(t, 512)
+	config := defaultModelServiceConfig(t, client)
+	original, err := New(client, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config.Index.Metric = vector.MetricL2Squared
+	if _, err := NewFromIndex(client, original.Index(), config); !errors.Is(err, ErrModelServiceUnavailable) {
 		t.Fatalf("NewFromIndex() error = %v, want ErrModelServiceUnavailable", err)
 	}
 }
@@ -114,21 +133,25 @@ func TestNewFromIndexUsesIndexConfiguration(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
 	config := defaultModelServiceConfig(t, client)
 	config.Index.Metric = vector.MetricL2Squared
-	config.Chunking.Builtin = chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
+	config.Chunking = chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
 	config.Index.Limits.MaxLiveVectors = 256
 	config.Index.Limits.MaxStaleVectors = 256
 	config.Index.Limits.MaxChunksPerDocument = 128
+	config.Encoding.MaxEmbeddingBytes = uint64(128 * client.Model().Dimensions * 4)
 	config.Index.Search = SearchConfig{
 		MaxResults:         12,
 		MaxCandidateChunks: 128,
 		MaxChunksPerResult: 6,
+		MaxQueryChunks:     128,
+		MaxEfSearch:        128,
+		MaxVisitLimit:      config.Index.HNSW.Search.VisitLimit,
 	}
 	original, err := New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	service, err := NewFromIndex(client, original.Index())
+	service, err := NewFromIndex(client, original.Index(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,11 +162,12 @@ func TestNewFromIndexUsesIndexConfiguration(t *testing.T) {
 	if documents.limits.maxChunks != 128 {
 		t.Fatalf("document encoder chunk limit = %d, want 128", documents.limits.maxChunks)
 	}
-	if service.index.config.Index.Limits.MaxStaleVectors != 256 {
-		t.Fatalf("stale vector limit = %d, want 256", service.index.config.Index.Limits.MaxStaleVectors)
+	if service.index.config.Limits.MaxStaleVectors != 256 {
+		t.Fatalf("stale vector limit = %d, want 256", service.index.config.Limits.MaxStaleVectors)
 	}
-	if service.Config().Index.Metric != vector.MetricL2Squared {
-		t.Fatalf("service metric = %v, want L2 squared", service.Config().Index.Metric)
+	serviceConfig, ok := service.Config()
+	if !ok || serviceConfig.Index.Metric != vector.MetricL2Squared {
+		t.Fatalf("service config = %+v, %v", serviceConfig, ok)
 	}
 	wantChunking := chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
 	if documents.splitter.Config() != wantChunking {
@@ -151,23 +175,10 @@ func TestNewFromIndexUsesIndexConfiguration(t *testing.T) {
 	}
 }
 
-func TestNewFromIndexRejectsExternalEncodingPipeline(t *testing.T) {
-	client, _ := modelServiceTestClient(t, 512)
-	config := defaultModelServiceConfig(t, client)
-	config.Chunking = ChunkingConfig{Kind: ChunkingKindExternal}
-	index, err := NewIndex(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NewFromIndex(client, index); !errors.Is(err, ErrModelServiceUnavailable) {
-		t.Fatalf("NewFromIndex() error = %v, want ErrModelServiceUnavailable", err)
-	}
-}
-
 func TestNewSplitsQueriesWithDocumentSplitter(t *testing.T) {
 	client, received := modelServiceTestClient(t, 512)
 	config := defaultModelServiceConfig(t, client)
-	config.Chunking.Builtin = chunk.Config{TargetBytes: 4, MaxBytes: 6, OverlapBytes: 1}
+	config.Chunking = chunk.Config{TargetBytes: 4, MaxBytes: 6, OverlapBytes: 1}
 	service, err := New(client, config)
 	if err != nil {
 		t.Fatal(err)
@@ -188,9 +199,13 @@ func TestQueryConfigIsRequestLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := service.Config()
+	before, ok := service.Config()
+	if !ok {
+		t.Fatal("Config() unavailable")
+	}
 	_, _ = service.SearchWithConfig(t.Context(), "query", 1, QueryConfig{CandidateChunks: 10})
-	if service.Config() != before {
+	after, ok := service.Config()
+	if !ok || after != before {
 		t.Fatal("request-local query config changed static semantic config")
 	}
 }
@@ -198,8 +213,9 @@ func TestQueryConfigIsRequestLocal(t *testing.T) {
 func TestNewBoundsAutomaticallySplitQueries(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
 	config := defaultModelServiceConfig(t, client)
-	config.Chunking.Builtin = chunk.Config{TargetBytes: 4, MaxBytes: 6, OverlapBytes: 1}
+	config.Chunking = chunk.Config{TargetBytes: 4, MaxBytes: 6, OverlapBytes: 1}
 	config.Index.Limits.MaxChunksPerDocument = 2
+	config.Index.Search.MaxQueryChunks = 2
 	config.Index.Search.MaxChunksPerResult = 2
 	service, err := New(client, config)
 	if err != nil {
@@ -249,18 +265,18 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
 	tests := []struct {
 		name   string
-		mutate func(*SemanticConfig)
+		mutate func(*ServiceConfig)
 	}{
-		{name: "invalid metric", mutate: func(c *SemanticConfig) { c.Index.Metric = 255 }},
-		{name: "invalid indexed vectors", mutate: func(c *SemanticConfig) { c.Index.Limits.MaxLiveVectors = 0 }},
-		{name: "invalid document chunks", mutate: func(c *SemanticConfig) { c.Index.Limits.MaxChunksPerDocument = 0 }},
-		{name: "invalid search config", mutate: func(c *SemanticConfig) { c.Index.Search = SearchConfig{} }},
-		{name: "search candidates exceed capacity", mutate: func(c *SemanticConfig) {
+		{name: "invalid metric", mutate: func(c *ServiceConfig) { c.Index.Metric = 255 }},
+		{name: "invalid indexed vectors", mutate: func(c *ServiceConfig) { c.Index.Limits.MaxLiveVectors = 0 }},
+		{name: "invalid document chunks", mutate: func(c *ServiceConfig) { c.Index.Limits.MaxChunksPerDocument = 0 }},
+		{name: "invalid search config", mutate: func(c *ServiceConfig) { c.Index.Search = SearchConfig{} }},
+		{name: "search candidates exceed capacity", mutate: func(c *ServiceConfig) {
 			c.Index.Limits.MaxLiveVectors = 10
 			c.Index.Limits.MaxStaleVectors = 10
 			c.Index.Search = SearchConfig{MaxResults: 5, MaxCandidateChunks: 11, MaxChunksPerResult: 1}
 		}},
-		{name: "invalid built-in chunking", mutate: func(c *SemanticConfig) { c.Chunking.Builtin = chunk.Config{} }},
+		{name: "invalid built-in chunking", mutate: func(c *ServiceConfig) { c.Chunking = chunk.Config{} }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -272,14 +288,9 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		})
 	}
 
-	config := defaultModelServiceConfig(t, client)
-	config.Chunking = ChunkingConfig{Kind: ChunkingKindExternal}
-	if _, err := New(client, config); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("New() external config error = %v, want ErrInvalidConfig", err)
-	}
 }
 
-func TestNewDerivesOneChunkLimitForEncoderAndIndex(t *testing.T) {
+func TestNewUsesIndependentDocumentAndQueryChunkLimits(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
 	config := defaultModelServiceConfig(t, client)
 	config.Index.Limits.MaxChunksPerDocument = 7
@@ -287,6 +298,7 @@ func TestNewDerivesOneChunkLimitForEncoderAndIndex(t *testing.T) {
 		MaxResults:         5,
 		MaxCandidateChunks: 10,
 		MaxChunksPerResult: 2,
+		MaxQueryChunks:     3,
 	}
 	service, err := New(client, config)
 	if err != nil {
@@ -302,6 +314,40 @@ func TestNewDerivesOneChunkLimitForEncoderAndIndex(t *testing.T) {
 			documents.limits.maxChunks,
 			service.index.limits.ingestion.maxChunksPerDocument,
 		)
+	}
+	queries, ok := service.queryEncoder.(*modelEncoder)
+	if !ok {
+		t.Fatalf("query encoder type = %T", service.queryEncoder)
+	}
+	if queries.limits.maxChunks != 3 || service.index.limits.search.maxQueryChunks != 3 {
+		t.Fatalf(
+			"query chunk limits: encoder=%d index=%d, want 3",
+			queries.limits.maxChunks,
+			service.index.limits.search.maxQueryChunks,
+		)
+	}
+}
+
+func TestNewUsesConfiguredEncodingLimits(t *testing.T) {
+	client, _ := modelServiceTestClient(t, 512)
+	config := defaultModelServiceConfig(t, client)
+	config.Encoding = EncodingLimits{
+		MaxFields: 2, MaxSourceBytes: 128, MaxEmbeddingBytes: 16,
+	}
+	service, err := New(client, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	documents := service.documentEncoder.(*modelEncoder)
+	queries := service.queryEncoder.(*modelEncoder)
+	for name, limits := range map[string]modelInputLimits{
+		"documents": documents.limits,
+		"queries":   queries.limits,
+	} {
+		if limits.maxFields != 2 || limits.maxSourceBytes != 128 || limits.maxEmbeddingBytes != 16 {
+			t.Fatalf("%s encoding limits = %+v", name, limits)
+		}
 	}
 }
 
@@ -325,11 +371,20 @@ func modelServiceTestClient(t *testing.T, contextTokens int) (embedding.Client, 
 	return client, &received
 }
 
-func defaultModelServiceConfig(t *testing.T, client embedding.Client) SemanticConfig {
+func defaultModelServiceConfig(t *testing.T, client embedding.Client) ServiceConfig {
 	t.Helper()
-	config, err := DefaultSemanticConfig(client.Model())
+	config, err := DefaultServiceConfig(client.Model())
 	if err != nil {
 		t.Fatal(err)
+	}
+	return config
+}
+
+func originalConfig(t *testing.T, service *Service) ServiceConfig {
+	t.Helper()
+	config, ok := service.Config()
+	if !ok {
+		t.Fatal("Config() unavailable")
 	}
 	return config
 }

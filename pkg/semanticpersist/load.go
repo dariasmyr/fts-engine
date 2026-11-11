@@ -63,22 +63,22 @@ func Load(
 	return index, Generation{ID: head.GenerationID}, nil
 }
 
-// LoadService loads the current generation and reconstructs its persisted
-// standard model pipeline. It returns the generation token for the next
-// optimistic Save. Indexes whose config selects ChunkingKindExternal must be
-// loaded with Load and bound to caller-owned encoders through semantic.NewService.
+// LoadService loads the current index generation and binds the supplied
+// standard model pipeline configuration. It returns the generation token for
+// the next optimistic Save. External encoders use Load and semantic.NewService.
 func LoadService(
 	ctx context.Context,
 	root string,
 	client embedding.Client,
-	config LoadConfig,
+	serviceConfig semantic.ServiceConfig,
+	loadConfig LoadConfig,
 ) (*semantic.Service, Generation, error) {
-	index, generation, err := Load(ctx, root, config)
+	index, generation, err := Load(ctx, root, loadConfig)
 	if err != nil {
 		return nil, Generation{}, err
 	}
 
-	service, err := semantic.NewFromIndex(client, index)
+	service, err := semantic.NewFromIndex(client, index, serviceConfig)
 	if err != nil {
 		return nil, Generation{}, err
 	}

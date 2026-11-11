@@ -299,14 +299,11 @@ func pruneForTest(
 func newTestIndex(t *testing.T) *semantic.Index {
 	t.Helper()
 
-	index, err := semantic.NewIndex(semantic.SemanticConfig{
-		Model: semantic.ModelConfig{ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 16},
-		Index: semantic.IndexConfig{
-			Metric: vector.MetricL2Squared,
-			Limits: semantic.LimitsConfig{MaxLiveVectors: 16, MaxChunksPerDocument: 2},
-			Search: semantic.SearchConfig{MaxResults: 4, MaxCandidateChunks: 16, MaxChunksPerResult: 2},
-		},
-		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindExternal},
+	index, err := semantic.NewIndex(semantic.IndexConfig{
+		Dimensions: 2,
+		Metric:     vector.MetricL2Squared,
+		Limits:     semantic.LimitsConfig{MaxLiveVectors: 16, MaxChunksPerDocument: 2},
+		Search:     semantic.SearchConfig{MaxResults: 4, MaxCandidateChunks: 16, MaxChunksPerResult: 2},
 	})
 	if err != nil {
 		t.Fatal(err)

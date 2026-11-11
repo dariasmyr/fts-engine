@@ -44,7 +44,6 @@ type ChunkSplitter interface {
 // EncoderConfig configures an advanced document and query encoder. Normal
 // model-bound services should use semantic.New instead.
 type EncoderConfig struct {
-	Metric vector.Metric
 	Limits InputLimits
 	// Splitter splits document fields into byte ranges.
 	Splitter ChunkSplitter
@@ -61,13 +60,6 @@ func (c EncoderConfig) normalized() (EncoderConfig, embedding.Model, error) {
 	model := c.Client.Model()
 	if model.Validate() != nil {
 		return EncoderConfig{}, embedding.Model{}, ErrInvalidConfig
-	}
-	if !c.Metric.Valid() {
-		return EncoderConfig{}, embedding.Model{}, ErrInvalidConfig
-	}
-	_, err := vector.NewSpace(model.Dimensions, c.Metric)
-	if err != nil {
-		return EncoderConfig{}, embedding.Model{}, fmt.Errorf("%w: vector space: %v", ErrInvalidConfig, err)
 	}
 	return c, model, nil
 }

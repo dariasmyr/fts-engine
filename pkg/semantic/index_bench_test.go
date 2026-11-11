@@ -8,6 +8,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
 const (
@@ -185,23 +186,19 @@ func newBenchmarkIndex(tb testing.TB, maxLive, maxStale, maxSegments int) *Index
 	return index
 }
 
-func benchmarkConfig(maxLive, maxStale, maxSegments int) SemanticConfig {
-	return SemanticConfig{
-		Model: ModelConfig{ID: "deterministic", Revision: "v1", Dimensions: benchmarkDimensions, ContextTokens: 16},
-		Index: IndexConfig{
-			Metric: vector.MetricL2Squared,
-			Limits: LimitsConfig{
-				MaxLiveVectors: maxLive, MaxStaleVectors: maxStale, MaxSegments: maxSegments,
-				MaxChunksPerDocument: 1,
-			},
-			Search: SearchConfig{MaxResults: 10, MaxCandidateChunks: 64, MaxChunksPerResult: 1},
-			HNSW: HNSWConfig{
-				MaxNeighbors: 16, EfConstruction: 64, Seed: 1,
-				DefaultEfSearch: 32, MaxEfSearch: 64,
-				DefaultVisitLimit: maxLive, MaxVisitLimit: maxLive,
-			},
+func benchmarkConfig(maxLive, maxStale, maxSegments int) IndexConfig {
+	return IndexConfig{
+		Dimensions: benchmarkDimensions,
+		Metric:     vector.MetricL2Squared,
+		Limits: LimitsConfig{
+			MaxLiveVectors: maxLive, MaxStaleVectors: maxStale, MaxSegments: maxSegments,
+			MaxChunksPerDocument: 1,
 		},
-		Chunking: ChunkingConfig{Kind: ChunkingKindExternal},
+		Search: SearchConfig{MaxResults: 10, MaxCandidateChunks: 64, MaxChunksPerResult: 1},
+		HNSW: hnsw.Config{
+			Build:  hnsw.BuildConfig{MaxNeighbors: 16, EfConstruction: 64, Seed: 1},
+			Search: hnsw.SearchConfig{EfSearch: 32, VisitLimit: maxLive},
+		},
 	}
 }
 

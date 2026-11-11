@@ -25,8 +25,8 @@ func (v *IndexView) validateSearchLimits(ctx context.Context, maxResultCount int
 	if _, err := resolveCandidateBudget(config.CandidateChunks, v.searchLimits.maxChunkCandidates); err != nil {
 		return err
 	}
-	if config.EfSearch < 0 || config.EfSearch > v.searchLimits.maxEfSearch ||
-		config.VisitLimit < 0 || config.VisitLimit > v.searchLimits.maxVisitLimit {
+	if config.EfSearch > v.searchLimits.maxEfSearch ||
+		config.VisitLimit > v.searchLimits.maxVisitLimit {
 		return ErrInvalidQueryConfig
 	}
 	return nil

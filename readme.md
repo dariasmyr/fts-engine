@@ -100,11 +100,11 @@ Notes:
 Embedding providers implement the provider-neutral `embedding.Client` interface.
 Every client is permanently bound to one validated `embedding.Model`; custom
 functions can be adapted with `embedding.NewClient`. `semantic.New` creates the
-document and query paths, applies model prefixes, and stores one static
-`SemanticConfig` with the index:
+document and query paths and applies model prefixes. `ServiceConfig` owns this
+pipeline while its nested `IndexConfig` remains independent of the model:
 
 ```go
-config, err := semantic.DefaultSemanticConfig(client.Model())
+config, err := semantic.DefaultServiceConfig(client.Model())
 if err != nil {
 	return err
 }
@@ -114,12 +114,13 @@ if err != nil {
 }
 ```
 
-All persisted static parameters are configured directly through
-`SemanticConfig`. The chunk count is one authoritative bound for both embedding
-memory and index ingestion, while search ceilings are configured together:
+Service and index parameters are configured through `ServiceConfig`. Document
+ingestion and query encoding have independent chunk
+ceilings. `EncodingLimits` separately bounds source and embedding memory for the
+built-in model pipeline:
 
 ```go
-config, err := semantic.DefaultSemanticConfig(client.Model())
+config, err := semantic.DefaultServiceConfig(client.Model())
 if err != nil {
 	return err
 }
@@ -130,12 +131,18 @@ config.Index.Search = semantic.SearchConfig{
 	MaxResults:         50,
 	MaxCandidateChunks: 500,
 	MaxChunksPerResult: 3,
+	MaxQueryChunks:     96,
+	MaxEfSearch:        500,
+	MaxVisitLimit:      2_000_000,
 }
+config.Encoding.MaxFields = 16
+config.Encoding.MaxSourceBytes = 1 << 20
+config.Encoding.MaxEmbeddingBytes = uint64(96 * client.Model().Dimensions * 4)
 service, err := semantic.New(client, config)
 ```
 
 `semantic.New` owns a reproducible built-in encoding pipeline. Advanced callers
-can create an index with `ChunkingKindExternal`, provide their own document and
+can create an index directly from `IndexConfig`, provide their own document and
 query encoders, and bind them through `semantic.NewService`.
 
 Index documents, commit pending vectors, and search them:
@@ -492,34 +499,20 @@ search lives in the benchmark module.
 Ordinary semantic search is in-memory and does not require disk persistence.
 
 ```go
-build := hnsw.BuildConfig{
-	Dimensions:     3,
-	Metric:         vector.MetricCosine,
-	MaxVectors:     len(values),
-	MaxVectorBytes: uint64(len(values) * 3 * 4),
-	MaxNeighbors:   8,
-	EfConstruction: 64,
-	Seed:           1,
-}
-search := hnsw.SearchConfig{
-	DefaultEfSearch:   32,
-	MaxEfSearch:       256,
-	DefaultVisitLimit: 10_000,
-	MaxVisitLimit:     100_000,
-	MaxK:              100,
+config := hnsw.Config{
+	Build: hnsw.BuildConfig{
+		MaxNeighbors: 8, EfConstruction: 64, Seed: 1,
+	},
+	Search: hnsw.SearchConfig{
+		EfSearch: 32, VisitLimit: 10_000,
+	},
 }
 
-index, err := hnsw.Build(ctx, preparedVectors, hnsw.BuildOptions{
-	Build:  build,
-	Search: search,
-	Progress: func(progress hnsw.BuildProgress) {
-		fmt.Printf("phase=%s vectors=%d/%d\n", progress.Phase, progress.Completed, progress.Total)
-	},
-})
+index, err := hnsw.Build(ctx, preparedVectors, config)
 if err != nil {
 	return err
 }
-result, err := index.Search(ctx, query, 10, vector.SearchOptions{EfSearch: 64})
+result, err := index.Search(ctx, query, 10, hnsw.QueryConfig{EfSearch: 64})
 ```
 
 `hnsw.Build` reads prepared rows in stable dense ordinal order and hides manual
@@ -635,7 +628,7 @@ Create the model-bound service in memory, then atomically commit and capture the
 revision that will be saved:
 
 ```go
-config, err := semantic.DefaultSemanticConfig(embeddingClient.Model())
+config, err := semantic.DefaultServiceConfig(embeddingClient.Model())
 if err != nil {
 	return err
 }
@@ -658,24 +651,24 @@ generation, err := semanticpersist.CommitAndSave(
 ```
 
 `CommitAndSave` prepares one revision, persists that exact candidate, and only
-then makes it searchable. The complete static `SemanticConfig`—model,
-chunking, metric, limits, search ceilings, and HNSW settings—is
-stored with the index. `LoadService` reconstructs that model-derived pipeline
-from the persisted config:
+then makes it searchable. Persistence stores only `IndexConfig`: dimensions,
+metric, limits, search ceilings, and HNSW settings. Model, chunking, and encoding
+settings remain service concerns and are supplied again to `LoadService`:
 
 ```go
 loaded, generation, err := semanticpersist.LoadService(
 	ctx,
 	"./data/semantic",
 	embeddingClient,
+	config,
 	semanticpersist.LoadConfig{},
 )
 service = loaded
 ```
 
-External encoders cannot be serialized. Load an index configured with
-`ChunkingKindExternal` through `semanticpersist.Load`, reconstruct the encoders,
-and bind them through `semantic.NewService`.
+External encoders cannot be serialized. Load the index through
+`semanticpersist.Load`, reconstruct the encoders, and bind them through
+`semantic.NewService`.
 
 See the runnable
 [`semantic-persistence` example](examples/client-library/semantic-persistence/main.go)

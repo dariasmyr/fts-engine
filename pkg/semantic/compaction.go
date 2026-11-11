@@ -71,7 +71,7 @@ func (i *Index) Compact(ctx context.Context) error {
 	return nil
 }
 
-func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, config SemanticConfig) (*IndexView, map[VectorID]vectorLocation, bool, error) {
+func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, config IndexConfig) (*IndexView, map[VectorID]vectorLocation, bool, error) {
 	var compacted *segment
 	if view.liveCount > 0 {
 		var err error
@@ -98,14 +98,14 @@ func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, conf
 			liveness: vector.NewFullBitSet(uint32(compacted.len())),
 		}}
 	}
-	hnswConfig := config.Index.hnswConfig()
+	hnswConfig := config.hnswConfig()
 	compactedView, err := newIndexView(
 		ctx,
 		view.revision,
 		segments,
 		view.space,
-		config.Index.runtimeLimits().search,
-		config.Index.runtimeLimits().results,
+		config.runtimeLimits().search,
+		config.runtimeLimits().results,
 		hnswConfig.Search,
 	)
 	if err != nil {
@@ -114,12 +114,12 @@ func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, conf
 	return compactedView, locations, compacted != nil, nil
 }
 
-func buildCompactedSegment(ctx context.Context, view *IndexView, segmentID SegmentID, config SemanticConfig) (*segment, error) {
+func buildCompactedSegment(ctx context.Context, view *IndexView, segmentID SegmentID, config IndexConfig) (*segment, error) {
 	flatVectors, liveRows, err := materializeLiveRows(ctx, view)
 	if err != nil {
 		return nil, err
 	}
-	space, err := vector.NewSpace(config.Model.Dimensions, config.Index.Metric)
+	space, err := vector.NewSpace(config.Dimensions, config.Metric)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +127,7 @@ func buildCompactedSegment(ctx context.Context, view *IndexView, segmentID Segme
 	if err != nil {
 		return nil, err
 	}
-	hnswConfig := config.Index.hnswConfig()
+	hnswConfig := config.hnswConfig()
 	return buildSegment(
 		ctx,
 		segmentID,

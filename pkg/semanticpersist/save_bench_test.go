@@ -52,7 +52,8 @@ func BenchmarkLoadService(b *testing.B) {
 		b.Fatal(err)
 	}
 	client := persistenceBenchmarkClient(b)
-	service, err := semantic.New(client, persistenceBenchmarkConfig(b, client))
+	serviceConfig := persistenceBenchmarkConfig(b, client)
+	service, err := semantic.New(client, serviceConfig)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -80,6 +81,7 @@ func BenchmarkLoadService(b *testing.B) {
 			ctx,
 			root,
 			client,
+			serviceConfig,
 			LoadConfig{},
 		)
 		if err != nil {
@@ -132,16 +134,11 @@ func BenchmarkCommitAndSave(b *testing.B) {
 
 func newPersistenceBenchmarkIndex(tb testing.TB) *semantic.Index {
 	tb.Helper()
-	index, err := semantic.NewIndex(semantic.SemanticConfig{
-		Model: semantic.ModelConfig{
-			ID: "deterministic", Revision: "v1", Dimensions: persistenceBenchmarkDimensions, ContextTokens: 16,
-		},
-		Index: semantic.IndexConfig{
-			Metric: vector.MetricL2Squared,
-			Limits: semantic.LimitsConfig{MaxLiveVectors: persistenceBenchmarkDocuments, MaxChunksPerDocument: 1},
-			Search: semantic.SearchConfig{MaxResults: 10, MaxCandidateChunks: 64, MaxChunksPerResult: 1},
-		},
-		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindExternal},
+	index, err := semantic.NewIndex(semantic.IndexConfig{
+		Dimensions: persistenceBenchmarkDimensions,
+		Metric:     vector.MetricL2Squared,
+		Limits:     semantic.LimitsConfig{MaxLiveVectors: persistenceBenchmarkDocuments, MaxChunksPerDocument: 1},
+		Search:     semantic.SearchConfig{MaxResults: 10, MaxCandidateChunks: 64, MaxChunksPerResult: 1},
 	})
 	if err != nil {
 		tb.Fatal(err)
@@ -194,9 +191,9 @@ func persistenceBenchmarkClient(tb testing.TB) embedding.Client {
 	return client
 }
 
-func persistenceBenchmarkConfig(tb testing.TB, client embedding.Client) semantic.SemanticConfig {
+func persistenceBenchmarkConfig(tb testing.TB, client embedding.Client) semantic.ServiceConfig {
 	tb.Helper()
-	config, err := semantic.DefaultSemanticConfig(client.Model())
+	config, err := semantic.DefaultServiceConfig(client.Model())
 	if err != nil {
 		tb.Fatal(err)
 	}

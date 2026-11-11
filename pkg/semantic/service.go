@@ -15,35 +15,50 @@ type Service struct {
 	index           *Index
 	documentEncoder DocumentEncoder
 	queryEncoder    QueryEncoder
+	config          *ServiceConfig
 }
 
 // New constructs a model-backed service with the built-in chunk splitter.
-func New(client embedding.Client, config SemanticConfig) (*Service, error) {
+func New(client embedding.Client, config ServiceConfig) (*Service, error) {
 	components, err := prepareStandardModelService(client, config)
 	if err != nil {
 		return nil, err
 	}
-	index, err := NewIndex(components.config)
+	index, err := NewIndex(components.config.Index)
 	if err != nil {
 		return nil, err
 	}
-	return NewService(index, components.documents, components.queries)
+	service, err := NewService(index, components.documents, components.queries)
+	if err != nil {
+		return nil, err
+	}
+	service.config = &components.config
+	return service, nil
 }
 
-// NewFromIndex reconstructs the persisted standard model pipeline and binds it
-// to an existing index, including one reconstructed by Restore.
+// NewFromIndex builds the configured standard model pipeline and binds it to an
+// existing compatible index, including one reconstructed by Restore.
 func NewFromIndex(
 	client embedding.Client,
 	index *Index,
+	config ServiceConfig,
 ) (*Service, error) {
 	if index == nil {
 		return nil, ErrInvalidConfig
 	}
-	components, err := prepareStandardModelService(client, index.config)
+	components, err := prepareStandardModelService(client, config)
 	if err != nil {
 		return nil, ErrModelServiceUnavailable
 	}
-	return NewService(index, components.documents, components.queries)
+	if components.config.Index != index.config {
+		return nil, ErrModelServiceUnavailable
+	}
+	service, err := NewService(index, components.documents, components.queries)
+	if err != nil {
+		return nil, err
+	}
+	service.config = &components.config
+	return service, nil
 }
 
 // NewService binds custom document and query encoders to an existing index.
@@ -70,8 +85,15 @@ func (s *Service) Index() *Index {
 	return s.index
 }
 
-// Config returns the static semantic configuration.
-func (s *Service) Config() SemanticConfig { return s.index.Config() }
+// Config returns the built-in model pipeline configuration. The second result
+// is false for services assembled from external encoders with NewService; use
+// Index().Config() to inspect their vector index configuration.
+func (s *Service) Config() (ServiceConfig, bool) {
+	if s.config == nil {
+		return ServiceConfig{}, false
+	}
+	return *s.config, true
+}
 
 // AddDocument encodes and stages a new document.
 // Changes become searchable after Commit.

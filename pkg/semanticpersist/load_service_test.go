@@ -17,7 +17,8 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
 	client := persistentTestClient(t, "v1")
-	service, err := semantic.New(client, persistentTestConfig(t, client))
+	config := persistentTestConfig(t, client)
+	service, err := semantic.New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +45,7 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 		ctx,
 		root,
 		client,
+		config,
 		semanticpersist.LoadConfig{},
 	)
 	if err != nil {
@@ -83,12 +85,12 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLoadServiceRestoresPersistedSemanticConfig(t *testing.T) {
+func TestLoadServiceUsesSuppliedServiceConfig(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
 	client := persistentTestClient(t, "v1")
 	config := persistentTestConfig(t, client)
-	config.Chunking.Builtin = chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
+	config.Chunking = chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
 	service, err := semantic.New(client, config)
 	if err != nil {
 		t.Fatal(err)
@@ -102,10 +104,13 @@ func TestLoadServiceRestoresPersistedSemanticConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	loadConfig := config
+	loadConfig.Chunking = chunk.Config{TargetBytes: 16, MaxBytes: 24, OverlapBytes: 2}
 	loaded, _, err := semanticpersist.LoadService(
 		ctx,
 		root,
 		client,
+		loadConfig,
 		semanticpersist.LoadConfig{},
 	)
 	if err != nil {
@@ -114,14 +119,16 @@ func TestLoadServiceRestoresPersistedSemanticConfig(t *testing.T) {
 	if loaded == nil {
 		t.Fatal("LoadService() returned nil service")
 	}
-	if loaded.Config() != service.Config() {
-		t.Fatalf("loaded config = %+v, want %+v", loaded.Config(), service.Config())
+	loadedConfig, loadedOK := loaded.Config()
+	if !loadedOK || loadedConfig != loadConfig {
+		t.Fatalf("loaded config = %+v, want supplied %+v", loadedConfig, loadConfig)
 	}
 
 	_, _, err = semanticpersist.LoadService(
 		ctx,
 		root,
 		persistentTestClient(t, "v2"),
+		config,
 		semanticpersist.LoadConfig{},
 	)
 	if !errors.Is(err, semantic.ErrModelServiceUnavailable) {
@@ -131,19 +138,21 @@ func TestLoadServiceRestoresPersistedSemanticConfig(t *testing.T) {
 
 func TestLoadServicePreservesCancellationAndPersistenceLimits(t *testing.T) {
 	client := persistentTestClient(t, "v1")
+	config := persistentTestConfig(t, client)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if _, _, err := semanticpersist.LoadService(
 		ctx,
 		t.TempDir(),
 		client,
+		config,
 		semanticpersist.LoadConfig{},
 	); !errors.Is(err, context.Canceled) {
 		t.Fatalf("LoadService() error = %v, want context canceled", err)
 	}
 
 	root := t.TempDir()
-	service, err := semantic.New(client, persistentTestConfig(t, client))
+	service, err := semantic.New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,6 +170,7 @@ func TestLoadServicePreservesCancellationAndPersistenceLimits(t *testing.T) {
 		t.Context(),
 		root,
 		client,
+		config,
 		semanticpersist.LoadConfig{Config: limits},
 	)
 	if !errors.Is(err, semanticpersist.ErrLimitExceeded) {
@@ -192,9 +202,9 @@ func persistentTestClient(t *testing.T, revision string) embedding.Client {
 	return client
 }
 
-func persistentTestConfig(t *testing.T, client embedding.Client) semantic.SemanticConfig {
+func persistentTestConfig(t *testing.T, client embedding.Client) semantic.ServiceConfig {
 	t.Helper()
-	config, err := semantic.DefaultSemanticConfig(client.Model())
+	config, err := semantic.DefaultServiceConfig(client.Model())
 	if err != nil {
 		t.Fatal(err)
 	}

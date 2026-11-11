@@ -38,8 +38,8 @@ func resolveSearchRequest(defaults SearchConfig, vectorCount, k int, config Quer
 	if k <= 0 {
 		return searchRequest{}, vector.ErrInvalidK
 	}
-	if config.EfSearch < 0 || config.VisitLimit < 0 {
-		return searchRequest{}, ErrInvalidQueryConfig
+	if err := config.Validate(); err != nil {
+		return searchRequest{}, err
 	}
 
 	efSearch := config.EfSearch

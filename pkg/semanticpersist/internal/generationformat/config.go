@@ -10,6 +10,7 @@ type Config struct {
 	MaxSegments          int
 	MaxDocuments         int
 	MaxChunksPerDocument int
+	MaxQueryChunks       int
 	MaxK                 int
 	MaxEfSearch          int
 	MaxVisitLimit        int
@@ -47,7 +48,7 @@ func (c Config) validateState() error {
 		return err
 	}
 	if c.MaxVectorBytes == 0 || c.MaxDimensions <= 0 || c.MaxVectors <= 0 ||
-		c.MaxSegments <= 0 || c.MaxDocuments <= 0 || c.MaxChunksPerDocument <= 0 ||
+		c.MaxSegments <= 0 || c.MaxDocuments <= 0 || c.MaxChunksPerDocument <= 0 || c.MaxQueryChunks <= 0 ||
 		c.MaxK <= 0 || c.MaxEfSearch <= 0 || c.MaxVisitLimit <= 0 {
 		return ErrLimitExceeded
 	}

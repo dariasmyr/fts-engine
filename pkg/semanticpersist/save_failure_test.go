@@ -30,7 +30,7 @@ func TestLowLevelSaveFailureAfterExplicitCommitKeepsPreviousCurrent(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := semantic.DefaultSemanticConfig(client.Model())
+	config, err := semantic.DefaultServiceConfig(client.Model())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestLowLevelSaveFailureAfterExplicitCommitKeepsPreviousCurrent(t *testing.T
 	if len(result.Hits) != 1 || result.Hits[0].DocID != "beta" {
 		t.Fatalf("in-process Search() hits = %+v, want beta", result.Hits)
 	}
-	loaded, _, err := LoadService(ctx, root, client, LoadConfig{})
+	loaded, _, err := LoadService(ctx, root, client, config, LoadConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

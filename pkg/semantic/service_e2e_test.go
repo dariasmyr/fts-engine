@@ -72,11 +72,11 @@ func TestDocumentPipelineFromProviderToSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := semantic.DefaultSemanticConfig(embeddingClient.Model())
+	config, err := semantic.DefaultServiceConfig(embeddingClient.Model())
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.Chunking.Builtin = chunk.Config{
+	config.Chunking = chunk.Config{
 		TargetBytes: 64, MaxBytes: 96, OverlapBytes: 8,
 	}
 	service, err := semantic.New(embeddingClient, config)

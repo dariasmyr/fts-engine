@@ -27,28 +27,19 @@ func main() {
 	}
 
 	encoder, err := semanticencode.NewEncoder(semanticencode.EncoderConfig{
-		Metric: vector.MetricL2Squared,
 		Limits: limits, Splitter: splitter, Client: client,
 	})
 	must(err)
 
-	model := client.Model()
-	index, err := semantic.NewIndex(semantic.SemanticConfig{
-		Model: semantic.ModelConfig{
-			ID: model.ID, Revision: model.Revision,
-			Dimensions: model.Dimensions, ContextTokens: model.ContextTokens,
-			DocumentPrefix: model.DocumentPrefix, QueryPrefix: model.QueryPrefix,
+	index, err := semantic.NewIndex(semantic.IndexConfig{
+		Dimensions: client.Model().Dimensions,
+		Metric:     vector.MetricL2Squared,
+		Limits: semantic.LimitsConfig{
+			MaxLiveVectors: 100, MaxStaleVectors: 100, MaxChunksPerDocument: 16,
 		},
-		Index: semantic.IndexConfig{
-			Metric: vector.MetricL2Squared,
-			Limits: semantic.LimitsConfig{
-				MaxLiveVectors: 100, MaxStaleVectors: 100, MaxChunksPerDocument: 16,
-			},
-			Search: semantic.SearchConfig{
-				MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3,
-			},
+		Search: semantic.SearchConfig{
+			MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3,
 		},
-		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindExternal},
 	})
 	must(err)
 	service, err := semantic.NewService(index, encoder, encoder)

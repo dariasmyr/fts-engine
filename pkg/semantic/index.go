@@ -23,25 +23,25 @@ type Index struct {
 	stateMu      sync.RWMutex
 
 	id     IndexID
-	config SemanticConfig
+	config IndexConfig
 	limits indexLimits
 	space  vector.Space
 	state  indexState
 }
 
 // NewIndex constructs an empty in-memory semantic index.
-func NewIndex(config SemanticConfig) (*Index, error) {
+func NewIndex(config IndexConfig) (*Index, error) {
 	config, err := config.normalized()
 	if err != nil {
 		return nil, err
 	}
-	space, err := vector.NewSpace(config.Model.Dimensions, config.Index.Metric)
+	space, err := vector.NewSpace(config.Dimensions, config.Metric)
 	if err != nil {
 		return nil, ErrInvalidConfig
 	}
-	hnswConfig := config.Index.hnswConfig()
+	hnswConfig := config.hnswConfig()
 
-	limits := config.Index.runtimeLimits()
+	limits := config.runtimeLimits()
 	view, err := newIndexView(
 		context.Background(),
 		0,
@@ -73,8 +73,8 @@ func NewIndex(config SemanticConfig) (*Index, error) {
 	}, nil
 }
 
-// Config returns the static semantic configuration.
-func (i *Index) Config() SemanticConfig { return i.config }
+// Config returns the static vector index configuration.
+func (i *Index) Config() IndexConfig { return i.config }
 
 // AddDocument validates, copies, prepares, and stages one document's raw chunk
 // embeddings in memory. It never retains caller-owned embedding buffers and is

@@ -10,7 +10,6 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func TestEncoderEncodeDocument(t *testing.T) {
@@ -67,7 +66,7 @@ func TestEncoderUsesModelPrefixes(t *testing.T) {
 	}
 	limits := InputLimits{MaxFields: 1, MaxSourceBytes: 1024, MaxChunks: 1, MaxEmbeddingBytes: 8}
 	encoder, err := NewEncoder(EncoderConfig{
-		Metric: vector.MetricCosine, Limits: limits, Client: client,
+		Limits: limits, Client: client,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +104,7 @@ func TestEncoderUsesSplitterForQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoder, err := NewEncoder(EncoderConfig{
-		Metric: vector.MetricCosine, Splitter: splitter, Client: client,
+		Splitter: splitter, Client: client,
 		Limits: InputLimits{MaxFields: 1, MaxSourceBytes: 1024, MaxChunks: 4, MaxEmbeddingBytes: 32},
 	})
 	if err != nil {
@@ -135,7 +134,6 @@ func testEmbeddingClient(t testing.TB, embed embedding.ClientFunc) embedding.Cli
 func newTestEncoder(t *testing.T, provider embedding.Client) *Encoder {
 	t.Helper()
 	encoder, err := NewEncoder(EncoderConfig{
-		Metric: vector.MetricCosine,
 		Limits: InputLimits{MaxFields: 4, MaxSourceBytes: 1024, MaxChunks: 4, MaxEmbeddingBytes: 1024},
 		Client: provider,
 	})

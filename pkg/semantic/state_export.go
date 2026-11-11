@@ -38,7 +38,7 @@ func (s *segment) exportState(words []uint64) SegmentState {
 // Pending mutations are intentionally excluded.
 type CommittedIndexState struct {
 	ID                   IndexID
-	Config               SemanticConfig
+	Config               IndexConfig
 	Revision             Revision
 	MaxAllocatedVectorID VectorID
 	NextSegmentID        SegmentID
@@ -84,7 +84,7 @@ func (i *Index) ExportState(ctx context.Context) (*CommittedIndexState, error) {
 func exportCommittedState(
 	ctx context.Context,
 	id IndexID,
-	config SemanticConfig,
+	config IndexConfig,
 	revision Revision,
 	maxAllocatedVectorID VectorID,
 	nextSegmentID SegmentID,
@@ -130,11 +130,11 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 	if state.ID == (IndexID{}) || state.NextSegmentID == 0 {
 		return nil, ErrInternalState
 	}
-	if len(state.Segments) > config.Index.runtimeLimits().lifecycle.maxSegments {
+	if len(state.Segments) > config.runtimeLimits().lifecycle.maxSegments {
 		return nil, ErrCapacityExceeded
 	}
 
-	space, err := vector.NewSpace(config.Model.Dimensions, config.Index.Metric)
+	space, err := vector.NewSpace(config.Dimensions, config.Metric)
 	if err != nil {
 		return nil, ErrInvalidConfig
 	}
@@ -209,9 +209,9 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		return nil, ErrInternalState
 	}
 
-	hnswConfig := config.Index.hnswConfig()
+	hnswConfig := config.hnswConfig()
 
-	limits := config.Index.runtimeLimits()
+	limits := config.runtimeLimits()
 	if err := validateLoadedSegments(ctx, views); err != nil {
 		return nil, err
 	}

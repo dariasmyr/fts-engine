@@ -112,7 +112,7 @@ type commitState struct {
 	pending              pendingBatch
 	locations            map[VectorID]vectorLocation
 	base                 *IndexView
-	config               SemanticConfig
+	config               IndexConfig
 	limits               indexLimits
 }
 
@@ -257,11 +257,11 @@ func (i *Index) publishPreparedCommit(prepared preparedCommit) {
 	}
 }
 
-func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pendingVector, config SemanticConfig) (*segment, error) {
+func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pendingVector, config IndexConfig) (*segment, error) {
 	if len(pending) == 0 {
 		return nil, nil
 	}
-	dimensions := config.Model.Dimensions
+	dimensions := config.Dimensions
 	flatVectors := make([]float32, len(pending)*dimensions)
 	rows := make([]VectorRow, len(pending))
 	for n, item := range pending {
@@ -273,7 +273,7 @@ func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pen
 		}
 		rows[n] = item.row
 	}
-	space, err := vector.NewSpace(config.Model.Dimensions, config.Index.Metric)
+	space, err := vector.NewSpace(config.Dimensions, config.Metric)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +281,7 @@ func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pen
 	if err != nil {
 		return nil, err
 	}
-	hnswConfig := config.Index.hnswConfig()
+	hnswConfig := config.hnswConfig()
 
 	return buildSegment(
 		ctx,

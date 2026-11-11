@@ -22,6 +22,7 @@ type Config struct {
 	MaxDocuments         int
 	MaxStringBytes       int
 	MaxChunksPerDocument int
+	MaxQueryChunks       int
 	MaxK                 int
 }
 
@@ -75,7 +76,7 @@ func DefaultConfig() Config {
 		MaxGraphLinks: 100_000_000, MaxOpenBytes: 1 << 30, MaxEfSearch: 1_000_000,
 		MaxVisitLimit: 10_000_000, MaxDimensions: 65_536, MaxVectors: 10_000_000,
 		MaxDocuments: 10_000_000, MaxStringBytes: 1 << 20,
-		MaxChunksPerDocument: 1_000_000, MaxK: 1_000_000,
+		MaxChunksPerDocument: 1_000_000, MaxQueryChunks: 1_000_000, MaxK: 1_000_000,
 	}
 }
 
@@ -100,6 +101,7 @@ func (c Config) normalized() (Config, error) {
 	c.MaxDocuments = defaultIfZero(c.MaxDocuments, defaults.MaxDocuments)
 	c.MaxStringBytes = defaultIfZero(c.MaxStringBytes, defaults.MaxStringBytes)
 	c.MaxChunksPerDocument = defaultIfZero(c.MaxChunksPerDocument, defaults.MaxChunksPerDocument)
+	c.MaxQueryChunks = defaultIfZero(c.MaxQueryChunks, defaults.MaxQueryChunks)
 	c.MaxK = defaultIfZero(c.MaxK, defaults.MaxK)
 	if err := validateConfig(c); err != nil {
 		return Config{}, err
@@ -122,9 +124,10 @@ func validateConfig(limits Config) error {
 		limits.MaxOpenBytes < limits.MaxFileBytes || limits.MaxOpenBytes >= math.MaxInt64 ||
 		limits.MaxEfSearch <= 0 || limits.MaxVisitLimit <= 0 || limits.MaxDimensions <= 0 ||
 		limits.MaxVectors <= 0 || limits.MaxDocuments <= 0 || limits.MaxStringBytes <= 0 ||
-		limits.MaxChunksPerDocument <= 0 || limits.MaxK <= 0 ||
+		limits.MaxChunksPerDocument <= 0 || limits.MaxQueryChunks <= 0 || limits.MaxK <= 0 ||
 		uint64(limits.MaxVectors) >= math.MaxUint32 || uint64(limits.MaxDocuments) > math.MaxUint32 ||
 		uint64(limits.MaxStringBytes) > math.MaxUint32 || uint64(limits.MaxChunksPerDocument) > math.MaxUint32 ||
+		uint64(limits.MaxQueryChunks) > math.MaxUint32 ||
 		uint64(limits.MaxK) > math.MaxUint32 {
 		return ErrLimitExceeded
 	}
@@ -139,7 +142,8 @@ func generationFormatConfig(config Config) generationformat.Config {
 		MaxVectorBytes: config.MaxVectorBytes, MaxDimensions: config.MaxDimensions,
 		MaxVectors: config.MaxVectors, MaxSegments: config.MaxVectors,
 		MaxDocuments: config.MaxDocuments, MaxChunksPerDocument: config.MaxChunksPerDocument,
-		MaxK: config.MaxK, MaxEfSearch: config.MaxEfSearch, MaxVisitLimit: config.MaxVisitLimit,
+		MaxQueryChunks: config.MaxQueryChunks,
+		MaxK:           config.MaxK, MaxEfSearch: config.MaxEfSearch, MaxVisitLimit: config.MaxVisitLimit,
 	}
 }
 

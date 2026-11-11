@@ -7,11 +7,6 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 )
 
-const (
-	defaultMaxFields      = 16
-	defaultMaxSourceBytes = uint64(1 << 20)
-)
-
 func newConfiguredChunkSplitter(config chunk.Config) (*chunk.Splitter, error) {
 	splitter, err := chunk.NewSplitter(config)
 	if err != nil {
@@ -20,33 +15,35 @@ func newConfiguredChunkSplitter(config chunk.Config) (*chunk.Splitter, error) {
 	return splitter, nil
 }
 
-func defaultInputLimits(dimensions, maxChunks int) (modelInputLimits, error) {
+func modelLimits(
+	config EncodingLimits,
+	dimensions int,
+	maxChunks int,
+) (modelInputLimits, error) {
 	if dimensions <= 0 || uint64(dimensions) > ^uint64(0)/4 ||
-		maxChunks <= 0 || uint64(maxChunks) > ^uint64(0)/(uint64(dimensions)*4) {
+		maxChunks <= 0 || config.MaxFields <= 0 || config.MaxSourceBytes == 0 ||
+		config.MaxEmbeddingBytes == 0 || uint64(maxChunks) > ^uint64(0)/(uint64(dimensions)*4) {
 		return modelInputLimits{}, ErrInvalidConfig
 	}
 	return modelInputLimits{
-		maxFields:         defaultMaxFields,
-		maxSourceBytes:    defaultMaxSourceBytes,
+		maxFields:         config.MaxFields,
+		maxSourceBytes:    config.MaxSourceBytes,
 		maxChunks:         maxChunks,
-		maxEmbeddingBytes: uint64(maxChunks) * uint64(dimensions) * 4,
+		maxEmbeddingBytes: config.MaxEmbeddingBytes,
 	}, nil
 }
 
 type modelServiceComponents struct {
-	config    SemanticConfig
+	config    ServiceConfig
 	documents *modelEncoder
 	queries   *modelEncoder
 }
 
 func prepareStandardModelService(
 	client embedding.Client,
-	config SemanticConfig,
+	config ServiceConfig,
 ) (modelServiceComponents, error) {
-	if config.Chunking.Kind != ChunkingKindByteSplitter {
-		return modelServiceComponents{}, ErrInvalidConfig
-	}
-	splitter, err := newConfiguredChunkSplitter(config.Chunking.Builtin)
+	splitter, err := newConfiguredChunkSplitter(config.Chunking)
 	if err != nil {
 		return modelServiceComponents{}, err
 	}
@@ -55,7 +52,7 @@ func prepareStandardModelService(
 
 func prepareModelService(
 	client embedding.Client,
-	config SemanticConfig,
+	config ServiceConfig,
 	splitter *chunk.Splitter,
 ) (modelServiceComponents, error) {
 	if client == nil || splitter == nil || newModelConfig(client.Model()) != config.Model {
@@ -70,10 +67,11 @@ func prepareModelService(
 
 func buildModelService(
 	client embedding.Client,
-	config SemanticConfig,
+	config ServiceConfig,
 	splitter *chunk.Splitter,
 ) (modelServiceComponents, error) {
-	inputLimits, err := defaultInputLimits(
+	documentLimits, err := modelLimits(
+		config.Encoding,
 		config.Model.Dimensions,
 		config.Index.Limits.MaxChunksPerDocument,
 	)
@@ -85,7 +83,15 @@ func buildModelService(
 		modelInputDocument,
 		splitter,
 		config.Model,
-		inputLimits,
+		documentLimits,
+	)
+	if err != nil {
+		return modelServiceComponents{}, err
+	}
+	queryLimits, err := modelLimits(
+		config.Encoding,
+		config.Model.Dimensions,
+		config.Index.Search.MaxQueryChunks,
 	)
 	if err != nil {
 		return modelServiceComponents{}, err
@@ -95,7 +101,7 @@ func buildModelService(
 		modelInputQuery,
 		splitter,
 		config.Model,
-		inputLimits,
+		queryLimits,
 	)
 	if err != nil {
 		return modelServiceComponents{}, err

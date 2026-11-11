@@ -14,6 +14,15 @@ type QueryConfig struct {
 	ResultFilter vector.ResultFilter
 }
 
+// Validate checks request-local HNSW tuning independently of index size and
+// result-filter cardinality. Zero values select the index defaults.
+func (c QueryConfig) Validate() error {
+	if c.EfSearch < 0 || c.VisitLimit < 0 {
+		return ErrInvalidQueryConfig
+	}
+	return nil
+}
+
 // SearchStats describes HNSW traversal work for one request.
 type SearchStats struct {
 	VisitedNodes         int
