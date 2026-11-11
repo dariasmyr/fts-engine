@@ -109,7 +109,7 @@ func testIndexState(t testing.TB) IndexState {
 			},
 			Search: semantic.SearchConfig{MaxResults: 2, MaxCandidateChunks: 8, MaxChunksPerResult: 1},
 		},
-		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindCustom},
+		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindExternal},
 	}
 	index, err := semantic.NewIndex(config)
 	if err != nil {

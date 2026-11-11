@@ -22,7 +22,7 @@ func TestSaveLoadRestoresHNSWSearch(t *testing.T) {
 			Limits: semantic.LimitsConfig{MaxLiveVectors: 16, MaxChunksPerDocument: 2},
 			Search: semantic.SearchConfig{MaxResults: 4, MaxCandidateChunks: 16, MaxChunksPerResult: 2},
 		},
-		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindCustom},
+		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindExternal},
 	}
 	index, err := semantic.NewIndex(config)
 	if err != nil {

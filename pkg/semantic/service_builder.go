@@ -12,12 +12,7 @@ const (
 	defaultMaxSourceBytes = uint64(1 << 20)
 )
 
-// ChunkSplitter splits document fields into byte ranges.
-type ChunkSplitter interface {
-	Split(text string) ([]chunk.Range, error)
-}
-
-func newConfiguredChunkSplitter(config chunk.Config) (ChunkSplitter, error) {
+func newConfiguredChunkSplitter(config chunk.Config) (*chunk.Splitter, error) {
 	splitter, err := chunk.NewSplitter(config)
 	if err != nil {
 		return nil, fmt.Errorf("%w: chunking config: %w", ErrInvalidConfig, err)
@@ -58,21 +53,10 @@ func prepareStandardModelService(
 	return prepareModelService(client, config, splitter)
 }
 
-func prepareCustomModelService(
-	client embedding.Client,
-	config SemanticConfig,
-	splitter ChunkSplitter,
-) (modelServiceComponents, error) {
-	if config.Chunking.Kind != ChunkingKindCustom || splitter == nil {
-		return modelServiceComponents{}, ErrInvalidConfig
-	}
-	return prepareModelService(client, config, splitter)
-}
-
 func prepareModelService(
 	client embedding.Client,
 	config SemanticConfig,
-	splitter ChunkSplitter,
+	splitter *chunk.Splitter,
 ) (modelServiceComponents, error) {
 	if client == nil || splitter == nil || newModelConfig(client.Model()) != config.Model {
 		return modelServiceComponents{}, ErrInvalidConfig
@@ -87,7 +71,7 @@ func prepareModelService(
 func buildModelService(
 	client embedding.Client,
 	config SemanticConfig,
-	splitter ChunkSplitter,
+	splitter *chunk.Splitter,
 ) (modelServiceComponents, error) {
 	inputLimits, err := defaultInputLimits(
 		config.Model.Dimensions,

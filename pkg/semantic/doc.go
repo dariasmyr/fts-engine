@@ -5,5 +5,7 @@
 // the pending-to-committed transition and exports that exact revision under one
 // mutation gate. CommitWithState lets an external operation accept a prepared
 // state before its matching view becomes searchable. Physical ANN storage is
-// segmented and may be compacted without changing semantic identities.
+// segmented and may be compacted without changing semantic identities. Index
+// operations are in-memory only; package semanticpersist provides durable
+// filesystem persistence.
 package semantic

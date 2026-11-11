@@ -134,9 +134,9 @@ config.Index.Search = semantic.SearchConfig{
 service, err := semantic.New(client, config)
 ```
 
-`ChunkSplitter` is not persisted. A custom splitter is accepted only by
-`semantic.NewCustom` (or `NewCustomFromIndex` for an existing index), and its
-config must use `ChunkingKindCustom`.
+`semantic.New` owns a reproducible built-in encoding pipeline. Advanced callers
+can create an index with `ChunkingKindExternal`, provide their own document and
+query encoders, and bind them through `semantic.NewService`.
 
 Index documents, commit pending vectors, and search them:
 
@@ -186,6 +186,10 @@ low. Increase `EfSearch`, `VisitLimit`, or `CandidateChunks` for a more
 expensive search, and compact when stale-row accumulation becomes significant.
 
 See the runnable [`semantic-commit` example](examples/client-library/semantic-commit/main.go).
+The [`semantic-custom-encoder` example](examples/client-library/semantic-custom-encoder/main.go)
+shows the low-level `NewIndex` + `NewService` path with caller-owned encoders.
+The [`semantic-index` example](examples/client-library/semantic-index/main.go)
+uses `semantic.Index` directly with caller-produced chunk and query embeddings.
 The runnable
 [`semantic-ollama` example](examples/client-library/semantic-ollama/main.go)
 derives separate document/query input paths from the prefixes in
@@ -669,9 +673,9 @@ loaded, generation, err := semanticpersist.LoadService(
 service = loaded
 ```
 
-Custom `ChunkSplitter` implementations cannot be serialized. Load their index
-with `semanticpersist.Load` and bind the runtime splitter through
-`semantic.NewCustomFromIndex`.
+External encoders cannot be serialized. Load an index configured with
+`ChunkingKindExternal` through `semanticpersist.Load`, reconstruct the encoders,
+and bind them through `semantic.NewService`.
 
 See the runnable
 [`semantic-persistence` example](examples/client-library/semantic-persistence/main.go)
@@ -779,6 +783,8 @@ Runtime diagnostics are separate from `textproc.ObservabilityPipeline()`.
 - `segment-pipeline-compatibility` - pipeline-compatible sealed segment restore
 - `rank-profile` - multi-field ranking with weighted field scoring
 - `semantic-commit` - mutable document search with explicit commit visibility
+- `semantic-custom-encoder` - low-level semantic index with caller-owned encoders
+- `semantic-index` - direct semantic index usage with caller-produced vectors
 - `semantic-persistence` - persisted writable restart and generation update
 - `snapshot-*` - mutable snapshot save and restore
 - `segment-*` - sealed segment save and restore, including `mmap`

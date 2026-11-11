@@ -4,48 +4,26 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticencode"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // This example shows that mutations become searchable only after Commit.
 func main() {
 	ctx := context.Background()
-	splitter, err := chunk.NewSplitter(chunk.Config{
-		TargetBytes:  512,
-		MaxBytes:     768,
-		OverlapBytes: 64,
-	})
+	embedder := exampleEmbedder{}
+	config, err := semantic.DefaultSemanticConfig(embedder.Model())
 	must(err)
-
-	encoder, err := semanticencode.NewEncoder(semanticencode.EncoderConfig{
-		Metric:   vector.MetricL2Squared,
-		Splitter: splitter,
-		Client:   commitEmbedder{},
-		Limits: semanticencode.InputLimits{
-			MaxFields:         10,
-			MaxSourceBytes:    1 << 20,
-			MaxChunks:         10,
-			MaxEmbeddingBytes: 1 << 20,
-		},
-	})
-	must(err)
-
-	index, err := semantic.NewIndex(semantic.SemanticConfig{
-		Model: semantic.ModelConfig{ID: "commit-example", Revision: "v1", Dimensions: 2, ContextTokens: 512},
-		Index: semantic.IndexConfig{
-			Metric: vector.MetricL2Squared,
-			Limits: semantic.LimitsConfig{MaxLiveVectors: 100, MaxChunksPerDocument: 10},
-			Search: semantic.SearchConfig{MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3},
-		},
-		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindCustom},
-	})
-	must(err)
-	service, err := semantic.NewService(index, encoder, encoder)
+	config.Index.Metric = vector.MetricL2Squared
+	config.Index.Limits.MaxLiveVectors = 100
+	config.Index.Limits.MaxStaleVectors = 100
+	config.Index.Limits.MaxChunksPerDocument = 10
+	config.Index.Search = semantic.SearchConfig{
+		MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3,
+	}
+	service, err := semantic.New(embedder, config)
 	must(err)
 
 	// Expected: no hits. The initial committed index is empty.
@@ -80,15 +58,15 @@ func search(ctx context.Context, service *semantic.Service, label string) {
 	fmt.Printf("%s: doc=%s\n", label, result.Hits[0].DocID)
 }
 
-type commitEmbedder struct{}
+type exampleEmbedder struct{}
 
-func (commitEmbedder) Model() embedding.Model {
+func (exampleEmbedder) Model() embedding.Model {
 	return embedding.Model{
 		ID: "commit-example", Revision: "v1", Dimensions: 2, ContextTokens: 512,
 	}
 }
 
-func (commitEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+func (exampleEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
 	result := make([][]float32, len(texts))
 	for i, text := range texts {
 		if text == "doc-a" || text == "query" {

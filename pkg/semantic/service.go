@@ -8,9 +8,9 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-// Service provides document-level semantic indexing and text search. New and
-// NewCustom own model-bound document/query preparation; NewService accepts
-// custom encoders. Index remains independent from document encoding.
+// Service provides document-level semantic indexing and text search. New owns
+// the standard model-bound preparation pipeline; NewService accepts external
+// encoders. Index remains independent from document encoding.
 type Service struct {
 	index           *Index
 	documentEncoder DocumentEncoder
@@ -20,24 +20,6 @@ type Service struct {
 // New constructs a model-backed service with the built-in chunk splitter.
 func New(client embedding.Client, config SemanticConfig) (*Service, error) {
 	components, err := prepareStandardModelService(client, config)
-	if err != nil {
-		return nil, err
-	}
-	index, err := NewIndex(components.config)
-	if err != nil {
-		return nil, err
-	}
-	return NewService(index, components.documents, components.queries)
-}
-
-// NewCustom constructs a model-backed service with a runtime chunk splitter.
-// The static config must select ChunkingKindCustom.
-func NewCustom(
-	client embedding.Client,
-	config SemanticConfig,
-	splitter ChunkSplitter,
-) (*Service, error) {
-	components, err := prepareCustomModelService(client, config, splitter)
 	if err != nil {
 		return nil, err
 	}
@@ -58,23 +40,6 @@ func NewFromIndex(
 		return nil, ErrInvalidConfig
 	}
 	components, err := prepareStandardModelService(client, index.config)
-	if err != nil {
-		return nil, ErrModelServiceUnavailable
-	}
-	return NewService(index, components.documents, components.queries)
-}
-
-// NewCustomFromIndex binds a runtime chunk splitter to an existing custom
-// index, including one reconstructed by Restore.
-func NewCustomFromIndex(
-	client embedding.Client,
-	index *Index,
-	splitter ChunkSplitter,
-) (*Service, error) {
-	if index == nil {
-		return nil, ErrInvalidConfig
-	}
-	components, err := prepareCustomModelService(client, index.config, splitter)
 	if err != nil {
 		return nil, ErrModelServiceUnavailable
 	}
@@ -231,13 +196,15 @@ func (s *Service) SearchWithConfig(
 	return s.index.Search(ctx, queries, maxResultCount, config)
 }
 
-// Commit publishes pending document mutations as a searchable view.
+// Commit publishes pending document mutations to the in-memory searchable view.
+// It performs no persistence I/O; use semanticpersist.CommitAndSave for a
+// durable commit.
 func (s *Service) Commit(ctx context.Context) error {
 	return s.index.Commit(ctx)
 }
 
-// Compact compacts committed immutable segments.
-// Pending mutations must be committed first.
+// Compact compacts committed immutable segments in memory. It performs no
+// persistence I/O. Pending mutations must be committed first.
 func (s *Service) Compact(ctx context.Context) error {
 	return s.index.Compact(ctx)
 }

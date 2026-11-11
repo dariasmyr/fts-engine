@@ -49,18 +49,21 @@ func (c SearchConfig) Validate() error {
 	return nil
 }
 
-// ChunkingKind identifies how document fields are split into chunks.
+// ChunkingKind identifies whether semantic text preparation is built in or
+// supplied by external encoders.
 type ChunkingKind uint8
 
 const (
 	ChunkingKindUnknown ChunkingKind = iota
 	ChunkingKindByteSplitter
-	ChunkingKindCustom
+	// ChunkingKindExternal marks indexes whose document and query preparation
+	// is owned by encoders supplied through NewService.
+	ChunkingKindExternal
 )
 
-// ChunkingConfig describes document splitting. Builtin configures the standard
-// splitter. A custom splitter is supplied at construction time and cannot be
-// reconstructed from persisted data.
+// ChunkingConfig describes ownership of document and query preparation.
+// Builtin configures the standard splitter. External marks a pipeline owned by
+// encoders supplied through NewService.
 type ChunkingConfig struct {
 	Kind    ChunkingKind
 	Builtin chunk.Config
@@ -77,7 +80,7 @@ func (c ChunkingConfig) Validate() error {
 			return ErrInvalidConfig
 		}
 		return nil
-	case ChunkingKindCustom:
+	case ChunkingKindExternal:
 		if c.Builtin != (chunk.Config{}) {
 			return ErrInvalidConfig
 		}

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"unicode/utf8"
 
+	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
@@ -28,7 +29,7 @@ const (
 
 type modelEncoder struct {
 	role       modelInputRole
-	splitter   ChunkSplitter
+	splitter   *chunk.Splitter
 	client     embedding.Client
 	limits     modelInputLimits
 	dimensions int
@@ -38,7 +39,7 @@ type modelEncoder struct {
 func newModelEncoder(
 	client embedding.Client,
 	role modelInputRole,
-	splitter ChunkSplitter,
+	splitter *chunk.Splitter,
 	modelConfig ModelConfig,
 	limits modelInputLimits,
 ) (*modelEncoder, error) {

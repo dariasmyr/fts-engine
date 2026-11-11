@@ -45,9 +45,9 @@ type CommittedIndexState struct {
 	Segments             []SegmentState
 }
 
-// ExportState returns a persistence-neutral copy of the committed index.
-// Pending mutations must be committed first so the returned value has one clear
-// revision and one matching IndexView.
+// ExportState returns a persistence-neutral in-memory copy of the committed
+// index. It performs no persistence I/O. Pending mutations must be committed
+// first so the returned value has one clear revision and one matching IndexView.
 func (i *Index) ExportState(ctx context.Context) (*CommittedIndexState, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
@@ -110,8 +110,8 @@ func exportCommittedState(
 	}, nil
 }
 
-// Restore validates a state and reconstructs a writable Index with an
-// empty pending batch.
+// Restore validates a state and reconstructs a writable in-memory Index with an
+// empty pending batch. It performs no persistence I/O.
 func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
@@ -47,7 +48,7 @@ func TestEncoderRejectsEmbeddingCountMismatch(t *testing.T) {
 	}
 }
 
-func TestNewUsesRolePrefix(t *testing.T) {
+func TestEncoderUsesModelPrefixes(t *testing.T) {
 	model := embedding.Model{
 		ID: "model", Revision: "digest", Dimensions: 2, ContextTokens: 512,
 		DocumentPrefix: "document: ", QueryPrefix: "query: ",
@@ -65,28 +66,58 @@ func TestNewUsesRolePrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := InputLimits{MaxFields: 1, MaxSourceBytes: 1024, MaxChunks: 1, MaxEmbeddingBytes: 8}
-	documentEncoder, err := NewEncoder(EncoderConfig{
-		Metric: vector.MetricCosine, Role: RoleDocument, Limits: limits, Client: client,
+	encoder, err := NewEncoder(EncoderConfig{
+		Metric: vector.MetricCosine, Limits: limits, Client: client,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	queryEncoder, err := NewEncoder(EncoderConfig{
-		Metric: vector.MetricCosine, Role: RoleQuery, Limits: limits, Client: client,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := documentEncoder.EncodeDocument(t.Context(), fts.Document{
+	if _, err := encoder.EncodeDocument(t.Context(), fts.Document{
 		ID: "input", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "text"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queryEncoder.EncodeQuery(t.Context(), "text", semantic.QueryConfig{}); err != nil {
+	if _, err := encoder.EncodeQuery(t.Context(), "text", semantic.QueryConfig{}); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(received, []string{"document: text", "query: text"}) {
+	if _, err := encoder.EncodeQueryDocument(t.Context(), fts.Document{
+		ID: "query", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "text"}},
+	}, semantic.QueryConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(received, []string{"document: text", "query: text", "query: text"}) {
 		t.Fatalf("embedded inputs = %q", received)
+	}
+}
+
+func TestEncoderUsesSplitterForQueries(t *testing.T) {
+	var received []string
+	client := testEmbeddingClient(t, func(_ context.Context, texts []string) ([][]float32, error) {
+		received = append(received, texts...)
+		vectors := make([][]float32, len(texts))
+		for i := range vectors {
+			vectors[i] = []float32{1, 0}
+		}
+		return vectors, nil
+	})
+	splitter, err := chunk.NewSplitter(chunk.Config{TargetBytes: 4, MaxBytes: 6, OverlapBytes: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder, err := NewEncoder(EncoderConfig{
+		Metric: vector.MetricCosine, Splitter: splitter, Client: client,
+		Limits: InputLimits{MaxFields: 1, MaxSourceBytes: 1024, MaxChunks: 4, MaxEmbeddingBytes: 32},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := encoder.EncodeQuery(t.Context(), "abcdefghij", semantic.QueryConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"abcd", "defg", "ghij"}
+	if !slices.Equal(received, want) {
+		t.Fatalf("embedded inputs = %q, want %q", received, want)
 	}
 }
 

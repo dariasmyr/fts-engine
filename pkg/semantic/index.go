@@ -11,9 +11,11 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-// Index owns staged document mutations and one immutable committed view.
+// Index owns in-memory staged document mutations and one immutable committed view.
 // AddDocument, ReplaceDocument, and DeleteDocument only stage changes. Commit
 // builds an HNSW segment and makes all staged changes searchable atomically.
+// Index performs no persistence I/O; use package semanticpersist for durable
+// storage.
 type Index struct {
 	// mutationGate serializes staging, commit, and compaction. It is a channel
 	// rather than sync.Mutex so callers can stop waiting through context.
@@ -27,6 +29,7 @@ type Index struct {
 	state  indexState
 }
 
+// NewIndex constructs an empty in-memory semantic index.
 func NewIndex(config SemanticConfig) (*Index, error) {
 	config, err := config.normalized()
 	if err != nil {
@@ -74,8 +77,8 @@ func NewIndex(config SemanticConfig) (*Index, error) {
 func (i *Index) Config() SemanticConfig { return i.config }
 
 // AddDocument validates, copies, prepares, and stages one document's raw chunk
-// embeddings. It never retains caller-owned embedding buffers and is invisible
-// to search until Commit.
+// embeddings in memory. It never retains caller-owned embedding buffers and is
+// invisible to search until Commit. It performs no persistence I/O.
 func (i *Index) AddDocument(ctx context.Context, docID fts.DocID, batch []ChunkEmbedding) error {
 	prepared, err := i.prepareBatch(ctx, docID, batch)
 	if err != nil {
@@ -90,7 +93,8 @@ func (i *Index) AddDocument(ctx context.Context, docID fts.DocID, batch []ChunkE
 	return err
 }
 
-// ReplaceDocument stages a replacement for the current document version.
+// ReplaceDocument stages an in-memory replacement for the current document
+// version. It performs no persistence I/O.
 func (i *Index) ReplaceDocument(ctx context.Context, docID fts.DocID, batch []ChunkEmbedding) error {
 	prepared, err := i.prepareBatch(ctx, docID, batch)
 	if err != nil {
@@ -105,8 +109,8 @@ func (i *Index) ReplaceDocument(ctx context.Context, docID fts.DocID, batch []Ch
 	return err
 }
 
-// DeleteDocument stages a deletion. The committed view is unchanged until
-// Commit.
+// DeleteDocument stages an in-memory deletion. The committed view is unchanged
+// until Commit. It performs no persistence I/O.
 func (i *Index) DeleteDocument(ctx context.Context, docID fts.DocID) error {
 	if ctx == nil {
 		return vector.ErrNilContext
@@ -126,8 +130,8 @@ func (i *Index) DeleteDocument(ctx context.Context, docID fts.DocID) error {
 	return err
 }
 
-// View returns the current committed immutable view. Pending mutations
-// are intentionally not included.
+// View returns the current in-memory committed immutable view. Pending
+// mutations are intentionally not included.
 func (i *Index) View() *IndexView {
 	i.stateMu.RLock()
 	view := i.state.view
@@ -245,6 +249,8 @@ func (i *Index) lockMutations(ctx context.Context) error {
 
 func (i *Index) unlockMutations() { <-i.mutationGate }
 
+// Search queries the current in-memory committed view. It performs no
+// persistence I/O.
 func (i *Index) Search(
 	ctx context.Context,
 	queries []ChunkEmbedding,

@@ -145,34 +145,22 @@ func TestNewFromIndexUsesIndexConfiguration(t *testing.T) {
 	if service.Config().Index.Metric != vector.MetricL2Squared {
 		t.Fatalf("service metric = %v, want L2 squared", service.Config().Index.Metric)
 	}
-	documentSplitter, ok := documents.splitter.(*chunk.Splitter)
-	if !ok {
-		t.Fatalf("document splitter type = %T", documents.splitter)
-	}
 	wantChunking := chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
-	if documentSplitter.Config() != wantChunking {
-		t.Fatalf("document chunk config = %+v, want %+v", documentSplitter.Config(), wantChunking)
+	if documents.splitter.Config() != wantChunking {
+		t.Fatalf("document chunk config = %+v, want %+v", documents.splitter.Config(), wantChunking)
 	}
 }
 
-func TestNewFromIndexRejectsCustomSplitterWithoutImplementation(t *testing.T) {
+func TestNewFromIndexRejectsExternalEncodingPipeline(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
 	config := defaultModelServiceConfig(t, client)
-	config.Chunking = ChunkingConfig{Kind: ChunkingKindCustom}
-	splitter := failingSplitter{err: errors.New("unused")}
-	original, err := NewCustom(client, config, splitter)
+	config.Chunking = ChunkingConfig{Kind: ChunkingKindExternal}
+	index, err := NewIndex(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewFromIndex(client, original.Index()); !errors.Is(err, ErrModelServiceUnavailable) {
+	if _, err := NewFromIndex(client, index); !errors.Is(err, ErrModelServiceUnavailable) {
 		t.Fatalf("NewFromIndex() error = %v, want ErrModelServiceUnavailable", err)
-	}
-	service, err := NewCustomFromIndex(client, original.Index(), splitter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if service.Index() != original.Index() {
-		t.Fatal("NewCustomFromIndex() replaced the provided index")
 	}
 }
 
@@ -257,27 +245,6 @@ func TestNewPreservesProviderAndContextErrors(t *testing.T) {
 	}
 }
 
-func TestNewPreservesSplitterErrors(t *testing.T) {
-	client, _ := modelServiceTestClient(t, 512)
-	splitError := errors.New("split failed")
-	config := defaultModelServiceConfig(t, client)
-	config.Chunking = ChunkingConfig{Kind: ChunkingKindCustom}
-	service, err := NewCustom(client, config, failingSplitter{err: splitError})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = service.AddDocument(t.Context(), fts.Document{
-		ID: "doc", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "text"}},
-	})
-	if !errors.Is(err, ErrInvalidDocument) || !errors.Is(err, splitError) {
-		t.Fatalf("AddDocument() error = %v, want invalid document and split errors", err)
-	}
-	_, err = service.Search(t.Context(), "query", 1)
-	if !errors.Is(err, ErrInvalidQuery) || !errors.Is(err, splitError) {
-		t.Fatalf("Search() error = %v, want invalid query and split errors", err)
-	}
-}
-
 func TestNewRejectsInvalidConfig(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
 	tests := []struct {
@@ -306,17 +273,9 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 	}
 
 	config := defaultModelServiceConfig(t, client)
-	config.Chunking = ChunkingConfig{Kind: ChunkingKindCustom}
+	config.Chunking = ChunkingConfig{Kind: ChunkingKindExternal}
 	if _, err := New(client, config); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("New() custom config error = %v, want ErrInvalidConfig", err)
-	}
-	if _, err := NewCustom(client, config, nil); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("NewCustom() error = %v, want ErrInvalidConfig", err)
-	}
-
-	config = defaultModelServiceConfig(t, client)
-	if _, err := NewCustom(client, config, failingSplitter{}); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("NewCustom() built-in config error = %v, want ErrInvalidConfig", err)
+		t.Fatalf("New() external config error = %v, want ErrInvalidConfig", err)
 	}
 }
 
@@ -344,14 +303,6 @@ func TestNewDerivesOneChunkLimitForEncoderAndIndex(t *testing.T) {
 			service.index.limits.ingestion.maxChunksPerDocument,
 		)
 	}
-}
-
-type failingSplitter struct {
-	err error
-}
-
-func (c failingSplitter) Split(string) ([]chunk.Range, error) {
-	return nil, c.err
 }
 
 func modelServiceTestClient(t *testing.T, contextTokens int) (embedding.Client, *[]string) {

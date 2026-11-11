@@ -65,9 +65,8 @@ func Load(
 
 // LoadService loads the current generation and reconstructs its persisted
 // standard model pipeline. It returns the generation token for the next
-// optimistic Save. Indexes created with a custom splitter must be loaded with
-// Load and bound through semantic.NewCustomFromIndex because executable
-// splitter implementations are not persisted.
+// optimistic Save. Indexes whose config selects ChunkingKindExternal must be
+// loaded with Load and bound to caller-owned encoders through semantic.NewService.
 func LoadService(
 	ctx context.Context,
 	root string,

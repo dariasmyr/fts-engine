@@ -141,7 +141,7 @@ func newPersistenceBenchmarkIndex(tb testing.TB) *semantic.Index {
 			Limits: semantic.LimitsConfig{MaxLiveVectors: persistenceBenchmarkDocuments, MaxChunksPerDocument: 1},
 			Search: semantic.SearchConfig{MaxResults: 10, MaxCandidateChunks: 64, MaxChunksPerResult: 1},
 		},
-		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindCustom},
+		Chunking: semantic.ChunkingConfig{Kind: semantic.ChunkingKindExternal},
 	})
 	if err != nil {
 		tb.Fatal(err)

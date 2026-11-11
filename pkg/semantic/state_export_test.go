@@ -293,7 +293,7 @@ func newTestIndex(t *testing.T) *Index {
 				DefaultEfSearch: 8, MaxEfSearch: 16, DefaultVisitLimit: 32, MaxVisitLimit: 32,
 			},
 		},
-		Chunking: ChunkingConfig{Kind: ChunkingKindCustom},
+		Chunking: ChunkingConfig{Kind: ChunkingKindExternal},
 	})
 	if err != nil {
 		t.Fatalf("NewIndex() error = %v", err)

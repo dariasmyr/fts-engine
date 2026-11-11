@@ -89,6 +89,6 @@ func serviceTestConfig() SemanticConfig {
 			Limits: LimitsConfig{MaxLiveVectors: 8, MaxChunksPerDocument: 2},
 			Search: SearchConfig{MaxResults: 2, MaxCandidateChunks: 8, MaxChunksPerResult: 1},
 		},
-		Chunking: ChunkingConfig{Kind: ChunkingKindCustom},
+		Chunking: ChunkingConfig{Kind: ChunkingKindExternal},
 	}
 }

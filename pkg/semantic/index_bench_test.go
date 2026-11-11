@@ -201,7 +201,7 @@ func benchmarkConfig(maxLive, maxStale, maxSegments int) SemanticConfig {
 				DefaultVisitLimit: maxLive, MaxVisitLimit: maxLive,
 			},
 		},
-		Chunking: ChunkingConfig{Kind: ChunkingKindCustom},
+		Chunking: ChunkingConfig{Kind: ChunkingKindExternal},
 	}
 }
 

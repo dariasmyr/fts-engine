@@ -9,10 +9,12 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-// Commit publishes the complete pending batch as one new immutable HNSW segment
-// plus liveness changes to older segments. Expensive construction happens while
-// holding the mutation gate but outside the short-lived state lock, so searches
-// continue against the previous immutable view.
+// Commit publishes the complete pending batch in memory as one new immutable
+// HNSW segment plus liveness changes to older segments. It performs no
+// persistence I/O. Expensive construction happens while holding the mutation
+// gate but outside the short-lived state lock, so searches continue against the
+// previous immutable view. Use semanticpersist.CommitAndSave when the same
+// transition must also be durable.
 func (i *Index) Commit(ctx context.Context) error {
 	if ctx == nil {
 		return vector.ErrNilContext
@@ -38,9 +40,10 @@ func (i *Index) Commit(ctx context.Context) error {
 	return nil
 }
 
-// CommitAndExportState publishes the pending batch and returns a detached copy
-// of that exact committed revision. Commit and export share one mutation gate,
-// so no staging operation, Commit, or Compact can interleave between them.
+// CommitAndExportState publishes the pending batch in memory and returns a
+// persistence-neutral detached copy of that exact committed revision. It
+// performs no persistence I/O. Commit and export share one mutation gate, so no
+// staging operation, Commit, or Compact can interleave between them.
 func (i *Index) CommitAndExportState(ctx context.Context) (*CommittedIndexState, error) {
 	var committed *CommittedIndexState
 	err := i.CommitWithState(ctx, func(state *CommittedIndexState) error {
@@ -51,9 +54,11 @@ func (i *Index) CommitAndExportState(ctx context.Context) (*CommittedIndexState,
 }
 
 // CommitWithState prepares the complete pending batch and passes the candidate
-// committed state to accept before making it searchable. The mutation gate is
-// held through accept. If accept returns an error, the previous view remains
-// searchable and the pending batch remains available for retry.
+// committed state to accept before making it searchable in memory. The Index
+// performs no persistence I/O itself; accept may establish an external commit
+// point. The mutation gate is held through accept. If accept returns an error,
+// the previous view remains searchable and the pending batch remains available
+// for retry.
 //
 // Once accept returns nil, publication is an in-memory, non-failing state
 // transition. Callers must therefore return nil only after any external commit

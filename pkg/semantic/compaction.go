@@ -9,8 +9,9 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-// Compact rewrites all live rows from the committed view into at most one
-// immutable segment. Pending mutations must be committed first.
+// Compact rewrites all live rows from the in-memory committed view into at most
+// one immutable segment. It performs no persistence I/O. Pending mutations must
+// be committed first.
 func (i *Index) Compact(ctx context.Context) error {
 	if ctx == nil {
 		return vector.ErrNilContext

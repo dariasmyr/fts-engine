@@ -27,15 +27,6 @@ var (
 	ErrEmbeddingCountMismatch = errors.New("semanticencode: embedding count does not match chunks")
 )
 
-// InputRole selects the model prefix used by a derived encoder.
-type InputRole uint8
-
-const (
-	RoleUnspecified InputRole = iota
-	RoleDocument
-	RoleQuery
-)
-
 // InputLimits bounds text and vector material created by one encoding call.
 type InputLimits struct {
 	MaxFields         int
@@ -44,109 +35,138 @@ type InputLimits struct {
 	MaxEmbeddingBytes uint64
 }
 
-// EncoderConfig configures one advanced document or query encoder. Normal
+// ChunkSplitter splits one UTF-8 text into byte ranges. Implementations used
+// by concurrent Service operations must be safe for concurrent use.
+type ChunkSplitter interface {
+	Split(text string) ([]chunk.Range, error)
+}
+
+// EncoderConfig configures an advanced document and query encoder. Normal
 // model-bound services should use semantic.New instead.
 type EncoderConfig struct {
 	Metric vector.Metric
-	Role   InputRole
 	Limits InputLimits
 	// Splitter splits document fields into byte ranges.
-	Splitter semantic.ChunkSplitter
+	Splitter ChunkSplitter
 	Client   embedding.Client
 }
 
-func (c EncoderConfig) Validate() error { _, _, _, err := c.normalized(); return err }
+func (c EncoderConfig) Validate() error { _, _, err := c.normalized(); return err }
 
-func (c EncoderConfig) normalized() (EncoderConfig, int, string, error) {
+func (c EncoderConfig) normalized() (EncoderConfig, embedding.Model, error) {
 	if c.Client == nil || c.Limits.MaxFields <= 0 ||
 		c.Limits.MaxSourceBytes == 0 || c.Limits.MaxChunks <= 0 || c.Limits.MaxEmbeddingBytes == 0 {
-		return EncoderConfig{}, 0, "", ErrInvalidConfig
+		return EncoderConfig{}, embedding.Model{}, ErrInvalidConfig
 	}
 	model := c.Client.Model()
 	if model.Validate() != nil {
-		return EncoderConfig{}, 0, "", ErrInvalidConfig
+		return EncoderConfig{}, embedding.Model{}, ErrInvalidConfig
 	}
 	if !c.Metric.Valid() {
-		return EncoderConfig{}, 0, "", ErrInvalidConfig
+		return EncoderConfig{}, embedding.Model{}, ErrInvalidConfig
 	}
-	space, err := vector.NewSpace(model.Dimensions, c.Metric)
+	_, err := vector.NewSpace(model.Dimensions, c.Metric)
 	if err != nil {
-		return EncoderConfig{}, 0, "", fmt.Errorf("%w: vector space: %v", ErrInvalidConfig, err)
+		return EncoderConfig{}, embedding.Model{}, fmt.Errorf("%w: vector space: %v", ErrInvalidConfig, err)
 	}
-	prefix := ""
-	if c.Role == RoleUnspecified {
-		c.Role = RoleDocument
-	}
-	switch c.Role {
-	case RoleDocument:
-		prefix = model.DocumentPrefix
-	case RoleQuery:
-		prefix = model.QueryPrefix
-	default:
-		return EncoderConfig{}, 0, "", ErrInvalidConfig
-	}
-	return c, space.Dimensions(), prefix, nil
+	return c, model, nil
 }
 
 // Encoder prepares source documents or queries as semantic vectors.
 type Encoder struct {
-	splitter   semantic.ChunkSplitter
-	client     embedding.Client
-	limits     InputLimits
-	dimensions int
-	prefix     string
+	splitter       ChunkSplitter
+	client         embedding.Client
+	limits         InputLimits
+	dimensions     int
+	documentPrefix string
+	queryPrefix    string
 }
 
-// NewEncoder constructs one role-specific encoder.
+// NewEncoder constructs one encoder for both document and query preparation.
 func NewEncoder(config EncoderConfig) (*Encoder, error) {
-	config, dimensions, prefix, err := config.normalized()
+	config, model, err := config.normalized()
 	if err != nil {
 		return nil, err
 	}
 	return &Encoder{
 		splitter: config.Splitter, client: config.Client,
-		limits: config.Limits, dimensions: dimensions, prefix: prefix,
+		limits: config.Limits, dimensions: model.Dimensions,
+		documentPrefix: model.DocumentPrefix, queryPrefix: model.QueryPrefix,
 	}, nil
 }
 
 // EncodeDocument prepares a source document for indexing.
 func (e *Encoder) EncodeDocument(ctx context.Context, document fts.Document) ([]semantic.ChunkEmbedding, error) {
-	return e.encodeDocument(ctx, document)
+	return e.encodeDocument(ctx, document, e.documentPrefix)
 }
 
-// EncodeQuery prepares a direct text query as one embedding input. Normal
-// model-bound services should use semantic.New for explicit long-query policy.
-func (e *Encoder) EncodeQuery(ctx context.Context, query string, _ semantic.QueryConfig) ([]semantic.ChunkEmbedding, error) {
+// EncodeQuery prepares a direct text query with the configured splitter. With
+// no splitter, the complete query is encoded as one input.
+func (e *Encoder) EncodeQuery(
+	ctx context.Context,
+	query string,
+	config semantic.QueryConfig,
+) ([]semantic.ChunkEmbedding, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
 	if query == "" || !utf8.ValidString(query) {
 		return nil, ErrInvalidQuery
 	}
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
 	if uint64(len(query)) > e.limits.MaxSourceBytes {
 		return nil, fmt.Errorf("%w: query bytes exceed %d", ErrLimitExceeded, e.limits.MaxSourceBytes)
 	}
-	return e.encodeInputs(ctx, []embeddingInput{{
-		ref: semantic.Ref{
-			ID:      "query-000000",
-			DocID:   "_query",
-			Field:   fts.DefaultField,
-			EndByte: uint64(len(query)),
-		},
-		text: query,
-	}})
+
+	ranges, err := e.splitText(query)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidQuery, err)
+	}
+	if len(ranges) == 0 {
+		return nil, ErrInvalidQuery
+	}
+	if len(ranges) > e.limits.MaxChunks || uint64(len(ranges)-1) > math.MaxUint32 {
+		return nil, fmt.Errorf("%w: query chunks exceed %d", ErrLimitExceeded, e.limits.MaxChunks)
+	}
+	inputs := make([]embeddingInput, len(ranges))
+	for i, r := range ranges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := r.Validate(query); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidQuery, err)
+		}
+		inputs[i] = embeddingInput{
+			ref: semantic.Ref{
+				ID: semantic.ChunkID(fmt.Sprintf("query-%06d", i)), DocID: "_query",
+				Field: fts.DefaultField, Ordinal: uint32(i),
+				StartByte: uint64(r.StartByte), EndByte: uint64(r.EndByte),
+			},
+			text: query[r.StartByte:r.EndByte],
+		}
+	}
+	return e.encodeInputs(ctx, inputs, e.queryPrefix)
 }
 
 // EncodeQueryDocument prepares an advanced structured query document.
 func (e *Encoder) EncodeQueryDocument(
 	ctx context.Context,
 	document fts.Document,
-	_ semantic.QueryConfig,
+	config semantic.QueryConfig,
 ) ([]semantic.ChunkEmbedding, error) {
-	return e.encodeDocument(ctx, document)
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	return e.encodeDocument(ctx, document, e.queryPrefix)
 }
 
-func (e *Encoder) encodeDocument(ctx context.Context, document fts.Document) ([]semantic.ChunkEmbedding, error) {
+func (e *Encoder) encodeDocument(
+	ctx context.Context,
+	document fts.Document,
+	prefix string,
+) ([]semantic.ChunkEmbedding, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -154,10 +174,14 @@ func (e *Encoder) encodeDocument(ctx context.Context, document fts.Document) ([]
 	if err != nil {
 		return nil, err
 	}
-	return e.encodeInputs(ctx, inputs)
+	return e.encodeInputs(ctx, inputs, prefix)
 }
 
-func (e *Encoder) encodeInputs(ctx context.Context, inputs []embeddingInput) ([]semantic.ChunkEmbedding, error) {
+func (e *Encoder) encodeInputs(
+	ctx context.Context,
+	inputs []embeddingInput,
+	prefix string,
+) ([]semantic.ChunkEmbedding, error) {
 	if err := e.validateEmbeddingSize(len(inputs)); err != nil {
 		return nil, err
 	}
@@ -166,7 +190,7 @@ func (e *Encoder) encodeInputs(ctx context.Context, inputs []embeddingInput) ([]
 	}
 	texts := make([]string, len(inputs))
 	for i, input := range inputs {
-		texts[i] = e.prefix + input.text
+		texts[i] = prefix + input.text
 	}
 	vectors, err := e.client.Embed(ctx, texts)
 	if err != nil {
@@ -186,6 +210,17 @@ var (
 type embeddingInput struct {
 	ref  semantic.Ref
 	text string
+}
+
+func (e *Encoder) splitText(text string) ([]chunk.Range, error) {
+	if e.splitter != nil {
+		return e.splitter.Split(text)
+	}
+	whole, err := chunk.Whole(text)
+	if err != nil {
+		return nil, err
+	}
+	return []chunk.Range{whole}, nil
 }
 
 func (e *Encoder) chunkDocument(ctx context.Context, document fts.Document) ([]embeddingInput, error) {
@@ -239,19 +274,9 @@ func (e *Encoder) chunkDocument(ctx context.Context, document fts.Document) ([]e
 			return nil, fmt.Errorf("%w: field %q: invalid UTF-8", ErrInvalidChunk, field)
 		}
 
-		var ranges []chunk.Range
-		if e.splitter == nil {
-			whole, err := chunk.Whole(text)
-			if err != nil {
-				return nil, fmt.Errorf("%w: field %q: %v", ErrInvalidChunk, field, err)
-			}
-			ranges = []chunk.Range{whole}
-		} else {
-			var err error
-			ranges, err = e.splitter.Split(text)
-			if err != nil {
-				return nil, fmt.Errorf("%w: field %q: %v", ErrInvalidChunk, field, err)
-			}
+		ranges, err := e.splitText(text)
+		if err != nil {
+			return nil, fmt.Errorf("%w: field %q: %v", ErrInvalidChunk, field, err)
 		}
 		if len(ranges) == 0 {
 			return nil, fmt.Errorf("%w: field %q produced no chunks", ErrInvalidChunk, field)
