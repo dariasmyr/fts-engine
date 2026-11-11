@@ -21,13 +21,13 @@ type persistedGeneration struct {
 }
 
 type generationFiles struct {
-	layout layout
-	limits Config
-	hooks  saveHooks
+	layout      layout
+	limits      Config
+	checkpoints saveCheckpoints
 }
 
 func newGenerationFiles(l layout, cfg settings) generationFiles {
-	return generationFiles{layout: l, limits: cfg.limits, hooks: cfg.hooks}
+	return generationFiles{layout: l, limits: cfg.limits, checkpoints: cfg.checkpoints}
 }
 
 func (s generationFiles) write(ctx context.Context, id uint64, state generationformat.IndexState, segments []generationformat.SegmentRef) (persistedGeneration, error) {
@@ -49,7 +49,7 @@ func (s generationFiles) write(ctx context.Context, id uint64, state generationf
 		}
 	}()
 
-	if err := beforeStep(ctx, s.hooks, stepWriteState); err != nil {
+	if err := s.checkpoints.before(ctx, checkpointWriteState); err != nil {
 		return persistedGeneration{}, err
 	}
 	stateData, stateRef, err := generationformat.EncodeState(state, generationFormatConfig(s.limits))
@@ -59,12 +59,12 @@ func (s generationFiles) write(ctx context.Context, id uint64, state generationf
 	if err := writeDataFile(filepath.Join(generationTemp, stateFileName), stateData); err != nil {
 		return persistedGeneration{}, err
 	}
-	if err := afterStep(s.hooks, stepWriteState, false); err != nil {
+	if err := s.checkpoints.after(checkpointWriteState); err != nil {
 		return persistedGeneration{}, err
 	}
 
 	manifest := generationformat.GenerationManifest{GenerationID: id, State: stateRef, Segments: segments}
-	if err := beforeStep(ctx, s.hooks, stepWriteManifest); err != nil {
+	if err := s.checkpoints.before(ctx, checkpointWriteManifest); err != nil {
 		return persistedGeneration{}, err
 	}
 	manifestData, manifestRef, err := generationformat.EncodeManifest(manifest, generationFormatConfig(s.limits))
@@ -77,17 +77,17 @@ func (s generationFiles) write(ctx context.Context, id uint64, state generationf
 	if err := writeDataFile(filepath.Join(generationTemp, manifestFileName), manifestData); err != nil {
 		return persistedGeneration{}, err
 	}
-	if err := afterStep(s.hooks, stepWriteManifest, false); err != nil {
+	if err := s.checkpoints.after(checkpointWriteManifest); err != nil {
 		return persistedGeneration{}, err
 	}
 
-	if err := beforeStep(ctx, s.hooks, stepSyncGeneration); err != nil {
+	if err := s.checkpoints.before(ctx, checkpointSyncGeneration); err != nil {
 		return persistedGeneration{}, err
 	}
 	if err := persistfs.SyncDirectory(generationTemp); err != nil {
 		return persistedGeneration{}, err
 	}
-	if err := afterStep(s.hooks, stepSyncGeneration, false); err != nil {
+	if err := s.checkpoints.after(checkpointSyncGeneration); err != nil {
 		return persistedGeneration{}, err
 	}
 	finalPath := s.layout.generation(id)
@@ -96,7 +96,7 @@ func (s generationFiles) write(ctx context.Context, id uint64, state generationf
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return persistedGeneration{}, err
 	}
-	if err := beforeStep(ctx, s.hooks, stepRenameGeneration); err != nil {
+	if err := s.checkpoints.before(ctx, checkpointRenameGeneration); err != nil {
 		return persistedGeneration{}, err
 	}
 	if err := os.Rename(generationTemp, finalPath); err != nil {
@@ -106,7 +106,7 @@ func (s generationFiles) write(ctx context.Context, id uint64, state generationf
 	if err := persistfs.SyncDirectory(s.layout.generations); err != nil {
 		return persistedGeneration{}, err
 	}
-	if err := afterStep(s.hooks, stepRenameGeneration, false); err != nil {
+	if err := s.checkpoints.after(checkpointRenameGeneration); err != nil {
 		return persistedGeneration{}, err
 	}
 	return persistedGeneration{id: id, manifest: manifest, manifestRef: manifestRef, state: state}, nil

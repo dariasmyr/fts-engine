@@ -35,11 +35,11 @@ func (i *Index) Compact(ctx context.Context) error {
 	}
 
 	if len(view.segments) <= 1 {
-		stale := false
+		hasStaleOrdinals := false
 		for _, item := range view.segments {
-			stale = stale || item.liveness.AllowedOrdinalCount() != item.segment.len()
+			hasStaleOrdinals = hasStaleOrdinals || item.liveness.AllowedOrdinalCount() != item.segment.len()
 		}
-		if !stale {
+		if !hasStaleOrdinals {
 			return nil
 		}
 	}

@@ -53,13 +53,13 @@ func validObjectID(id string) bool {
 }
 
 type segmentStore struct {
-	layout layout
-	limits Config
-	hooks  saveHooks
+	layout      layout
+	limits      Config
+	checkpoints saveCheckpoints
 }
 
 func newSegmentStore(l layout, cfg settings) segmentStore {
-	return segmentStore{layout: l, limits: cfg.limits, hooks: cfg.hooks}
+	return segmentStore{layout: l, limits: cfg.limits, checkpoints: cfg.checkpoints}
 }
 
 func (s segmentStore) put(ctx context.Context, data semantic.SegmentState, maxK int) (generationformat.SegmentRef, error) {
@@ -74,18 +74,18 @@ func (s segmentStore) put(ctx context.Context, data semantic.SegmentState, maxK 
 		}
 	}()
 
-	if err := beforeStep(ctx, s.hooks, stepWriteVectors); err != nil {
+	if err := s.checkpoints.before(ctx, checkpointWriteVectors); err != nil {
 		return generationformat.SegmentRef{}, err
 	}
 	vectorsRef, err := s.writeVectors(ctx, filepath.Join(segmentTemp, vectorsFileName), data.Vectors, maxK)
 	if err != nil {
 		return generationformat.SegmentRef{}, err
 	}
-	if err := afterStep(s.hooks, stepWriteVectors, false); err != nil {
+	if err := s.checkpoints.after(checkpointWriteVectors); err != nil {
 		return generationformat.SegmentRef{}, err
 	}
 
-	if err := beforeStep(ctx, s.hooks, stepWriteGraph); err != nil {
+	if err := s.checkpoints.before(ctx, checkpointWriteGraph); err != nil {
 		return generationformat.SegmentRef{}, err
 	}
 	if data.Index == nil {
@@ -95,17 +95,17 @@ func (s segmentStore) put(ctx context.Context, data semantic.SegmentState, maxK 
 	if err != nil {
 		return generationformat.SegmentRef{}, err
 	}
-	if err := afterStep(s.hooks, stepWriteGraph, false); err != nil {
+	if err := s.checkpoints.after(checkpointWriteGraph); err != nil {
 		return generationformat.SegmentRef{}, err
 	}
 
-	if err := beforeStep(ctx, s.hooks, stepSyncSegment); err != nil {
+	if err := s.checkpoints.before(ctx, checkpointSyncSegment); err != nil {
 		return generationformat.SegmentRef{}, err
 	}
 	if err := persistfs.SyncDirectory(segmentTemp); err != nil {
 		return generationformat.SegmentRef{}, err
 	}
-	if err := afterStep(s.hooks, stepSyncSegment, false); err != nil {
+	if err := s.checkpoints.after(checkpointSyncSegment); err != nil {
 		return generationformat.SegmentRef{}, err
 	}
 
@@ -114,7 +114,7 @@ func (s segmentStore) put(ctx context.Context, data semantic.SegmentState, maxK 
 	if err := s.layout.ensureContained(storedPath); err != nil {
 		return generationformat.SegmentRef{}, err
 	}
-	if err := beforeStep(ctx, s.hooks, stepRenameSegment); err != nil {
+	if err := s.checkpoints.before(ctx, checkpointRenameSegment); err != nil {
 		return generationformat.SegmentRef{}, err
 	}
 	if _, err := os.Lstat(storedPath); err == nil {
@@ -139,7 +139,7 @@ func (s segmentStore) put(ctx context.Context, data semantic.SegmentState, maxK 
 			return generationformat.SegmentRef{}, err
 		}
 	}
-	if err := afterStep(s.hooks, stepRenameSegment, false); err != nil {
+	if err := s.checkpoints.after(checkpointRenameSegment); err != nil {
 		return generationformat.SegmentRef{}, err
 	}
 	return ref, nil

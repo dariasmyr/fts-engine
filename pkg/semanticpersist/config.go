@@ -55,6 +55,19 @@ type RecoverConfig struct {
 	Generation Generation
 }
 
+type settings struct {
+	limits      Config
+	checkpoints saveCheckpoints
+}
+
+func newSettings(config Config) (settings, error) {
+	config, err := config.normalized()
+	if err != nil {
+		return settings{}, err
+	}
+	return settings{limits: config}, nil
+}
+
 // DefaultConfig returns the validation limits used for zero-valued fields.
 func DefaultConfig() Config {
 	return Config{

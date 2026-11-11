@@ -187,11 +187,13 @@ func TestCommitAndSaveFailureBeforeCurrentKeepsMutationPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.hooks.before = func(step saveStep) error {
-		if step == stepWriteCurrent {
-			return failed
-		}
-		return nil
+	cfg.checkpoints.probe = saveFaultInjector{
+		beforeStep: func(checkpoint saveCheckpoint) error {
+			if checkpoint == checkpointWriteCurrent {
+				return failed
+			}
+			return nil
+		},
 	}
 	_, err = commitAndSave(ctx, root, index, previous.ID, cfg)
 	if !errors.Is(err, failed) {
@@ -259,11 +261,13 @@ func TestCommitAndSaveIndeterminateOutcomePublishesCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.hooks.after = func(step saveStep) error {
-		if step == stepReplaceCurrent {
-			return failed
-		}
-		return nil
+	cfg.checkpoints.probe = saveFaultInjector{
+		afterStep: func(checkpoint saveCheckpoint) error {
+			if checkpoint == checkpointReplaceCurrent {
+				return failed
+			}
+			return nil
+		},
 	}
 	generationID, err := commitAndSave(ctx, root, index, 0, cfg)
 	if !errors.Is(err, ErrIndeterminate) {
@@ -365,12 +369,14 @@ func TestCommitAndSaveBlocksMutationUntilPersistenceCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.hooks.before = func(step saveStep) error {
-		if step == stepWriteVectors {
-			startOnce.Do(func() { close(writeStarted) })
-			<-releaseWrite
-		}
-		return nil
+	cfg.checkpoints.probe = saveFaultInjector{
+		beforeStep: func(checkpoint saveCheckpoint) error {
+			if checkpoint == checkpointWriteVectors {
+				startOnce.Do(func() { close(writeStarted) })
+				<-releaseWrite
+			}
+			return nil
+		},
 	}
 
 	saveDone := make(chan error, 1)

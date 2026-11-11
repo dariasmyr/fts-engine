@@ -26,6 +26,13 @@ var (
 	ErrStaleGeneration            = errors.New("semanticpersist: expected generation does not match CURRENT")
 )
 
+func indeterminateError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %v", ErrIndeterminate, err)
+}
+
 func mapFormatError(err error) error {
 	if err == nil {
 		return nil

@@ -73,20 +73,20 @@ func TestSaveChecksExpectedGenerationBeforeSegmentObjects(t *testing.T) {
 
 func TestSaveFailureBeforeCurrentReplacementKeepsPreviousGeneration(t *testing.T) {
 	tests := []struct {
-		name string
-		step saveStep
+		name       string
+		checkpoint saveCheckpoint
 	}{
-		{name: "write vectors", step: stepWriteVectors},
-		{name: "write graph", step: stepWriteGraph},
-		{name: "sync segment", step: stepSyncSegment},
-		{name: "rename segment", step: stepRenameSegment},
-		{name: "sync reused segments", step: stepSyncReusedSegments},
-		{name: "write state", step: stepWriteState},
-		{name: "write manifest", step: stepWriteManifest},
-		{name: "generation fsync", step: stepSyncGeneration},
-		{name: "rename generation", step: stepRenameGeneration},
-		{name: "write CURRENT", step: stepWriteCurrent},
-		{name: "CURRENT rename", step: stepReplaceCurrent},
+		{name: "write vectors", checkpoint: checkpointWriteVectors},
+		{name: "write graph", checkpoint: checkpointWriteGraph},
+		{name: "sync segment", checkpoint: checkpointSyncSegment},
+		{name: "rename segment", checkpoint: checkpointRenameSegment},
+		{name: "sync reused segments", checkpoint: checkpointSyncReusedSegments},
+		{name: "write state", checkpoint: checkpointWriteState},
+		{name: "write manifest", checkpoint: checkpointWriteManifest},
+		{name: "generation fsync", checkpoint: checkpointSyncGeneration},
+		{name: "rename generation", checkpoint: checkpointRenameGeneration},
+		{name: "write CURRENT", checkpoint: checkpointWriteCurrent},
+		{name: "CURRENT rename", checkpoint: checkpointReplaceCurrent},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -105,11 +105,13 @@ func TestSaveFailureBeforeCurrentReplacementKeepsPreviousGeneration(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			cfg.hooks.before = func(step saveStep) error {
-				if step == tt.step {
-					return failed
-				}
-				return nil
+			cfg.checkpoints.probe = saveFaultInjector{
+				beforeStep: func(checkpoint saveCheckpoint) error {
+					if checkpoint == tt.checkpoint {
+						return failed
+					}
+					return nil
+				},
 			}
 			_, err = save(ctx, root, index, previous.ID, cfg)
 			if !errors.Is(err, failed) {
@@ -152,11 +154,13 @@ func TestSaveRetrySkipsInstalledOrphanGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.hooks.after = func(step saveStep) error {
-		if step == stepRenameGeneration {
-			return failed
-		}
-		return nil
+	cfg.checkpoints.probe = saveFaultInjector{
+		afterStep: func(checkpoint saveCheckpoint) error {
+			if checkpoint == checkpointRenameGeneration {
+				return failed
+			}
+			return nil
+		},
 	}
 	if _, err := save(ctx, root, index, previous.ID, cfg); !errors.Is(err, failed) {
 		t.Fatalf("save() error = %v, want injected failure", err)
@@ -174,12 +178,12 @@ func TestSaveRetrySkipsInstalledOrphanGeneration(t *testing.T) {
 func TestSaveFailureAfterCurrentReplacementIsIndeterminate(t *testing.T) {
 	tests := []struct {
 		name   string
-		before saveStep
-		after  saveStep
+		before saveCheckpoint
+		after  saveCheckpoint
 	}{
-		{name: "after CURRENT replacement", after: stepReplaceCurrent},
-		{name: "before root sync", before: stepSyncRoot},
-		{name: "after root sync", after: stepSyncRoot},
+		{name: "after CURRENT replacement", after: checkpointReplaceCurrent},
+		{name: "before root sync", before: checkpointSyncRoot},
+		{name: "after root sync", after: checkpointSyncRoot},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -195,17 +199,19 @@ func TestSaveFailureAfterCurrentReplacementIsIndeterminate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cfg.hooks.before = func(step saveStep) error {
-				if step == tt.before {
-					return failed
-				}
-				return nil
-			}
-			cfg.hooks.after = func(step saveStep) error {
-				if step == tt.after {
-					return failed
-				}
-				return nil
+			cfg.checkpoints.probe = saveFaultInjector{
+				beforeStep: func(checkpoint saveCheckpoint) error {
+					if checkpoint == tt.before {
+						return failed
+					}
+					return nil
+				},
+				afterStep: func(checkpoint saveCheckpoint) error {
+					if checkpoint == tt.after {
+						return failed
+					}
+					return nil
+				},
 			}
 			if _, err := save(ctx, root, index, previous.ID, cfg); !errors.Is(err, ErrIndeterminate) {
 				t.Fatalf("save() error = %v, want ErrIndeterminate", err)

@@ -12,13 +12,13 @@ import (
 )
 
 type currentFile struct {
-	layout layout
-	limits Config
-	hooks  saveHooks
+	layout      layout
+	limits      Config
+	checkpoints saveCheckpoints
 }
 
 func newCurrentFile(l layout, cfg settings) currentFile {
-	return currentFile{layout: l, limits: cfg.limits, hooks: cfg.hooks}
+	return currentFile{layout: l, limits: cfg.limits, checkpoints: cfg.checkpoints}
 }
 
 func (s currentFile) read(ctx context.Context) (generationformat.Head, error) {
@@ -40,7 +40,7 @@ func (s currentFile) read(ctx context.Context) (generationformat.Head, error) {
 }
 
 func (s currentFile) commit(ctx context.Context, head generationformat.Head) error {
-	if err := beforeStep(ctx, s.hooks, stepWriteCurrent); err != nil {
+	if err := s.checkpoints.before(ctx, checkpointWriteCurrent); err != nil {
 		return err
 	}
 	data, err := generationformat.EncodeHead(head, generationFormatConfig(s.limits))
@@ -52,26 +52,26 @@ func (s currentFile) commit(ctx context.Context, head generationformat.Head) err
 		return err
 	}
 	defer os.Remove(name)
-	if err := afterStep(s.hooks, stepWriteCurrent, false); err != nil {
+	if err := s.checkpoints.after(checkpointWriteCurrent); err != nil {
 		return err
 	}
-	if err := beforeStep(ctx, s.hooks, stepReplaceCurrent); err != nil {
+	if err := s.checkpoints.before(ctx, checkpointReplaceCurrent); err != nil {
 		return err
 	}
 	if err := storage.AtomicReplace(name, s.layout.current); err != nil {
 		return fmt.Errorf("semanticpersist: replace CURRENT: %w", err)
 	}
-	if err := afterStep(s.hooks, stepReplaceCurrent, true); err != nil {
-		return err
+	if err := s.checkpoints.after(checkpointReplaceCurrent); err != nil {
+		return indeterminateError(err)
 	}
-	if err := beforeStep(context.Background(), s.hooks, stepSyncRoot); err != nil {
-		return fmt.Errorf("%w: %v", ErrIndeterminate, err)
+	if err := s.checkpoints.before(context.Background(), checkpointSyncRoot); err != nil {
+		return indeterminateError(err)
 	}
 	if err := persistfs.SyncDirectory(s.layout.root); err != nil {
-		return fmt.Errorf("%w: %v", ErrIndeterminate, err)
+		return indeterminateError(err)
 	}
-	if err := afterStep(s.hooks, stepSyncRoot, true); err != nil {
-		return err
+	if err := s.checkpoints.after(checkpointSyncRoot); err != nil {
+		return indeterminateError(err)
 	}
 	return nil
 }
@@ -90,7 +90,7 @@ func (s currentFile) replace(head generationformat.Head) error {
 		return err
 	}
 	if err := persistfs.SyncDirectory(s.layout.root); err != nil {
-		return fmt.Errorf("%w: %v", ErrIndeterminate, err)
+		return indeterminateError(err)
 	}
 	return nil
 }

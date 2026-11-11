@@ -291,13 +291,13 @@ func (w *generationWriter) write(
 		segmentRefs[i] = ref
 	}
 	if reused {
-		if err := beforeStep(ctx, cfg.hooks, stepSyncReusedSegments); err != nil {
+		if err := cfg.checkpoints.before(ctx, checkpointSyncReusedSegments); err != nil {
 			return 0, err
 		}
 		if err := persistfs.SyncDirectory(w.layout.segments); err != nil {
 			return 0, err
 		}
-		if err := afterStep(cfg.hooks, stepSyncReusedSegments, false); err != nil {
+		if err := cfg.checkpoints.after(checkpointSyncReusedSegments); err != nil {
 			return 0, err
 		}
 	}
