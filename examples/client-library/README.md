@@ -45,7 +45,8 @@ Standalone examples:
 - `segment-bundle/main.go` - save and restore one sealed segment as an `io.Writer`/`io.Reader` blob
 - `rank-profile/main.go` - multi-field ranking with weighted field scoring
 - `semantic-commit/main.go` - mutable document search and explicit `Commit` visibility
-- `semantic-persistence/main.go` - `CommitAndSave`, load, mutate, and save the next generation
+- `semantic-persistence/main.go` - `CommitAndSaveService`, `LoadService`, mutate, and save the next generation
+- `semantic-index-persistence/main.go` - raw `Index` persistence with `CommitAndSave` and `Load`
 - `semantic-ollama/main.go` - external Ollama embeddings with separate document and query prompts
 
 Snapshot examples:
@@ -79,6 +80,7 @@ go run ./examples/client-library/segment-bundle
 go run ./examples/client-library/rank-profile
 go run ./examples/client-library/semantic-commit
 go run ./examples/client-library/semantic-persistence
+go run ./examples/client-library/semantic-index-persistence
 ```
 
 The Ollama example additionally requires a running model:

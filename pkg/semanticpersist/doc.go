@@ -1,11 +1,11 @@
 // Package semanticpersist provides generation-based persistence for
 // semantic.Index.
 //
-// Save persists one already committed index generation. CommitAndSave prepares
-// the pending revision, persists that candidate under the Index mutation gate,
-// and only then makes its matching view searchable. LoadService reconstructs
-// an in-memory semantic.Service and returns the loaded generation for the next
-// optimistic save. Loading owns no persistent filesystem resources.
+// Save persists one already committed raw index generation. SaveService and
+// CommitAndSaveService also persist the model-backed ServiceConfig required by
+// LoadService. CommitAndSave and CommitAndSaveService prepare the pending
+// revision under the Index mutation gate and publish it only after persistence.
+// Loading owns no persistent filesystem resources.
 //
 // Save and Load are the lower-level operations for callers that manage
 // semantic.Index directly. Save requires an explicit expected generation.
@@ -51,7 +51,8 @@
 //
 // semantic-state.bin contains the logical index state required to resume
 // writes after restore, including configuration, revision and allocation
-// metadata, vector-to-chunk mappings, and liveness information.
+// metadata, vector-to-chunk mappings, and liveness information. Service-aware
+// generations additionally contain the immutable model pipeline configuration.
 //
 // # CURRENT and saving
 //
@@ -111,12 +112,12 @@
 // ErrLockUnsupported. This is intentionally stricter than ftspersist, which
 // has a Windows LockFileEx implementation.
 //
-// CommitAndSave is the ordinary document-level write flow and requires no
-// caller-side mutex. It holds the mutation gate through candidate preparation,
-// filesystem persistence, and in-memory publication. Concurrent mutations wait;
-// search continues against the previous immutable view until persistence
-// succeeds. Save remains the low-level operation for an index that is already
-// committed and rejects pending mutations.
+// CommitAndSaveService is the ordinary model-backed document-level write flow
+// and requires no caller-side mutex. It holds the mutation gate through
+// candidate preparation, filesystem persistence, and in-memory publication.
+// Concurrent mutations wait; search continues against the previous immutable
+// view until persistence succeeds. Save and CommitAndSave remain the low-level
+// operations for raw indexes and external encoder pipelines.
 //
 // If optimistic generation matching or filesystem persistence fails before
 // CURRENT replacement, the candidate is not searchable and its mutations remain

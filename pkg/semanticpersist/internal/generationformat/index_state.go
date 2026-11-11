@@ -9,7 +9,7 @@ import (
 
 // SSTA wire-format version. Semantic persistence predates production use, so
 // old semantic state versions are intentionally not migrated.
-const stateVersion = uint16(16)
+const stateVersion = uint16(17)
 
 const minimumRowBytes = wireUint64Size + 3*wireStringLengthPrefixSize + wireUint32Size + 2*wireUint64Size
 
@@ -19,8 +19,10 @@ const (
 	stateIndexIDSize              = 16
 
 	stateConfigFixedSize    = stateConfigUint32FieldCount*wireUint32Size + wireUint64Size + 2*wireUint8Size + wireUint16Size
+	stateServiceFlagSize    = wireUint32Size
+	stateServiceFixedSize   = 6*wireUint32Size + 2*wireUint64Size
 	stateUint64MetadataSize = stateUint64MetadataFieldCount * wireUint64Size
-	stateFixedEncodedSize   = wireHeaderSize + stateIndexIDSize + stateConfigFixedSize + stateUint64MetadataSize + wireUint32Size + wireChecksumSize
+	stateFixedEncodedSize   = wireHeaderSize + stateIndexIDSize + stateConfigFixedSize + stateServiceFlagSize + stateUint64MetadataSize + wireUint32Size + wireChecksumSize
 
 	stateSegmentFixedSize = wireUint64Size + 2*wireUint32Size
 	stateRowFixedSize     = wireUint64Size + wireUint32Size + 2*wireUint64Size
@@ -35,6 +37,7 @@ type SegmentState struct {
 type IndexState struct {
 	ID                   semantic.IndexID
 	Config               semantic.IndexConfig
+	ServiceConfig        *semantic.ServiceConfig
 	Revision             semantic.Revision
 	MaxAllocatedVectorID semantic.VectorID
 	NextSegmentID        semantic.SegmentID
@@ -52,6 +55,7 @@ func EncodeState(value IndexState, limits Config) ([]byte, FileRef, error) {
 	e := newEncoder("SSTA", stateVersion, expectedSize, limits)
 	e.writeBytes(value.ID[:])
 	encodeIndexConfig(e, value.Config)
+	encodeServiceConfig(e, value.ServiceConfig, limits.MaxStringBytes)
 	e.writeUint64(uint64(value.Revision))
 	e.writeUint64(uint64(value.MaxAllocatedVectorID))
 	e.writeUint64(uint64(value.NextSegmentID))
@@ -82,6 +86,7 @@ func DecodeState(data []byte, limits Config) (IndexState, error) {
 	value := IndexState{}
 	copy(value.ID[:], d.readBytes(stateIndexIDSize))
 	value.Config = decodeIndexConfig(d)
+	value.ServiceConfig = decodeServiceConfig(d, value.Config)
 	value.Revision = semantic.Revision(d.readUint64())
 	value.MaxAllocatedVectorID = semantic.VectorID(d.readUint64())
 	value.NextSegmentID = semantic.SegmentID(d.readUint64())
@@ -182,6 +187,51 @@ func decodeIndexConfig(d *decoder) semantic.IndexConfig {
 	c.HNSW.Search.VisitLimit = int(d.readUint32())
 	c.Search.MaxVisitLimit = int(d.readUint32())
 	c.HNSW.Build.Seed = d.readUint64()
+	return c
+}
+
+func encodeServiceConfig(e *encoder, c *semantic.ServiceConfig, maxString int) {
+	if c == nil {
+		e.writeUint32(0)
+		return
+	}
+	e.writeUint32(1)
+	e.writeUint32(uint32(c.Model.Dimensions))
+	e.writeUint32(uint32(c.Model.ContextTokens))
+	e.writeUint32(uint32(c.Chunking.TargetBytes))
+	e.writeUint32(uint32(c.Chunking.MaxBytes))
+	e.writeUint32(uint32(c.Chunking.OverlapBytes))
+	e.writeUint32(uint32(c.Encoding.MaxFields))
+	e.writeUint64(c.Encoding.MaxSourceBytes)
+	e.writeUint64(c.Encoding.MaxEmbeddingBytes)
+	e.writeString(c.Model.ID, maxString)
+	e.writeString(c.Model.Revision, maxString)
+	e.writeString(c.Model.DocumentPrefix, maxString)
+	e.writeString(c.Model.QueryPrefix, maxString)
+}
+
+func decodeServiceConfig(d *decoder, index semantic.IndexConfig) *semantic.ServiceConfig {
+	present := d.readUint32()
+	if present == 0 {
+		return nil
+	}
+	if present != 1 {
+		d.decodeErr = ErrCorrupt
+		return nil
+	}
+	c := &semantic.ServiceConfig{Index: index}
+	c.Model.Dimensions = int(d.readUint32())
+	c.Model.ContextTokens = int(d.readUint32())
+	c.Chunking.TargetBytes = int(d.readUint32())
+	c.Chunking.MaxBytes = int(d.readUint32())
+	c.Chunking.OverlapBytes = int(d.readUint32())
+	c.Encoding.MaxFields = int(d.readUint32())
+	c.Encoding.MaxSourceBytes = d.readUint64()
+	c.Encoding.MaxEmbeddingBytes = d.readUint64()
+	c.Model.ID = d.readString()
+	c.Model.Revision = d.readString()
+	c.Model.DocumentPrefix = d.readString()
+	c.Model.QueryPrefix = d.readString()
 	return c
 }
 

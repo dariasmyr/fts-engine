@@ -195,7 +195,7 @@ func TestCommitAndSaveFailureBeforeCurrentKeepsMutationPending(t *testing.T) {
 			return nil
 		},
 	}
-	_, err = commitAndSave(ctx, root, index, previous.ID, cfg)
+	_, err = commitAndSave(ctx, root, index, nil, previous.ID, cfg)
 	if !errors.Is(err, failed) {
 		t.Fatalf("commitAndSave() error = %v, want injected failure", err)
 	}
@@ -269,7 +269,7 @@ func TestCommitAndSaveIndeterminateOutcomePublishesCandidate(t *testing.T) {
 			return nil
 		},
 	}
-	generationID, err := commitAndSave(ctx, root, index, 0, cfg)
+	generationID, err := commitAndSave(ctx, root, index, nil, 0, cfg)
 	if !errors.Is(err, ErrIndeterminate) {
 		t.Fatalf("commitAndSave() error = %v, want ErrIndeterminate", err)
 	}
@@ -381,7 +381,7 @@ func TestCommitAndSaveBlocksMutationUntilPersistenceCompletes(t *testing.T) {
 
 	saveDone := make(chan error, 1)
 	go func() {
-		_, err := commitAndSave(ctx, root, index, 0, cfg)
+		_, err := commitAndSave(ctx, root, index, nil, 0, cfg)
 		saveDone <- err
 	}()
 	<-writeStarted

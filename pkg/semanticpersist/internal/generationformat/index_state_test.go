@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
@@ -16,8 +17,8 @@ func TestStateVersionAndLifecycleLimitsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version := binary.LittleEndian.Uint16(data[4:6]); version != 16 {
-		t.Fatalf("state version = %d, want 16", version)
+	if version := binary.LittleEndian.Uint16(data[4:6]); version != 17 {
+		t.Fatalf("state version = %d, want 17", version)
 	}
 	decoded, err := DecodeState(data, limits)
 	if err != nil {
@@ -30,7 +31,7 @@ func TestStateVersionAndLifecycleLimitsRoundTrip(t *testing.T) {
 		t.Fatalf("decoded index ID = %x, want %x", decoded.ID, value.ID)
 	}
 
-	binary.LittleEndian.PutUint16(data[4:6], 15)
+	binary.LittleEndian.PutUint16(data[4:6], 16)
 	if _, err := DecodeState(data, limits); !errors.Is(err, ErrUnsupportedVersion) {
 		t.Fatalf("DecodeState old version error = %v, want ErrUnsupportedVersion", err)
 	}
@@ -49,6 +50,33 @@ func TestStateIndexConfigRoundTrip(t *testing.T) {
 	}
 	if decoded.Config != value.Config {
 		t.Fatalf("semantic config = %+v, want %+v", decoded.Config, value.Config)
+	}
+}
+
+func TestStateServiceConfigRoundTrip(t *testing.T) {
+	value := testIndexState(t)
+	value.ServiceConfig = &semantic.ServiceConfig{
+		Model: semantic.ModelConfig{
+			ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 16,
+			DocumentPrefix: "document: ", QueryPrefix: "query: ",
+		},
+		Index:    value.Config,
+		Chunking: chunk.Config{TargetBytes: 8, MaxBytes: 16, OverlapBytes: 2},
+		Encoding: semantic.EncodingLimits{
+			MaxFields: 5, MaxSourceBytes: 2048, MaxEmbeddingBytes: 24,
+		},
+	}
+
+	data, _, err := EncodeState(value, testStateLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeState(data, testStateLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ServiceConfig == nil || *decoded.ServiceConfig != *value.ServiceConfig {
+		t.Fatalf("service config = %+v, want %+v", decoded.ServiceConfig, value.ServiceConfig)
 	}
 }
 

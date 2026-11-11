@@ -640,39 +640,39 @@ if err != nil {
 if err := service.AddDocument(ctx, document); err != nil {
 	return err
 }
-generation, err := semanticpersist.CommitAndSave(
+generation, err := semanticpersist.CommitAndSaveService(
 	ctx,
 	"./data/semantic",
-	service.Index(),
+	service,
 	semanticpersist.SaveConfig{
 		ExpectedGeneration: &semanticpersist.Generation{},
 	},
 )
 ```
 
-`CommitAndSave` prepares one revision, persists that exact candidate, and only
-then makes it searchable. Persistence stores only `IndexConfig`: dimensions,
-metric, limits, search ceilings, and HNSW settings. Model, chunking, and encoding
-settings remain service concerns and are supplied again to `LoadService`:
+`CommitAndSaveService` prepares one revision, persists that exact candidate, and
+only then makes it searchable. The generation stores `IndexConfig` plus the
+service-level model, chunking, prefixes, and encoding limits. `LoadService`
+restores that configuration and only requires a matching embedding client:
 
 ```go
 loaded, generation, err := semanticpersist.LoadService(
 	ctx,
 	"./data/semantic",
 	embeddingClient,
-	config,
 	semanticpersist.LoadConfig{},
 )
 service = loaded
 ```
 
-External encoders cannot be serialized. Load the index through
-`semanticpersist.Load`, reconstruct the encoders, and bind them through
-`semantic.NewService`.
+Raw indexes and external encoders use `Save`/`CommitAndSave` and `Load` instead.
+Reconstruct external encoders and bind them through `semantic.NewService`.
 
 See the runnable
 [`semantic-persistence` example](examples/client-library/semantic-persistence/main.go)
-for the complete save and load flow.
+for the model-backed save and load flow. The
+[`semantic-index-persistence` example](examples/client-library/semantic-index-persistence/main.go)
+shows raw `Index` persistence with caller-owned embeddings.
 
 Replacement and deletion leave stale physical vectors in the service until
 `service.Compact(ctx)` is called. Compaction preserves stable `VectorID` values

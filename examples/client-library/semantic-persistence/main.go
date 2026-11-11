@@ -38,10 +38,10 @@ func main() {
 
 	must(service.AddDocument(ctx, document("doc-a", "a-v1")))
 	must(service.AddDocument(ctx, document("doc-b", "b")))
-	generation, err := semanticpersist.CommitAndSave(
+	generation, err := semanticpersist.CommitAndSaveService(
 		ctx,
 		root,
-		service.Index(),
+		service,
 		semanticpersist.SaveConfig{
 			ExpectedGeneration: &semanticpersist.Generation{},
 		},
@@ -51,10 +51,10 @@ func main() {
 	search(ctx, service, "query-v1", "after commit and save")
 
 	must(service.ReplaceDocument(ctx, document("doc-a", "a-v2")))
-	generation, err = semanticpersist.CommitAndSave(
+	generation, err = semanticpersist.CommitAndSaveService(
 		ctx,
 		root,
-		service.Index(),
+		service,
 		semanticpersist.SaveConfig{
 			ExpectedGeneration: &generation,
 		},
@@ -66,7 +66,6 @@ func main() {
 		ctx,
 		root,
 		persistenceEmbedder{},
-		config,
 		semanticpersist.LoadConfig{},
 	)
 	must(err)

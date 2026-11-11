@@ -34,7 +34,38 @@ func Save(
 	if err != nil {
 		return Generation{}, err
 	}
-	generationID, err := save(ctx, root, index, config.ExpectedGeneration.ID, cfg)
+	generationID, err := save(ctx, root, index, nil, config.ExpectedGeneration.ID, cfg)
+	return Generation{ID: generationID}, err
+}
+
+// SaveService persists one committed model-backed service generation. The
+// saved ServiceConfig is restored by LoadService and cannot be replaced by the
+// caller during loading.
+func SaveService(
+	ctx context.Context,
+	root string,
+	service *semantic.Service,
+	config SaveConfig,
+) (Generation, error) {
+	if config.ExpectedGeneration == nil {
+		return Generation{}, ErrExpectedGenerationRequired
+	}
+	serviceConfig, index, err := persistedService(service)
+	if err != nil {
+		return Generation{}, err
+	}
+	cfg, err := newSettings(config.Config)
+	if err != nil {
+		return Generation{}, err
+	}
+	generationID, err := save(
+		ctx,
+		root,
+		index,
+		&serviceConfig,
+		config.ExpectedGeneration.ID,
+		cfg,
+	)
 	return Generation{ID: generationID}, err
 }
 
@@ -59,16 +90,63 @@ func CommitAndSave(
 		ctx,
 		root,
 		index,
+		nil,
 		config.ExpectedGeneration.ID,
 		cfg,
 	)
 	return Generation{ID: generationID}, err
 }
 
+// CommitAndSaveService atomically commits and persists a model-backed service,
+// including the immutable ServiceConfig required by LoadService.
+func CommitAndSaveService(
+	ctx context.Context,
+	root string,
+	service *semantic.Service,
+	config SaveConfig,
+) (Generation, error) {
+	if config.ExpectedGeneration == nil {
+		return Generation{}, ErrExpectedGenerationRequired
+	}
+	serviceConfig, index, err := persistedService(service)
+	if err != nil {
+		return Generation{}, err
+	}
+	cfg, err := newSettings(config.Config)
+	if err != nil {
+		return Generation{}, err
+	}
+	generationID, err := commitAndSave(
+		ctx,
+		root,
+		index,
+		&serviceConfig,
+		config.ExpectedGeneration.ID,
+		cfg,
+	)
+	return Generation{ID: generationID}, err
+}
+
+func persistedService(service *semantic.Service) (semantic.ServiceConfig, *semantic.Index, error) {
+	if service == nil {
+		return semantic.ServiceConfig{}, nil, ErrCorrupt
+	}
+	config, ok := service.Config()
+	if !ok {
+		return semantic.ServiceConfig{}, nil, semantic.ErrModelServiceUnavailable
+	}
+	index := service.Index()
+	if index == nil || config.Index != index.Config() {
+		return semantic.ServiceConfig{}, nil, ErrCorrupt
+	}
+	return config, index, nil
+}
+
 func commitAndSave(
 	ctx context.Context,
 	root string,
 	index *semantic.Index,
+	serviceConfig *semantic.ServiceConfig,
 	expectedGenerationID uint64,
 	cfg settings,
 ) (uint64, error) {
@@ -89,6 +167,7 @@ func commitAndSave(
 			ctx,
 			root,
 			committed,
+			serviceConfig,
 			expectedGenerationID,
 			cfg,
 		)
@@ -109,6 +188,7 @@ func save(
 	ctx context.Context,
 	root string,
 	index *semantic.Index,
+	serviceConfig *semantic.ServiceConfig,
 	expectedGenerationID uint64,
 	cfg settings,
 ) (uint64, error) {
@@ -125,13 +205,14 @@ func save(
 	if err != nil {
 		return 0, err
 	}
-	return saveCommittedState(ctx, root, committed, expectedGenerationID, cfg)
+	return saveCommittedState(ctx, root, committed, serviceConfig, expectedGenerationID, cfg)
 }
 
 func saveCommittedState(
 	ctx context.Context,
 	root string,
 	committed *semantic.CommittedIndexState,
+	serviceConfig *semantic.ServiceConfig,
 	expectedGenerationID uint64,
 	cfg settings,
 ) (uint64, error) {
@@ -147,7 +228,7 @@ func saveCommittedState(
 
 	// Validation boundary: convert the detached domain state into the wire DTO
 	// before acquiring filesystem resources.
-	state, err := buildPersistenceState(ctx, committed)
+	state, err := buildPersistenceState(ctx, committed, serviceConfig)
 	if err != nil {
 		return 0, err
 	}

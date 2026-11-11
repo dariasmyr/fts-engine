@@ -55,6 +55,48 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 			return 0, codecErrorf(ErrLimitExceeded, "state config %s value %d exceeds uint32", field.name, field.value)
 		}
 	}
+	if value.ServiceConfig != nil {
+		service := *value.ServiceConfig
+		if service.Index != c || service.Validate() != nil {
+			return 0, codecErrorf(ErrCorrupt, "state service config is invalid")
+		}
+		serviceIntegers := []struct {
+			name  string
+			value int
+		}{
+			{name: "model dimensions", value: service.Model.Dimensions},
+			{name: "model context tokens", value: service.Model.ContextTokens},
+			{name: "chunk target bytes", value: service.Chunking.TargetBytes},
+			{name: "chunk max bytes", value: service.Chunking.MaxBytes},
+			{name: "maximum encoding fields", value: service.Encoding.MaxFields},
+		}
+		for _, field := range serviceIntegers {
+			if field.value <= 0 {
+				return 0, codecErrorf(ErrCorrupt, "state service config %s must be positive, got %d", field.name, field.value)
+			}
+			if uint64(field.value) > math.MaxUint32 {
+				return 0, codecErrorf(ErrLimitExceeded, "state service config %s value %d exceeds uint32", field.name, field.value)
+			}
+		}
+		if service.Chunking.OverlapBytes < 0 || uint64(service.Chunking.OverlapBytes) > math.MaxUint32 ||
+			service.Encoding.MaxSourceBytes == 0 || service.Encoding.MaxEmbeddingBytes == 0 {
+			return 0, codecErrorf(ErrCorrupt, "state service config limits are invalid")
+		}
+		if !accumulateEncodedSize(&encodedSize, stateServiceFixedSize) {
+			return 0, ErrLimitExceeded
+		}
+		for _, text := range []string{
+			service.Model.ID,
+			service.Model.Revision,
+			service.Model.DocumentPrefix,
+			service.Model.QueryPrefix,
+		} {
+			if !utf8.ValidString(text) || len(text) > limits.MaxStringBytes ||
+				!accumulateEncodedStringSize(&encodedSize, text) {
+				return 0, ErrLimitExceeded
+			}
+		}
+	}
 	if c.Dimensions > limits.MaxDimensions {
 		return 0, codecErrorf(ErrLimitExceeded, "state dimensions %d exceed limit %d", c.Dimensions, limits.MaxDimensions)
 	}

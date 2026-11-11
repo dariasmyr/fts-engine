@@ -68,7 +68,7 @@ func BenchmarkLoadService(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-	if _, err := CommitAndSave(ctx, root, service.Index(), SaveConfig{
+	if _, err := CommitAndSaveService(ctx, root, service, SaveConfig{
 		ExpectedGeneration: &Generation{},
 	}); err != nil {
 		b.Fatal(err)
@@ -81,7 +81,6 @@ func BenchmarkLoadService(b *testing.B) {
 			ctx,
 			root,
 			client,
-			serviceConfig,
 			LoadConfig{},
 		)
 		if err != nil {
@@ -112,7 +111,7 @@ func BenchmarkCommitAndSave(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-	generation, err := CommitAndSave(ctx, root, service.Index(), SaveConfig{
+	generation, err := CommitAndSaveService(ctx, root, service, SaveConfig{
 		ExpectedGeneration: &Generation{},
 	})
 	if err != nil {
@@ -122,7 +121,7 @@ func BenchmarkCommitAndSave(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		next, err := CommitAndSave(ctx, root, service.Index(), SaveConfig{
+		next, err := CommitAndSaveService(ctx, root, service, SaveConfig{
 			ExpectedGeneration: &generation,
 		})
 		if err != nil {

@@ -113,7 +113,7 @@ func TestSaveFailureBeforeCurrentReplacementKeepsPreviousGeneration(t *testing.T
 					return nil
 				},
 			}
-			_, err = save(ctx, root, index, previous.ID, cfg)
+			_, err = save(ctx, root, index, nil, previous.ID, cfg)
 			if !errors.Is(err, failed) {
 				t.Fatalf("save() error = %v, want injected failure", err)
 			}
@@ -162,7 +162,7 @@ func TestSaveRetrySkipsInstalledOrphanGeneration(t *testing.T) {
 			return nil
 		},
 	}
-	if _, err := save(ctx, root, index, previous.ID, cfg); !errors.Is(err, failed) {
+	if _, err := save(ctx, root, index, nil, previous.ID, cfg); !errors.Is(err, failed) {
 		t.Fatalf("save() error = %v, want injected failure", err)
 	}
 
@@ -213,7 +213,7 @@ func TestSaveFailureAfterCurrentReplacementIsIndeterminate(t *testing.T) {
 					return nil
 				},
 			}
-			if _, err := save(ctx, root, index, previous.ID, cfg); !errors.Is(err, ErrIndeterminate) {
+			if _, err := save(ctx, root, index, nil, previous.ID, cfg); !errors.Is(err, ErrIndeterminate) {
 				t.Fatalf("save() error = %v, want ErrIndeterminate", err)
 			}
 			_, generation, err := Load(ctx, root, LoadConfig{})
