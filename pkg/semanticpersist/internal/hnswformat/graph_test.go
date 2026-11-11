@@ -43,6 +43,13 @@ func TestGraphFileRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	encodedSize, err := GraphFileSize(index.TopologyStats())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encodedSize != metadata.Size {
+		t.Fatalf("GraphFileSize() = %d, want %d", encodedSize, metadata.Size)
+	}
 	limits := Config{
 		MaxFileBytes:   1 << 20,
 		MaxGraphBytes:  1 << 20,

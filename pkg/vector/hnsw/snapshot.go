@@ -5,6 +5,38 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
+// TopologyStats describes the HNSW topology without copying its CSR arrays.
+type TopologyStats struct {
+	NodeCount           int
+	Level0LinkCount     int
+	UpperLayerNodeCount int
+	UpperLinkCount      int
+
+	MaxNeighbors          int
+	LevelZeroMaxNeighbors int
+	EfConstruction        int
+	Seed                  uint64
+}
+
+// TopologyStats returns allocation-free metadata about index topology.
+func (i *Index) TopologyStats() TopologyStats {
+	if i == nil {
+		return TopologyStats{}
+	}
+
+	t := i.topology
+	return TopologyStats{
+		NodeCount:             len(t.levels),
+		Level0LinkCount:       len(t.level0Neighbors),
+		UpperLayerNodeCount:   len(t.upperLinkOffsets) - 1,
+		UpperLinkCount:        len(t.upperNeighbors),
+		MaxNeighbors:          t.build.maxNeighbors,
+		LevelZeroMaxNeighbors: t.build.levelZeroMaxNeighbors,
+		EfConstruction:        t.build.efConstruction,
+		Seed:                  t.build.seed,
+	}
+}
+
 // Snapshot returns an internal, detached representation of index topology.
 func Snapshot(index *Index) hnswmodel.Snapshot {
 	if index == nil {

@@ -112,9 +112,17 @@ func graphFromSnapshot(snapshot hnswmodel.Snapshot, vectors FileRef) graph {
 	}
 }
 
-// GraphFileSize returns the encoded graph file size for an HNSW snapshot.
-func GraphFileSize(snapshot hnswmodel.Snapshot, vectors FileRef) (uint64, error) {
-	return encodedGraphSize(graphFromSnapshot(snapshot, vectors))
+// GraphFileSize returns the encoded graph file size for HNSW topology stats.
+func GraphFileSize(stats hnsw.TopologyStats) (uint64, error) {
+	if stats.NodeCount < 0 || stats.Level0LinkCount < 0 || stats.UpperLayerNodeCount < 0 || stats.UpperLinkCount < 0 {
+		return 0, ErrCorrupt
+	}
+	return encodedGraphSizeFromCounts(
+		uint64(stats.NodeCount),
+		uint64(stats.Level0LinkCount),
+		uint64(stats.UpperLayerNodeCount),
+		uint64(stats.UpperLinkCount),
+	)
 }
 
 func validateDecodedGraph(

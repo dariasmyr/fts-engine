@@ -266,11 +266,20 @@ func encodedGraphSize(graph graph) (uint64, error) {
 	if len(graph.UpperLinkOffsets) == 0 {
 		return 0, ErrCorrupt
 	}
-	topologyBytes, ok := topologyBytes(
+	return encodedGraphSizeFromCounts(
 		uint64(len(graph.Levels)),
 		uint64(len(graph.Level0Links)),
 		uint64(len(graph.UpperLinkOffsets)-1),
 		uint64(len(graph.UpperLinks)),
+	)
+}
+
+func encodedGraphSizeFromCounts(nodes, level0, placements, upper uint64) (uint64, error) {
+	topologyBytes, ok := topologyBytes(
+		nodes,
+		level0,
+		placements,
+		upper,
 	)
 	if !ok {
 		return 0, ErrLimitExceeded

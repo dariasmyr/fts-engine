@@ -273,7 +273,7 @@ func validateSegmentData(data semantic.SegmentState, config semantic.IndexConfig
 	}
 	dimensions := data.Index.Dimensions()
 	length := data.Index.Len()
-	topology := hnsw.Snapshot(data.Index)
+	topology := data.Index.TopologyStats()
 	if dimensions <= 0 || dimensions > limits.MaxDimensions || length < 0 || length > limits.MaxVectors ||
 		semanticLimits.MaxLiveVectors <= 0 || semanticLimits.MaxStaleVectors < 0 ||
 		semanticLimits.MaxLiveVectors > limits.MaxVectors-semanticLimits.MaxStaleVectors ||
@@ -291,14 +291,14 @@ func validateSegmentData(data semantic.SegmentState, config semantic.IndexConfig
 	if !ok || vectorBytes > limits.MaxVectorBytes || limits.MaxFileBytes < 44 || vectorBytes > limits.MaxFileBytes-44 {
 		return ErrLimitExceeded
 	}
-	directedLinks, ok := format.CheckedAddUint64(uint64(len(topology.Level0Links)), uint64(len(topology.UpperLinks)))
+	directedLinks, ok := format.CheckedAddUint64(uint64(topology.Level0LinkCount), uint64(topology.UpperLinkCount))
 	if !ok || config.Search.MaxEfSearch > limits.MaxEfSearch || config.Search.MaxVisitLimit > limits.MaxVisitLimit ||
 		topology.MaxNeighbors != config.HNSW.Build.MaxNeighbors || topology.LevelZeroMaxNeighbors != config.HNSW.Build.MaxNeighbors*2 ||
 		topology.EfConstruction != config.HNSW.Build.EfConstruction || topology.Seed != config.HNSW.Build.Seed ||
 		directedLinks > limits.MaxGraphLinks {
 		return ErrLimitExceeded
 	}
-	graphBytes, err := hnswformat.GraphFileSize(topology, generationformat.FileRef{Size: 1, SHA256: [32]byte{1}})
+	graphBytes, err := hnswformat.GraphFileSize(topology)
 	if err != nil || graphBytes > min(limits.MaxFileBytes, limits.MaxGraphBytes) {
 		return ErrLimitExceeded
 	}
