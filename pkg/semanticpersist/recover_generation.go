@@ -6,7 +6,6 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/internal/persistfs"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/storage"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -30,48 +29,36 @@ func RecoverGeneration(
 	if err != nil {
 		return err
 	}
-	l := newLayout(root)
-	if err := l.validate(); err != nil {
-		return err
-	}
-	lock, err := storage.AcquireOperationLock(l.lock)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
+	return withStorageOperation(root, operationLayoutExisting, func(operation *storageOperation) error {
+		l := operation.layout
+		generations := newGenerationFiles(l, cfg)
+		persisted, err := generations.open(
+			ctx,
+			config.Generation.ID,
+			nil,
+		)
+		if err != nil {
+			return err
+		}
 
-	generations := newGenerationFiles(l, cfg)
-
-	persisted, err := generations.open(
-		ctx,
-		config.Generation.ID,
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-
-	segments := newSegmentStore(l, cfg)
-
-	_, err = restoreIndex(
-		ctx,
-		persisted,
-		segments,
-	)
-	if err != nil {
-		return err
-	}
-
-	if err := syncSavedGeneration(l, persisted.manifest); err != nil {
-		return err
-	}
-
-	return newCurrentFile(l, cfg).replace(
-		generationformat.Head{
-			GenerationID: config.Generation.ID,
-			ManifestHash: persisted.manifestRef.SHA256,
-		},
-	)
+		segments := newSegmentStore(l, cfg)
+		if _, err := restoreIndex(ctx, persisted, segments); err != nil {
+			return err
+		}
+		if err := syncSavedGeneration(l, persisted.manifest); err != nil {
+			return err
+		}
+		if err := newCurrentFile(l, cfg).replace(
+			generationformat.Head{
+				GenerationID: config.Generation.ID,
+				ManifestHash: persisted.manifestRef.SHA256,
+			},
+		); err != nil {
+			return err
+		}
+		operation.markPublishedToStorage()
+		return nil
+	})
 }
 
 func syncSavedGeneration(l layout, manifest generationformat.GenerationManifest) error {

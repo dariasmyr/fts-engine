@@ -10,7 +10,6 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/internal/persistfs"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/storage"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -233,50 +232,47 @@ func saveCommittedState(
 		return 0, err
 	}
 
-	l := newLayout(root)
-	rootCreated, err := l.prepare()
-	if err != nil {
-		return 0, err
-	}
-	lock, err := storage.AcquireOperationLock(l.lock)
-	if err != nil {
-		return 0, err
-	}
-	defer lock.Close()
+	return withStorageOperationResult(root, operationLayoutPrepare, func(operation *storageOperation) (uint64, error) {
+		l := operation.layout
+		for _, path := range []string{l.segments, l.objects, l.generations, l.root} {
+			if err := persistfs.SyncDirectory(path); err != nil {
+				return 0, err
+			}
+		}
+		if operation.rootCreated {
+			if err := persistfs.SyncDirectory(filepath.Dir(l.root)); err != nil {
+				return 0, err
+			}
+		}
 
-	for _, path := range []string{l.segments, l.objects, l.generations, l.root} {
-		if err := persistfs.SyncDirectory(path); err != nil {
+		head, hasCurrent, err := readCurrent(ctx, l, cfg)
+		if err != nil {
 			return 0, err
 		}
-	}
-	if rootCreated {
-		if err := persistfs.SyncDirectory(filepath.Dir(l.root)); err != nil {
+		currentID := uint64(0)
+		if hasCurrent {
+			currentID = head.GenerationID
+		}
+		if currentID != expectedGenerationID {
+			return 0, ErrStaleGeneration
+		}
+
+		reusable, err := loadReusableSegments(ctx, l, cfg, head, hasCurrent, state.state.ID)
+		if err != nil {
 			return 0, err
 		}
-	}
-
-	head, hasCurrent, err := readCurrent(ctx, l, cfg)
-	if err != nil {
-		return 0, err
-	}
-	currentID := uint64(0)
-	if hasCurrent {
-		currentID = head.GenerationID
-	}
-	if currentID != expectedGenerationID {
-		return 0, ErrStaleGeneration
-	}
-
-	reusable, err := loadReusableSegments(ctx, l, cfg, head, hasCurrent, state.state.ID)
-	if err != nil {
-		return 0, err
-	}
-	nextID, err := nextGenerationID(l)
-	if err != nil {
-		return 0, err
-	}
-	writer := generationWriter{layout: l, reusable: reusable}
-	return writer.write(ctx, state, nextID, cfg)
+		nextID, err := nextGenerationID(l)
+		if err != nil {
+			return 0, err
+		}
+		writer := generationWriter{layout: l, reusable: reusable}
+		generationID, err := writer.write(ctx, state, nextID, cfg)
+		if err != nil {
+			return 0, err
+		}
+		operation.markPublishedToStorage()
+		return generationID, nil
+	})
 }
 
 func readCurrent(

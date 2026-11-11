@@ -12,7 +12,6 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/internal/persistfs"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/storage"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -40,30 +39,22 @@ func prune(
 	root string,
 	retainGenerations int,
 	cfg settings,
-) (result PruneResult, err error) {
+) (PruneResult, error) {
 	if ctx == nil {
-		return result, vector.ErrNilContext
+		return PruneResult{}, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
-		return result, err
+		return PruneResult{}, err
 	}
 	if root == "" || retainGenerations <= 0 {
-		return result, ErrCorrupt
+		return PruneResult{}, ErrCorrupt
 	}
+	return withStorageOperationResult(root, operationLayoutExisting, func(operation *storageOperation) (PruneResult, error) {
+		return pruneLocked(ctx, operation.layout, retainGenerations, cfg)
+	})
+}
 
-	l := newLayout(root)
-	if err := l.validate(); err != nil {
-		return result, err
-	}
-	lock, err := storage.AcquireOperationLock(l.lock)
-	if err != nil {
-		return result, err
-	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
-	if err := l.validate(); err != nil {
-		return result, err
-	}
-
+func pruneLocked(ctx context.Context, l layout, retainGenerations int, cfg settings) (result PruneResult, err error) {
 	dirtyDirectories := make(map[string]struct{})
 	defer func() {
 		paths := make([]string, 0, len(dirtyDirectories))

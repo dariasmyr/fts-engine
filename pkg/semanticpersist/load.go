@@ -5,7 +5,6 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/storage"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -39,37 +38,44 @@ func load(
 		return nil, Generation{}, persistedGeneration{}, err
 	}
 
-	l := newLayout(root)
-	if err := l.validate(); err != nil {
-		return nil, Generation{}, persistedGeneration{}, err
-	}
-	lock, err := storage.AcquireOperationLock(l.lock)
+	loaded, err := withStorageOperationResult(root, operationLayoutExisting, func(operation *storageOperation) (loadOperationResult, error) {
+		l := operation.layout
+		head, err := newCurrentFile(l, cfg).read(ctx)
+		if err != nil {
+			return loadOperationResult{}, err
+		}
+		persisted, err := newGenerationFiles(l, cfg).open(
+			ctx,
+			head.GenerationID,
+			&head.ManifestHash,
+		)
+		if err != nil {
+			return loadOperationResult{}, corruptMissingReference(err)
+		}
+		index, err := restoreIndex(
+			ctx,
+			persisted,
+			newSegmentStore(l, cfg),
+		)
+		if err != nil {
+			return loadOperationResult{}, corruptMissingReference(err)
+		}
+		return loadOperationResult{
+			index:      index,
+			generation: Generation{ID: head.GenerationID},
+			persisted:  persisted,
+		}, nil
+	})
 	if err != nil {
 		return nil, Generation{}, persistedGeneration{}, err
 	}
-	defer lock.Close()
+	return loaded.index, loaded.generation, loaded.persisted, nil
+}
 
-	head, err := newCurrentFile(l, cfg).read(ctx)
-	if err != nil {
-		return nil, Generation{}, persistedGeneration{}, err
-	}
-	persisted, err := newGenerationFiles(l, cfg).open(
-		ctx,
-		head.GenerationID,
-		&head.ManifestHash,
-	)
-	if err != nil {
-		return nil, Generation{}, persistedGeneration{}, corruptMissingReference(err)
-	}
-	index, err := restoreIndex(
-		ctx,
-		persisted,
-		newSegmentStore(l, cfg),
-	)
-	if err != nil {
-		return nil, Generation{}, persistedGeneration{}, corruptMissingReference(err)
-	}
-	return index, Generation{ID: head.GenerationID}, persisted, nil
+type loadOperationResult struct {
+	index      *semantic.Index
+	generation Generation
+	persisted  persistedGeneration
 }
 
 // LoadService restores the saved model-backed service configuration and binds
