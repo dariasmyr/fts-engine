@@ -2,6 +2,7 @@ package semanticpersist
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -131,6 +132,83 @@ func BenchmarkCommitAndSave(b *testing.B) {
 	}
 }
 
+func BenchmarkIncrementalSaveReusedSegments(b *testing.B) {
+	for _, segmentCount := range []int{1, 8, 16} {
+		b.Run(fmt.Sprintf("segments=%d", segmentCount), func(b *testing.B) {
+			ctx := context.Background()
+			root := b.TempDir()
+			client := persistenceBenchmarkClient(b)
+			service := newPersistenceBenchmarkService(b, client, segmentCount)
+			generation, err := CommitAndSaveService(ctx, root, service, SaveConfig{
+				ExpectedGeneration: &Generation{},
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+			before := benchmarkDirectoryBytes(b, root)
+			verifiedBytes := benchmarkDirectoryBytes(b, newLayout(root).segments)
+			operations := 0
+			b.ReportAllocs()
+			for b.Loop() {
+				next, err := CommitAndSaveService(ctx, root, service, SaveConfig{
+					ExpectedGeneration: &generation,
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+				generation = next
+				operations++
+			}
+			after := benchmarkDirectoryBytes(b, root)
+			b.ReportMetric(float64(segmentCount), "segments")
+			b.ReportMetric(float64(after-before)/float64(operations), "retained-bytes/op")
+			b.ReportMetric(float64(verifiedBytes), "verified-bytes/op")
+		})
+	}
+}
+
+func BenchmarkLoadServiceSegments(b *testing.B) {
+	for _, segmentCount := range []int{1, 8, 16} {
+		b.Run(fmt.Sprintf("segments=%d", segmentCount), func(b *testing.B) {
+			ctx := context.Background()
+			root := b.TempDir()
+			client := persistenceBenchmarkClient(b)
+			service := newPersistenceBenchmarkService(b, client, segmentCount)
+			if _, err := CommitAndSaveService(ctx, root, service, SaveConfig{
+				ExpectedGeneration: &Generation{},
+			}); err != nil {
+				b.Fatal(err)
+			}
+
+			b.Run("matching-model", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					loaded, _, err := LoadService(ctx, root, client, LoadConfig{})
+					if err != nil {
+						b.Fatal(err)
+					}
+					if loaded == nil {
+						b.Fatal("LoadService() returned nil service")
+					}
+				}
+				b.ReportMetric(float64(segmentCount), "segments")
+			})
+
+			mismatch := persistenceBenchmarkMismatchClient(b)
+			b.Run("mismatched-model", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					_, _, err := LoadService(ctx, root, mismatch, LoadConfig{})
+					if !errors.Is(err, semantic.ErrModelServiceUnavailable) {
+						b.Fatalf("LoadService() error = %v, want ErrModelServiceUnavailable", err)
+					}
+				}
+				b.ReportMetric(float64(segmentCount), "segments")
+			})
+		})
+	}
+}
+
 func newPersistenceBenchmarkIndex(tb testing.TB) *semantic.Index {
 	tb.Helper()
 	index, err := semantic.NewIndex(semantic.IndexConfig{
@@ -188,6 +266,71 @@ func persistenceBenchmarkClient(tb testing.TB) embedding.Client {
 		tb.Fatal(err)
 	}
 	return client
+}
+
+func persistenceBenchmarkMismatchClient(tb testing.TB) embedding.Client {
+	tb.Helper()
+	client, err := embedding.NewClient(embedding.Model{
+		ID: "persistence-benchmark", Revision: "other-revision",
+		Dimensions: persistenceBenchmarkDimensions, ContextTokens: 512,
+	}, func(context.Context, []string) ([][]float32, error) {
+		return nil, errors.New("mismatched benchmark client must not embed")
+	})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return client
+}
+
+func newPersistenceBenchmarkService(
+	tb testing.TB,
+	client embedding.Client,
+	segmentCount int,
+) *semantic.Service {
+	tb.Helper()
+	config := persistenceBenchmarkConfig(tb, client)
+	config.Index.Limits.MaxSegments = segmentCount + 1
+	service, err := semantic.New(client, config)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	documentsPerSegment := persistenceBenchmarkDocuments / segmentCount
+	for segment := range segmentCount {
+		for offset := range documentsPerSegment {
+			n := segment*documentsPerSegment + offset
+			docID := fts.DocID(fmt.Sprintf("doc-%06d", n))
+			if err := service.AddDocument(context.Background(), fts.Document{
+				ID: docID,
+				Fields: map[string]fts.FieldData{
+					fts.DefaultField: {Text: string(docID)},
+				},
+			}); err != nil {
+				tb.Fatal(err)
+			}
+		}
+		if err := service.Commit(context.Background()); err != nil {
+			tb.Fatal(err)
+		}
+	}
+	return service
+}
+
+func benchmarkDirectoryBytes(tb testing.TB, root string) int64 {
+	tb.Helper()
+	var total int64
+	err := filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			total += info.Size()
+		}
+		return nil
+	})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return total
 }
 
 func persistenceBenchmarkConfig(tb testing.TB, client embedding.Client) semantic.ServiceConfig {

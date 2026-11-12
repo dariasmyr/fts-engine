@@ -10,7 +10,7 @@ type candidatePreconditions struct {
 type stateCandidate struct {
 	preconditions    candidatePreconditions
 	view             *IndexView
-	locations        map[VectorID]vectorLocation
+	locations        *locationTable
 	allocatedSegment bool
 	resetPending     bool
 }
@@ -27,6 +27,9 @@ func (i *Index) candidatePreconditionsLocked() candidatePreconditions {
 }
 
 func (i *Index) validateCandidate(candidate stateCandidate) error {
+	if candidate.view == nil || candidate.locations == nil || candidate.locations.count != candidate.view.liveCount {
+		return ErrInternalState
+	}
 	i.stateMu.RLock()
 	defer i.stateMu.RUnlock()
 	if candidate.preconditions.revision != i.state.revision ||

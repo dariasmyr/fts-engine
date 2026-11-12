@@ -68,7 +68,7 @@ func NewIndex(config IndexConfig) (*Index, error) {
 			view:          view,
 			nextSegmentID: SegmentID(1),
 			documents:     make(map[fts.DocID]documentVectors),
-			locations:     make(map[VectorID]vectorLocation),
+			locations:     newLocationTable(),
 		},
 	}, nil
 }

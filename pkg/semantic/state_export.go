@@ -139,7 +139,7 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		return nil, ErrInvalidConfig
 	}
 	views := make([]segmentView, len(state.Segments))
-	locations := make(map[VectorID]vectorLocation)
+	locations := newLocationTable()
 	documents := make(map[fts.DocID]documentVectors)
 	type chunkKey struct {
 		documentID fts.DocID
@@ -192,7 +192,9 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 				return nil, ErrInvalidSegment
 			}
 			liveChunks[key] = struct{}{}
-			locations[row.VectorID] = vectorLocation{segment: segmentID, ordinal: vector.Ordinal(ordinal)}
+			if err := locations.set(row.VectorID, vectorLocation{segment: segmentID, ordinal: vector.Ordinal(ordinal)}); err != nil {
+				return nil, err
+			}
 
 			version := documents[row.Chunk.DocID]
 			if version.count == 0 {

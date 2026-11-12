@@ -107,7 +107,7 @@ func (i *Index) CommitWithState(
 type commitState struct {
 	candidatePreconditions
 	pending   pendingBatch
-	locations map[VectorID]vectorLocation
+	locations *locationTable
 	config    IndexConfig
 	limits    indexLimits
 }
@@ -198,17 +198,13 @@ func (i *Index) captureCommitState(ctx context.Context) (commitState, error) {
 	i.stateMu.RLock()
 	defer i.stateMu.RUnlock()
 
-	locations, err := cloneLocations(ctx, i.state.locations)
-	if err != nil {
-		return commitState{}, err
-	}
 	return commitState{
 		candidatePreconditions: i.candidatePreconditionsLocked(),
 		pending: pendingBatch{
 			additions: append([]pendingVector(nil), i.state.pending.additions...),
 			removals:  append([]VectorID(nil), i.state.pending.removals...),
 		},
-		locations: locations,
+		locations: i.state.locations,
 		config:    i.config,
 		limits:    i.limits,
 	}, nil

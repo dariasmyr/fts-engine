@@ -70,7 +70,7 @@ func (i *Index) Compact(ctx context.Context) error {
 	return nil
 }
 
-func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, config IndexConfig) (*IndexView, map[VectorID]vectorLocation, bool, error) {
+func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, config IndexConfig) (*IndexView, *locationTable, bool, error) {
 	var compacted *segment
 	if view.liveCount > 0 {
 		var err error
@@ -80,13 +80,15 @@ func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, conf
 		}
 	}
 
-	locations := make(map[VectorID]vectorLocation, view.liveCount)
+	locations := newLocationTable()
 	if compacted != nil {
 		for ordinal, row := range compacted.rows {
 			if err := contextcheck.PeriodicError(ctx, ordinal); err != nil {
 				return nil, nil, false, err
 			}
-			locations[row.VectorID] = vectorLocation{segment: segmentID, ordinal: vector.Ordinal(ordinal)}
+			if err := locations.set(row.VectorID, vectorLocation{segment: segmentID, ordinal: vector.Ordinal(ordinal)}); err != nil {
+				return nil, nil, false, err
+			}
 		}
 	}
 

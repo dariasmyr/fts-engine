@@ -16,7 +16,7 @@ type indexState struct {
 	view     *IndexView
 
 	documents map[fts.DocID]documentVectors
-	locations map[VectorID]vectorLocation
+	locations *locationTable
 
 	liveVectorCount      int
 	maxAllocatedVectorID VectorID
@@ -134,9 +134,9 @@ func (s *indexState) supersede(version documentVectors) ([]VectorID, error) {
 		return nil, nil
 	}
 
-	_, published := s.locations[version.first]
+	_, published := s.locations.get(version.first)
 	for n := 1; n < version.count; n++ {
-		_, currentPublished := s.locations[version.vectorID(n)]
+		_, currentPublished := s.locations.get(version.vectorID(n))
 		if currentPublished != published {
 			return nil, ErrInternalState
 		}
