@@ -73,6 +73,31 @@ func TestSplitterEmptyShortAndTinyUTF8Window(t *testing.T) {
 	}
 }
 
+func TestSplitterRejectsRuneLargerThanMaxBytes(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name string
+		text string
+	}{
+		{name: "two byte rune", text: "éé"},
+		{name: "three byte rune", text: "日日"},
+		{name: "four byte rune", text: "🙂🙂"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			splitter, err := NewSplitter(Config{TargetBytes: 1, MaxBytes: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := splitter.Split(tt.text); !errors.Is(err, ErrRuneExceedsMaxBytes) {
+				t.Fatalf("Split() error = %v, want ErrRuneExceedsMaxBytes", err)
+			}
+		})
+	}
+}
+
 func TestUTF8BoundaryDirectionAndProgress(t *testing.T) {
 	cases := []struct {
 		text                 string

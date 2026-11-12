@@ -71,12 +71,20 @@ func newSettings(config Config) (settings, error) {
 
 // DefaultConfig returns the validation limits used for zero-valued fields.
 func DefaultConfig() Config {
+	maxWireInt := int(^uint(0) >> 1)
+	if uint64(maxWireInt) > math.MaxUint32 {
+		maxWireInt = int(math.MaxUint32)
+	}
+	maxVectorCount := maxWireInt
+	if uint64(maxVectorCount) == math.MaxUint32 {
+		maxVectorCount--
+	}
 	return Config{
-		MaxFileBytes: 512 << 20, MaxVectorBytes: 512 << 20, MaxGraphBytes: 512 << 20,
-		MaxGraphLinks: 100_000_000, MaxOpenBytes: 1 << 30, MaxEfSearch: 1_000_000,
-		MaxVisitLimit: 10_000_000, MaxDimensions: 65_536, MaxVectors: 10_000_000,
-		MaxDocuments: 10_000_000, MaxStringBytes: 1 << 20,
-		MaxChunksPerDocument: 1_000_000, MaxQueryChunks: 1_000_000, MaxK: 1_000_000,
+		MaxFileBytes: 512 << 20, MaxVectorBytes: math.MaxUint64 - 128, MaxGraphBytes: 512 << 20,
+		MaxGraphLinks: math.MaxUint64, MaxOpenBytes: 1 << 30, MaxEfSearch: maxWireInt,
+		MaxVisitLimit: maxWireInt, MaxDimensions: maxWireInt, MaxVectors: maxVectorCount,
+		MaxDocuments: maxWireInt, MaxStringBytes: maxWireInt,
+		MaxChunksPerDocument: maxWireInt, MaxQueryChunks: maxWireInt, MaxK: maxWireInt,
 	}
 }
 

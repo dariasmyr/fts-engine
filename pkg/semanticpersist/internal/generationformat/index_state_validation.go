@@ -57,7 +57,11 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 	}
 	if value.ServiceConfig != nil {
 		service := *value.ServiceConfig
-		if service.Index != c || service.Validate() != nil {
+		if service.EncodingBehaviorVersion != semantic.CurrentEncodingBehaviorVersion {
+			return 0, codecErrorf(ErrUnsupportedVersion, "state encoding behavior version %d is unsupported", service.EncodingBehaviorVersion)
+		}
+		serviceErr := service.Validate()
+		if service.Index != c || serviceErr != nil {
 			return 0, codecErrorf(ErrCorrupt, "state service config is invalid")
 		}
 		serviceIntegers := []struct {

@@ -71,7 +71,7 @@ func (s generationFiles) write(ctx context.Context, id uint64, state generationf
 	if err != nil {
 		return persistedGeneration{}, mapFormatError(err)
 	}
-	if err := validateOpenReferences(uint64(len(manifestData)), manifest, s.limits); err != nil {
+	if err := validateOpenReferences(uint64(len(manifestData)), manifest, state.Config.Dimensions, s.limits); err != nil {
 		return persistedGeneration{}, err
 	}
 	if err := writeDataFile(filepath.Join(generationTemp, manifestFileName), manifestData); err != nil {
@@ -144,7 +144,7 @@ func (s generationFiles) open(ctx context.Context, id uint64, expectedHash *[sha
 	if err := validateManifestObjectRefs(manifest); err != nil {
 		return persistedGeneration{}, err
 	}
-	if err := validateOpenReferences(uint64(len(manifestData)), manifest, s.limits); err != nil {
+	if err := validateOpenReferences(uint64(len(manifestData)), manifest, 0, s.limits); err != nil {
 		return persistedGeneration{}, err
 	}
 	stateData, err := readReferencedFile(s.layout.state(id), manifest.State, s.limits.MaxFileBytes)
@@ -158,10 +158,13 @@ func (s generationFiles) open(ctx context.Context, id uint64, expectedHash *[sha
 	if len(state.Segments) != len(manifest.Segments) {
 		return persistedGeneration{}, ErrCorrupt
 	}
+	if err := validateOpenReferences(uint64(len(manifestData)), manifest, state.Config.Dimensions, s.limits); err != nil {
+		return persistedGeneration{}, err
+	}
 	return persistedGeneration{id: id, manifest: manifest, manifestRef: generationformat.FileRef{Size: uint64(len(manifestData)), SHA256: hash}, state: state}, nil
 }
 
-func validateOpenReferences(manifestBytes uint64, value generationformat.GenerationManifest, limits Config) error {
+func validateOpenReferences(manifestBytes uint64, value generationformat.GenerationManifest, dimensions int, limits Config) error {
 	if value.State.Size > limits.MaxFileBytes {
 		return ErrLimitExceeded
 	}
@@ -187,7 +190,10 @@ func validateOpenReferences(manifestBytes uint64, value generationformat.Generat
 			return ErrLimitExceeded
 		}
 	}
-	scratchBytes, ok := format.CheckedMultiplyUint64(uint64(limits.MaxDimensions), 8)
+	if dimensions < 0 || dimensions > limits.MaxDimensions {
+		return ErrLimitExceeded
+	}
+	scratchBytes, ok := format.CheckedMultiplyUint64(uint64(dimensions), 8)
 	if !ok {
 		return ErrLimitExceeded
 	}

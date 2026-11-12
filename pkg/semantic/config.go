@@ -10,6 +10,10 @@ import (
 )
 
 const (
+	// CurrentEncodingBehaviorVersion identifies the built-in field ordering,
+	// chunk identity, prefix, and embedding assembly semantics.
+	CurrentEncodingBehaviorVersion = uint32(1)
+
 	defaultMaxChunksPerDocument    = 64
 	defaultMaxLiveVectors          = 1_000_000
 	defaultMaxSearchResults        = 20
@@ -147,10 +151,11 @@ func (c ModelConfig) model() embedding.Model {
 // ServiceConfig configures the built-in model-backed document and query
 // encoding pipeline together with its vector index.
 type ServiceConfig struct {
-	Model    ModelConfig
-	Index    IndexConfig
-	Chunking chunk.Config
-	Encoding EncodingLimits
+	Model                   ModelConfig
+	Index                   IndexConfig
+	Chunking                chunk.Config
+	Encoding                EncodingLimits
+	EncodingBehaviorVersion uint32
 }
 
 // DefaultServiceConfig returns the validated effective defaults for model.
@@ -162,7 +167,8 @@ func DefaultServiceConfig(model embedding.Model) (ServiceConfig, error) {
 	targetBytes := max(1, maxChunkBytes*3/4)
 	overlapBytes := min(targetBytes-1, maxChunkBytes/8)
 	config := ServiceConfig{
-		Model: newModelConfig(model),
+		Model:                   newModelConfig(model),
+		EncodingBehaviorVersion: CurrentEncodingBehaviorVersion,
 		Index: IndexConfig{
 			Dimensions: model.Dimensions,
 			Metric:     vector.MetricCosine,
@@ -190,6 +196,12 @@ func (c ServiceConfig) Validate() error {
 }
 
 func (c ServiceConfig) normalized() (ServiceConfig, error) {
+	if c.EncodingBehaviorVersion == 0 {
+		c.EncodingBehaviorVersion = CurrentEncodingBehaviorVersion
+	}
+	if c.EncodingBehaviorVersion != CurrentEncodingBehaviorVersion {
+		return ServiceConfig{}, ErrUnsupportedEncodingBehavior
+	}
 	if err := c.Model.Validate(); err != nil {
 		return ServiceConfig{}, err
 	}
@@ -290,6 +302,27 @@ func (c IndexConfig) normalized() (IndexConfig, error) {
 		c.HNSW.Search.VisitLimit > c.Search.MaxVisitLimit {
 		return IndexConfig{}, ErrInvalidConfig
 	}
+	for _, value := range []int{
+		c.Dimensions,
+		limits.MaxLiveVectors,
+		limits.MaxStaleVectors,
+		limits.MaxSegments,
+		limits.MaxChunksPerDocument,
+		c.Search.MaxResults,
+		c.Search.MaxCandidateChunks,
+		c.Search.MaxChunksPerResult,
+		c.Search.MaxQueryChunks,
+		c.Search.MaxEfSearch,
+		c.Search.MaxVisitLimit,
+		c.HNSW.Build.MaxNeighbors,
+		c.HNSW.Build.EfConstruction,
+		c.HNSW.Search.EfSearch,
+		c.HNSW.Search.VisitLimit,
+	} {
+		if uint64(value) > math.MaxUint32 {
+			return IndexConfig{}, ErrInvalidConfig
+		}
+	}
 
 	if err := c.hnswConfig().Validate(); err != nil {
 		return IndexConfig{}, ErrInvalidConfig
@@ -358,7 +391,7 @@ func validVectorCapacity(dimensions, maxVectors int) bool {
 		return false
 	}
 
-	return n <= math.MaxUint64/(d*4)
+	return n <= (math.MaxUint64-128)/(d*4)
 }
 
 type capacityLimits struct {

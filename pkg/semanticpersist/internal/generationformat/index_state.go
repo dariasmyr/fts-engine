@@ -9,7 +9,7 @@ import (
 
 // SSTA wire-format version. Semantic persistence predates production use, so
 // old semantic state versions are intentionally not migrated.
-const stateVersion = uint16(17)
+const stateVersion = uint16(18)
 
 const minimumRowBytes = wireUint64Size + 3*wireStringLengthPrefixSize + wireUint32Size + 2*wireUint64Size
 
@@ -20,7 +20,7 @@ const (
 
 	stateConfigFixedSize    = stateConfigUint32FieldCount*wireUint32Size + wireUint64Size + 2*wireUint8Size + wireUint16Size
 	stateServiceFlagSize    = wireUint32Size
-	stateServiceFixedSize   = 6*wireUint32Size + 2*wireUint64Size
+	stateServiceFixedSize   = 7*wireUint32Size + 2*wireUint64Size
 	stateUint64MetadataSize = stateUint64MetadataFieldCount * wireUint64Size
 	stateFixedEncodedSize   = wireHeaderSize + stateIndexIDSize + stateConfigFixedSize + stateServiceFlagSize + stateUint64MetadataSize + wireUint32Size + wireChecksumSize
 
@@ -202,6 +202,7 @@ func encodeServiceConfig(e *encoder, c *semantic.ServiceConfig, maxString int) {
 	e.writeUint32(uint32(c.Chunking.MaxBytes))
 	e.writeUint32(uint32(c.Chunking.OverlapBytes))
 	e.writeUint32(uint32(c.Encoding.MaxFields))
+	e.writeUint32(c.EncodingBehaviorVersion)
 	e.writeUint64(c.Encoding.MaxSourceBytes)
 	e.writeUint64(c.Encoding.MaxEmbeddingBytes)
 	e.writeString(c.Model.ID, maxString)
@@ -226,6 +227,7 @@ func decodeServiceConfig(d *decoder, index semantic.IndexConfig) *semantic.Servi
 	c.Chunking.MaxBytes = int(d.readUint32())
 	c.Chunking.OverlapBytes = int(d.readUint32())
 	c.Encoding.MaxFields = int(d.readUint32())
+	c.EncodingBehaviorVersion = d.readUint32()
 	c.Encoding.MaxSourceBytes = d.readUint64()
 	c.Encoding.MaxEmbeddingBytes = d.readUint64()
 	c.Model.ID = d.readString()

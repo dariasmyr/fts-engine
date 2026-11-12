@@ -34,10 +34,10 @@ func (c *Client) resolveAndValidateModel(ctx context.Context, baseURL string) er
 		ctx,
 		http.MethodPost,
 		baseURL+"/api/show",
-		map[string]string{"model": c.model.ID},
+		map[string]string{"model": digest},
 		&shown,
 	); err != nil {
-		return fmt.Errorf("embedding/ollama: inspect model: %w", err)
+		return fmt.Errorf("embedding/ollama: inspect model digest: %w", err)
 	}
 	if len(shown.Capabilities) > 0 && !slices.Contains(shown.Capabilities, "embedding") {
 		return fmt.Errorf("%w: model %q does not declare embedding capability", ErrModelMismatch, c.model.ID)

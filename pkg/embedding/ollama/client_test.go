@@ -26,7 +26,7 @@ func TestClientEmbed(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 		}
-		if request.Model != "test-model" || !slices.Equal(request.Input, []string{"one", "two"}) ||
+		if request.Model != "digest" || !slices.Equal(request.Input, []string{"one", "two"}) ||
 			!request.Truncate || request.Dimensions != 2 {
 			t.Errorf("request = %+v", request)
 		}
@@ -162,7 +162,7 @@ func TestNewVerifiesModel(t *testing.T) {
 }
 
 func TestNewRejectsRevisionChangeDuringInitialization(t *testing.T) {
-	metadata := metadataHandler(t, "unused", 2, 512, []string{"embedding"}, nil)
+	metadata := metadataHandler(t, "first", 2, 512, []string{"embedding"}, nil)
 	tagRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/tags" {
@@ -184,6 +184,30 @@ func TestNewRejectsRevisionChangeDuringInitialization(t *testing.T) {
 	config.BaseURL = server.URL
 	if _, err := New(t.Context(), config); !errors.Is(err, ErrModelMismatch) {
 		t.Fatalf("New() error = %v, want ErrModelMismatch", err)
+	}
+}
+
+func TestNewFailsClosedWhenDigestReferencesAreUnsupported(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			_ = json.NewEncoder(w).Encode(map[string]any{"models": []listedModel{{
+				Name: "test-model", Model: "test-model", Digest: "digest",
+			}}})
+		case "/api/show":
+			http.Error(w, "model not found", http.StatusNotFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	config := testConfig()
+	config.BaseURL = server.URL
+	_, err := New(t.Context(), config)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("New() error = %v, want 404 APIError", err)
 	}
 }
 
@@ -239,8 +263,8 @@ func metadataHandler(
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Error(err)
 			}
-			if request["model"] != "test-model" {
-				t.Errorf("show model = %q, want test-model", request["model"])
+			if request["model"] != digest {
+				t.Errorf("show model = %q, want digest %q", request["model"], digest)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"capabilities": capabilities,

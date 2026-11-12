@@ -93,9 +93,9 @@ func pruneLocked(ctx context.Context, l layout, retainGenerations int, cfg setti
 	}
 	slices.SortFunc(ids, func(a, b uint64) int {
 		switch {
-		case a < b:
-			return -1
 		case a > b:
+			return -1
+		case a < b:
 			return 1
 		default:
 			return 0

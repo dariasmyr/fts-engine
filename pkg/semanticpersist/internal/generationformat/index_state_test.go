@@ -17,8 +17,8 @@ func TestStateVersionAndLifecycleLimitsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version := binary.LittleEndian.Uint16(data[4:6]); version != 17 {
-		t.Fatalf("state version = %d, want 17", version)
+	if version := binary.LittleEndian.Uint16(data[4:6]); version != 18 {
+		t.Fatalf("state version = %d, want 18", version)
 	}
 	decoded, err := DecodeState(data, limits)
 	if err != nil {
@@ -31,7 +31,7 @@ func TestStateVersionAndLifecycleLimitsRoundTrip(t *testing.T) {
 		t.Fatalf("decoded index ID = %x, want %x", decoded.ID, value.ID)
 	}
 
-	binary.LittleEndian.PutUint16(data[4:6], 16)
+	binary.LittleEndian.PutUint16(data[4:6], 17)
 	if _, err := DecodeState(data, limits); !errors.Is(err, ErrUnsupportedVersion) {
 		t.Fatalf("DecodeState old version error = %v, want ErrUnsupportedVersion", err)
 	}
@@ -65,6 +65,7 @@ func TestStateServiceConfigRoundTrip(t *testing.T) {
 		Encoding: semantic.EncodingLimits{
 			MaxFields: 5, MaxSourceBytes: 2048, MaxEmbeddingBytes: 24,
 		},
+		EncodingBehaviorVersion: semantic.CurrentEncodingBehaviorVersion,
 	}
 
 	data, _, err := EncodeState(value, testStateLimits())
@@ -77,6 +78,27 @@ func TestStateServiceConfigRoundTrip(t *testing.T) {
 	}
 	if decoded.ServiceConfig == nil || *decoded.ServiceConfig != *value.ServiceConfig {
 		t.Fatalf("service config = %+v, want %+v", decoded.ServiceConfig, value.ServiceConfig)
+	}
+}
+
+func TestStateRejectsUnsupportedEncodingBehavior(t *testing.T) {
+	t.Parallel()
+
+	for _, version := range []uint32{0, semantic.CurrentEncodingBehaviorVersion + 1} {
+		value := testIndexState(t)
+		value.ServiceConfig = &semantic.ServiceConfig{
+			Model: semantic.ModelConfig{
+				ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 16,
+			},
+			Index:                   value.Config,
+			Chunking:                chunk.Config{TargetBytes: 8, MaxBytes: 16, OverlapBytes: 2},
+			Encoding:                semantic.EncodingLimits{MaxFields: 5, MaxSourceBytes: 2048, MaxEmbeddingBytes: 24},
+			EncodingBehaviorVersion: version,
+		}
+
+		if _, _, err := EncodeState(value, testStateLimits()); !errors.Is(err, ErrUnsupportedVersion) {
+			t.Fatalf("EncodeState(version %d) error = %v, want ErrUnsupportedVersion", version, err)
+		}
 	}
 }
 

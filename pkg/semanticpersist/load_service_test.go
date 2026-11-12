@@ -3,6 +3,8 @@ package semanticpersist_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -128,6 +130,66 @@ func TestLoadServiceRestoresSavedServiceConfig(t *testing.T) {
 	)
 	if !errors.Is(err, semantic.ErrModelServiceUnavailable) {
 		t.Fatalf("LoadService() mismatch error = %v, want semantic.ErrModelServiceUnavailable", err)
+	}
+}
+
+func TestLoadServiceChecksModelBeforeSegmentObjects(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	root := t.TempDir()
+	client := persistentTestClient(t, "v1")
+	service, err := semantic.New(client, persistentTestConfig(t, client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.AddDocument(ctx, testDocument("alpha", "alpha")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := semanticpersist.CommitAndSaveService(
+		ctx,
+		root,
+		service,
+		semanticpersist.SaveConfig{ExpectedGeneration: &semanticpersist.Generation{}},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var vectorsPath string
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Name() == "vectors.bin" {
+			vectorsPath = path
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vectorsPath == "" {
+		t.Fatal("vectors.bin not found")
+	}
+	if err := os.WriteFile(vectorsPath, []byte("corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := semanticpersist.LoadService(
+		ctx,
+		root,
+		persistentTestClient(t, "v2"),
+		semanticpersist.LoadConfig{},
+	); !errors.Is(err, semantic.ErrModelServiceUnavailable) {
+		t.Fatalf("LoadService() mismatch error = %v, want semantic.ErrModelServiceUnavailable", err)
+	}
+	if _, _, err := semanticpersist.LoadService(
+		ctx,
+		root,
+		client,
+		semanticpersist.LoadConfig{},
+	); !errors.Is(err, semanticpersist.ErrCorrupt) {
+		t.Fatalf("LoadService() segment error = %v, want ErrCorrupt", err)
 	}
 }
 

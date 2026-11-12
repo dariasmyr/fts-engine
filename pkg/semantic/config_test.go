@@ -19,7 +19,8 @@ func TestDefaultServiceConfigReturnsEffectiveConfig(t *testing.T) {
 	}
 	wantChunking := chunk.Config{TargetBytes: 384, MaxBytes: 512, OverlapBytes: 64}
 	if config.Index.Dimensions != client.Model().Dimensions ||
-		config.Index.Metric != vector.MetricCosine || config.Chunking != wantChunking {
+		config.Index.Metric != vector.MetricCosine || config.Chunking != wantChunking ||
+		config.EncodingBehaviorVersion != CurrentEncodingBehaviorVersion {
 		t.Fatalf("default config index/chunking = %+v/%+v", config.Index, config.Chunking)
 	}
 	if config.Index.Limits.MaxStaleVectors != defaultMaxLiveVectors || config.Index.Limits.MaxSegments != 16 {
@@ -35,6 +36,20 @@ func TestDefaultServiceConfigReturnsEffectiveConfig(t *testing.T) {
 		MaxEmbeddingBytes: uint64(defaultMaxChunksPerDocument * client.Model().Dimensions * 4),
 	}) {
 		t.Fatalf("default encoding limits = %+v", config.Encoding)
+	}
+}
+
+func TestServiceConfigRejectsUnsupportedEncodingBehavior(t *testing.T) {
+	t.Parallel()
+
+	client, _ := modelServiceTestClient(t, 512)
+	config, err := DefaultServiceConfig(client.Model())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.EncodingBehaviorVersion++
+	if err := config.Validate(); !errors.Is(err, ErrUnsupportedEncodingBehavior) {
+		t.Fatalf("Validate() error = %v, want ErrUnsupportedEncodingBehavior", err)
 	}
 }
 

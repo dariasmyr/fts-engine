@@ -7,7 +7,9 @@ import (
 
 // Config configures deterministic byte-range splitting.
 type Config struct {
-	TargetBytes  int
+	TargetBytes int
+	// MaxBytes is a strict upper bound for every returned range. Split returns
+	// ErrRuneExceedsMaxBytes when one UTF-8 rune cannot fit without being split.
 	MaxBytes     int
 	OverlapBytes int
 }
@@ -55,6 +57,9 @@ func (s *Splitter) Split(text string) ([]Range, error) {
 		end := s.chooseEnd(text, start)
 		if end <= start {
 			return nil, ErrInvalidSplitConfig
+		}
+		if end-start > s.config.MaxBytes {
+			return nil, ErrRuneExceedsMaxBytes
 		}
 		ranges = append(ranges, Range{StartByte: start, EndByte: end})
 		if end == len(text) {

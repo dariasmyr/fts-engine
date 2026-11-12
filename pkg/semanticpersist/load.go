@@ -24,45 +24,27 @@ func load(
 	root string,
 	config LoadConfig,
 ) (*semantic.Index, Generation, persistedGeneration, error) {
-	if ctx == nil {
-		return nil, Generation{}, persistedGeneration{}, vector.ErrNilContext
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, Generation{}, persistedGeneration{}, err
-	}
-	if root == "" {
-		return nil, Generation{}, persistedGeneration{}, ErrCorrupt
-	}
-	cfg, err := newSettings(config.Config)
+	cfg, err := prepareLoad(ctx, root, config)
 	if err != nil {
 		return nil, Generation{}, persistedGeneration{}, err
 	}
 
 	loaded, err := withStorageOperationResult(root, operationLayoutExisting, func(operation *storageOperation) (loadOperationResult, error) {
-		l := operation.layout
-		head, err := newCurrentFile(l, cfg).read(ctx)
+		persisted, generation, err := openCurrentGeneration(ctx, operation.layout, cfg)
 		if err != nil {
 			return loadOperationResult{}, err
-		}
-		persisted, err := newGenerationFiles(l, cfg).open(
-			ctx,
-			head.GenerationID,
-			&head.ManifestHash,
-		)
-		if err != nil {
-			return loadOperationResult{}, corruptMissingReference(err)
 		}
 		index, err := restoreIndex(
 			ctx,
 			persisted,
-			newSegmentStore(l, cfg),
+			newSegmentStore(operation.layout, cfg),
 		)
 		if err != nil {
 			return loadOperationResult{}, corruptMissingReference(err)
 		}
 		return loadOperationResult{
 			index:      index,
-			generation: Generation{ID: head.GenerationID},
+			generation: generation,
 			persisted:  persisted,
 		}, nil
 	})
@@ -70,6 +52,39 @@ func load(
 		return nil, Generation{}, persistedGeneration{}, err
 	}
 	return loaded.index, loaded.generation, loaded.persisted, nil
+}
+
+func prepareLoad(ctx context.Context, root string, config LoadConfig) (settings, error) {
+	if ctx == nil {
+		return settings{}, vector.ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return settings{}, err
+	}
+	if root == "" {
+		return settings{}, ErrCorrupt
+	}
+	return newSettings(config.Config)
+}
+
+func openCurrentGeneration(
+	ctx context.Context,
+	l layout,
+	cfg settings,
+) (persistedGeneration, Generation, error) {
+	head, err := newCurrentFile(l, cfg).read(ctx)
+	if err != nil {
+		return persistedGeneration{}, Generation{}, err
+	}
+	persisted, err := newGenerationFiles(l, cfg).open(
+		ctx,
+		head.GenerationID,
+		&head.ManifestHash,
+	)
+	if err != nil {
+		return persistedGeneration{}, Generation{}, corruptMissingReference(err)
+	}
+	return persisted, Generation{ID: head.GenerationID}, nil
 }
 
 type loadOperationResult struct {
@@ -87,16 +102,57 @@ func LoadService(
 	client embedding.Client,
 	loadConfig LoadConfig,
 ) (*semantic.Service, Generation, error) {
-	index, generation, persisted, err := load(ctx, root, loadConfig)
+	cfg, err := prepareLoad(ctx, root, loadConfig)
 	if err != nil {
 		return nil, Generation{}, err
 	}
-	if persisted.state.ServiceConfig == nil {
-		return nil, Generation{}, semantic.ErrModelServiceUnavailable
-	}
-	service, err := semantic.NewFromIndex(client, index, *persisted.state.ServiceConfig)
+	loaded, err := withStorageOperationResult(root, operationLayoutExisting, func(operation *storageOperation) (loadServiceOperationResult, error) {
+		persisted, generation, err := openCurrentGeneration(ctx, operation.layout, cfg)
+		if err != nil {
+			return loadServiceOperationResult{}, err
+		}
+		if err := validatePersistedServiceClient(persisted.state.ServiceConfig, client); err != nil {
+			return loadServiceOperationResult{}, err
+		}
+		index, err := restoreIndex(ctx, persisted, newSegmentStore(operation.layout, cfg))
+		if err != nil {
+			return loadServiceOperationResult{}, corruptMissingReference(err)
+		}
+		service, err := semantic.NewFromIndex(client, index, *persisted.state.ServiceConfig)
+		if err != nil {
+			return loadServiceOperationResult{}, err
+		}
+		return loadServiceOperationResult{service: service, generation: generation}, nil
+	})
 	if err != nil {
 		return nil, Generation{}, err
 	}
-	return service, generation, nil
+	return loaded.service, loaded.generation, nil
+}
+
+type loadServiceOperationResult struct {
+	service    *semantic.Service
+	generation Generation
+}
+
+func validatePersistedServiceClient(config *semantic.ServiceConfig, client embedding.Client) error {
+	if config == nil || client == nil {
+		return semantic.ErrModelServiceUnavailable
+	}
+	model := client.Model()
+	if err := model.Validate(); err != nil {
+		return semantic.ErrModelServiceUnavailable
+	}
+	clientConfig := semantic.ModelConfig{
+		ID:             model.ID,
+		Revision:       model.Revision,
+		Dimensions:     model.Dimensions,
+		ContextTokens:  model.ContextTokens,
+		DocumentPrefix: model.DocumentPrefix,
+		QueryPrefix:    model.QueryPrefix,
+	}
+	if clientConfig != config.Model {
+		return semantic.ErrModelServiceUnavailable
+	}
+	return nil
 }
