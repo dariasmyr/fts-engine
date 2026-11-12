@@ -19,24 +19,23 @@ func modelLimits(
 	config EncodingLimits,
 	dimensions int,
 	maxChunks int,
-) (modelInputLimits, error) {
+) (InputLimits, error) {
 	if dimensions <= 0 || uint64(dimensions) > ^uint64(0)/4 ||
 		maxChunks <= 0 || config.MaxFields <= 0 || config.MaxSourceBytes == 0 ||
 		config.MaxEmbeddingBytes == 0 || uint64(maxChunks) > ^uint64(0)/(uint64(dimensions)*4) {
-		return modelInputLimits{}, ErrInvalidConfig
+		return InputLimits{}, ErrInvalidConfig
 	}
-	return modelInputLimits{
-		maxFields:         config.MaxFields,
-		maxSourceBytes:    config.MaxSourceBytes,
-		maxChunks:         maxChunks,
-		maxEmbeddingBytes: config.MaxEmbeddingBytes,
+	return InputLimits{
+		MaxFields:         config.MaxFields,
+		MaxSourceBytes:    config.MaxSourceBytes,
+		MaxChunks:         maxChunks,
+		MaxEmbeddingBytes: config.MaxEmbeddingBytes,
 	}, nil
 }
 
 type modelServiceComponents struct {
-	config    ServiceConfig
-	documents *modelEncoder
-	queries   *modelEncoder
+	config  ServiceConfig
+	encoder *Encoder
 }
 
 func prepareStandardModelService(
@@ -78,16 +77,6 @@ func buildModelService(
 	if err != nil {
 		return modelServiceComponents{}, err
 	}
-	documents, err := newModelEncoder(
-		client,
-		modelInputDocument,
-		splitter,
-		config.Model,
-		documentLimits,
-	)
-	if err != nil {
-		return modelServiceComponents{}, err
-	}
 	queryLimits, err := modelLimits(
 		config.Encoding,
 		config.Model.Dimensions,
@@ -96,15 +85,15 @@ func buildModelService(
 	if err != nil {
 		return modelServiceComponents{}, err
 	}
-	queries, err := newModelEncoder(
+	encoder, err := newEncoder(
 		client,
-		modelInputQuery,
 		splitter,
-		config.Model,
+		documentLimits,
 		queryLimits,
+		&config.Model,
 	)
 	if err != nil {
 		return modelServiceComponents{}, err
 	}
-	return modelServiceComponents{config: config, documents: documents, queries: queries}, nil
+	return modelServiceComponents{config: config, encoder: encoder}, nil
 }

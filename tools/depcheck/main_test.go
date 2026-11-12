@@ -39,16 +39,6 @@ func TestArchitectureRulesAllowIntendedDependencies(t *testing.T) {
 			},
 		},
 		{
-			ImportPath: rootModule + "/pkg/semanticencode",
-			Imports: []string{
-				rootModule + "/pkg/chunk",
-				rootModule + "/pkg/embedding",
-				rootModule + "/pkg/fts",
-				rootModule + "/pkg/semantic",
-				rootModule + "/pkg/vector",
-			},
-		},
-		{
 			ImportPath: rootModule + "/pkg/semanticpersist",
 			Imports: []string{
 				rootModule + "/internal/format",
@@ -115,12 +105,6 @@ func TestArchitectureRulesRejectForbiddenEdges(t *testing.T) {
 			rule: "pkg/vector/hnsw",
 		},
 		{
-			name: "semantic to encoder",
-			from: rootModule + "/pkg/semantic",
-			to:   rootModule + "/pkg/semanticencode",
-			rule: "pkg/semantic",
-		},
-		{
 			name: "semantic to persistence",
 			from: rootModule + "/pkg/semantic",
 			to:   rootModule + "/pkg/semanticpersist",
@@ -131,12 +115,6 @@ func TestArchitectureRulesRejectForbiddenEdges(t *testing.T) {
 			from: rootModule + "/pkg/semanticpersist/internal/storage",
 			to:   rootModule + "/pkg/semanticpersist",
 			rule: "pkg/semanticpersist/internal/storage",
-		},
-		{
-			name: "encoder to persistence",
-			from: rootModule + "/pkg/semanticencode",
-			to:   rootModule + "/pkg/semanticpersist",
-			rule: "pkg/semanticencode",
 		},
 		{
 			name: "persistence to unrelated package",

@@ -35,8 +35,7 @@ For external integrations, prefer these public packages:
 - `pkg/vector/hnsw` - deterministic HNSW construction and immutable approximate search
 - `pkg/embedding` - provider-neutral embedding clients and transformations
 - `pkg/embedding/ollama` - Ollama `/api/embed` transport
-- `pkg/semantic` - model-bound document indexing and chunk-aware semantic search
-- `pkg/semanticencode` - document chunking and embedding adaptation
+- `pkg/semantic` - document encoding, model-bound indexing, and chunk-aware semantic search
 - `pkg/semanticpersist` - generation-based persistence for committed semantic index states
 
 `cmd/*`, `internal/*`, and `benchmarks/*` are repository-owned tooling, not the main library surface.

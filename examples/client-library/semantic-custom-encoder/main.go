@@ -9,7 +9,6 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semanticencode"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -19,14 +18,14 @@ func main() {
 	ctx := context.Background()
 	client := exampleEmbedder{}
 	splitter := paragraphSplitter{}
-	limits := semanticencode.InputLimits{
+	limits := semantic.InputLimits{
 		MaxFields:         4,
 		MaxSourceBytes:    1 << 20,
 		MaxChunks:         16,
 		MaxEmbeddingBytes: 1 << 20,
 	}
 
-	encoder, err := semanticencode.NewEncoder(semanticencode.EncoderConfig{
+	encoder, err := semantic.NewEncoder(semantic.EncoderConfig{
 		Limits: limits, Splitter: splitter, Client: client,
 	})
 	must(err)

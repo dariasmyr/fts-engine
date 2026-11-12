@@ -28,7 +28,7 @@ func New(client embedding.Client, config ServiceConfig) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	service, err := NewService(index, components.documents, components.queries)
+	service, err := NewService(index, components.encoder, components.encoder)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +53,7 @@ func NewFromIndex(
 	if components.config.Index != index.config {
 		return nil, ErrModelServiceUnavailable
 	}
-	service, err := NewService(index, components.documents, components.queries)
+	service, err := NewService(index, components.encoder, components.encoder)
 	if err != nil {
 		return nil, err
 	}

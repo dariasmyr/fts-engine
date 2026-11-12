@@ -92,7 +92,6 @@ var architectureRules = []architectureRule{
 	repositoryRule(rootModule+"/internal/memorystore", rootModule+"/pkg/vector"),
 	repositoryRule(rootModule + "/internal/persistfs"),
 	repositoryRule(rootModule+"/internal/sealedstate", rootModule+"/pkg/fts"),
-
 	repositoryRule(rootModule + "/pkg/chunk"),
 	{
 		owner:                     rootModule + "/pkg/embedding",
@@ -153,14 +152,6 @@ var architectureRules = []architectureRule{
 		rootModule+"/pkg/chunk",
 		rootModule+"/pkg/embedding",
 		rootModule+"/pkg/fts",
-		rootModule+"/pkg/vector",
-	),
-	repositoryRule(
-		rootModule+"/pkg/semanticencode",
-		rootModule+"/pkg/chunk",
-		rootModule+"/pkg/embedding",
-		rootModule+"/pkg/fts",
-		rootModule+"/pkg/semantic",
 		rootModule+"/pkg/vector",
 	),
 	repositoryRule(
