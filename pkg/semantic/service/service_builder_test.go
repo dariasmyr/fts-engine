@@ -78,97 +78,6 @@ func TestNewAcceptsCompleteConfig(t *testing.T) {
 	}
 }
 
-func TestNewFromIndexBindsExistingIndex(t *testing.T) {
-	client, _ := modelServiceTestClient(t, 512)
-	original, err := New(client, defaultModelConfig(t, client))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	service, err := NewFromIndex(client, original.Index(), originalConfig(t, original))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if service.Index() != original.Index() {
-		t.Fatal("NewFromIndex() replaced the provided index")
-	}
-}
-
-func TestNewFromIndexValidatesModelConfig(t *testing.T) {
-	client, _ := modelServiceTestClient(t, 512)
-	original, err := New(client, defaultModelConfig(t, client))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	incompatible, err := embedding.NewClient(embedding.Model{
-		ID: "model", Revision: "revision", Dimensions: 2, ContextTokens: 512,
-		DocumentPrefix: "changed: ", QueryPrefix: "query: ",
-	}, func(_ context.Context, texts []string) ([][]float32, error) {
-		return make([][]float32, len(texts)), nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = NewFromIndex(incompatible, original.Index(), originalConfig(t, original))
-	if !errors.Is(err, ErrModelServiceUnavailable) {
-		t.Fatalf("NewFromIndex() error = %v, want ErrModelServiceUnavailable", err)
-	}
-}
-
-func TestNewFromIndexValidatesIndexConfig(t *testing.T) {
-	client, _ := modelServiceTestClient(t, 512)
-	config := defaultModelConfig(t, client)
-	original, err := New(client, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	config.Index.Metric = vector.MetricL2Squared
-	if _, err := NewFromIndex(client, original.Index(), config); !errors.Is(err, ErrModelServiceUnavailable) {
-		t.Fatalf("NewFromIndex() error = %v, want ErrModelServiceUnavailable", err)
-	}
-}
-
-func TestNewFromIndexUsesIndexConfiguration(t *testing.T) {
-	client, _ := modelServiceTestClient(t, 512)
-	config := defaultModelConfig(t, client)
-	config.Index.Metric = vector.MetricL2Squared
-	config.Pipeline.Chunking = chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
-	config.Index.Operational.Capacity.MaxLiveVectors = 256
-	config.Index.Operational.Capacity.MaxStaleVectors = 256
-	config.Index.Operational.Ingestion.MaxChunksPerDocument = 128
-	config.Pipeline.Operational.Encoding.MaxEmbeddingBytes = uint64(128 * client.Model().Dimensions * 4)
-	config.Index.Operational.Search = SearchLimits{
-		MaxResults:         12,
-		MaxCandidateChunks: 128,
-		MaxChunksPerResult: 6,
-		MaxQueryChunks:     128,
-		MaxEfSearch:        128,
-		MaxVisitLimit:      config.Index.Operational.SearchDefaults.VisitLimit,
-	}
-	original, err := New(client, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	service, err := NewFromIndex(client, original.Index(), config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, ok := service.documentEncoder.(*encoding.Encoder)
-	if !ok {
-		t.Fatalf("document encoder type = %T", service.documentEncoder)
-	}
-	if service.index.Config().Operational.Capacity.MaxStaleVectors != 256 {
-		t.Fatalf("stale vector limit = %d, want 256", service.index.Config().Operational.Capacity.MaxStaleVectors)
-	}
-	serviceConfig, ok := service.Config()
-	if !ok || serviceConfig.Index.Metric != vector.MetricL2Squared || serviceConfig.Pipeline.Chunking != config.Pipeline.Chunking {
-		t.Fatalf("service config = %+v, %v", serviceConfig, ok)
-	}
-}
-
 func TestNewSplitsQueriesWithDocumentSplitter(t *testing.T) {
 	client, received := modelServiceTestClient(t, 512)
 	config := defaultModelConfig(t, client)
@@ -360,15 +269,6 @@ func defaultModelConfig(t *testing.T, client embedding.Client) Config {
 	config, err := DefaultConfig(client.Model())
 	if err != nil {
 		t.Fatal(err)
-	}
-	return config
-}
-
-func originalConfig(t *testing.T, service *Service) Config {
-	t.Helper()
-	config, ok := service.Config()
-	if !ok {
-		t.Fatal("Config() unavailable")
 	}
 	return config
 }

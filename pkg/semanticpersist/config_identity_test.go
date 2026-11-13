@@ -280,7 +280,12 @@ func TestSaveRejectsPipelineAndPersistenceModeChanges(t *testing.T) {
 		}
 		changedConfig := config
 		changedConfig.Pipeline.Operational.Encoding.MaxSourceBytes++
-		changedService, err := service.NewFromIndex(client, semanticService.Index(), changedConfig)
+		changedIndex := serviceIndexCopy(t, ctx, semanticService)
+		changedService, _, err := service.Load(ctx, lineageTestLoader{state: service.LoadedState{
+			Index:        changedIndex,
+			Pipeline:     changedConfig.Pipeline,
+			GenerationID: 1,
+		}}, client)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -295,14 +300,14 @@ func TestSaveRejectsPipelineAndPersistenceModeChanges(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Save(ctx, root, semanticService.Index(), SaveOptions{ExpectedGeneration: &first}); !errors.Is(err, ErrPersistenceModeMismatch) {
+		if _, err := Save(ctx, root, serviceIndexCopy(t, ctx, semanticService), SaveOptions{ExpectedGeneration: &first}); !errors.Is(err, ErrPersistenceModeMismatch) {
 			t.Fatalf("Save() error = %v, want ErrPersistenceModeMismatch", err)
 		}
 	})
 
 	t.Run("raw to model backed", func(t *testing.T) {
 		root := t.TempDir()
-		first, err := Save(ctx, root, semanticService.Index(), SaveOptions{ExpectedGeneration: &Generation{}})
+		first, err := Save(ctx, root, serviceIndexCopy(t, ctx, semanticService), SaveOptions{ExpectedGeneration: &Generation{}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -310,6 +315,34 @@ func TestSaveRejectsPipelineAndPersistenceModeChanges(t *testing.T) {
 			t.Fatalf("CommitAndSaveService() error = %v, want ErrPersistenceModeMismatch", err)
 		}
 	})
+}
+
+func serviceIndexCopy(t *testing.T, ctx context.Context, semanticService *service.Service) *semantic.Index {
+	t.Helper()
+	state, err := semanticService.ExportState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := semantic.Restore(ctx, *state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return index
+}
+
+type lineageTestLoader struct{ state service.LoadedState }
+
+func (l lineageTestLoader) LoadServiceState(
+	ctx context.Context,
+	preflight service.RestorePreflight,
+) (service.LoadedState, error) {
+	if err := ctx.Err(); err != nil {
+		return service.LoadedState{}, err
+	}
+	if err := preflight(l.state.Index.Config(), l.state.Pipeline); err != nil {
+		return service.LoadedState{}, err
+	}
+	return l.state, nil
 }
 
 func directoryEntryNames(t *testing.T, directory string) []string {

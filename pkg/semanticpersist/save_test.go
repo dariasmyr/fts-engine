@@ -11,6 +11,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 )
 
 func TestSaveRejectsPendingMutations(t *testing.T) {
@@ -32,6 +33,144 @@ func TestSaveRejectsPendingMutations(t *testing.T) {
 	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("storage root error = %v, want os.ErrNotExist", err)
 	}
+}
+
+func TestSaveServiceRejectsExternalEncoders(t *testing.T) {
+	index := newTestIndex(t)
+	encoder := persistenceTestEncoder{}
+	semanticService, err := service.NewService(index, encoder, encoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := SaveOptions{ExpectedGeneration: &Generation{}}
+	if _, err := SaveService(t.Context(), t.TempDir(), semanticService, options); !errors.Is(err, service.ErrModelServiceUnavailable) {
+		t.Fatalf("SaveService() error = %v, want ErrModelServiceUnavailable", err)
+	}
+	if _, err := CommitAndSaveService(t.Context(), t.TempDir(), semanticService, options); !errors.Is(err, service.ErrModelServiceUnavailable) {
+		t.Fatalf("CommitAndSaveService() error = %v, want ErrModelServiceUnavailable", err)
+	}
+}
+
+func TestCommitAndSaveServiceFailureKeepsMutationPending(t *testing.T) {
+	client := newLineageTestClient(t)
+	config, err := service.DefaultConfig(client.Model())
+	if err != nil {
+		t.Fatal(err)
+	}
+	semanticService, err := service.New(client, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := semanticService.AddDocument(t.Context(), persistenceDocument("pending")); err != nil {
+		t.Fatal(err)
+	}
+
+	failed := errors.New("injected service save failure")
+	settings, err := newSettings(Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.checkpoints.probe = saveFaultInjector{beforeStep: func(checkpoint saveCheckpoint) error {
+		if checkpoint == checkpointWriteCurrent {
+			return failed
+		}
+		return nil
+	}}
+	serviceConfig, err := persistedService(semanticService)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if _, err := commitAndSaveService(t.Context(), root, semanticService, serviceConfig, 0, settings); !errors.Is(err, failed) {
+		t.Fatalf("commitAndSaveService() error = %v, want injected error", err)
+	}
+	if _, err := semanticService.ExportState(t.Context()); !errors.Is(err, semantic.ErrPendingMutations) {
+		t.Fatalf("ExportState() error = %v, want ErrPendingMutations", err)
+	}
+	result, err := semanticService.Search(t.Context(), "pending", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Hits) != 0 {
+		t.Fatalf("failed candidate became searchable: %+v", result.Hits)
+	}
+}
+
+func TestCommitAndSaveServiceIndeterminatePublishesCandidate(t *testing.T) {
+	client := newLineageTestClient(t)
+	config, err := service.DefaultConfig(client.Model())
+	if err != nil {
+		t.Fatal(err)
+	}
+	semanticService, err := service.New(client, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := semanticService.AddDocument(t.Context(), persistenceDocument("committed")); err != nil {
+		t.Fatal(err)
+	}
+
+	settings, err := newSettings(Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.checkpoints.probe = saveFaultInjector{afterStep: func(checkpoint saveCheckpoint) error {
+		if checkpoint == checkpointReplaceCurrent {
+			return errors.New("after CURRENT replacement")
+		}
+		return nil
+	}}
+	serviceConfig, err := persistedService(semanticService)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	generationID, err := commitAndSaveService(t.Context(), root, semanticService, serviceConfig, 0, settings)
+	if !errors.Is(err, ErrIndeterminate) {
+		t.Fatalf("commitAndSaveService() error = %v, want ErrIndeterminate", err)
+	}
+	if generationID != 0 {
+		t.Fatalf("generation ID = %d, want 0 for indeterminate result", generationID)
+	}
+	committed, err := semanticService.ExportState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed.Revision != 1 {
+		t.Fatalf("in-memory revision = %d, want 1", committed.Revision)
+	}
+	loader, err := NewLoader(root, LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, generationID, err := service.Load(t.Context(), loader, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generationID != 1 {
+		t.Fatalf("loaded generation = %d, want 1", generationID)
+	}
+	loadedState, err := loaded.ExportState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedState.Revision != committed.Revision {
+		t.Fatalf("loaded revision = %d, want %d", loadedState.Revision, committed.Revision)
+	}
+}
+
+type persistenceTestEncoder struct{}
+
+func (persistenceTestEncoder) EncodeDocument(context.Context, fts.Document) ([]semantic.ChunkEmbedding, error) {
+	return nil, nil
+}
+
+func (persistenceTestEncoder) EncodeQuery(context.Context, string) ([]semantic.ChunkEmbedding, error) {
+	return nil, nil
+}
+
+func (persistenceTestEncoder) EncodeQueryDocument(context.Context, fts.Document) ([]semantic.ChunkEmbedding, error) {
+	return nil, nil
 }
 
 func TestCommitAndSavePersistsPendingRevision(t *testing.T) {

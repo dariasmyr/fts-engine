@@ -50,6 +50,20 @@ func prepareStandardModelService(
 	return prepareModelService(client, config, splitter)
 }
 
+func prepareRestoredModelService(
+	client embedding.Client,
+	config Config,
+) (modelServiceComponents, error) {
+	if client == nil || config.validateCanonical() != nil || client.Model() != config.Pipeline.Model {
+		return modelServiceComponents{}, ErrModelServiceUnavailable
+	}
+	splitter, err := newConfiguredChunkSplitter(config.Pipeline.Chunking)
+	if err != nil {
+		return modelServiceComponents{}, err
+	}
+	return buildModelService(client, config, splitter)
+}
+
 func prepareModelService(
 	client embedding.Client,
 	config Config,

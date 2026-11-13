@@ -3,9 +3,9 @@
 //
 // Save persists one already committed raw index generation. SaveService and
 // CommitAndSaveService also persist the model-backed PipelineConfig required by
-// LoadService. CommitAndSave and CommitAndSaveService prepare the pending
-// revision under the Index mutation gate and publish it only after persistence.
-// Loading owns no persistent filesystem resources.
+// service.Load with a Loader. CommitAndSave and CommitAndSaveService prepare the
+// pending revision under the Index mutation gate and publish it only after
+// persistence. Loading owns no persistent filesystem resources.
 //
 // Save and Load are the lower-level operations for callers that manage
 // semantic.Index directly. Save requires an explicit expected generation.
@@ -111,14 +111,15 @@
 //
 // # Concurrency
 //
-// CommitAndSave, Save, Load, RecoverGeneration, and Prune hold an exclusive
-// filesystem lock for the duration of their filesystem operation. This
-// prevents CURRENT replacement or pruning while a generation is being loaded.
+// CommitAndSave, Save, Load, Loader.LoadServiceState, RecoverGeneration, and
+// Prune hold an exclusive filesystem lock for the duration of their filesystem
+// operation. This prevents CURRENT replacement or pruning while a generation
+// is being loaded.
 //
 // Writable locking is supported on Linux, macOS, and FreeBSD. On Windows and
-// other platforms CommitAndSave, Save, Load, RecoverGeneration, and Prune return
-// ErrLockUnsupported. This is intentionally stricter than ftspersist, which
-// has a Windows LockFileEx implementation.
+// other platforms CommitAndSave, Save, Load, Loader.LoadServiceState,
+// RecoverGeneration, and Prune return ErrLockUnsupported. This is intentionally
+// stricter than ftspersist, which has a Windows LockFileEx implementation.
 //
 // CommitAndSaveService is the ordinary model-backed document-level write flow
 // and requires no caller-side mutex. It holds the mutation gate through

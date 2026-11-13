@@ -740,8 +740,9 @@ generation, err := semanticpersist.CommitAndSaveService(
 
 `CommitAndSaveService` prepares one revision, persists that exact candidate, and
 only then makes it searchable. The generation stores `IndexConfig` plus the
-service-level model, chunking, prefixes, and encoding limits. `LoadService`
-restores that configuration and only requires a matching embedding client:
+service-level model, chunking, prefixes, and encoding limits. `service.Load`
+restores that configuration through a persistence loader and only requires a
+matching embedding client:
 
 ```go
 info, err := semanticpersist.Inspect(
@@ -755,12 +756,18 @@ if err != nil {
 fmt.Printf("generation=%d dimensions=%d model=%s\n",
 	info.Generation.ID, info.IndexConfig.Dimensions, info.Pipeline.Model.ID)
 
-loaded, generation, err := semanticpersist.LoadService(
-	ctx,
+loader, err := semanticpersist.NewLoader(
 	"./data/semantic",
-	embeddingClient,
 	semanticpersist.LoadOptions{},
 )
+if err != nil {
+	return err
+}
+loaded, generationID, err := service.Load(ctx, loader, embeddingClient)
+if err != nil {
+	return err
+}
+generation = semanticpersist.Generation{ID: generationID}
 semanticService = loaded
 ```
 

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
@@ -117,6 +118,97 @@ func TestServiceValidatesSearchBeforeEncoding(t *testing.T) {
 	}
 	if encoder.queryCalls != 0 {
 		t.Fatalf("query encoder calls = %d, want 0", encoder.queryCalls)
+	}
+}
+
+func TestServiceExportsDetachedCommittedState(t *testing.T) {
+	encoder := &serviceTestEncoder{value: []float32{1, 0}}
+	index, err := semantic.NewIndex(serviceTestConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(index, encoder, encoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.IndexConfig() != index.Config() {
+		t.Fatalf("IndexConfig() = %+v, want %+v", service.IndexConfig(), index.Config())
+	}
+	if err := service.AddDocument(t.Context(), fts.Document{
+		ID: "doc", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "x"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	exported, err := service.ExportState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported.Segments[0].Rows[0].Chunk.DocID = "changed"
+	exported.Segments[0].LivenessWords[0] = 0
+	exported.Segments = nil
+
+	again, err := service.ExportState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Segments) != 1 || again.Segments[0].Rows[0].Chunk.DocID != "doc" ||
+		again.Segments[0].LivenessWords[0] == 0 {
+		t.Fatalf("mutating exported state changed Service state: %+v", again.Segments)
+	}
+}
+
+func TestServiceCommitWithStatePreservesPendingOnFailure(t *testing.T) {
+	encoder := &serviceTestEncoder{value: []float32{1, 0}}
+	index, err := semantic.NewIndex(serviceTestConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(index, encoder, encoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.AddDocument(t.Context(), fts.Document{
+		ID: "doc", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "x"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("reject candidate")
+	err = service.CommitWithState(t.Context(), func(state *semantic.CommittedIndexState) error {
+		if state.Config != service.IndexConfig() || state.Revision != 1 {
+			t.Fatalf("candidate = config %+v, revision %d", state.Config, state.Revision)
+		}
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("CommitWithState() error = %v, want callback error", err)
+	}
+	if _, err := service.ExportState(t.Context()); !errors.Is(err, semantic.ErrPendingMutations) {
+		t.Fatalf("ExportState() error = %v, want ErrPendingMutations", err)
+	}
+	result, err := service.Search(t.Context(), "query", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Hits) != 0 {
+		t.Fatalf("failed candidate became searchable: %+v", result.Hits)
+	}
+
+	if err := service.CommitWithState(t.Context(), func(state *semantic.CommittedIndexState) error {
+		state.Segments[0].Rows[0].Chunk.DocID = "changed"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = service.Search(t.Context(), "query", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Hits) != 1 || result.Hits[0].DocID != "doc" {
+		t.Fatalf("Search() hits = %+v, want detached original doc", result.Hits)
 	}
 }
 

@@ -47,7 +47,7 @@ func BenchmarkSave(b *testing.B) {
 	}
 }
 
-func BenchmarkLoadService(b *testing.B) {
+func BenchmarkServiceLoad(b *testing.B) {
 	ctx := context.Background()
 	root := filepath.Join(b.TempDir(), "service")
 	if err := os.Mkdir(root, 0o700); err != nil {
@@ -55,13 +55,13 @@ func BenchmarkLoadService(b *testing.B) {
 	}
 	client := persistenceBenchmarkClient(b)
 	serviceConfig := persistenceBenchmarkConfig(b, client)
-	service, err := service.New(client, serviceConfig)
+	semanticService, err := service.New(client, serviceConfig)
 	if err != nil {
 		b.Fatal(err)
 	}
 	for n := range persistenceBenchmarkDocuments {
 		docID := fts.DocID(fmt.Sprintf("doc-%06d", n))
-		if err := service.AddDocument(ctx, fts.Document{
+		if err := semanticService.AddDocument(ctx, fts.Document{
 			ID: docID,
 			Fields: map[string]fts.FieldData{
 				fts.DefaultField: {Text: string(docID)},
@@ -70,26 +70,25 @@ func BenchmarkLoadService(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-	if _, err := CommitAndSaveService(ctx, root, service, SaveOptions{
+	if _, err := CommitAndSaveService(ctx, root, semanticService, SaveOptions{
 		ExpectedGeneration: &Generation{},
 	}); err != nil {
+		b.Fatal(err)
+	}
+	loader, err := NewLoader(root, LoadOptions{})
+	if err != nil {
 		b.Fatal(err)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		loaded, _, err := LoadService(
-			ctx,
-			root,
-			client,
-			LoadOptions{},
-		)
+		loaded, _, err := service.Load(ctx, loader, client)
 		if err != nil {
 			b.Fatal(err)
 		}
 		if loaded == nil {
-			b.Fatal("LoadService() returned nil service")
+			b.Fatal("service.Load() returned nil service")
 		}
 	}
 }
@@ -168,7 +167,7 @@ func BenchmarkIncrementalSaveReusedSegments(b *testing.B) {
 	}
 }
 
-func BenchmarkLoadServiceSegments(b *testing.B) {
+func BenchmarkServiceLoadSegments(b *testing.B) {
 	for _, segmentCount := range []int{1, 8, 16} {
 		b.Run(fmt.Sprintf("segments=%d", segmentCount), func(b *testing.B) {
 			ctx := context.Background()
@@ -180,16 +179,20 @@ func BenchmarkLoadServiceSegments(b *testing.B) {
 			}); err != nil {
 				b.Fatal(err)
 			}
+			loader, err := NewLoader(root, LoadOptions{})
+			if err != nil {
+				b.Fatal(err)
+			}
 
 			b.Run("matching-model", func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					loaded, _, err := LoadService(ctx, root, client, LoadOptions{})
+					loaded, _, err := service.Load(ctx, loader, client)
 					if err != nil {
 						b.Fatal(err)
 					}
 					if loaded == nil {
-						b.Fatal("LoadService() returned nil service")
+						b.Fatal("service.Load() returned nil service")
 					}
 				}
 				b.ReportMetric(float64(segmentCount), "segments")
@@ -199,9 +202,9 @@ func BenchmarkLoadServiceSegments(b *testing.B) {
 			b.Run("mismatched-model", func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					_, _, err := LoadService(ctx, root, mismatch, LoadOptions{})
+					_, _, err := service.Load(ctx, loader, mismatch)
 					if !errors.Is(err, service.ErrModelServiceUnavailable) {
-						b.Fatalf("LoadService() error = %v, want ErrModelServiceUnavailable", err)
+						b.Fatalf("service.Load() error = %v, want ErrModelServiceUnavailable", err)
 					}
 				}
 				b.ReportMetric(float64(segmentCount), "segments")

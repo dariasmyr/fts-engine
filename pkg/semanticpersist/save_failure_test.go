@@ -34,43 +34,47 @@ func TestLowLevelSaveFailureAfterExplicitCommitKeepsPreviousCurrent(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := service.New(client, config)
+	semanticService, err := service.New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.AddDocument(ctx, persistenceDocument("alpha")); err != nil {
+	if err := semanticService.AddDocument(ctx, persistenceDocument("alpha")); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Commit(ctx); err != nil {
+	if err := semanticService.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	_, err = SaveService(ctx, root, service, SaveOptions{
+	_, err = SaveService(ctx, root, semanticService, SaveOptions{
 		ExpectedGeneration: &Generation{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.AddDocument(ctx, persistenceDocument("beta")); err != nil {
+	if err := semanticService.AddDocument(ctx, persistenceDocument("beta")); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Commit(ctx); err != nil {
+	if err := semanticService.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = SaveService(ctx, root, service, SaveOptions{
+	_, err = SaveService(ctx, root, semanticService, SaveOptions{
 		ExpectedGeneration: &Generation{},
 	})
 	if !errors.Is(err, ErrStaleGeneration) {
 		t.Fatalf("Save() error = %v, want ErrStaleGeneration", err)
 	}
-	result, err := service.Search(ctx, "beta", 1)
+	result, err := semanticService.Search(ctx, "beta", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result.Hits) != 1 || result.Hits[0].DocID != "beta" {
 		t.Fatalf("in-process Search() hits = %+v, want beta", result.Hits)
 	}
-	loaded, _, err := LoadService(ctx, root, client, LoadOptions{})
+	loader, err := NewLoader(root, LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := service.Load(ctx, loader, client)
 	if err != nil {
 		t.Fatal(err)
 	}

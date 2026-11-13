@@ -86,12 +86,9 @@ func main() {
 	}
 	fmt.Println("save with another index identity was rejected")
 
-	loaded, _, err := semanticpersist.LoadService(
-		ctx,
-		root,
-		persistenceEmbedder{},
-		semanticpersist.LoadOptions{},
-	)
+	loader, err := semanticpersist.NewLoader(root, semanticpersist.LoadOptions{})
+	must(err)
+	loaded, _, err := service.Load(ctx, loader, persistenceEmbedder{})
 	must(err)
 	search(ctx, loaded, "query-v2", "after reopen")
 }

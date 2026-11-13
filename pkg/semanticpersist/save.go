@@ -39,8 +39,8 @@ func Save(
 }
 
 // SaveService persists one committed model-backed service generation. The
-// saved pipeline config is restored by LoadService and cannot be replaced by the
-// caller during loading.
+// saved pipeline config is restored by service.Load through a Loader and cannot
+// be replaced by the caller during loading.
 func SaveService(
 	ctx context.Context,
 	root string,
@@ -50,7 +50,7 @@ func SaveService(
 	if options.ExpectedGeneration == nil {
 		return Generation{}, ErrExpectedGenerationRequired
 	}
-	serviceConfig, index, err := persistedService(semanticService)
+	serviceConfig, err := persistedService(semanticService)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -58,13 +58,16 @@ func SaveService(
 	if err != nil {
 		return Generation{}, err
 	}
-	generationID, err := save(
-		ctx,
-		root,
-		index,
-		&serviceConfig,
-		options.ExpectedGeneration.ID,
-		cfg,
+	committed, err := semanticService.ExportState(ctx)
+	if err != nil {
+		return Generation{}, err
+	}
+	if committed.Config != serviceConfig.Index {
+		return Generation{}, ErrCorrupt
+	}
+	generationID, err := saveCommittedState(
+		ctx, root, committed, &serviceConfig.Pipeline,
+		options.ExpectedGeneration.ID, cfg,
 	)
 	return Generation{ID: generationID}, err
 }
@@ -98,7 +101,7 @@ func CommitAndSave(
 }
 
 // CommitAndSaveService atomically commits and persists a model-backed service,
-// including the immutable pipeline config required by LoadService.
+// including the immutable pipeline config required by service.Load.
 func CommitAndSaveService(
 	ctx context.Context,
 	root string,
@@ -108,7 +111,7 @@ func CommitAndSaveService(
 	if options.ExpectedGeneration == nil {
 		return Generation{}, ErrExpectedGenerationRequired
 	}
-	serviceConfig, index, err := persistedService(semanticService)
+	serviceConfig, err := persistedService(semanticService)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -116,30 +119,56 @@ func CommitAndSaveService(
 	if err != nil {
 		return Generation{}, err
 	}
-	generationID, err := commitAndSave(
-		ctx,
-		root,
-		index,
-		&serviceConfig,
-		options.ExpectedGeneration.ID,
-		cfg,
+	generationID, err := commitAndSaveService(
+		ctx, root, semanticService, serviceConfig,
+		options.ExpectedGeneration.ID, cfg,
 	)
 	return Generation{ID: generationID}, err
 }
 
-func persistedService(semanticService *service.Service) (service.PipelineConfig, *semantic.Index, error) {
+func commitAndSaveService(
+	ctx context.Context,
+	root string,
+	semanticService *service.Service,
+	serviceConfig service.Config,
+	expectedGenerationID uint64,
+	cfg settings,
+) (uint64, error) {
+	var generationID uint64
+	var saveErr error
+	err := semanticService.CommitWithState(ctx, func(committed *semantic.CommittedIndexState) error {
+		if committed == nil || committed.Config != serviceConfig.Index {
+			return ErrCorrupt
+		}
+		generationID, saveErr = saveCommittedState(
+			ctx, root, committed, &serviceConfig.Pipeline,
+			expectedGenerationID, cfg,
+		)
+		if errors.Is(saveErr, ErrIndeterminate) {
+			// CURRENT may already reference this exact candidate, so publish the
+			// matching in-memory view before returning the indeterminate error.
+			return nil
+		}
+		return saveErr
+	})
+	if err != nil {
+		return generationID, err
+	}
+	return generationID, saveErr
+}
+
+func persistedService(semanticService *service.Service) (service.Config, error) {
 	if semanticService == nil {
-		return service.PipelineConfig{}, nil, ErrCorrupt
+		return service.Config{}, ErrCorrupt
 	}
 	config, ok := semanticService.Config()
 	if !ok {
-		return service.PipelineConfig{}, nil, service.ErrModelServiceUnavailable
+		return service.Config{}, service.ErrModelServiceUnavailable
 	}
-	index := semanticService.Index()
-	if index == nil || config.Index != index.Config() {
-		return service.PipelineConfig{}, nil, ErrCorrupt
+	if config.Index != semanticService.IndexConfig() {
+		return service.Config{}, ErrCorrupt
 	}
-	return config.Pipeline, index, nil
+	return config, nil
 }
 
 func commitAndSave(

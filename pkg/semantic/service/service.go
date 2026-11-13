@@ -37,45 +37,6 @@ func New(client embedding.Client, config Config) (*Service, error) {
 	return service, nil
 }
 
-// NewFromIndex builds the configured standard model pipeline and binds it to an
-// existing compatible index, including one reconstructed by Restore.
-func NewFromIndex(
-	client embedding.Client,
-	index *semantic.Index,
-	config Config,
-) (*Service, error) {
-	if index == nil {
-		return nil, ErrInvalidConfig
-	}
-	if config.validateCanonical() != nil || config.Index != index.Config() {
-		return nil, ErrModelServiceUnavailable
-	}
-	components, err := prepareStandardModelService(client, config)
-	if err != nil {
-		return nil, ErrModelServiceUnavailable
-	}
-	service, err := NewService(index, components.encoder, components.encoder)
-	if err != nil {
-		return nil, err
-	}
-	service.pipeline = &components.config.Pipeline
-	return service, nil
-}
-
-// BindRestored binds the saved standard pipeline contract to an already
-// restored compatible index. The pipeline must come from persisted metadata;
-// no defaults or caller overrides are applied.
-func BindRestored(
-	index *semantic.Index,
-	client embedding.Client,
-	saved PipelineConfig,
-) (*Service, error) {
-	if index == nil || saved.ValidateCanonical(index.Config()) != nil {
-		return nil, ErrModelServiceUnavailable
-	}
-	return NewFromIndex(client, index, Config{Index: index.Config(), Pipeline: saved})
-}
-
 // NewService binds custom document and query encoders to an existing index.
 // Encoders are responsible for producing vectors with the dimensions expected
 // by the index; each encoded batch is validated before it is staged or searched.
@@ -94,20 +55,35 @@ func NewService(
 	}, nil
 }
 
-// Index returns the underlying semantic index for operations
-// that work directly with prepared embeddings.
-func (s *Service) Index() *semantic.Index {
-	return s.index
-}
-
 // Config returns the built-in model pipeline configuration. The second result
-// is false for services assembled from external encoders with NewService; use
-// Index().Config() to inspect their vector index configuration.
+// is false for services assembled from external encoders with NewService.
 func (s *Service) Config() (Config, bool) {
 	if s.pipeline == nil {
 		return Config{}, false
 	}
 	return Config{Index: s.index.Config(), Pipeline: *s.pipeline}, true
+}
+
+// IndexConfig returns a copy of the immutable vector index configuration.
+func (s *Service) IndexConfig() semantic.IndexConfig {
+	return s.index.Config()
+}
+
+// ExportState returns a detached persistence-neutral copy of the committed
+// index state. Pending mutations must be committed first.
+func (s *Service) ExportState(ctx context.Context) (*semantic.CommittedIndexState, error) {
+	return s.index.ExportState(ctx)
+}
+
+// CommitWithState prepares pending mutations and passes the exact committed
+// candidate to accept before publishing it to searches. The callback must
+// complete its external commit point before returning nil and must not
+// reentrantly mutate, commit, or compact this Service.
+func (s *Service) CommitWithState(
+	ctx context.Context,
+	accept func(*semantic.CommittedIndexState) error,
+) error {
+	return s.index.CommitWithState(ctx, accept)
 }
 
 // AddDocument encodes and stages a new document.
@@ -240,7 +216,7 @@ func (s *Service) SearchWithConfig(
 }
 
 // Commit publishes pending document mutations to the in-memory searchable view.
-// It performs no persistence I/O; use semanticpersist.CommitAndSave for a
+// It performs no persistence I/O; use semanticpersist.CommitAndSaveService for a
 // durable commit.
 func (s *Service) Commit(ctx context.Context) error {
 	return s.index.Commit(ctx)
@@ -252,10 +228,12 @@ func (s *Service) Compact(ctx context.Context) error {
 	return s.index.Compact(ctx)
 }
 
+// Statistics returns a snapshot of index counters.
 func (s *Service) Statistics() semantic.Statistics {
 	return s.index.Statistics()
 }
 
+// View returns the current immutable searchable index view.
 func (s *Service) View() *semantic.IndexView {
 	return s.index.View()
 }
