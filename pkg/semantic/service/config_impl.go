@@ -1,10 +1,11 @@
-package semantic
+package service
 
 import (
 	"math"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -23,7 +24,7 @@ const (
 
 // Config combines an Index contract with its model-backed pipeline contract.
 type Config struct {
-	Index    IndexConfig
+	Index    semantic.IndexConfig
 	Pipeline PipelineConfig
 }
 
@@ -53,13 +54,13 @@ func DefaultConfig(model embedding.Model) (Config, error) {
 	maxChunkBytes := min(model.ContextTokens, 4096)
 	targetBytes := max(1, maxChunkBytes*3/4)
 	c := Config{
-		Index: IndexConfig{
+		Index: semantic.IndexConfig{
 			Dimensions: model.Dimensions,
 			Metric:     vector.MetricCosine,
-			Operational: OperationalLimits{
-				Capacity:  CapacityLimits{MaxLiveVectors: defaultMaxLiveVectors},
-				Ingestion: IngestionLimits{MaxChunksPerDocument: defaultMaxChunksPerDocument},
-				Search: SearchLimits{
+			Operational: semantic.OperationalLimits{
+				Capacity:  semantic.CapacityLimits{MaxLiveVectors: defaultMaxLiveVectors},
+				Ingestion: semantic.IngestionLimits{MaxChunksPerDocument: defaultMaxChunksPerDocument},
+				Search: semantic.SearchLimits{
 					MaxResults:         defaultMaxSearchResults,
 					MaxCandidateChunks: defaultMaxChunkCandidates,
 					MaxChunksPerResult: defaultMaxChunksPerDocumentHit,
@@ -82,9 +83,9 @@ func DefaultConfig(model embedding.Model) (Config, error) {
 // Validate checks whether c can be normalized into a valid new service config.
 func (c Config) Validate() error { _, err := c.normalized(); return err }
 func (c Config) normalized() (Config, error) {
-	index, err := c.Index.normalized()
+	index, err := c.Index.NormalizeForNew()
 	if err != nil {
-		return Config{}, err
+		return Config{}, ErrInvalidConfig
 	}
 	c.Index = index
 	pipeline, err := c.Pipeline.normalized(index)
@@ -101,7 +102,7 @@ func (c Config) validateCanonical() error {
 	}
 	return nil
 }
-func (p PipelineConfig) normalized(index IndexConfig) (PipelineConfig, error) {
+func (p PipelineConfig) normalized(index semantic.IndexConfig) (PipelineConfig, error) {
 	if p.EncodingBehaviorVersion == 0 {
 		p.EncodingBehaviorVersion = CurrentEncodingBehaviorVersion
 	}
@@ -125,7 +126,7 @@ func (p PipelineConfig) normalized(index IndexConfig) (PipelineConfig, error) {
 	p.Operational.Encoding = encoding
 	return p, nil
 }
-func (p PipelineConfig) validateCanonical(index IndexConfig) error {
+func (p PipelineConfig) validateCanonical(index semantic.IndexConfig) error {
 	n, err := p.normalized(index)
 	if err != nil || n != p {
 		return ErrInvalidConfig
@@ -134,7 +135,9 @@ func (p PipelineConfig) validateCanonical(index IndexConfig) error {
 }
 
 // ValidateCanonical checks a persisted pipeline without applying defaults.
-func (p PipelineConfig) ValidateCanonical(index IndexConfig) error { return p.validateCanonical(index) }
+func (p PipelineConfig) ValidateCanonical(index semantic.IndexConfig) error {
+	return p.validateCanonical(index)
+}
 func (c EncodingLimits) normalized(dimensions, maxChunks int) (EncodingLimits, error) {
 	if c.MaxFields < 0 || dimensions <= 0 || maxChunks <= 0 || uint64(dimensions) > math.MaxUint64/4 {
 		return EncodingLimits{}, ErrInvalidConfig

@@ -11,7 +11,7 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist"
 )
 
@@ -20,17 +20,17 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	client := persistentTestClient(t, "v1")
 	config := persistentTestConfig(t, client)
-	service, err := semantic.New(client, config)
+	semanticService, err := service.New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.AddDocument(ctx, testDocument("alpha", "alpha")); err != nil {
+	if err := semanticService.AddDocument(ctx, testDocument("alpha", "alpha")); err != nil {
 		t.Fatal(err)
 	}
 	generation, err := semanticpersist.CommitAndSaveService(
 		ctx,
 		root,
-		service,
+		semanticService,
 		semanticpersist.SaveConfig{
 			ExpectedGeneration: &semanticpersist.Generation{},
 		},
@@ -41,7 +41,7 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 	if generation.ID != 1 {
 		t.Fatalf("generation = %d, want 1", generation.ID)
 	}
-	assertSearchHit(t, service, "alpha", "alpha")
+	assertSearchHit(t, semanticService, "alpha", "alpha")
 
 	loaded, loadedGeneration, err := semanticpersist.LoadService(
 		ctx,
@@ -78,7 +78,7 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 	_, err = semanticpersist.Save(
 		ctx,
 		root,
-		service.Index(),
+		semanticService.Index(),
 		semanticpersist.SaveConfig{ExpectedGeneration: &semanticpersist.Generation{}},
 	)
 	if !errors.Is(err, semanticpersist.ErrStaleGeneration) {
@@ -92,14 +92,14 @@ func TestLoadServiceRestoresSavedConfig(t *testing.T) {
 	client := persistentTestClient(t, "v1")
 	config := persistentTestConfig(t, client)
 	config.Pipeline.Chunking = chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
-	service, err := semantic.New(client, config)
+	semanticService, err := service.New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := semanticpersist.SaveService(
 		ctx,
 		root,
-		service,
+		semanticService,
 		semanticpersist.SaveConfig{ExpectedGeneration: &semanticpersist.Generation{}},
 	); err != nil {
 		t.Fatal(err)
@@ -128,8 +128,8 @@ func TestLoadServiceRestoresSavedConfig(t *testing.T) {
 		persistentTestClient(t, "v2"),
 		semanticpersist.LoadConfig{},
 	)
-	if !errors.Is(err, semantic.ErrModelServiceUnavailable) {
-		t.Fatalf("LoadService() mismatch error = %v, want semantic.ErrModelServiceUnavailable", err)
+	if !errors.Is(err, service.ErrModelServiceUnavailable) {
+		t.Fatalf("LoadService() mismatch error = %v, want service.ErrModelServiceUnavailable", err)
 	}
 }
 
@@ -139,17 +139,17 @@ func TestLoadServiceChecksModelBeforeSegmentObjects(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
 	client := persistentTestClient(t, "v1")
-	service, err := semantic.New(client, persistentTestConfig(t, client))
+	semanticService, err := service.New(client, persistentTestConfig(t, client))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.AddDocument(ctx, testDocument("alpha", "alpha")); err != nil {
+	if err := semanticService.AddDocument(ctx, testDocument("alpha", "alpha")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := semanticpersist.CommitAndSaveService(
 		ctx,
 		root,
-		service,
+		semanticService,
 		semanticpersist.SaveConfig{ExpectedGeneration: &semanticpersist.Generation{}},
 	); err != nil {
 		t.Fatal(err)
@@ -180,8 +180,8 @@ func TestLoadServiceChecksModelBeforeSegmentObjects(t *testing.T) {
 		root,
 		persistentTestClient(t, "v2"),
 		semanticpersist.LoadConfig{},
-	); !errors.Is(err, semantic.ErrModelServiceUnavailable) {
-		t.Fatalf("LoadService() mismatch error = %v, want semantic.ErrModelServiceUnavailable", err)
+	); !errors.Is(err, service.ErrModelServiceUnavailable) {
+		t.Fatalf("LoadService() mismatch error = %v, want service.ErrModelServiceUnavailable", err)
 	}
 	if _, _, err := semanticpersist.LoadService(
 		ctx,
@@ -197,14 +197,14 @@ func TestLoadServiceRejectsRawIndexGeneration(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
 	client := persistentTestClient(t, "v1")
-	service, err := semantic.New(client, persistentTestConfig(t, client))
+	semanticService, err := service.New(client, persistentTestConfig(t, client))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := semanticpersist.Save(
 		ctx,
 		root,
-		service.Index(),
+		semanticService.Index(),
 		semanticpersist.SaveConfig{ExpectedGeneration: &semanticpersist.Generation{}},
 	); err != nil {
 		t.Fatal(err)
@@ -215,8 +215,8 @@ func TestLoadServiceRejectsRawIndexGeneration(t *testing.T) {
 		root,
 		client,
 		semanticpersist.LoadConfig{},
-	); !errors.Is(err, semantic.ErrModelServiceUnavailable) {
-		t.Fatalf("LoadService() error = %v, want semantic.ErrModelServiceUnavailable", err)
+	); !errors.Is(err, service.ErrModelServiceUnavailable) {
+		t.Fatalf("LoadService() error = %v, want service.ErrModelServiceUnavailable", err)
 	}
 }
 
@@ -235,14 +235,14 @@ func TestLoadServicePreservesCancellationAndPersistenceLimits(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	service, err := semantic.New(client, config)
+	semanticService, err := service.New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := semanticpersist.SaveService(
 		t.Context(),
 		root,
-		service,
+		semanticService,
 		semanticpersist.SaveConfig{ExpectedGeneration: &semanticpersist.Generation{}},
 	); err != nil {
 		t.Fatal(err)
@@ -284,9 +284,9 @@ func persistentTestClient(t *testing.T, revision string) embedding.Client {
 	return client
 }
 
-func persistentTestConfig(t *testing.T, client embedding.Client) semantic.Config {
+func persistentTestConfig(t *testing.T, client embedding.Client) service.Config {
 	t.Helper()
-	config, err := semantic.DefaultConfig(client.Model())
+	config, err := service.DefaultConfig(client.Model())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,9 +302,9 @@ func testDocument(id, text string) fts.Document {
 	}
 }
 
-func assertSearchHit(t *testing.T, service *semantic.Service, query string, want fts.DocID) {
+func assertSearchHit(t *testing.T, semanticService *service.Service, query string, want fts.DocID) {
 	t.Helper()
-	result, err := service.Search(t.Context(), query, 1)
+	result, err := semanticService.Search(t.Context(), query, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

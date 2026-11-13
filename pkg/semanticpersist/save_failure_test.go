@@ -8,7 +8,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 )
 
 func TestLowLevelSaveFailureAfterExplicitCommitKeepsPreviousCurrent(t *testing.T) {
@@ -30,11 +30,11 @@ func TestLowLevelSaveFailureAfterExplicitCommitKeepsPreviousCurrent(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := semantic.DefaultConfig(client.Model())
+	config, err := service.DefaultConfig(client.Model())
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := semantic.New(client, config)
+	service, err := service.New(client, config)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/internal/persistfs"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
@@ -43,13 +44,13 @@ func Save(
 func SaveService(
 	ctx context.Context,
 	root string,
-	service *semantic.Service,
+	semanticService *service.Service,
 	config SaveConfig,
 ) (Generation, error) {
 	if config.ExpectedGeneration == nil {
 		return Generation{}, ErrExpectedGenerationRequired
 	}
-	serviceConfig, index, err := persistedService(service)
+	serviceConfig, index, err := persistedService(semanticService)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -101,13 +102,13 @@ func CommitAndSave(
 func CommitAndSaveService(
 	ctx context.Context,
 	root string,
-	service *semantic.Service,
+	semanticService *service.Service,
 	config SaveConfig,
 ) (Generation, error) {
 	if config.ExpectedGeneration == nil {
 		return Generation{}, ErrExpectedGenerationRequired
 	}
-	serviceConfig, index, err := persistedService(service)
+	serviceConfig, index, err := persistedService(semanticService)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -126,17 +127,17 @@ func CommitAndSaveService(
 	return Generation{ID: generationID}, err
 }
 
-func persistedService(service *semantic.Service) (semantic.PipelineConfig, *semantic.Index, error) {
-	if service == nil {
-		return semantic.PipelineConfig{}, nil, ErrCorrupt
+func persistedService(semanticService *service.Service) (service.PipelineConfig, *semantic.Index, error) {
+	if semanticService == nil {
+		return service.PipelineConfig{}, nil, ErrCorrupt
 	}
-	config, ok := service.Config()
+	config, ok := semanticService.Config()
 	if !ok {
-		return semantic.PipelineConfig{}, nil, semantic.ErrModelServiceUnavailable
+		return service.PipelineConfig{}, nil, service.ErrModelServiceUnavailable
 	}
-	index := service.Index()
+	index := semanticService.Index()
 	if index == nil || config.Index != index.Config() {
-		return semantic.PipelineConfig{}, nil, ErrCorrupt
+		return service.PipelineConfig{}, nil, ErrCorrupt
 	}
 	return config.Pipeline, index, nil
 }
@@ -145,7 +146,7 @@ func commitAndSave(
 	ctx context.Context,
 	root string,
 	index *semantic.Index,
-	serviceConfig *semantic.PipelineConfig,
+	serviceConfig *service.PipelineConfig,
 	expectedGenerationID uint64,
 	cfg settings,
 ) (uint64, error) {
@@ -187,7 +188,7 @@ func save(
 	ctx context.Context,
 	root string,
 	index *semantic.Index,
-	serviceConfig *semantic.PipelineConfig,
+	serviceConfig *service.PipelineConfig,
 	expectedGenerationID uint64,
 	cfg settings,
 ) (uint64, error) {
@@ -211,7 +212,7 @@ func saveCommittedState(
 	ctx context.Context,
 	root string,
 	committed *semantic.CommittedIndexState,
-	serviceConfig *semantic.PipelineConfig,
+	serviceConfig *service.PipelineConfig,
 	expectedGenerationID uint64,
 	cfg settings,
 ) (uint64, error) {

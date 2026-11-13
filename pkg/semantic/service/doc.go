@@ -1,3 +1,2 @@
-// Package service defines configuration owned by the semantic application
-// service. Service orchestration moves into this package in a later phase.
+// Package service coordinates semantic input encoding and index operations.
 package service

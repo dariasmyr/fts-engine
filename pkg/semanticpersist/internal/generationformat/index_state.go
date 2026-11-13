@@ -3,6 +3,7 @@ package generationformat
 import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
@@ -37,7 +38,7 @@ type SegmentState struct {
 type IndexState struct {
 	ID                   semantic.IndexID
 	Config               semantic.IndexConfig
-	Pipeline             *semantic.PipelineConfig
+	Pipeline             *service.PipelineConfig
 	Revision             semantic.Revision
 	MaxAllocatedVectorID semantic.VectorID
 	NextSegmentID        semantic.SegmentID
@@ -184,7 +185,7 @@ func decodeIndexConfig(d *decoder) semantic.IndexConfig {
 	return c
 }
 
-func encodePipelineConfig(e *encoder, c *semantic.PipelineConfig, maxString int) {
+func encodePipelineConfig(e *encoder, c *service.PipelineConfig, maxString int) {
 	if c == nil {
 		e.writeUint32(0)
 		return
@@ -205,7 +206,7 @@ func encodePipelineConfig(e *encoder, c *semantic.PipelineConfig, maxString int)
 	e.writeString(c.Model.QueryPrefix, maxString)
 }
 
-func decodePipelineConfig(d *decoder) *semantic.PipelineConfig {
+func decodePipelineConfig(d *decoder) *service.PipelineConfig {
 	present := d.readUint32()
 	if present == 0 {
 		return nil
@@ -214,7 +215,7 @@ func decodePipelineConfig(d *decoder) *semantic.PipelineConfig {
 		d.decodeErr = ErrCorrupt
 		return nil
 	}
-	c := &semantic.PipelineConfig{}
+	c := &service.PipelineConfig{}
 	c.Model.Dimensions = int(d.readUint32())
 	c.Model.ContextTokens = int(d.readUint32())
 	c.Chunking.TargetBytes = int(d.readUint32())

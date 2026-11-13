@@ -8,7 +8,7 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
@@ -20,7 +20,7 @@ func main() {
 	defer os.RemoveAll(root)
 
 	embedder := persistenceEmbedder{}
-	config, err := semantic.DefaultConfig(embedder.Model())
+	config, err := service.DefaultConfig(embedder.Model())
 	must(err)
 	config.Index.Metric = vector.MetricL2Squared
 	config.Pipeline.Chunking = chunk.Config{
@@ -33,28 +33,28 @@ func main() {
 	config.Index.Operational.Search.MaxCandidateChunks = 100
 	config.Index.Operational.Search.MaxChunksPerResult = 3
 
-	service, err := semantic.New(embedder, config)
+	semanticService, err := service.New(embedder, config)
 	must(err)
 
-	must(service.AddDocument(ctx, document("doc-a", "a-v1")))
-	must(service.AddDocument(ctx, document("doc-b", "b")))
+	must(semanticService.AddDocument(ctx, document("doc-a", "a-v1")))
+	must(semanticService.AddDocument(ctx, document("doc-b", "b")))
 	generation, err := semanticpersist.CommitAndSaveService(
 		ctx,
 		root,
-		service,
+		semanticService,
 		semanticpersist.SaveConfig{
 			ExpectedGeneration: &semanticpersist.Generation{},
 		},
 	)
 	must(err)
 	fmt.Printf("initial content generation=%d\n", generation.ID)
-	search(ctx, service, "query-v1", "after commit and save")
+	search(ctx, semanticService, "query-v1", "after commit and save")
 
-	must(service.ReplaceDocument(ctx, document("doc-a", "a-v2")))
+	must(semanticService.ReplaceDocument(ctx, document("doc-a", "a-v2")))
 	generation, err = semanticpersist.CommitAndSaveService(
 		ctx,
 		root,
-		service,
+		semanticService,
 		semanticpersist.SaveConfig{
 			ExpectedGeneration: &generation,
 		},
@@ -83,7 +83,7 @@ func document(id fts.DocID, text string) fts.Document {
 
 func search(
 	ctx context.Context,
-	service *semantic.Service,
+	service *service.Service,
 	query string,
 	label string,
 ) {

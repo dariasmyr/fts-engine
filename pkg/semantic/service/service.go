@@ -1,10 +1,11 @@
-package semantic
+package service
 
 import (
 	"context"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -12,7 +13,7 @@ import (
 // the standard model-bound preparation pipeline; NewService accepts external
 // encoders. Index remains independent from document encoding.
 type Service struct {
-	index           *Index
+	index           *semantic.Index
 	documentEncoder DocumentEncoder
 	queryEncoder    QueryEncoder
 	pipeline        *PipelineConfig
@@ -24,7 +25,7 @@ func New(client embedding.Client, config Config) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	index, err := NewIndex(components.config.Index)
+	index, err := semantic.NewIndex(components.config.Index)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +41,7 @@ func New(client embedding.Client, config Config) (*Service, error) {
 // existing compatible index, including one reconstructed by Restore.
 func NewFromIndex(
 	client embedding.Client,
-	index *Index,
+	index *semantic.Index,
 	config Config,
 ) (*Service, error) {
 	if index == nil {
@@ -65,7 +66,7 @@ func NewFromIndex(
 // Encoders are responsible for producing vectors with the dimensions expected
 // by the index; each encoded batch is validated before it is staged or searched.
 func NewService(
-	index *Index,
+	index *semantic.Index,
 	documentEncoder DocumentEncoder,
 	queryEncoder QueryEncoder,
 ) (*Service, error) {
@@ -81,7 +82,7 @@ func NewService(
 
 // Index returns the underlying semantic index for operations
 // that work directly with prepared embeddings.
-func (s *Service) Index() *Index {
+func (s *Service) Index() *semantic.Index {
 	return s.index
 }
 
@@ -151,12 +152,12 @@ func (s *Service) SearchDocuments(
 	ctx context.Context,
 	query fts.Document,
 	maxResultCount int,
-) (DocumentSearchResult, error) {
+) (semantic.DocumentSearchResult, error) {
 	return s.SearchDocumentsWithConfig(
 		ctx,
 		query,
 		maxResultCount,
-		QueryConfig{},
+		semantic.QueryConfig{},
 	)
 }
 
@@ -166,18 +167,21 @@ func (s *Service) SearchDocumentsWithConfig(
 	ctx context.Context,
 	query fts.Document,
 	maxResultCount int,
-	config QueryConfig,
-) (DocumentSearchResult, error) {
+	config semantic.QueryConfig,
+) (semantic.DocumentSearchResult, error) {
 	if ctx == nil {
-		return DocumentSearchResult{}, vector.ErrNilContext
+		return semantic.DocumentSearchResult{}, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
-		return DocumentSearchResult{}, err
+		return semantic.DocumentSearchResult{}, err
+	}
+	if err := s.index.ValidateSearchRequest(ctx, maxResultCount, config); err != nil {
+		return semantic.DocumentSearchResult{}, err
 	}
 
-	queries, err := s.queryEncoder.EncodeQueryDocument(ctx, query, config)
+	queries, err := s.queryEncoder.EncodeQueryDocument(ctx, query)
 	if err != nil {
-		return DocumentSearchResult{}, err
+		return semantic.DocumentSearchResult{}, err
 	}
 
 	return s.index.Search(
@@ -193,8 +197,8 @@ func (s *Service) Search(
 	ctx context.Context,
 	query string,
 	maxResultCount int,
-) (DocumentSearchResult, error) {
-	return s.SearchWithConfig(ctx, query, maxResultCount, QueryConfig{})
+) (semantic.DocumentSearchResult, error) {
+	return s.SearchWithConfig(ctx, query, maxResultCount, semantic.QueryConfig{})
 }
 
 // SearchWithConfig searches one text query with explicit request-local query
@@ -203,17 +207,20 @@ func (s *Service) SearchWithConfig(
 	ctx context.Context,
 	query string,
 	maxResultCount int,
-	config QueryConfig,
-) (DocumentSearchResult, error) {
+	config semantic.QueryConfig,
+) (semantic.DocumentSearchResult, error) {
 	if ctx == nil {
-		return DocumentSearchResult{}, vector.ErrNilContext
+		return semantic.DocumentSearchResult{}, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
-		return DocumentSearchResult{}, err
+		return semantic.DocumentSearchResult{}, err
 	}
-	queries, err := s.queryEncoder.EncodeQuery(ctx, query, config)
+	if err := s.index.ValidateSearchRequest(ctx, maxResultCount, config); err != nil {
+		return semantic.DocumentSearchResult{}, err
+	}
+	queries, err := s.queryEncoder.EncodeQuery(ctx, query)
 	if err != nil {
-		return DocumentSearchResult{}, err
+		return semantic.DocumentSearchResult{}, err
 	}
 	return s.index.Search(ctx, queries, maxResultCount, config)
 }
@@ -231,10 +238,10 @@ func (s *Service) Compact(ctx context.Context) error {
 	return s.index.Compact(ctx)
 }
 
-func (s *Service) Statistics() Statistics {
+func (s *Service) Statistics() semantic.Statistics {
 	return s.index.Statistics()
 }
 
-func (s *Service) View() *IndexView {
+func (s *Service) View() *semantic.IndexView {
 	return s.index.View()
 }

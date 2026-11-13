@@ -268,3 +268,12 @@ func (i *Index) Search(
 
 	return view.Search(ctx, queries, k, config)
 }
+
+// ValidateSearchRequest checks request-local search budgets without executing a search.
+func (i *Index) ValidateSearchRequest(ctx context.Context, k int, config QueryConfig) error {
+	view, err := i.viewForRead(ctx)
+	if err != nil {
+		return err
+	}
+	return view.validateSearchLimits(ctx, k, config)
+}

@@ -20,6 +20,13 @@ type Ref struct {
 	EndByte   uint64
 }
 
+// ChunkEmbedding couples source-chunk metadata with one raw finite embedding.
+// Index validates, copies, and performs metric-specific preparation.
+type ChunkEmbedding struct {
+	Ref       Ref
+	Embedding []float32
+}
+
 // Validate verifies metadata and byte boundaries against the source field.
 func (r Ref) Validate(text string) error {
 	if r.DocID == "" {

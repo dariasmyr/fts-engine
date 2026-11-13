@@ -1,10 +1,11 @@
-package semantic
+package service
 
 import (
 	"fmt"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/encoding"
 )
 
 func newConfiguredChunkSplitter(config chunk.Config) (*chunk.Splitter, error) {
@@ -19,13 +20,13 @@ func modelLimits(
 	config EncodingLimits,
 	dimensions int,
 	maxChunks int,
-) (InputLimits, error) {
+) (encoding.InputLimits, error) {
 	if dimensions <= 0 || uint64(dimensions) > ^uint64(0)/4 ||
 		maxChunks <= 0 || config.MaxFields <= 0 || config.MaxSourceBytes == 0 ||
 		config.MaxEmbeddingBytes == 0 || uint64(maxChunks) > ^uint64(0)/(uint64(dimensions)*4) {
-		return InputLimits{}, ErrInvalidConfig
+		return encoding.InputLimits{}, ErrInvalidConfig
 	}
-	return InputLimits{
+	return encoding.InputLimits{
 		MaxFields:         config.MaxFields,
 		MaxSourceBytes:    config.MaxSourceBytes,
 		MaxChunks:         maxChunks,
@@ -35,7 +36,7 @@ func modelLimits(
 
 type modelServiceComponents struct {
 	config  Config
-	encoder *Encoder
+	encoder *encoding.Encoder
 }
 
 func prepareStandardModelService(
@@ -85,13 +86,12 @@ func buildModelService(
 	if err != nil {
 		return modelServiceComponents{}, err
 	}
-	encoder, err := newEncoder(
-		client,
-		splitter,
-		documentLimits,
-		queryLimits,
-		&config.Pipeline.Model,
-	)
+	encoder, err := encoding.NewEncoder(encoding.EncoderConfig{
+		Client:         client,
+		Splitter:       splitter,
+		DocumentLimits: documentLimits,
+		QueryLimits:    queryLimits,
+	})
 	if err != nil {
 		return modelServiceComponents{}, err
 	}

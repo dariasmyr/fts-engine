@@ -5,6 +5,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -101,7 +102,7 @@ func LoadService(
 	root string,
 	client embedding.Client,
 	loadConfig LoadConfig,
-) (*semantic.Service, Generation, error) {
+) (*service.Service, Generation, error) {
 	cfg, err := prepareLoad(ctx, root, loadConfig)
 	if err != nil {
 		return nil, Generation{}, err
@@ -118,7 +119,7 @@ func LoadService(
 		if err != nil {
 			return loadServiceOperationResult{}, corruptMissingReference(err)
 		}
-		service, err := semantic.NewFromIndex(client, index, semantic.Config{Index: index.Config(), Pipeline: *persisted.state.Pipeline})
+		service, err := service.NewFromIndex(client, index, service.Config{Index: index.Config(), Pipeline: *persisted.state.Pipeline})
 		if err != nil {
 			return loadServiceOperationResult{}, err
 		}
@@ -131,20 +132,20 @@ func LoadService(
 }
 
 type loadServiceOperationResult struct {
-	service    *semantic.Service
+	service    *service.Service
 	generation Generation
 }
 
-func validatePersistedServiceClient(config *semantic.PipelineConfig, client embedding.Client) error {
+func validatePersistedServiceClient(config *service.PipelineConfig, client embedding.Client) error {
 	if config == nil || client == nil {
-		return semantic.ErrModelServiceUnavailable
+		return service.ErrModelServiceUnavailable
 	}
 	model := client.Model()
 	if err := model.Validate(); err != nil {
-		return semantic.ErrModelServiceUnavailable
+		return service.ErrModelServiceUnavailable
 	}
 	if model != config.Model {
-		return semantic.ErrModelServiceUnavailable
+		return service.ErrModelServiceUnavailable
 	}
 	return nil
 }

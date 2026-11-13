@@ -1,4 +1,4 @@
-package semantic
+package encoding
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 )
 
 func TestEncoderEncodeDocument(t *testing.T) {
@@ -40,7 +41,7 @@ func TestEncoderEncodeDocument(t *testing.T) {
 	if &encoded[0].Embedding[0] != &firstVector[0] {
 		t.Fatal("EncodeDocument() copied or replaced the provider vector row")
 	}
-	wantRefs := []Ref{
+	wantRefs := []semantic.Ref{
 		{ID: "_whole/body", DocID: "doc", Field: "body", EndByte: 4},
 		{ID: "_whole/title", DocID: "doc", Field: "title", EndByte: 5},
 	}
@@ -72,7 +73,7 @@ func TestNewEncoderRejectsInvalidConfig(t *testing.T) {
 		name   string
 		config EncoderConfig
 	}{
-		{name: "nil client", config: EncoderConfig{Limits: validLimits}},
+		{name: "nil client", config: EncoderConfig{DocumentLimits: validLimits, QueryLimits: validLimits}},
 		{name: "zero limits", config: EncoderConfig{Client: client}},
 	}
 	for _, test := range tests {
@@ -85,6 +86,23 @@ func TestNewEncoderRejectsInvalidConfig(t *testing.T) {
 				t.Fatalf("EncoderConfig.Validate() error = %v, want ErrInvalidConfig", err)
 			}
 		})
+	}
+}
+
+func TestNewEncoderKeepsIndependentLimits(t *testing.T) {
+	t.Parallel()
+
+	client := testEmbeddingClient(t, func(context.Context, []string) ([][]float32, error) { return nil, nil })
+	documentLimits := InputLimits{MaxFields: 2, MaxSourceBytes: 64, MaxChunks: 7, MaxEmbeddingBytes: 64}
+	queryLimits := InputLimits{MaxFields: 1, MaxSourceBytes: 32, MaxChunks: 3, MaxEmbeddingBytes: 32}
+	encoder, err := NewEncoder(EncoderConfig{
+		Client: client, DocumentLimits: documentLimits, QueryLimits: queryLimits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encoder.documentLimits != documentLimits || encoder.queryLimits != queryLimits {
+		t.Fatalf("limits = %+v/%+v, want %+v/%+v", encoder.documentLimits, encoder.queryLimits, documentLimits, queryLimits)
 	}
 }
 
@@ -106,7 +124,8 @@ func TestEncoderNumberedDocumentContract(t *testing.T) {
 	}
 	encoder, err := NewEncoder(EncoderConfig{
 		Splitter: splitter, Client: client,
-		Limits: InputLimits{MaxFields: 2, MaxSourceBytes: 64, MaxChunks: 8, MaxEmbeddingBytes: 64},
+		DocumentLimits: InputLimits{MaxFields: 2, MaxSourceBytes: 64, MaxChunks: 8, MaxEmbeddingBytes: 64},
+		QueryLimits:    InputLimits{MaxFields: 1, MaxSourceBytes: 64, MaxChunks: 8, MaxEmbeddingBytes: 64},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +140,7 @@ func TestEncoderNumberedDocumentContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRefs := []Ref{
+	wantRefs := []semantic.Ref{
 		{ID: "body/chunk-000000", DocID: "doc", Field: "body", StartByte: 0, EndByte: 4},
 		{ID: "body/chunk-000001", DocID: "doc", Field: "body", Ordinal: 1, StartByte: 3, EndByte: 7},
 		{ID: "body/chunk-000002", DocID: "doc", Field: "body", Ordinal: 2, StartByte: 6, EndByte: 10},
@@ -155,7 +174,7 @@ func TestEncoderUsesModelPrefixes(t *testing.T) {
 	}
 	limits := InputLimits{MaxFields: 1, MaxSourceBytes: 1024, MaxChunks: 1, MaxEmbeddingBytes: 8}
 	encoder, err := NewEncoder(EncoderConfig{
-		Limits: limits, Client: client,
+		DocumentLimits: limits, QueryLimits: limits, Client: client,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -165,12 +184,12 @@ func TestEncoderUsesModelPrefixes(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := encoder.EncodeQuery(t.Context(), "text", QueryConfig{}); err != nil {
+	if _, err := encoder.EncodeQuery(t.Context(), "text"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := encoder.EncodeQueryDocument(t.Context(), fts.Document{
 		ID: "query", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "text"}},
-	}, QueryConfig{}); err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(received, []string{"document: text", "query: text", "query: text"}) {
@@ -194,13 +213,14 @@ func TestEncoderUsesSplitterForQueries(t *testing.T) {
 	}
 	encoder, err := NewEncoder(EncoderConfig{
 		Splitter: splitter, Client: client,
-		Limits: InputLimits{MaxFields: 1, MaxSourceBytes: 1024, MaxChunks: 4, MaxEmbeddingBytes: 32},
+		DocumentLimits: InputLimits{MaxFields: 1, MaxSourceBytes: 1024, MaxChunks: 4, MaxEmbeddingBytes: 32},
+		QueryLimits:    InputLimits{MaxFields: 1, MaxSourceBytes: 1024, MaxChunks: 4, MaxEmbeddingBytes: 32},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	encoded, err := encoder.EncodeQuery(t.Context(), "abcdefghij", QueryConfig{})
+	encoded, err := encoder.EncodeQuery(t.Context(), "abcdefghij")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +228,7 @@ func TestEncoderUsesSplitterForQueries(t *testing.T) {
 	if !slices.Equal(received, want) {
 		t.Fatalf("embedded inputs = %q, want %q", received, want)
 	}
-	wantRefs := []Ref{
+	wantRefs := []semantic.Ref{
 		{ID: "query-000000", DocID: "_query", Field: fts.DefaultField, StartByte: 0, EndByte: 4},
 		{ID: "query-000001", DocID: "_query", Field: fts.DefaultField, Ordinal: 1, StartByte: 3, EndByte: 7},
 		{ID: "query-000002", DocID: "_query", Field: fts.DefaultField, Ordinal: 2, StartByte: 6, EndByte: 10},
@@ -252,9 +272,10 @@ func TestEncoderRejectsInvalidSplitterRange(t *testing.T) {
 		return nil, nil
 	})
 	encoder, err := NewEncoder(EncoderConfig{
-		Limits:   InputLimits{MaxFields: 1, MaxSourceBytes: 16, MaxChunks: 1, MaxEmbeddingBytes: 8},
-		Splitter: invalidRangeSplitter{},
-		Client:   client,
+		DocumentLimits: InputLimits{MaxFields: 1, MaxSourceBytes: 16, MaxChunks: 1, MaxEmbeddingBytes: 8},
+		QueryLimits:    InputLimits{MaxFields: 1, MaxSourceBytes: 16, MaxChunks: 1, MaxEmbeddingBytes: 8},
+		Splitter:       invalidRangeSplitter{},
+		Client:         client,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -286,7 +307,7 @@ func TestEncoderConcurrentUse(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			_, errorsByWorker[worker] = encoder.EncodeQuery(t.Context(), "🙂", QueryConfig{})
+			_, errorsByWorker[worker] = encoder.EncodeQuery(t.Context(), "🙂")
 		}()
 	}
 	wait.Wait()
@@ -311,8 +332,9 @@ func testEmbeddingClient(t testing.TB, embed embedding.ClientFunc) embedding.Cli
 func newTestEncoder(t *testing.T, provider embedding.Client) *Encoder {
 	t.Helper()
 	encoder, err := NewEncoder(EncoderConfig{
-		Limits: InputLimits{MaxFields: 4, MaxSourceBytes: 1024, MaxChunks: 4, MaxEmbeddingBytes: 1024},
-		Client: provider,
+		DocumentLimits: InputLimits{MaxFields: 4, MaxSourceBytes: 1024, MaxChunks: 4, MaxEmbeddingBytes: 1024},
+		QueryLimits:    InputLimits{MaxFields: 4, MaxSourceBytes: 1024, MaxChunks: 4, MaxEmbeddingBytes: 1024},
+		Client:         provider,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -320,8 +342,8 @@ func newTestEncoder(t *testing.T, provider embedding.Client) *Encoder {
 	return encoder
 }
 
-func encodedRefs(chunks []ChunkEmbedding) []Ref {
-	refs := make([]Ref, len(chunks))
+func encodedRefs(chunks []semantic.ChunkEmbedding) []semantic.Ref {
+	refs := make([]semantic.Ref, len(chunks))
 	for i, item := range chunks {
 		refs[i] = item.Ref
 	}

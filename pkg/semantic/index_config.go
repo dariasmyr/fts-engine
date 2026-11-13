@@ -50,6 +50,9 @@ type SearchLimits struct {
 // Validate checks whether c can be normalized into a valid index contract.
 func (c IndexConfig) Validate() error { _, err := c.normalized(); return err }
 
+// NormalizeForNew applies defaults and returns a canonical config for a new Index.
+func (c IndexConfig) NormalizeForNew() (IndexConfig, error) { return c.normalized() }
+
 func (c IndexConfig) validateCanonical() error {
 	normalized, err := c.normalized()
 	if err != nil || normalized != c {

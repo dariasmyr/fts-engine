@@ -8,10 +8,19 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func TestIndexOwnsMetricPreparation(t *testing.T) {
-	index, err := NewIndex(serviceTestConfig())
+	index, err := NewIndex(IndexConfig{
+		Dimensions: 2,
+		Metric:     vector.MetricCosine,
+		Operational: OperationalLimits{
+			Capacity:  CapacityLimits{MaxLiveVectors: 8},
+			Ingestion: IngestionLimits{MaxChunksPerDocument: 2},
+			Search:    SearchLimits{MaxResults: 2, MaxCandidateChunks: 8, MaxChunksPerResult: 1},
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

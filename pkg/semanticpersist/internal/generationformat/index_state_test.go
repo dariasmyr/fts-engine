@@ -8,6 +8,7 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -56,16 +57,16 @@ func TestStateIndexConfigRoundTrip(t *testing.T) {
 
 func TestStateConfigRoundTrip(t *testing.T) {
 	value := testIndexState(t)
-	value.Pipeline = &semantic.PipelineConfig{
+	value.Pipeline = &service.PipelineConfig{
 		Model: embedding.Model{
 			ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 16,
 			DocumentPrefix: "document: ", QueryPrefix: "query: ",
 		},
 		Chunking: chunk.Config{TargetBytes: 8, MaxBytes: 16, OverlapBytes: 2},
-		Operational: semantic.PipelineOperationalLimits{Encoding: semantic.EncodingLimits{
+		Operational: service.PipelineOperationalLimits{Encoding: service.EncodingLimits{
 			MaxFields: 5, MaxSourceBytes: 2048, MaxEmbeddingBytes: 24,
 		}},
-		EncodingBehaviorVersion: semantic.CurrentEncodingBehaviorVersion,
+		EncodingBehaviorVersion: service.CurrentEncodingBehaviorVersion,
 	}
 
 	data, _, err := EncodeState(value, testStateLimits())
@@ -84,14 +85,14 @@ func TestStateConfigRoundTrip(t *testing.T) {
 func TestStateRejectsUnsupportedEncodingBehavior(t *testing.T) {
 	t.Parallel()
 
-	for _, version := range []uint32{0, semantic.CurrentEncodingBehaviorVersion + 1} {
+	for _, version := range []uint32{0, service.CurrentEncodingBehaviorVersion + 1} {
 		value := testIndexState(t)
-		value.Pipeline = &semantic.PipelineConfig{
+		value.Pipeline = &service.PipelineConfig{
 			Model: embedding.Model{
 				ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 16,
 			},
 			Chunking:                chunk.Config{TargetBytes: 8, MaxBytes: 16, OverlapBytes: 2},
-			Operational:             semantic.PipelineOperationalLimits{Encoding: semantic.EncodingLimits{MaxFields: 5, MaxSourceBytes: 2048, MaxEmbeddingBytes: 24}},
+			Operational:             service.PipelineOperationalLimits{Encoding: service.EncodingLimits{MaxFields: 5, MaxSourceBytes: 2048, MaxEmbeddingBytes: 24}},
 			EncodingBehaviorVersion: version,
 		}
 

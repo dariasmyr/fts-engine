@@ -7,6 +7,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 )
 
 func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error) {
@@ -56,22 +57,22 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 		}
 	}
 	if value.Pipeline != nil {
-		service := *value.Pipeline
-		if service.EncodingBehaviorVersion != semantic.CurrentEncodingBehaviorVersion {
-			return 0, codecErrorf(ErrUnsupportedVersion, "state encoding behavior version %d is unsupported", service.EncodingBehaviorVersion)
+		pipeline := *value.Pipeline
+		if pipeline.EncodingBehaviorVersion != service.CurrentEncodingBehaviorVersion {
+			return 0, codecErrorf(ErrUnsupportedVersion, "state encoding behavior version %d is unsupported", pipeline.EncodingBehaviorVersion)
 		}
-		if service.ValidateCanonical(c) != nil {
+		if pipeline.ValidateCanonical(c) != nil {
 			return 0, codecErrorf(ErrCorrupt, "state service config is invalid")
 		}
 		serviceIntegers := []struct {
 			name  string
 			value int
 		}{
-			{name: "model dimensions", value: service.Model.Dimensions},
-			{name: "model context tokens", value: service.Model.ContextTokens},
-			{name: "chunk target bytes", value: service.Chunking.TargetBytes},
-			{name: "chunk max bytes", value: service.Chunking.MaxBytes},
-			{name: "maximum encoding fields", value: service.Operational.Encoding.MaxFields},
+			{name: "model dimensions", value: pipeline.Model.Dimensions},
+			{name: "model context tokens", value: pipeline.Model.ContextTokens},
+			{name: "chunk target bytes", value: pipeline.Chunking.TargetBytes},
+			{name: "chunk max bytes", value: pipeline.Chunking.MaxBytes},
+			{name: "maximum encoding fields", value: pipeline.Operational.Encoding.MaxFields},
 		}
 		for _, field := range serviceIntegers {
 			if field.value <= 0 {
@@ -81,18 +82,18 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 				return 0, codecErrorf(ErrLimitExceeded, "state service config %s value %d exceeds uint32", field.name, field.value)
 			}
 		}
-		if service.Chunking.OverlapBytes < 0 || uint64(service.Chunking.OverlapBytes) > math.MaxUint32 ||
-			service.Operational.Encoding.MaxSourceBytes == 0 || service.Operational.Encoding.MaxEmbeddingBytes == 0 {
+		if pipeline.Chunking.OverlapBytes < 0 || uint64(pipeline.Chunking.OverlapBytes) > math.MaxUint32 ||
+			pipeline.Operational.Encoding.MaxSourceBytes == 0 || pipeline.Operational.Encoding.MaxEmbeddingBytes == 0 {
 			return 0, codecErrorf(ErrCorrupt, "state service config limits are invalid")
 		}
 		if !accumulateEncodedSize(&encodedSize, stateServiceFixedSize) {
 			return 0, ErrLimitExceeded
 		}
 		for _, text := range []string{
-			service.Model.ID,
-			service.Model.Revision,
-			service.Model.DocumentPrefix,
-			service.Model.QueryPrefix,
+			pipeline.Model.ID,
+			pipeline.Model.Revision,
+			pipeline.Model.DocumentPrefix,
+			pipeline.Model.QueryPrefix,
 		} {
 			if !utf8.ValidString(text) || len(text) > limits.MaxStringBytes ||
 				!accumulateEncodedStringSize(&encodedSize, text) {

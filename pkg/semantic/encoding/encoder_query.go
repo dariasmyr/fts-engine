@@ -1,4 +1,4 @@
-package semantic
+package encoding
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -15,16 +16,12 @@ import (
 func (e *Encoder) EncodeQuery(
 	ctx context.Context,
 	text string,
-	config QueryConfig,
-) ([]ChunkEmbedding, error) {
+) ([]semantic.ChunkEmbedding, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
 	if text == "" || !utf8.ValidString(text) {
 		return nil, ErrInvalidQuery
-	}
-	if err := config.Validate(); err != nil {
-		return nil, err
 	}
 	inputs, err := e.queryInputs(ctx, text)
 	if err != nil {
@@ -68,8 +65,8 @@ func (e *Encoder) queryInputs(ctx context.Context, text string) ([]encoderInput,
 			return nil, fmt.Errorf("%w: %w", ErrInvalidQuery, err)
 		}
 		inputs[ordinal] = encoderInput{
-			ref: Ref{
-				ID:        ChunkID(fmt.Sprintf("query-%06d", ordinal)),
+			ref: semantic.Ref{
+				ID:        semantic.ChunkID(fmt.Sprintf("query-%06d", ordinal)),
 				DocID:     "_query",
 				Field:     fts.DefaultField,
 				Ordinal:   uint32(ordinal),

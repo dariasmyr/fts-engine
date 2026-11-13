@@ -1,4 +1,4 @@
-package semantic
+package encoding
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 )
 
 func TestBuiltinEncoderDocumentAndQueryContract(t *testing.T) {
@@ -34,8 +35,9 @@ func TestBuiltinEncoderDocumentAndQueryContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := InputLimits{MaxFields: 2, MaxSourceBytes: 64, MaxChunks: 8, MaxEmbeddingBytes: 64}
-	model := client.Model()
-	encoder, err := newEncoder(client, splitter, limits, limits, &model)
+	encoder, err := NewEncoder(EncoderConfig{
+		Client: client, Splitter: splitter, DocumentLimits: limits, QueryLimits: limits,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,12 +52,12 @@ func TestBuiltinEncoderDocumentAndQueryContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	queryChunks, err := encoder.EncodeQuery(t.Context(), "abcdefghij", QueryConfig{})
+	queryChunks, err := encoder.EncodeQuery(t.Context(), "abcdefghij")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	wantDocumentRefs := []Ref{
+	wantDocumentRefs := []semantic.Ref{
 		{ID: "body/chunk-000000", DocID: "doc", Field: "body", Ordinal: 0, StartByte: 0, EndByte: 4},
 		{ID: "body/chunk-000001", DocID: "doc", Field: "body", Ordinal: 1, StartByte: 3, EndByte: 7},
 		{ID: "body/chunk-000002", DocID: "doc", Field: "body", Ordinal: 2, StartByte: 6, EndByte: 10},
@@ -64,7 +66,7 @@ func TestBuiltinEncoderDocumentAndQueryContract(t *testing.T) {
 	if got := chunkRefs(documentChunks); !reflect.DeepEqual(got, wantDocumentRefs) {
 		t.Fatalf("document refs = %+v, want %+v", got, wantDocumentRefs)
 	}
-	wantQueryRefs := []Ref{
+	wantQueryRefs := []semantic.Ref{
 		{ID: "query-000000", DocID: "_query", Field: fts.DefaultField, Ordinal: 0, StartByte: 0, EndByte: 4},
 		{ID: "query-000001", DocID: "_query", Field: fts.DefaultField, Ordinal: 1, StartByte: 3, EndByte: 7},
 		{ID: "query-000002", DocID: "_query", Field: fts.DefaultField, Ordinal: 2, StartByte: 6, EndByte: 10},
@@ -72,11 +74,11 @@ func TestBuiltinEncoderDocumentAndQueryContract(t *testing.T) {
 	if got := chunkRefs(queryChunks); !reflect.DeepEqual(got, wantQueryRefs) {
 		t.Fatalf("query refs = %+v, want %+v", got, wantQueryRefs)
 	}
-	unicodeChunks, err := encoder.EncodeQuery(t.Context(), "🙂", QueryConfig{})
+	unicodeChunks, err := encoder.EncodeQuery(t.Context(), "🙂")
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantUnicodeRef := Ref{
+	wantUnicodeRef := semantic.Ref{
 		ID: "query-000000", DocID: "_query", Field: fts.DefaultField, StartByte: 0, EndByte: 4,
 	}
 	if len(unicodeChunks) != 1 || unicodeChunks[0].Ref != wantUnicodeRef {
@@ -106,14 +108,10 @@ func TestBuiltinEncoderPreservesErrorsAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	model := client.Model()
-	encoder, err := newEncoder(
-		client,
-		splitter,
-		InputLimits{MaxFields: 1, MaxSourceBytes: 8, MaxChunks: 1, MaxEmbeddingBytes: 8},
-		InputLimits{MaxFields: 1, MaxSourceBytes: 8, MaxChunks: 1, MaxEmbeddingBytes: 8},
-		&model,
-	)
+	limits := InputLimits{MaxFields: 1, MaxSourceBytes: 8, MaxChunks: 1, MaxEmbeddingBytes: 8}
+	encoder, err := NewEncoder(EncoderConfig{
+		Client: client, Splitter: splitter, DocumentLimits: limits, QueryLimits: limits,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,8 +143,8 @@ func builtinEncoderTestClient(t testing.TB, embed embedding.ClientFunc) embeddin
 	return client
 }
 
-func chunkRefs(chunks []ChunkEmbedding) []Ref {
-	refs := make([]Ref, len(chunks))
+func chunkRefs(chunks []semantic.ChunkEmbedding) []semantic.Ref {
+	refs := make([]semantic.Ref, len(chunks))
 	for i, item := range chunks {
 		refs[i] = item.Ref
 	}

@@ -156,8 +156,20 @@ var architectureRules = []architectureRule{
 	),
 	repositoryRule(
 		rootModule+"/pkg/semantic/service",
+		rootModule+"/pkg/chunk",
 		rootModule+"/pkg/embedding",
+		rootModule+"/pkg/fts",
 		rootModule+"/pkg/semantic",
+		rootModule+"/pkg/semantic/encoding",
+		rootModule+"/pkg/vector",
+	),
+	repositoryRule(
+		rootModule+"/pkg/semantic/encoding",
+		rootModule+"/pkg/chunk",
+		rootModule+"/pkg/embedding",
+		rootModule+"/pkg/fts",
+		rootModule+"/pkg/semantic",
+		rootModule+"/pkg/vector",
 	),
 	repositoryRule(
 		rootModule+"/pkg/semanticpersist",
@@ -182,6 +194,7 @@ var architectureRules = []architectureRule{
 			rootModule + "/internal/format",
 			rootModule + "/pkg/fts",
 			rootModule + "/pkg/semantic",
+			rootModule + "/pkg/semantic/service",
 			rootModule + "/pkg/vector",
 		},
 		forbiddenImports: []string{"os", "path/filepath", "syscall"},

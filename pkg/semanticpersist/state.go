@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 )
 
@@ -19,7 +20,7 @@ type persistenceState struct {
 func buildPersistenceState(
 	ctx context.Context,
 	committed *semantic.CommittedIndexState,
-	pipeline *semantic.PipelineConfig,
+	pipeline *service.PipelineConfig,
 ) (persistenceState, error) {
 	if committed == nil {
 		return persistenceState{}, ErrCorrupt

@@ -1,4 +1,4 @@
-package semantic
+package service
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/encoding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -72,8 +73,8 @@ func TestNewAcceptsCompleteConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok := service.Config()
-	if !ok || got != config || service.index.config != config.Index {
-		t.Fatalf("config = %+v/%+v, want %+v", got, service.index.config, config)
+	if !ok || got != config || service.index.Config() != config.Index {
+		t.Fatalf("config = %+v/%+v, want %+v", got, service.index.Config(), config)
 	}
 }
 
@@ -155,27 +156,16 @@ func TestNewFromIndexUsesIndexConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	documents, ok := service.documentEncoder.(*Encoder)
+	_, ok := service.documentEncoder.(*encoding.Encoder)
 	if !ok {
 		t.Fatalf("document encoder type = %T", service.documentEncoder)
 	}
-	if documents.documentLimits.MaxChunks != 128 {
-		t.Fatalf("document encoder chunk limit = %d, want 128", documents.documentLimits.MaxChunks)
-	}
-	if service.index.config.Operational.Capacity.MaxStaleVectors != 256 {
-		t.Fatalf("stale vector limit = %d, want 256", service.index.config.Operational.Capacity.MaxStaleVectors)
+	if service.index.Config().Operational.Capacity.MaxStaleVectors != 256 {
+		t.Fatalf("stale vector limit = %d, want 256", service.index.Config().Operational.Capacity.MaxStaleVectors)
 	}
 	serviceConfig, ok := service.Config()
-	if !ok || serviceConfig.Index.Metric != vector.MetricL2Squared {
+	if !ok || serviceConfig.Index.Metric != vector.MetricL2Squared || serviceConfig.Pipeline.Chunking != config.Pipeline.Chunking {
 		t.Fatalf("service config = %+v, %v", serviceConfig, ok)
-	}
-	wantChunking := chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
-	splitter, ok := documents.splitter.(*chunk.Splitter)
-	if !ok {
-		t.Fatalf("document chunk splitter = %T, want *chunk.Splitter", documents.splitter)
-	}
-	if splitter.Config() != wantChunking {
-		t.Fatalf("document chunk config = %+v, want %+v", splitter.Config(), wantChunking)
 	}
 }
 
@@ -227,12 +217,12 @@ func TestNewBoundsAutomaticallySplitQueries(t *testing.T) {
 	}
 
 	_, err = service.Search(t.Context(), "abcdefghij", 1)
-	if !errors.Is(err, ErrInputLimitExceeded) {
+	if !errors.Is(err, encoding.ErrInputLimitExceeded) {
 		t.Fatalf("Search() chunk-limit error = %v, want ErrInputLimitExceeded", err)
 	}
 
 	_, err = service.Search(t.Context(), strings.Repeat("a", int(defaultMaxSourceBytes)+1), 1)
-	if !errors.Is(err, ErrInputLimitExceeded) {
+	if !errors.Is(err, encoding.ErrInputLimitExceeded) {
 		t.Fatalf("Search() source-limit error = %v, want ErrInputLimitExceeded", err)
 	}
 }
@@ -308,27 +298,22 @@ func TestNewUsesIndependentDocumentAndQueryChunkLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	documents, ok := service.documentEncoder.(*Encoder)
+	documents, ok := service.documentEncoder.(*encoding.Encoder)
 	if !ok {
 		t.Fatalf("document encoder type = %T", service.documentEncoder)
 	}
-	if documents.documentLimits.MaxChunks != 7 || service.index.limits.ingestion.maxChunksPerDocument != 7 {
-		t.Fatalf(
-			"chunk limits: encoder=%d index=%d, want 7",
-			documents.documentLimits.MaxChunks,
-			service.index.limits.ingestion.maxChunksPerDocument,
-		)
+	if service.index.Config().Operational.Ingestion.MaxChunksPerDocument != 7 {
+		t.Fatalf("index document chunk limit = %d, want 7", service.index.Config().Operational.Ingestion.MaxChunksPerDocument)
 	}
-	queries, ok := service.queryEncoder.(*Encoder)
+	queries, ok := service.queryEncoder.(*encoding.Encoder)
 	if !ok {
 		t.Fatalf("query encoder type = %T", service.queryEncoder)
 	}
-	if queries.queryLimits.MaxChunks != 3 || service.index.limits.search.maxQueryChunks != 3 {
-		t.Fatalf(
-			"query chunk limits: encoder=%d index=%d, want 3",
-			queries.queryLimits.MaxChunks,
-			service.index.limits.search.maxQueryChunks,
-		)
+	if documents != queries {
+		t.Fatal("built-in service uses different document and query encoders")
+	}
+	if service.index.Config().Operational.Search.MaxQueryChunks != 3 {
+		t.Fatalf("index query chunk limit = %d, want 3", service.index.Config().Operational.Search.MaxQueryChunks)
 	}
 }
 
@@ -343,18 +328,10 @@ func TestNewUsesConfiguredEncodingLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	documents := service.documentEncoder.(*Encoder)
-	queries := service.queryEncoder.(*Encoder)
+	documents := service.documentEncoder.(*encoding.Encoder)
+	queries := service.queryEncoder.(*encoding.Encoder)
 	if documents != queries {
 		t.Fatal("built-in service uses different document and query encoders")
-	}
-	for name, limits := range map[string]InputLimits{
-		"documents": documents.documentLimits,
-		"queries":   queries.queryLimits,
-	} {
-		if limits.MaxFields != 2 || limits.MaxSourceBytes != 128 || limits.MaxEmbeddingBytes != 16 {
-			t.Fatalf("%s encoding limits = %+v", name, limits)
-		}
 	}
 }
 

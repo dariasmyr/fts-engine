@@ -6,7 +6,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -14,7 +14,7 @@ import (
 func main() {
 	ctx := context.Background()
 	embedder := exampleEmbedder{}
-	config, err := semantic.DefaultConfig(embedder.Model())
+	config, err := service.DefaultConfig(embedder.Model())
 	must(err)
 	config.Index.Metric = vector.MetricL2Squared
 	config.Index.Operational.Capacity.MaxLiveVectors = 100
@@ -23,32 +23,32 @@ func main() {
 	config.Index.Operational.Search.MaxResults = 10
 	config.Index.Operational.Search.MaxCandidateChunks = 100
 	config.Index.Operational.Search.MaxChunksPerResult = 3
-	service, err := semantic.New(embedder, config)
+	semanticService, err := service.New(embedder, config)
 	must(err)
 
 	// Expected: no hits. The initial committed index is empty.
-	search(ctx, service, "initial empty committed index")
+	search(ctx, semanticService, "initial empty committed index")
 
-	must(service.AddDocument(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.FieldData{"body": {Text: "doc-a"}}}))
+	must(semanticService.AddDocument(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.FieldData{"body": {Text: "doc-a"}}}))
 	// Expected: no hits. AddDocument only queues the mutation.
-	search(ctx, service, "after AddDocument, before Commit")
+	search(ctx, semanticService, "after AddDocument, before Commit")
 
-	must(service.Commit(ctx))
+	must(semanticService.Commit(ctx))
 	// Expected: doc-a. Commit makes the new index view searchable.
-	search(ctx, service, "after Commit")
+	search(ctx, semanticService, "after Commit")
 
-	if err := service.DeleteDocument(ctx, "doc-a"); err != nil {
+	if err := semanticService.DeleteDocument(ctx, "doc-a"); err != nil {
 		panic(err)
 	}
 	// Expected: doc-a. The deletion is queued until Commit.
-	search(ctx, service, "after DeleteDocument, before Commit")
+	search(ctx, semanticService, "after DeleteDocument, before Commit")
 
-	must(service.Commit(ctx))
+	must(semanticService.Commit(ctx))
 	// Expected: no hits. The deletion is now committed.
-	search(ctx, service, "after delete Commit")
+	search(ctx, semanticService, "after delete Commit")
 }
 
-func search(ctx context.Context, service *semantic.Service, label string) {
+func search(ctx context.Context, service *service.Service, label string) {
 	result, err := service.Search(ctx, "query", 1)
 	must(err)
 	if len(result.Hits) == 0 {

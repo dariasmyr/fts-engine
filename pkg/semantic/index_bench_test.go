@@ -86,39 +86,6 @@ func BenchmarkIndexCommit(b *testing.B) {
 	}
 }
 
-func BenchmarkServiceCommit(b *testing.B) {
-	const documents = 256
-	b.ReportAllocs()
-	for range b.N {
-		b.StopTimer()
-		encoder := &benchmarkEncoder{}
-		config := benchmarkConfig(documents, 0, 16)
-		index, err := NewIndex(config)
-		if err != nil {
-			b.Fatal(err)
-		}
-		service, err := NewService(index, encoder, encoder)
-		if err != nil {
-			b.Fatal(err)
-		}
-		for n := range documents {
-			docID := fts.DocID(fmt.Sprintf("doc-%06d", n))
-			if err := service.AddDocument(context.Background(), fts.Document{
-				ID: docID,
-				Fields: map[string]fts.FieldData{
-					fts.DefaultField: {Text: "document"},
-				},
-			}); err != nil {
-				b.Fatal(err)
-			}
-		}
-		b.StartTimer()
-		if err := service.Commit(context.Background()); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkIndexCompact(b *testing.B) {
 	const documents = 256
 
@@ -146,35 +113,6 @@ func BenchmarkIndexCompact(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-}
-
-type benchmarkEncoder struct {
-	next int
-}
-
-func (e *benchmarkEncoder) EncodeDocument(
-	_ context.Context,
-	document fts.Document,
-) ([]ChunkEmbedding, error) {
-	embedding := benchmarkChunk(document.ID, e.next)
-	e.next++
-	return []ChunkEmbedding{embedding}, nil
-}
-
-func (e *benchmarkEncoder) EncodeQuery(
-	_ context.Context,
-	_ string,
-	_ QueryConfig,
-) ([]ChunkEmbedding, error) {
-	return []ChunkEmbedding{benchmarkChunk("query", 0)}, nil
-}
-
-func (e *benchmarkEncoder) EncodeQueryDocument(
-	_ context.Context,
-	_ fts.Document,
-	_ QueryConfig,
-) ([]ChunkEmbedding, error) {
-	return []ChunkEmbedding{benchmarkChunk("query", 0)}, nil
 }
 
 func newBenchmarkIndex(tb testing.TB, maxLive, maxStale, maxSegments int) *Index {

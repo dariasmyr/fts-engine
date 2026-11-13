@@ -1,4 +1,4 @@
-package semantic_test
+package service_test
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding/ollama"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 )
 
 func TestDocumentPipelineFromProviderToSearch(t *testing.T) {
@@ -72,14 +72,14 @@ func TestDocumentPipelineFromProviderToSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := semantic.DefaultConfig(embeddingClient.Model())
+	config, err := service.DefaultConfig(embeddingClient.Model())
 	if err != nil {
 		t.Fatal(err)
 	}
 	config.Pipeline.Chunking = chunk.Config{
 		TargetBytes: 64, MaxBytes: 96, OverlapBytes: 8,
 	}
-	service, err := semantic.New(embeddingClient, config)
+	service, err := service.New(embeddingClient, config)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package semantic
+package encoding
 
 import "github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 

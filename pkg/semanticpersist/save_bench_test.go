@@ -12,6 +12,7 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -54,7 +55,7 @@ func BenchmarkLoadService(b *testing.B) {
 	}
 	client := persistenceBenchmarkClient(b)
 	serviceConfig := persistenceBenchmarkConfig(b, client)
-	service, err := semantic.New(client, serviceConfig)
+	service, err := service.New(client, serviceConfig)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -97,7 +98,7 @@ func BenchmarkCommitAndSave(b *testing.B) {
 	ctx := context.Background()
 	root := filepath.Join(b.TempDir(), "service")
 	client := persistenceBenchmarkClient(b)
-	service, err := semantic.New(client, persistenceBenchmarkConfig(b, client))
+	service, err := service.New(client, persistenceBenchmarkConfig(b, client))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -173,8 +174,8 @@ func BenchmarkLoadServiceSegments(b *testing.B) {
 			ctx := context.Background()
 			root := b.TempDir()
 			client := persistenceBenchmarkClient(b)
-			service := newPersistenceBenchmarkService(b, client, segmentCount)
-			if _, err := CommitAndSaveService(ctx, root, service, SaveConfig{
+			semanticService := newPersistenceBenchmarkService(b, client, segmentCount)
+			if _, err := CommitAndSaveService(ctx, root, semanticService, SaveConfig{
 				ExpectedGeneration: &Generation{},
 			}); err != nil {
 				b.Fatal(err)
@@ -199,7 +200,7 @@ func BenchmarkLoadServiceSegments(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					_, _, err := LoadService(ctx, root, mismatch, LoadConfig{})
-					if !errors.Is(err, semantic.ErrModelServiceUnavailable) {
+					if !errors.Is(err, service.ErrModelServiceUnavailable) {
 						b.Fatalf("LoadService() error = %v, want ErrModelServiceUnavailable", err)
 					}
 				}
@@ -289,11 +290,11 @@ func newPersistenceBenchmarkService(
 	tb testing.TB,
 	client embedding.Client,
 	segmentCount int,
-) *semantic.Service {
+) *service.Service {
 	tb.Helper()
 	config := persistenceBenchmarkConfig(tb, client)
 	config.Index.Operational.Capacity.MaxSegments = segmentCount + 1
-	service, err := semantic.New(client, config)
+	service, err := service.New(client, config)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -336,9 +337,9 @@ func benchmarkDirectoryBytes(tb testing.TB, root string) int64 {
 	return total
 }
 
-func persistenceBenchmarkConfig(tb testing.TB, client embedding.Client) semantic.Config {
+func persistenceBenchmarkConfig(tb testing.TB, client embedding.Client) service.Config {
 	tb.Helper()
-	config, err := semantic.DefaultConfig(client.Model())
+	config, err := service.DefaultConfig(client.Model())
 	if err != nil {
 		tb.Fatal(err)
 	}

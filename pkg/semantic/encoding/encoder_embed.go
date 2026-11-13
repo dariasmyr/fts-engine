@@ -1,13 +1,15 @@
-package semantic
+package encoding
 
 import (
 	"context"
 	"fmt"
 	"math"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 )
 
 type encoderInput struct {
-	ref  Ref
+	ref  semantic.Ref
 	text string
 }
 
@@ -16,7 +18,7 @@ func (e *Encoder) embedInputs(
 	inputs []encoderInput,
 	prefix string,
 	limits InputLimits,
-) ([]ChunkEmbedding, error) {
+) ([]semantic.ChunkEmbedding, error) {
 	bytesPerVector := uint64(e.dimensions) * 4
 	if e.dimensions <= 0 || uint64(e.dimensions) > math.MaxUint64/4 ||
 		uint64(len(inputs)) > math.MaxUint64/bytesPerVector ||
@@ -49,12 +51,12 @@ func (e *Encoder) embedInputs(
 			len(inputs),
 		)
 	}
-	result := make([]ChunkEmbedding, len(inputs))
+	result := make([]semantic.ChunkEmbedding, len(inputs))
 	for i, input := range inputs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		result[i] = ChunkEmbedding{Ref: input.ref, Embedding: vectors[i]}
+		result[i] = semantic.ChunkEmbedding{Ref: input.ref, Embedding: vectors[i]}
 	}
 	return result, nil
 }

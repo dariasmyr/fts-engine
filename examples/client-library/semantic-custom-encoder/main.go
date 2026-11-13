@@ -9,24 +9,26 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/encoding"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // This example shows the low-level pipeline: the caller owns document and
-// query encoders and binds them to an index through semantic.NewService.
+// query encoders and binds them to an index through service.NewService.
 func main() {
 	ctx := context.Background()
 	client := exampleEmbedder{}
 	splitter := paragraphSplitter{}
-	limits := semantic.InputLimits{
+	limits := encoding.InputLimits{
 		MaxFields:         4,
 		MaxSourceBytes:    1 << 20,
 		MaxChunks:         16,
 		MaxEmbeddingBytes: 1 << 20,
 	}
 
-	encoder, err := semantic.NewEncoder(semantic.EncoderConfig{
-		Limits: limits, Splitter: splitter, Client: client,
+	encoder, err := encoding.NewEncoder(encoding.EncoderConfig{
+		DocumentLimits: limits, QueryLimits: limits, Splitter: splitter, Client: client,
 	})
 	must(err)
 
@@ -40,18 +42,18 @@ func main() {
 		},
 	})
 	must(err)
-	service, err := semantic.NewService(index, encoder, encoder)
+	semanticService, err := service.NewService(index, encoder, encoder)
 	must(err)
 
-	must(service.AddDocument(ctx, fts.Document{
+	must(semanticService.AddDocument(ctx, fts.Document{
 		ID: "travel",
 		Fields: map[string]fts.FieldData{
 			"body": {Text: "A hotel stands beside the river.\n\nBoats leave every morning."},
 		},
 	}))
-	must(service.Commit(ctx))
+	must(semanticService.Commit(ctx))
 
-	result, err := service.Search(ctx, "hotel beside the river", 1)
+	result, err := semanticService.Search(ctx, "hotel beside the river", 1)
 	must(err)
 	for _, hit := range result.Hits {
 		fmt.Printf("doc=%s distance=%.1f\n", hit.DocID, hit.Distance)

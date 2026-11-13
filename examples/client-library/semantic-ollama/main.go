@@ -8,7 +8,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding/ollama"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 )
 
 func main() {
@@ -23,20 +23,20 @@ func main() {
 		QueryPrefix:    "search_query: ",
 	})
 	must(err)
-	config, err := semantic.DefaultConfig(client.Model())
+	config, err := service.DefaultConfig(client.Model())
 	must(err)
-	service, err := semantic.New(client, config)
+	semanticService, err := service.New(client, config)
 	must(err)
 
 	for _, document := range []fts.Document{
 		{ID: "hotel", Fields: map[string]fts.FieldData{"body": {Text: "A quiet hotel near a river in France."}}},
 		{ID: "shipping", Fields: map[string]fts.FieldData{"body": {Text: "Cargo shipping operations on European rivers."}}},
 	} {
-		must(service.AddDocument(ctx, document))
+		must(semanticService.AddDocument(ctx, document))
 	}
-	must(service.Commit(ctx))
+	must(semanticService.Commit(ctx))
 
-	result, err := service.Search(ctx, "French hotel by a river", 2)
+	result, err := semanticService.Search(ctx, "French hotel by a river", 2)
 	must(err)
 	for _, hit := range result.Hits {
 		fmt.Printf("doc=%s distance=%.4f\n", hit.DocID, hit.Distance)

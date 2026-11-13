@@ -1,4 +1,4 @@
-package semantic
+package encoding
 
 import (
 	"context"
@@ -8,11 +8,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // EncodeDocument prepares a source document for indexing.
-func (e *Encoder) EncodeDocument(ctx context.Context, document fts.Document) ([]ChunkEmbedding, error) {
+func (e *Encoder) EncodeDocument(ctx context.Context, document fts.Document) ([]semantic.ChunkEmbedding, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
@@ -27,13 +28,9 @@ func (e *Encoder) EncodeDocument(ctx context.Context, document fts.Document) ([]
 func (e *Encoder) EncodeQueryDocument(
 	ctx context.Context,
 	document fts.Document,
-	config QueryConfig,
-) ([]ChunkEmbedding, error) {
+) ([]semantic.ChunkEmbedding, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
-	}
-	if err := config.Validate(); err != nil {
-		return nil, err
 	}
 	inputs, err := e.documentInputs(ctx, document, e.queryLimits)
 	if err != nil {
@@ -108,7 +105,7 @@ func (e *Encoder) documentInputs(
 				return nil, fmt.Errorf("%w: field %q: %w", ErrInvalidDocument, field, err)
 			}
 			inputs = append(inputs, encoderInput{
-				ref: Ref{
+				ref: semantic.Ref{
 					ID:        documentChunkID(field, ordinal, e.splitter == nil),
 					DocID:     document.ID,
 					Field:     field,
@@ -130,16 +127,16 @@ func fieldText(value fts.FieldData) string {
 	return value.Value
 }
 
-func documentChunkID(field string, ordinal int, whole bool) ChunkID {
+func documentChunkID(field string, ordinal int, whole bool) semantic.ChunkID {
 	if whole {
 		if field == fts.DefaultField {
 			return "_whole"
 		}
-		return ChunkID("_whole/" + field)
+		return semantic.ChunkID("_whole/" + field)
 	}
 	id := fmt.Sprintf("chunk-%06d", ordinal)
 	if field != fts.DefaultField {
 		id = field + "/" + id
 	}
-	return ChunkID(id)
+	return semantic.ChunkID(id)
 }
