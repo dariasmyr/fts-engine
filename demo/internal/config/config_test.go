@@ -54,6 +54,7 @@ func TestValidateConfigAppliesFallbacksFromDefaultConfig(t *testing.T) {
 	cfg.Semantic.MaxLiveVectors = 0
 	cfg.Semantic.Ollama = SemanticOllamaConfig{}
 	cfg.Semantic.Persistence.Path = ""
+	cfg.Semantic.Persistence.MaxOpenBytes = 0
 	cfg.Mode.Type = ""
 
 	if err := validateConfig(&cfg); err != nil {

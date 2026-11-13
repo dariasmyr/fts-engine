@@ -67,5 +67,6 @@ semantic:
     path: "./data/semantic/local"
     load_on_start: true
     save_on_build: true
+    max_open_bytes: 8589934592 # 8 GiB safety budget for loading a generation
 mode:
   type: "prod"

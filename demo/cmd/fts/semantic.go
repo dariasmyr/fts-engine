@@ -21,14 +21,15 @@ import (
 )
 
 type semanticRuntime struct {
-	service         *service.Service
-	generation      semanticpersist.Generation
-	loadedFromDisk  bool
-	persistencePath string
-	persistence     bool
-	saveOnBuild     bool
-	workers         int
-	checkpointDocs  int
+	service           *service.Service
+	generation        semanticpersist.Generation
+	loadedFromDisk    bool
+	persistencePath   string
+	persistence       bool
+	saveOnBuild       bool
+	workers           int
+	checkpointDocs    int
+	persistenceLimits semanticpersist.Limits
 }
 
 func buildSemanticRuntime(ctx context.Context, log *slog.Logger, cfg config.SemanticConfig) (*semanticRuntime, error) {
@@ -50,16 +51,19 @@ func buildSemanticRuntime(ctx context.Context, log *slog.Logger, cfg config.Sema
 	}
 
 	runtimeState := &semanticRuntime{
-		persistencePath: cfg.Persistence.Path,
-		persistence:     cfg.Persistence.Enabled,
-		saveOnBuild:     cfg.Persistence.SaveOnBuild,
-		workers:         cfg.Workers,
-		checkpointDocs:  cfg.CheckpointDocuments,
+		persistencePath:   cfg.Persistence.Path,
+		persistence:       cfg.Persistence.Enabled,
+		saveOnBuild:       cfg.Persistence.SaveOnBuild,
+		workers:           cfg.Workers,
+		checkpointDocs:    cfg.CheckpointDocuments,
+		persistenceLimits: semanticpersist.Limits{MaxOpenBytes: cfg.Persistence.MaxOpenBytes},
 	}
 	currentPath := filepath.Join(cfg.Persistence.Path, "CURRENT")
 	if cfg.Persistence.Enabled && cfg.Persistence.LoadOnStart {
 		if _, statErr := os.Stat(currentPath); statErr == nil {
-			loader, loadErr := semanticpersist.NewLoader(cfg.Persistence.Path, semanticpersist.LoadOptions{})
+			loader, loadErr := semanticpersist.NewLoader(cfg.Persistence.Path, semanticpersist.LoadOptions{
+				Limits: runtimeState.persistenceLimits,
+			})
 			if loadErr != nil {
 				return nil, fmt.Errorf("configure semantic persistence loader: %w", loadErr)
 			}
@@ -160,11 +164,18 @@ func populateSemanticDocuments(
 			persistStartedAt := time.Now()
 			generation, err := semanticpersist.SaveService(ctx, runtimeState.persistencePath, runtimeState.service, semanticpersist.SaveOptions{
 				ExpectedGeneration: &runtimeState.generation,
+				Limits:             runtimeState.persistenceLimits,
 			})
 			if err != nil {
 				return fmt.Errorf("persist semantic index: %w", err)
 			}
 			runtimeState.generation = generation
+			if _, pruneErr := semanticpersist.Prune(ctx, runtimeState.persistencePath, semanticpersist.PruneOptions{
+				RetainGenerations: 2,
+				Limits:            runtimeState.persistenceLimits,
+			}); pruneErr != nil {
+				log.Warn("Could not prune old semantic generations", "error", pruneErr)
+			}
 			checkpointPersistenceDuration = time.Since(persistStartedAt)
 			persistenceDuration += checkpointPersistenceDuration
 		}
@@ -191,7 +202,7 @@ func populateSemanticDocuments(
 	log.Info("Semantic indexing summary",
 		"documents", stats.Documents,
 		"vectors", stats.LiveVectors,
-		"new_documents", indexed.Load(),
+		"embedded_this_run", indexed.Load(),
 		"embedding_duration", embeddingDuration,
 		"hnsw_duration", commitDuration,
 		"persistence_duration", persistenceDuration,
@@ -234,7 +245,7 @@ func embedSemanticBatch(
 				if count%10_000 == 0 {
 					log.Info("Semantic embedding progress",
 						"documents", previouslyCommitted+count,
-						"new_documents", count,
+						"embedded_this_run", count,
 						"elapsed", time.Since(startedAt),
 					)
 				}
@@ -295,13 +306,6 @@ func addSemanticDocument(ctx context.Context, semanticService *service.Service, 
 			"content": {Text: strings.Join(parts, "\n")},
 		},
 	})
-}
-
-func rate(count int64, duration time.Duration) float64 {
-	if duration <= 0 {
-		return 0
-	}
-	return float64(count) / duration.Seconds()
 }
 
 func directorySize(root string) (int64, error) {

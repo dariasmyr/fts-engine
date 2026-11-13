@@ -36,10 +36,11 @@ type SemanticOllamaConfig struct {
 }
 
 type SemanticPersistenceConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	Path        string `yaml:"path"`
-	LoadOnStart bool   `yaml:"load_on_start"`
-	SaveOnBuild bool   `yaml:"save_on_build"`
+	Enabled      bool   `yaml:"enabled"`
+	Path         string `yaml:"path"`
+	LoadOnStart  bool   `yaml:"load_on_start"`
+	SaveOnBuild  bool   `yaml:"save_on_build"`
+	MaxOpenBytes uint64 `yaml:"max_open_bytes"`
 }
 
 type FTSConfig struct {
@@ -219,10 +220,11 @@ func defaultConfig() Config {
 				QueryPrefix:    "search_query: ",
 			},
 			Persistence: SemanticPersistenceConfig{
-				Enabled:     true,
-				Path:        "./data/semantic/local",
-				LoadOnStart: true,
-				SaveOnBuild: true,
+				Enabled:      true,
+				Path:         "./data/semantic/local",
+				LoadOnStart:  true,
+				SaveOnBuild:  true,
+				MaxOpenBytes: 8 << 30,
 			},
 		},
 		Mode: ModeConfig{Type: "prod"},
@@ -318,6 +320,9 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.Semantic.Persistence.Path == "" {
 		cfg.Semantic.Persistence.Path = defaults.Semantic.Persistence.Path
+	}
+	if cfg.Semantic.Persistence.MaxOpenBytes == 0 {
+		cfg.Semantic.Persistence.MaxOpenBytes = defaults.Semantic.Persistence.MaxOpenBytes
 	}
 
 	if cfg.FTS.Compaction.LoadFactor < 0 || cfg.FTS.Compaction.LoadFactor > 1 {

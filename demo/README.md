@@ -79,6 +79,7 @@ semantic:
     path: "./data/semantic/local"
     load_on_start: true
     save_on_build: true
+    max_open_bytes: 8589934592 # 8 GiB
 ```
 
 In the CUI, `Ctrl+T` cycles through `syntax`, `plain`, and `semantic` modes.
@@ -94,6 +95,12 @@ During a new build, the demo commits and persists a resumable checkpoint every
 document IDs from the saved generation and embeds only missing corpus documents.
 With the default 25,000-document interval, an interruption loses at most the
 currently uncommitted interval rather than the complete embedding run.
+`semantic.persistence.max_open_bytes` is a validation budget, not a reserved
+allocation. The persistence reader applies conservative multipliers to vector,
+graph, and state files; the demo uses 8 GiB so the approximately 244k-vector
+Wikipedia generation passes validation. Old generations and unreachable
+segment objects are pruned after a successful checkpoint, retaining two
+generations for recovery.
 
 ## Measure full-dump indexing
 
