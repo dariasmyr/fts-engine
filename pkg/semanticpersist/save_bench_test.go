@@ -35,7 +35,7 @@ func BenchmarkSave(b *testing.B) {
 		}
 		expected := Generation{}
 		b.StartTimer()
-		if _, err := Save(ctx, root, index, SaveConfig{
+		if _, err := Save(ctx, root, index, SaveOptions{
 			ExpectedGeneration: &expected,
 		}); err != nil {
 			b.Fatal(err)
@@ -70,7 +70,7 @@ func BenchmarkLoadService(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-	if _, err := CommitAndSaveService(ctx, root, service, SaveConfig{
+	if _, err := CommitAndSaveService(ctx, root, service, SaveOptions{
 		ExpectedGeneration: &Generation{},
 	}); err != nil {
 		b.Fatal(err)
@@ -83,7 +83,7 @@ func BenchmarkLoadService(b *testing.B) {
 			ctx,
 			root,
 			client,
-			LoadConfig{},
+			LoadOptions{},
 		)
 		if err != nil {
 			b.Fatal(err)
@@ -113,7 +113,7 @@ func BenchmarkCommitAndSave(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-	generation, err := CommitAndSaveService(ctx, root, service, SaveConfig{
+	generation, err := CommitAndSaveService(ctx, root, service, SaveOptions{
 		ExpectedGeneration: &Generation{},
 	})
 	if err != nil {
@@ -123,7 +123,7 @@ func BenchmarkCommitAndSave(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		next, err := CommitAndSaveService(ctx, root, service, SaveConfig{
+		next, err := CommitAndSaveService(ctx, root, service, SaveOptions{
 			ExpectedGeneration: &generation,
 		})
 		if err != nil {
@@ -140,7 +140,7 @@ func BenchmarkIncrementalSaveReusedSegments(b *testing.B) {
 			root := b.TempDir()
 			client := persistenceBenchmarkClient(b)
 			service := newPersistenceBenchmarkService(b, client, segmentCount)
-			generation, err := CommitAndSaveService(ctx, root, service, SaveConfig{
+			generation, err := CommitAndSaveService(ctx, root, service, SaveOptions{
 				ExpectedGeneration: &Generation{},
 			})
 			if err != nil {
@@ -151,7 +151,7 @@ func BenchmarkIncrementalSaveReusedSegments(b *testing.B) {
 			operations := 0
 			b.ReportAllocs()
 			for b.Loop() {
-				next, err := CommitAndSaveService(ctx, root, service, SaveConfig{
+				next, err := CommitAndSaveService(ctx, root, service, SaveOptions{
 					ExpectedGeneration: &generation,
 				})
 				if err != nil {
@@ -175,7 +175,7 @@ func BenchmarkLoadServiceSegments(b *testing.B) {
 			root := b.TempDir()
 			client := persistenceBenchmarkClient(b)
 			semanticService := newPersistenceBenchmarkService(b, client, segmentCount)
-			if _, err := CommitAndSaveService(ctx, root, semanticService, SaveConfig{
+			if _, err := CommitAndSaveService(ctx, root, semanticService, SaveOptions{
 				ExpectedGeneration: &Generation{},
 			}); err != nil {
 				b.Fatal(err)
@@ -184,7 +184,7 @@ func BenchmarkLoadServiceSegments(b *testing.B) {
 			b.Run("matching-model", func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					loaded, _, err := LoadService(ctx, root, client, LoadConfig{})
+					loaded, _, err := LoadService(ctx, root, client, LoadOptions{})
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -199,7 +199,7 @@ func BenchmarkLoadServiceSegments(b *testing.B) {
 			b.Run("mismatched-model", func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					_, _, err := LoadService(ctx, root, mismatch, LoadConfig{})
+					_, _, err := LoadService(ctx, root, mismatch, LoadOptions{})
 					if !errors.Is(err, service.ErrModelServiceUnavailable) {
 						b.Fatalf("LoadService() error = %v, want ErrModelServiceUnavailable", err)
 					}

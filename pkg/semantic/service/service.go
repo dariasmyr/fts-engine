@@ -62,6 +62,20 @@ func NewFromIndex(
 	return service, nil
 }
 
+// BindRestored binds the saved standard pipeline contract to an already
+// restored compatible index. The pipeline must come from persisted metadata;
+// no defaults or caller overrides are applied.
+func BindRestored(
+	index *semantic.Index,
+	client embedding.Client,
+	saved PipelineConfig,
+) (*Service, error) {
+	if index == nil || saved.ValidateCanonical(index.Config()) != nil {
+		return nil, ErrModelServiceUnavailable
+	}
+	return NewFromIndex(client, index, Config{Index: index.Config(), Pipeline: saved})
+}
+
 // NewService binds custom document and query encoders to an existing index.
 // Encoders are responsible for producing vectors with the dimensions expected
 // by the index; each encoded batch is validated before it is staged or searched.

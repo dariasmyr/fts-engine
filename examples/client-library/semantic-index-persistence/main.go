@@ -41,7 +41,7 @@ func main() {
 		ctx,
 		root,
 		index,
-		semanticpersist.SaveConfig{
+		semanticpersist.SaveOptions{
 			ExpectedGeneration: &semanticpersist.Generation{},
 		},
 	)
@@ -51,7 +51,7 @@ func main() {
 	loaded, loadedGeneration, err := semanticpersist.Load(
 		ctx,
 		root,
-		semanticpersist.LoadConfig{},
+		semanticpersist.LoadOptions{},
 	)
 	must(err)
 	fmt.Printf("loaded generation=%d\n", loadedGeneration.ID)

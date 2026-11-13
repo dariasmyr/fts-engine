@@ -14,18 +14,18 @@ import (
 func Load(
 	ctx context.Context,
 	root string,
-	config LoadConfig,
+	options LoadOptions,
 ) (*semantic.Index, Generation, error) {
-	index, generation, _, err := load(ctx, root, config)
+	index, generation, _, err := load(ctx, root, options)
 	return index, generation, err
 }
 
 func load(
 	ctx context.Context,
 	root string,
-	config LoadConfig,
+	options LoadOptions,
 ) (*semantic.Index, Generation, persistedGeneration, error) {
-	cfg, err := prepareLoad(ctx, root, config)
+	cfg, err := prepareLoad(ctx, root, options)
 	if err != nil {
 		return nil, Generation{}, persistedGeneration{}, err
 	}
@@ -55,7 +55,7 @@ func load(
 	return loaded.index, loaded.generation, loaded.persisted, nil
 }
 
-func prepareLoad(ctx context.Context, root string, config LoadConfig) (settings, error) {
+func prepareLoad(ctx context.Context, root string, options LoadOptions) (settings, error) {
 	if ctx == nil {
 		return settings{}, vector.ErrNilContext
 	}
@@ -65,7 +65,7 @@ func prepareLoad(ctx context.Context, root string, config LoadConfig) (settings,
 	if root == "" {
 		return settings{}, ErrCorrupt
 	}
-	return newSettings(config.Config)
+	return newSettings(options.Limits)
 }
 
 func openCurrentGeneration(
@@ -101,9 +101,9 @@ func LoadService(
 	ctx context.Context,
 	root string,
 	client embedding.Client,
-	loadConfig LoadConfig,
+	options LoadOptions,
 ) (*service.Service, Generation, error) {
-	cfg, err := prepareLoad(ctx, root, loadConfig)
+	cfg, err := prepareLoad(ctx, root, options)
 	if err != nil {
 		return nil, Generation{}, err
 	}
@@ -119,11 +119,11 @@ func LoadService(
 		if err != nil {
 			return loadServiceOperationResult{}, corruptMissingReference(err)
 		}
-		service, err := service.NewFromIndex(client, index, service.Config{Index: index.Config(), Pipeline: *persisted.state.Pipeline})
+		semanticService, err := service.BindRestored(index, client, *persisted.state.Pipeline)
 		if err != nil {
 			return loadServiceOperationResult{}, err
 		}
-		return loadServiceOperationResult{service: service, generation: generation}, nil
+		return loadServiceOperationResult{service: semanticService, generation: generation}, nil
 	})
 	if err != nil {
 		return nil, Generation{}, err

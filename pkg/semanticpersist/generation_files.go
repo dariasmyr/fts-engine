@@ -22,7 +22,7 @@ type persistedGeneration struct {
 
 type generationFiles struct {
 	layout      layout
-	limits      Config
+	limits      Limits
 	checkpoints saveCheckpoints
 }
 
@@ -164,7 +164,7 @@ func (s generationFiles) open(ctx context.Context, id uint64, expectedHash *[sha
 	return persistedGeneration{id: id, manifest: manifest, manifestRef: generationformat.FileRef{Size: uint64(len(manifestData)), SHA256: hash}, state: state}, nil
 }
 
-func validateOpenReferences(manifestBytes uint64, value generationformat.GenerationManifest, dimensions int, limits Config) error {
+func validateOpenReferences(manifestBytes uint64, value generationformat.GenerationManifest, dimensions int, limits Limits) error {
 	if value.State.Size > limits.MaxFileBytes {
 		return ErrLimitExceeded
 	}

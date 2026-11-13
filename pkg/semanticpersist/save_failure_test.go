@@ -44,7 +44,7 @@ func TestLowLevelSaveFailureAfterExplicitCommitKeepsPreviousCurrent(t *testing.T
 	if err := service.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	_, err = SaveService(ctx, root, service, SaveConfig{
+	_, err = SaveService(ctx, root, service, SaveOptions{
 		ExpectedGeneration: &Generation{},
 	})
 	if err != nil {
@@ -57,7 +57,7 @@ func TestLowLevelSaveFailureAfterExplicitCommitKeepsPreviousCurrent(t *testing.T
 		t.Fatal(err)
 	}
 
-	_, err = SaveService(ctx, root, service, SaveConfig{
+	_, err = SaveService(ctx, root, service, SaveOptions{
 		ExpectedGeneration: &Generation{},
 	})
 	if !errors.Is(err, ErrStaleGeneration) {
@@ -70,7 +70,7 @@ func TestLowLevelSaveFailureAfterExplicitCommitKeepsPreviousCurrent(t *testing.T
 	if len(result.Hits) != 1 || result.Hits[0].DocID != "beta" {
 		t.Fatalf("in-process Search() hits = %+v, want beta", result.Hits)
 	}
-	loaded, _, err := LoadService(ctx, root, client, LoadConfig{})
+	loaded, _, err := LoadService(ctx, root, client, LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

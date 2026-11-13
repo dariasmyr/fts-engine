@@ -54,7 +54,7 @@ func validObjectID(id string) bool {
 
 type segmentStore struct {
 	layout      layout
-	limits      Config
+	limits      Limits
 	checkpoints saveCheckpoints
 }
 
@@ -266,7 +266,7 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 	return segment, nil
 }
 
-func validateSegmentData(data semantic.SegmentState, config semantic.IndexConfig, limits Config) error {
+func validateSegmentData(data semantic.SegmentState, config semantic.IndexConfig, limits Limits) error {
 	semanticLimits := config.Operational.Capacity
 	if data.Vectors == nil || data.Index == nil {
 		return ErrLimitExceeded

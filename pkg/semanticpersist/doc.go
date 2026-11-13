@@ -2,7 +2,7 @@
 // semantic.Index.
 //
 // Save persists one already committed raw index generation. SaveService and
-// CommitAndSaveService also persist the model-backed Config required by
+// CommitAndSaveService also persist the model-backed PipelineConfig required by
 // LoadService. CommitAndSave and CommitAndSaveService prepare the pending
 // revision under the Index mutation gate and publish it only after persistence.
 // Loading owns no persistent filesystem resources.

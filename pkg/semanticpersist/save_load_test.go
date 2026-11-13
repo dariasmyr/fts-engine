@@ -58,7 +58,7 @@ func TestSaveLoadRestoresHNSWSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	generation, err := semanticpersist.Save(ctx, root, index, semanticpersist.SaveConfig{
+	generation, err := semanticpersist.Save(ctx, root, index, semanticpersist.SaveOptions{
 		ExpectedGeneration: &semanticpersist.Generation{},
 	})
 	if err != nil {
@@ -68,8 +68,8 @@ func TestSaveLoadRestoresHNSWSearch(t *testing.T) {
 		t.Fatalf("generation ID = %d, want 1", generation.ID)
 	}
 
-	loaded, loadedGeneration, err := semanticpersist.Load(ctx, root, semanticpersist.LoadConfig{
-		Config: semanticpersist.DefaultConfig(),
+	loaded, loadedGeneration, err := semanticpersist.Load(ctx, root, semanticpersist.LoadOptions{
+		Limits: semanticpersist.DefaultLimits(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestSaveLoadRestoresHNSWSearch(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("restored search result = %+v, want %+v", got, want)
 	}
-	next, err := semanticpersist.Save(ctx, root, loaded, semanticpersist.SaveConfig{
+	next, err := semanticpersist.Save(ctx, root, loaded, semanticpersist.SaveOptions{
 		ExpectedGeneration: &loadedGeneration,
 	})
 	if err != nil {
@@ -153,13 +153,13 @@ func TestCompactSaveLoadContinuesWriting(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	generation, err := semanticpersist.Save(ctx, root, index, semanticpersist.SaveConfig{
+	generation, err := semanticpersist.Save(ctx, root, index, semanticpersist.SaveOptions{
 		ExpectedGeneration: &semanticpersist.Generation{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, loadedGeneration, err := semanticpersist.Load(ctx, root, semanticpersist.LoadConfig{})
+	loaded, loadedGeneration, err := semanticpersist.Load(ctx, root, semanticpersist.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,13 +180,13 @@ func TestCompactSaveLoadContinuesWriting(t *testing.T) {
 
 	index = loaded
 	add("continued", []float32{30, 0})
-	nextGeneration, err := semanticpersist.CommitAndSave(ctx, root, loaded, semanticpersist.SaveConfig{
+	nextGeneration, err := semanticpersist.CommitAndSave(ctx, root, loaded, semanticpersist.SaveOptions{
 		ExpectedGeneration: &loadedGeneration,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reopened, reopenedGeneration, err := semanticpersist.Load(ctx, root, semanticpersist.LoadConfig{})
+	reopened, reopenedGeneration, err := semanticpersist.Load(ctx, root, semanticpersist.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

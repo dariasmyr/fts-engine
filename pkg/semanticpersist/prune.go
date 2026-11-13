@@ -25,12 +25,12 @@ type PruneResult struct {
 // Prune removes generations outside the retention set, segment objects not
 // reachable from any retained manifest, and recognized save temporary entries.
 // It holds the operation lock for the complete operation.
-func Prune(ctx context.Context, root string, config PruneConfig) (PruneResult, error) {
-	cfg, err := newSettings(config.Config)
+func Prune(ctx context.Context, root string, options PruneOptions) (PruneResult, error) {
+	cfg, err := newSettings(options.Limits)
 	if err != nil {
 		return PruneResult{}, err
 	}
-	return prune(ctx, root, config.RetainGenerations, cfg)
+	return prune(ctx, root, options.RetainGenerations, cfg)
 }
 
 // Unknown entries and symlinks are never removed.

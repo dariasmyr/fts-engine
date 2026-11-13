@@ -31,7 +31,7 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 		ctx,
 		root,
 		semanticService,
-		semanticpersist.SaveConfig{
+		semanticpersist.SaveOptions{
 			ExpectedGeneration: &semanticpersist.Generation{},
 		},
 	)
@@ -47,7 +47,7 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 		ctx,
 		root,
 		client,
-		semanticpersist.LoadConfig{},
+		semanticpersist.LoadOptions{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +64,7 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 		ctx,
 		root,
 		loaded,
-		semanticpersist.SaveConfig{
+		semanticpersist.SaveOptions{
 			ExpectedGeneration: &loadedGeneration,
 		},
 	)
@@ -79,7 +79,7 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 		ctx,
 		root,
 		semanticService.Index(),
-		semanticpersist.SaveConfig{ExpectedGeneration: &semanticpersist.Generation{}},
+		semanticpersist.SaveOptions{ExpectedGeneration: &semanticpersist.Generation{}},
 	)
 	if !errors.Is(err, semanticpersist.ErrStaleGeneration) {
 		t.Fatalf("first Save() over existing data error = %v, want ErrStaleGeneration", err)
@@ -100,7 +100,7 @@ func TestLoadServiceRestoresSavedConfig(t *testing.T) {
 		ctx,
 		root,
 		semanticService,
-		semanticpersist.SaveConfig{ExpectedGeneration: &semanticpersist.Generation{}},
+		semanticpersist.SaveOptions{ExpectedGeneration: &semanticpersist.Generation{}},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestLoadServiceRestoresSavedConfig(t *testing.T) {
 		ctx,
 		root,
 		client,
-		semanticpersist.LoadConfig{},
+		semanticpersist.LoadOptions{},
 	)
 	if err != nil {
 		t.Fatalf("LoadService(): %v", err)
@@ -126,7 +126,7 @@ func TestLoadServiceRestoresSavedConfig(t *testing.T) {
 		ctx,
 		root,
 		persistentTestClient(t, "v2"),
-		semanticpersist.LoadConfig{},
+		semanticpersist.LoadOptions{},
 	)
 	if !errors.Is(err, service.ErrModelServiceUnavailable) {
 		t.Fatalf("LoadService() mismatch error = %v, want service.ErrModelServiceUnavailable", err)
@@ -150,7 +150,7 @@ func TestLoadServiceChecksModelBeforeSegmentObjects(t *testing.T) {
 		ctx,
 		root,
 		semanticService,
-		semanticpersist.SaveConfig{ExpectedGeneration: &semanticpersist.Generation{}},
+		semanticpersist.SaveOptions{ExpectedGeneration: &semanticpersist.Generation{}},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestLoadServiceChecksModelBeforeSegmentObjects(t *testing.T) {
 		ctx,
 		root,
 		persistentTestClient(t, "v2"),
-		semanticpersist.LoadConfig{},
+		semanticpersist.LoadOptions{},
 	); !errors.Is(err, service.ErrModelServiceUnavailable) {
 		t.Fatalf("LoadService() mismatch error = %v, want service.ErrModelServiceUnavailable", err)
 	}
@@ -187,9 +187,58 @@ func TestLoadServiceChecksModelBeforeSegmentObjects(t *testing.T) {
 		ctx,
 		root,
 		client,
-		semanticpersist.LoadConfig{},
+		semanticpersist.LoadOptions{},
 	); !errors.Is(err, semanticpersist.ErrCorrupt) {
 		t.Fatalf("LoadService() segment error = %v, want ErrCorrupt", err)
+	}
+}
+
+func TestLoadServiceChecksMetadataBeforeModel(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	root := t.TempDir()
+	client := persistentTestClient(t, "v1")
+	semanticService, err := service.New(client, persistentTestConfig(t, client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := semanticpersist.SaveService(
+		ctx,
+		root,
+		semanticService,
+		semanticpersist.SaveOptions{ExpectedGeneration: &semanticpersist.Generation{}},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var statePath string
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Name() == "semantic-state.bin" {
+			statePath = path
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statePath == "" {
+		t.Fatal("semantic-state.bin not found")
+	}
+	if err := os.WriteFile(statePath, []byte("corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := semanticpersist.LoadService(
+		ctx,
+		root,
+		persistentTestClient(t, "v2"),
+		semanticpersist.LoadOptions{},
+	); !errors.Is(err, semanticpersist.ErrCorrupt) {
+		t.Fatalf("LoadService() error = %v, want ErrCorrupt", err)
 	}
 }
 
@@ -205,7 +254,7 @@ func TestLoadServiceRejectsRawIndexGeneration(t *testing.T) {
 		ctx,
 		root,
 		semanticService.Index(),
-		semanticpersist.SaveConfig{ExpectedGeneration: &semanticpersist.Generation{}},
+		semanticpersist.SaveOptions{ExpectedGeneration: &semanticpersist.Generation{}},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +263,7 @@ func TestLoadServiceRejectsRawIndexGeneration(t *testing.T) {
 		ctx,
 		root,
 		client,
-		semanticpersist.LoadConfig{},
+		semanticpersist.LoadOptions{},
 	); !errors.Is(err, service.ErrModelServiceUnavailable) {
 		t.Fatalf("LoadService() error = %v, want service.ErrModelServiceUnavailable", err)
 	}
@@ -229,7 +278,7 @@ func TestLoadServicePreservesCancellationAndPersistenceLimits(t *testing.T) {
 		ctx,
 		t.TempDir(),
 		client,
-		semanticpersist.LoadConfig{},
+		semanticpersist.LoadOptions{},
 	); !errors.Is(err, context.Canceled) {
 		t.Fatalf("LoadService() error = %v, want context canceled", err)
 	}
@@ -243,17 +292,17 @@ func TestLoadServicePreservesCancellationAndPersistenceLimits(t *testing.T) {
 		t.Context(),
 		root,
 		semanticService,
-		semanticpersist.SaveConfig{ExpectedGeneration: &semanticpersist.Generation{}},
+		semanticpersist.SaveOptions{ExpectedGeneration: &semanticpersist.Generation{}},
 	); err != nil {
 		t.Fatal(err)
 	}
-	limits := semanticpersist.DefaultConfig()
+	limits := semanticpersist.DefaultLimits()
 	limits.MaxDimensions = 1
 	_, _, err = semanticpersist.LoadService(
 		t.Context(),
 		root,
 		client,
-		semanticpersist.LoadConfig{Config: limits},
+		semanticpersist.LoadOptions{Limits: limits},
 	)
 	if !errors.Is(err, semanticpersist.ErrLimitExceeded) {
 		t.Fatalf("LoadService() limit error = %v, want ErrLimitExceeded", err)

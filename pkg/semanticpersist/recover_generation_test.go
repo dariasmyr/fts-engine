@@ -15,11 +15,11 @@ func TestRecoverGenerationMakesValidatedGenerationCurrent(t *testing.T) {
 	root := t.TempDir()
 	generations := saveTestGenerations(t, ctx, root, newTestIndex(t), 2)
 
-	cfg, err := newSettings(Config{})
+	cfg, err := newSettings(Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := RecoverGeneration(ctx, root, RecoverConfig{Generation: Generation{ID: generations[0].ID}}); err != nil {
+	if err := RecoverGeneration(ctx, root, RecoverOptions{Generation: Generation{ID: generations[0].ID}}); err != nil {
 		t.Fatal(err)
 	}
 	head, err := newCurrentFile(newLayout(root), cfg).read(ctx)
@@ -43,7 +43,7 @@ func TestRecoverGenerationRequiresExclusiveOperationLock(t *testing.T) {
 	}
 	defer lock.Close()
 
-	if err := RecoverGeneration(ctx, root, RecoverConfig{Generation: Generation{ID: generation.ID}}); !errors.Is(err, ErrLocked) {
+	if err := RecoverGeneration(ctx, root, RecoverOptions{Generation: Generation{ID: generation.ID}}); !errors.Is(err, ErrLocked) {
 		t.Fatalf("RecoverGeneration() error = %v, want ErrLocked", err)
 	}
 }
@@ -63,7 +63,7 @@ func TestRecoverGenerationRejectsDifferentIndexLineage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := newSettings(Config{})
+	cfg, err := newSettings(Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestRecoverGenerationRejectsDifferentIndexLineage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = RecoverGeneration(ctx, root, RecoverConfig{Generation: Generation{ID: candidateID}})
+	err = RecoverGeneration(ctx, root, RecoverOptions{Generation: Generation{ID: candidateID}})
 	if !errors.Is(err, ErrIndexIdentityMismatch) {
 		t.Fatalf("RecoverGeneration() error = %v, want ErrIndexIdentityMismatch", err)
 	}
@@ -98,14 +98,14 @@ func TestSaveContinuesAfterRecoveringOlderGeneration(t *testing.T) {
 	index := newTestIndex(t)
 	generations := saveTestGenerations(t, ctx, root, index, 2)
 
-	if err := RecoverGeneration(ctx, root, RecoverConfig{Generation: Generation{ID: generations[0].ID}}); err != nil {
+	if err := RecoverGeneration(ctx, root, RecoverOptions{Generation: Generation{ID: generations[0].ID}}); err != nil {
 		t.Fatal(err)
 	}
-	loaded, loadedGeneration, err := Load(ctx, root, LoadConfig{})
+	loaded, loadedGeneration, err := Load(ctx, root, LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := Save(ctx, root, loaded, SaveConfig{ExpectedGeneration: &loadedGeneration})
+	next, err := Save(ctx, root, loaded, SaveOptions{ExpectedGeneration: &loadedGeneration})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,9 +7,9 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/hnswformat"
 )
 
-// Config bounds persisted files, decoded data, and restored search settings.
-// Zero fields are replaced by DefaultConfig.
-type Config struct {
+// Limits bounds persisted files and decoded data for one operation.
+// Zero fields are replaced by DefaultLimits.
+type Limits struct {
 	MaxFileBytes         uint64
 	MaxVectorBytes       uint64
 	MaxGraphBytes        uint64
@@ -26,51 +26,51 @@ type Config struct {
 	MaxK                 int
 }
 
-// SaveConfig configures one Save operation.
+// SaveOptions configures one Save operation.
 // ExpectedGeneration is required for optimistic concurrency control.
-type SaveConfig struct {
-	// Config bounds files and decoded data. Zero fields use DefaultConfig.
-	Config Config
+type SaveOptions struct {
+	// Limits bounds files and decoded data. Zero fields use DefaultLimits.
+	Limits Limits
 	// ExpectedGeneration must match CURRENT. Use a zero Generation for the first
 	// save and the value returned by Load or the previous save thereafter.
 	ExpectedGeneration *Generation
 }
 
-// LoadConfig configures one Load operation.
-type LoadConfig struct {
-	// Config bounds files and decoded data. Zero fields use DefaultConfig.
-	Config Config
+// LoadOptions configures one Load operation.
+type LoadOptions struct {
+	// Limits bounds files and decoded data. Zero fields use DefaultLimits.
+	Limits Limits
 }
 
-// PruneConfig configures one Prune operation.
-type PruneConfig struct {
+// PruneOptions configures one Prune operation.
+type PruneOptions struct {
 	// RetainGenerations is the total number of valid committed generations to
 	// retain, including the generation named by CURRENT. It must be positive.
 	RetainGenerations int
-	Config            Config
+	Limits            Limits
 }
 
-// RecoverConfig configures one RecoverGeneration operation.
-type RecoverConfig struct {
-	Config     Config
+// RecoverOptions configures one RecoverGeneration operation.
+type RecoverOptions struct {
+	Limits     Limits
 	Generation Generation
 }
 
 type settings struct {
-	limits      Config
+	limits      Limits
 	checkpoints saveCheckpoints
 }
 
-func newSettings(config Config) (settings, error) {
-	config, err := config.normalized()
+func newSettings(limits Limits) (settings, error) {
+	limits, err := limits.normalized()
 	if err != nil {
 		return settings{}, err
 	}
-	return settings{limits: config}, nil
+	return settings{limits: limits}, nil
 }
 
-// DefaultConfig returns the validation limits used for zero-valued fields.
-func DefaultConfig() Config {
+// DefaultLimits returns the validation limits used for zero-valued fields.
+func DefaultLimits() Limits {
 	maxWireInt := int(^uint(0) >> 1)
 	if uint64(maxWireInt) > math.MaxUint32 {
 		maxWireInt = int(math.MaxUint32)
@@ -79,7 +79,7 @@ func DefaultConfig() Config {
 	if uint64(maxVectorCount) == math.MaxUint32 {
 		maxVectorCount--
 	}
-	return Config{
+	return Limits{
 		MaxFileBytes: 512 << 20, MaxVectorBytes: math.MaxUint64 - 128, MaxGraphBytes: 512 << 20,
 		MaxGraphLinks: math.MaxUint64, MaxOpenBytes: 1 << 30, MaxEfSearch: maxWireInt,
 		MaxVisitLimit: maxWireInt, MaxDimensions: maxWireInt, MaxVectors: maxVectorCount,
@@ -88,15 +88,15 @@ func DefaultConfig() Config {
 	}
 }
 
-// Validate checks the effective static persistence configuration. Zero fields
-// select values from DefaultConfig.
-func (c Config) Validate() error {
+// Validate checks the effective static persistence limits. Zero fields select
+// values from DefaultLimits.
+func (c Limits) Validate() error {
 	_, err := c.normalized()
 	return err
 }
 
-func (c Config) normalized() (Config, error) {
-	defaults := DefaultConfig()
+func (c Limits) normalized() (Limits, error) {
+	defaults := DefaultLimits()
 	c.MaxFileBytes = defaultIfZero(c.MaxFileBytes, defaults.MaxFileBytes)
 	c.MaxVectorBytes = defaultIfZero(c.MaxVectorBytes, defaults.MaxVectorBytes)
 	c.MaxGraphBytes = defaultIfZero(c.MaxGraphBytes, defaults.MaxGraphBytes)
@@ -111,8 +111,8 @@ func (c Config) normalized() (Config, error) {
 	c.MaxChunksPerDocument = defaultIfZero(c.MaxChunksPerDocument, defaults.MaxChunksPerDocument)
 	c.MaxQueryChunks = defaultIfZero(c.MaxQueryChunks, defaults.MaxQueryChunks)
 	c.MaxK = defaultIfZero(c.MaxK, defaults.MaxK)
-	if err := validateConfig(c); err != nil {
-		return Config{}, err
+	if err := validateLimits(c); err != nil {
+		return Limits{}, err
 	}
 	return c, nil
 }
@@ -125,7 +125,7 @@ func defaultIfZero[T comparable](value, fallback T) T {
 	return value
 }
 
-func validateConfig(limits Config) error {
+func validateLimits(limits Limits) error {
 	if limits.MaxFileBytes == 0 || limits.MaxFileBytes >= math.MaxInt64 ||
 		limits.MaxVectorBytes == 0 || limits.MaxVectorBytes > math.MaxUint64-128 ||
 		limits.MaxGraphBytes == 0 || limits.MaxGraphBytes >= math.MaxInt64 || limits.MaxGraphLinks == 0 ||
@@ -142,24 +142,24 @@ func validateConfig(limits Config) error {
 	return nil
 }
 
-func generationFormatConfig(config Config) generationformat.Config {
+func generationFormatConfig(limits Limits) generationformat.Config {
 	// Every persisted segment contains at least one vector, so MaxVectors is a
 	// conservative upper bound for the number of segments without expanding the public API.
 	return generationformat.Config{
-		MaxFileBytes: config.MaxFileBytes, MaxStringBytes: config.MaxStringBytes,
-		MaxVectorBytes: config.MaxVectorBytes, MaxDimensions: config.MaxDimensions,
-		MaxVectors: config.MaxVectors, MaxSegments: config.MaxVectors,
-		MaxDocuments: config.MaxDocuments, MaxChunksPerDocument: config.MaxChunksPerDocument,
-		MaxQueryChunks: config.MaxQueryChunks,
-		MaxK:           config.MaxK, MaxEfSearch: config.MaxEfSearch, MaxVisitLimit: config.MaxVisitLimit,
+		MaxFileBytes: limits.MaxFileBytes, MaxStringBytes: limits.MaxStringBytes,
+		MaxVectorBytes: limits.MaxVectorBytes, MaxDimensions: limits.MaxDimensions,
+		MaxVectors: limits.MaxVectors, MaxSegments: limits.MaxVectors,
+		MaxDocuments: limits.MaxDocuments, MaxChunksPerDocument: limits.MaxChunksPerDocument,
+		MaxQueryChunks: limits.MaxQueryChunks,
+		MaxK:           limits.MaxK, MaxEfSearch: limits.MaxEfSearch, MaxVisitLimit: limits.MaxVisitLimit,
 	}
 }
 
-func hnswFormatConfig(config Config) hnswformat.Config {
+func hnswFormatConfig(limits Limits) hnswformat.Config {
 	return hnswformat.Config{
-		MaxFileBytes: config.MaxFileBytes, MaxGraphBytes: config.MaxGraphBytes,
-		MaxVectorBytes: config.MaxVectorBytes, MaxVectors: config.MaxVectors,
-		MaxGraphLinks: config.MaxGraphLinks, MaxDimensions: config.MaxDimensions,
-		MaxK: config.MaxK,
+		MaxFileBytes: limits.MaxFileBytes, MaxGraphBytes: limits.MaxGraphBytes,
+		MaxVectorBytes: limits.MaxVectorBytes, MaxVectors: limits.MaxVectors,
+		MaxGraphLinks: limits.MaxGraphLinks, MaxDimensions: limits.MaxDimensions,
+		MaxK: limits.MaxK,
 	}
 }

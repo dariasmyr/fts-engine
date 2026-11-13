@@ -219,7 +219,7 @@ func TestSaveRejectsImmutableIndexConfigChangeBeforeWriting(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	index := newTestIndex(t)
-	first, err := Save(ctx, root, index, SaveConfig{ExpectedGeneration: &Generation{}})
+	first, err := Save(ctx, root, index, SaveOptions{ExpectedGeneration: &Generation{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestSaveRejectsImmutableIndexConfigChangeBeforeWriting(t *testing.T) {
 
 	beforeGenerations := directoryEntryNames(t, newLayout(root).generations)
 	beforeSegments := directoryEntryNames(t, newLayout(root).segments)
-	if _, err := Save(ctx, root, changed, SaveConfig{ExpectedGeneration: &first}); !errors.Is(err, ErrImmutableConfigMismatch) {
+	if _, err := Save(ctx, root, changed, SaveOptions{ExpectedGeneration: &first}); !errors.Is(err, ErrImmutableConfigMismatch) {
 		t.Fatalf("Save() error = %v, want ErrImmutableConfigMismatch", err)
 	}
 	afterGenerations := directoryEntryNames(t, newLayout(root).generations)
@@ -248,7 +248,7 @@ func TestSaveRejectsImmutableIndexConfigChangeBeforeWriting(t *testing.T) {
 	if len(afterSegments) != len(beforeSegments) {
 		t.Fatalf("segment count after rejected save = %d, want %d", len(afterSegments), len(beforeSegments))
 	}
-	_, current, err := Load(ctx, root, LoadConfig{})
+	_, current, err := Load(ctx, root, LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestSaveRejectsPipelineAndPersistenceModeChanges(t *testing.T) {
 
 	t.Run("pipeline config", func(t *testing.T) {
 		root := t.TempDir()
-		first, err := SaveService(ctx, root, semanticService, SaveConfig{ExpectedGeneration: &Generation{}})
+		first, err := SaveService(ctx, root, semanticService, SaveOptions{ExpectedGeneration: &Generation{}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -283,29 +283,29 @@ func TestSaveRejectsPipelineAndPersistenceModeChanges(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := CommitAndSaveService(ctx, root, changedService, SaveConfig{ExpectedGeneration: &first}); !errors.Is(err, ErrImmutableConfigMismatch) {
+		if _, err := CommitAndSaveService(ctx, root, changedService, SaveOptions{ExpectedGeneration: &first}); !errors.Is(err, ErrImmutableConfigMismatch) {
 			t.Fatalf("CommitAndSaveService() error = %v, want ErrImmutableConfigMismatch", err)
 		}
 	})
 
 	t.Run("model backed to raw", func(t *testing.T) {
 		root := t.TempDir()
-		first, err := SaveService(ctx, root, semanticService, SaveConfig{ExpectedGeneration: &Generation{}})
+		first, err := SaveService(ctx, root, semanticService, SaveOptions{ExpectedGeneration: &Generation{}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Save(ctx, root, semanticService.Index(), SaveConfig{ExpectedGeneration: &first}); !errors.Is(err, ErrPersistenceModeMismatch) {
+		if _, err := Save(ctx, root, semanticService.Index(), SaveOptions{ExpectedGeneration: &first}); !errors.Is(err, ErrPersistenceModeMismatch) {
 			t.Fatalf("Save() error = %v, want ErrPersistenceModeMismatch", err)
 		}
 	})
 
 	t.Run("raw to model backed", func(t *testing.T) {
 		root := t.TempDir()
-		first, err := Save(ctx, root, semanticService.Index(), SaveConfig{ExpectedGeneration: &Generation{}})
+		first, err := Save(ctx, root, semanticService.Index(), SaveOptions{ExpectedGeneration: &Generation{}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := CommitAndSaveService(ctx, root, semanticService, SaveConfig{ExpectedGeneration: &first}); !errors.Is(err, ErrPersistenceModeMismatch) {
+		if _, err := CommitAndSaveService(ctx, root, semanticService, SaveOptions{ExpectedGeneration: &first}); !errors.Is(err, ErrPersistenceModeMismatch) {
 			t.Fatalf("CommitAndSaveService() error = %v, want ErrPersistenceModeMismatch", err)
 		}
 	})

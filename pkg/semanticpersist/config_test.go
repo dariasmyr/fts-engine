@@ -8,7 +8,7 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-func TestDefaultConfigAcceptsValidSemanticCapacity(t *testing.T) {
+func TestDefaultLimitsAcceptValidSemanticCapacity(t *testing.T) {
 	t.Parallel()
 
 	index, err := semantic.NewIndex(semantic.IndexConfig{
@@ -28,11 +28,11 @@ func TestDefaultConfigAcceptsValidSemanticCapacity(t *testing.T) {
 		t.Context(),
 		t.TempDir(),
 		index,
-		semanticpersist.SaveConfig{
-			Config:             semanticpersist.DefaultConfig(),
+		semanticpersist.SaveOptions{
+			Limits:             semanticpersist.DefaultLimits(),
 			ExpectedGeneration: &semanticpersist.Generation{},
 		},
 	); err != nil {
-		t.Fatalf("Save() with default persistence config: %v", err)
+		t.Fatalf("Save() with default persistence limits: %v", err)
 	}
 }

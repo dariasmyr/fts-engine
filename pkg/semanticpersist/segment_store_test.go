@@ -16,21 +16,21 @@ func TestOperationsRejectCorruptSegmentObject(t *testing.T) {
 		{
 			name: "load",
 			run: func(ctx context.Context, root string, _ uint64) error {
-				_, _, err := Load(ctx, root, LoadConfig{})
+				_, _, err := Load(ctx, root, LoadOptions{})
 				return err
 			},
 		},
 		{
 			name: "prune",
 			run: func(ctx context.Context, root string, _ uint64) error {
-				_, err := Prune(ctx, root, PruneConfig{RetainGenerations: 1})
+				_, err := Prune(ctx, root, PruneOptions{RetainGenerations: 1})
 				return err
 			},
 		},
 		{
 			name: "recover",
 			run: func(ctx context.Context, root string, generationID uint64) error {
-				return RecoverGeneration(ctx, root, RecoverConfig{Generation: Generation{ID: generationID}})
+				return RecoverGeneration(ctx, root, RecoverOptions{Generation: Generation{ID: generationID}})
 			},
 		},
 	}

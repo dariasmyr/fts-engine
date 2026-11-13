@@ -25,16 +25,16 @@ func Save(
 	ctx context.Context,
 	root string,
 	index *semantic.Index,
-	config SaveConfig,
+	options SaveOptions,
 ) (Generation, error) {
-	if config.ExpectedGeneration == nil {
+	if options.ExpectedGeneration == nil {
 		return Generation{}, ErrExpectedGenerationRequired
 	}
-	cfg, err := newSettings(config.Config)
+	cfg, err := newSettings(options.Limits)
 	if err != nil {
 		return Generation{}, err
 	}
-	generationID, err := save(ctx, root, index, nil, config.ExpectedGeneration.ID, cfg)
+	generationID, err := save(ctx, root, index, nil, options.ExpectedGeneration.ID, cfg)
 	return Generation{ID: generationID}, err
 }
 
@@ -45,16 +45,16 @@ func SaveService(
 	ctx context.Context,
 	root string,
 	semanticService *service.Service,
-	config SaveConfig,
+	options SaveOptions,
 ) (Generation, error) {
-	if config.ExpectedGeneration == nil {
+	if options.ExpectedGeneration == nil {
 		return Generation{}, ErrExpectedGenerationRequired
 	}
 	serviceConfig, index, err := persistedService(semanticService)
 	if err != nil {
 		return Generation{}, err
 	}
-	cfg, err := newSettings(config.Config)
+	cfg, err := newSettings(options.Limits)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -63,7 +63,7 @@ func SaveService(
 		root,
 		index,
 		&serviceConfig,
-		config.ExpectedGeneration.ID,
+		options.ExpectedGeneration.ID,
 		cfg,
 	)
 	return Generation{ID: generationID}, err
@@ -77,12 +77,12 @@ func CommitAndSave(
 	ctx context.Context,
 	root string,
 	index *semantic.Index,
-	config SaveConfig,
+	options SaveOptions,
 ) (Generation, error) {
-	if config.ExpectedGeneration == nil {
+	if options.ExpectedGeneration == nil {
 		return Generation{}, ErrExpectedGenerationRequired
 	}
-	cfg, err := newSettings(config.Config)
+	cfg, err := newSettings(options.Limits)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -91,7 +91,7 @@ func CommitAndSave(
 		root,
 		index,
 		nil,
-		config.ExpectedGeneration.ID,
+		options.ExpectedGeneration.ID,
 		cfg,
 	)
 	return Generation{ID: generationID}, err
@@ -103,16 +103,16 @@ func CommitAndSaveService(
 	ctx context.Context,
 	root string,
 	semanticService *service.Service,
-	config SaveConfig,
+	options SaveOptions,
 ) (Generation, error) {
-	if config.ExpectedGeneration == nil {
+	if options.ExpectedGeneration == nil {
 		return Generation{}, ErrExpectedGenerationRequired
 	}
 	serviceConfig, index, err := persistedService(semanticService)
 	if err != nil {
 		return Generation{}, err
 	}
-	cfg, err := newSettings(config.Config)
+	cfg, err := newSettings(options.Limits)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -121,7 +121,7 @@ func CommitAndSaveService(
 		root,
 		index,
 		&serviceConfig,
-		config.ExpectedGeneration.ID,
+		options.ExpectedGeneration.ID,
 		cfg,
 	)
 	return Generation{ID: generationID}, err

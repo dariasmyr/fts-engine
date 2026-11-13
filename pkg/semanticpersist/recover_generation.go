@@ -14,7 +14,7 @@ import (
 func RecoverGeneration(
 	ctx context.Context,
 	root string,
-	config RecoverConfig,
+	options RecoverOptions,
 ) error {
 	if ctx == nil {
 		return vector.ErrNilContext
@@ -22,10 +22,10 @@ func RecoverGeneration(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if root == "" || config.Generation.ID == 0 {
+	if root == "" || options.Generation.ID == 0 {
 		return ErrCorrupt
 	}
-	cfg, err := newSettings(config.Config)
+	cfg, err := newSettings(options.Limits)
 	if err != nil {
 		return err
 	}
@@ -34,7 +34,7 @@ func RecoverGeneration(
 		generations := newGenerationFiles(l, cfg)
 		candidate, err := generations.open(
 			ctx,
-			config.Generation.ID,
+			options.Generation.ID,
 			nil,
 		)
 		if err != nil {
@@ -60,7 +60,7 @@ func RecoverGeneration(
 		}
 		if err := newCurrentFile(l, cfg).replace(
 			generationformat.Head{
-				GenerationID: config.Generation.ID,
+				GenerationID: options.Generation.ID,
 				ManifestHash: candidate.manifestRef.SHA256,
 			},
 		); err != nil {

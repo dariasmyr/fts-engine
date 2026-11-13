@@ -13,7 +13,7 @@ import (
 
 type currentFile struct {
 	layout      layout
-	limits      Config
+	limits      Limits
 	checkpoints saveCheckpoints
 }
 
