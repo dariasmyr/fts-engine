@@ -24,6 +24,9 @@ var (
 	ErrLockUnsupported            = storage.ErrLockUnsupported
 	ErrExpectedGenerationRequired = errors.New("semanticpersist: expected generation is required")
 	ErrStaleGeneration            = errors.New("semanticpersist: expected generation does not match CURRENT")
+	ErrIndexIdentityMismatch      = errors.New("semanticpersist: index identity does not match persisted lineage")
+	ErrImmutableConfigMismatch    = errors.New("semanticpersist: immutable configuration does not match persisted lineage")
+	ErrPersistenceModeMismatch    = errors.New("semanticpersist: persistence mode does not match persisted lineage")
 )
 
 func indeterminateError(err error) error {

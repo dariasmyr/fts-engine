@@ -12,7 +12,7 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 )
 
-func TestSaveDoesNotReuseSegmentFromIndependentIndex(t *testing.T) {
+func TestSaveRejectsIndependentIndexLineage(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -23,13 +23,16 @@ func TestSaveDoesNotReuseSegmentFromIndependentIndex(t *testing.T) {
 
 	second := newTestIndex(t)
 	addTestSegmentWithVector(t, ctx, second, []float32{9, 8})
-	if _, err := Save(ctx, root, second, SaveConfig{ExpectedGeneration: &generation}); err != nil {
-		t.Fatal(err)
+	if _, err := Save(ctx, root, second, SaveConfig{ExpectedGeneration: &generation}); !errors.Is(err, ErrIndexIdentityMismatch) {
+		t.Fatalf("Save() error = %v, want ErrIndexIdentityMismatch", err)
 	}
 
-	loaded, _, err := Load(ctx, root, LoadConfig{})
+	loaded, loadedGeneration, err := Load(ctx, root, LoadConfig{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if loadedGeneration != generation {
+		t.Fatalf("loaded generation = %d, want %d", loadedGeneration.ID, generation.ID)
 	}
 	state, err := loaded.ExportState(ctx)
 	if err != nil {
@@ -39,8 +42,8 @@ func TestSaveDoesNotReuseSegmentFromIndependentIndex(t *testing.T) {
 	if err := state.Segments[0].Vectors.ReadVectorInto(ctx, 0, got); err != nil {
 		t.Fatal(err)
 	}
-	if got[0] != 9 || got[1] != 8 {
-		t.Fatalf("loaded vector = %v, want [9 8]", got)
+	if got[0] != 1 || got[1] != 2 {
+		t.Fatalf("loaded vector = %v, want [1 2]", got)
 	}
 }
 
@@ -68,6 +71,21 @@ func TestSaveChecksExpectedGenerationBeforeSegmentObjects(t *testing.T) {
 	_, err = Save(ctx, root, index, SaveConfig{ExpectedGeneration: &Generation{}})
 	if !errors.Is(err, ErrStaleGeneration) {
 		t.Fatalf("Save() error = %v, want ErrStaleGeneration", err)
+	}
+}
+
+func TestSaveWithStaleGenerationDoesNotCreateStorageRoot(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "store")
+	_, err := Save(context.Background(), root, newTestIndex(t), SaveConfig{
+		ExpectedGeneration: &Generation{ID: 1},
+	})
+	if !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("Save() error = %v, want ErrStaleGeneration", err)
+	}
+	if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("storage root error = %v, want os.ErrNotExist", err)
 	}
 }
 

@@ -1,8 +1,10 @@
 package semanticpersist
 
 import (
+	"context"
 	"errors"
 
+	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/storage"
 )
 
@@ -20,6 +22,25 @@ type storageOperation struct {
 }
 
 func (o *storageOperation) markPublishedToStorage() { o.publishedToStorage = true }
+
+func (o *storageOperation) openCurrentGeneration(
+	ctx context.Context,
+	cfg settings,
+) (generationformat.Head, persistedGeneration, bool, error) {
+	head, hasCurrent, err := readCurrent(ctx, o.layout, cfg)
+	if err != nil || !hasCurrent {
+		return head, persistedGeneration{}, hasCurrent, err
+	}
+	persisted, err := newGenerationFiles(o.layout, cfg).open(
+		ctx,
+		head.GenerationID,
+		&head.ManifestHash,
+	)
+	if err != nil {
+		return generationformat.Head{}, persistedGeneration{}, false, err
+	}
+	return head, persisted, true, nil
+}
 
 func (o *storageOperation) mapCloseError(err error) error {
 	if o.publishedToStorage {

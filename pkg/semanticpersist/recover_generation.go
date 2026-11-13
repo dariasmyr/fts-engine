@@ -32,7 +32,7 @@ func RecoverGeneration(
 	return withStorageOperation(root, operationLayoutExisting, func(operation *storageOperation) error {
 		l := operation.layout
 		generations := newGenerationFiles(l, cfg)
-		persisted, err := generations.open(
+		candidate, err := generations.open(
 			ctx,
 			config.Generation.ID,
 			nil,
@@ -41,17 +41,27 @@ func RecoverGeneration(
 			return err
 		}
 
-		segments := newSegmentStore(l, cfg)
-		if _, err := restoreIndex(ctx, persisted, segments); err != nil {
+		_, current, hasCurrent, err := operation.openCurrentGeneration(ctx, cfg)
+		if err != nil {
 			return err
 		}
-		if err := syncSavedGeneration(l, persisted.manifest); err != nil {
+		if hasCurrent {
+			if err := validateImmutableLineage(current.state, candidate.state); err != nil {
+				return err
+			}
+		}
+
+		segments := newSegmentStore(l, cfg)
+		if _, err := restoreIndex(ctx, candidate, segments); err != nil {
+			return err
+		}
+		if err := syncSavedGeneration(l, candidate.manifest); err != nil {
 			return err
 		}
 		if err := newCurrentFile(l, cfg).replace(
 			generationformat.Head{
 				GenerationID: config.Generation.ID,
-				ManifestHash: persisted.manifestRef.SHA256,
+				ManifestHash: candidate.manifestRef.SHA256,
 			},
 		); err != nil {
 			return err

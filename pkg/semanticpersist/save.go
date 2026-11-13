@@ -232,9 +232,33 @@ func saveCommittedState(
 	if err != nil {
 		return 0, err
 	}
+	if expectedGenerationID != 0 {
+		if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
+			return 0, ErrStaleGeneration
+		} else if err != nil {
+			return 0, err
+		}
+	}
 
 	return withStorageOperationResult(root, operationLayoutPrepare, func(operation *storageOperation) (uint64, error) {
 		l := operation.layout
+		head, current, hasCurrent, err := operation.openCurrentGeneration(ctx, cfg)
+		if err != nil {
+			return 0, err
+		}
+		currentID := uint64(0)
+		if hasCurrent {
+			currentID = head.GenerationID
+		}
+		if currentID != expectedGenerationID {
+			return 0, ErrStaleGeneration
+		}
+		if hasCurrent {
+			if err := validateImmutableLineage(current.state, state.state); err != nil {
+				return 0, err
+			}
+		}
+
 		for _, path := range []string{l.segments, l.objects, l.generations, l.root} {
 			if err := persistfs.SyncDirectory(path); err != nil {
 				return 0, err
@@ -246,22 +270,7 @@ func saveCommittedState(
 			}
 		}
 
-		head, hasCurrent, err := readCurrent(ctx, l, cfg)
-		if err != nil {
-			return 0, err
-		}
-		currentID := uint64(0)
-		if hasCurrent {
-			currentID = head.GenerationID
-		}
-		if currentID != expectedGenerationID {
-			return 0, ErrStaleGeneration
-		}
-
-		reusable, err := loadReusableSegments(ctx, l, cfg, head, hasCurrent, state.state.ID)
-		if err != nil {
-			return 0, err
-		}
+		reusable := reusableSegments(current, hasCurrent)
 		nextID, err := nextGenerationID(l)
 		if err != nil {
 			return 0, err
@@ -291,33 +300,18 @@ func readCurrent(
 	return head, true, nil
 }
 
-func loadReusableSegments(
-	ctx context.Context,
-	l layout,
-	cfg settings,
-	head generationformat.Head,
+func reusableSegments(
+	persisted persistedGeneration,
 	hasCurrent bool,
-	indexID semantic.IndexID,
-) (map[semantic.SegmentID]generationformat.SegmentRef, error) {
+) map[semantic.SegmentID]generationformat.SegmentRef {
 	if !hasCurrent {
-		return nil, nil
-	}
-	persisted, err := newGenerationFiles(l, cfg).open(
-		ctx,
-		head.GenerationID,
-		&head.ManifestHash,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if persisted.state.ID != indexID {
-		return nil, nil
+		return nil
 	}
 	reusable := make(map[semantic.SegmentID]generationformat.SegmentRef, len(persisted.state.Segments))
 	for i, segment := range persisted.state.Segments {
 		reusable[segment.ID] = persisted.manifest.Segments[i]
 	}
-	return reusable, nil
+	return reusable
 }
 
 func nextGenerationID(l layout) (uint64, error) {
