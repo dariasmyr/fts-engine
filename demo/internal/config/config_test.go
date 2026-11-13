@@ -49,6 +49,10 @@ func TestValidateConfigAppliesFallbacksFromDefaultConfig(t *testing.T) {
 	cfg.FTS.Persistence.FlushThreshold = 0
 	cfg.FTS.Pipeline.Preset = ""
 	cfg.FTS.Pipeline.MinLength = 0
+	cfg.Semantic.Workers = 0
+	cfg.Semantic.MaxLiveVectors = 0
+	cfg.Semantic.Ollama = SemanticOllamaConfig{}
+	cfg.Semantic.Persistence.Path = ""
 	cfg.Mode.Type = ""
 
 	if err := validateConfig(&cfg); err != nil {
@@ -124,6 +128,9 @@ func TestConfigStructsDoNotUseEnvDefaults(t *testing.T) {
 		reflect.TypeOf(RibbonConfig{}),
 		reflect.TypeOf(ModeConfig{}),
 		reflect.TypeOf(PipelineConfig{}),
+		reflect.TypeOf(SemanticConfig{}),
+		reflect.TypeOf(SemanticOllamaConfig{}),
+		reflect.TypeOf(SemanticPersistenceConfig{}),
 	} {
 		for i := 0; i < typ.NumField(); i++ {
 			field := typ.Field(i)

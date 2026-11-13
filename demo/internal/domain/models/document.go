@@ -17,6 +17,7 @@ type ResultData struct {
 	UniqueMatches int      `json:"unique_matches"`
 	TotalMatches  int      `json:"total_matches"`
 	Score         float64  `json:"score"`
+	Distance      *float64 `json:"distance,omitempty"`
 	Explanation   *Explain `json:"explanation,omitempty"`
 	Document      Document `json:"document"`
 }
@@ -41,20 +42,22 @@ type ScoreContribution struct {
 }
 
 type SearchDiagnostics struct {
-	LogicalQueryType   string            `json:"logical_query_type"`
-	ExecutionStrategy  string            `json:"execution_strategy"`
-	StrategySkipReason string            `json:"strategy_skip_reason"`
-	Timings            map[string]string `json:"timings"`
-	ProcessedTokens    int               `json:"processed_tokens"`
-	FieldsVisited      int               `json:"fields_visited"`
-	GeneratedKeys      int               `json:"generated_keys"`
-	IndexSearches      int               `json:"index_searches"`
-	FilterChecks       int               `json:"filter_checks"`
-	FilterRejects      int               `json:"filter_rejects"`
-	PostingEntriesRead int               `json:"posting_entries_read"`
-	CandidateDocs      int               `json:"candidate_docs"`
-	MatchedDocs        int               `json:"matched_docs"`
-	ReturnedDocs       int               `json:"returned_docs"`
+	LogicalQueryType     string            `json:"logical_query_type"`
+	ExecutionStrategy    string            `json:"execution_strategy"`
+	StrategySkipReason   string            `json:"strategy_skip_reason"`
+	Timings              map[string]string `json:"timings"`
+	ProcessedTokens      int               `json:"processed_tokens"`
+	FieldsVisited        int               `json:"fields_visited"`
+	GeneratedKeys        int               `json:"generated_keys"`
+	IndexSearches        int               `json:"index_searches"`
+	FilterChecks         int               `json:"filter_checks"`
+	FilterRejects        int               `json:"filter_rejects"`
+	PostingEntriesRead   int               `json:"posting_entries_read"`
+	CandidateDocs        int               `json:"candidate_docs"`
+	MatchedDocs          int               `json:"matched_docs"`
+	ReturnedDocs         int               `json:"returned_docs"`
+	VisitedNodes         int               `json:"visited_nodes,omitempty"`
+	DistanceComputations int               `json:"distance_computations,omitempty"`
 }
 
 type SearchResult struct {

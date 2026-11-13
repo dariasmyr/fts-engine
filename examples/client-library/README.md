@@ -88,7 +88,7 @@ The Ollama example additionally requires a running model:
 ```bash
 ollama pull nomic-embed-text
 OLLAMA_MODEL=nomic-embed-text:latest \
-OLLAMA_DIMENSIONS=768 OLLAMA_CONTEXT_TOKENS=8192 \
+OLLAMA_DIMENSIONS=768 OLLAMA_CONTEXT_TOKENS=2048 \
   go run ./examples/client-library/semantic-ollama
 ```
 

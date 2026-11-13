@@ -80,6 +80,7 @@ func main() {
 	log.Info("fts", "compaction_load_factor", cfg.FTS.Compaction.LoadFactor)
 	log.Info("fts", "compaction_auto_check", cfg.FTS.Compaction.AutoCheck)
 	log.Info("fts", "mode", cfg.Mode.Type)
+	log.Info("semantic", "enabled", cfg.Semantic.Enabled, "model", cfg.Semantic.Ollama.Model, "workers", cfg.Semantic.Workers)
 
 	registry, err := ftsbuiltin.NewSnapshotRegistry()
 	if err != nil {
@@ -105,6 +106,14 @@ func main() {
 		return
 	}
 	ftsEngine := &serviceAdapter{service: svc, snapshotLoaded: loadedFromSnapshot, searchStats: ftsstats.NewSearchStats(64)}
+	semanticEngine, err := buildSemanticRuntime(ctx, log, cfg.Semantic)
+	if err != nil {
+		log.Error("Failed to initialize semantic search", "error", sl.Err(err))
+		return
+	}
+	if semanticEngine != nil {
+		ftsEngine.semanticService = semanticEngine.service
+	}
 
 	log.Info("FTS engine initialised")
 
@@ -133,7 +142,7 @@ func main() {
 	startPprofServer(log)
 
 	if cfg.Mode.Type == "experiment" {
-		runExperimentMode(ctx, log, ftsEngine.service, documents)
+		runExperimentMode(ctx, log, ftsEngine.service, semanticEngine, documents)
 		return
 	}
 
@@ -155,6 +164,14 @@ func main() {
 			log.Error("Failed to persist state", "error", sl.Err(err))
 			return
 		}
+	}
+
+	if semanticEngine != nil && semanticEngine.loadedFromDisk {
+		log.Info("Skipping semantic re-indexing: persisted state loaded", "path", semanticEngine.persistencePath)
+	}
+	if err := populateSemanticDocuments(ctx, log, semanticEngine, documents); err != nil {
+		log.Error("Failed to index semantic corpus", "error", sl.Err(err))
+		return
 	}
 
 	if err := runCUI(ctx, log, cfg.FTS.Index, cfg.FTS.Scorer, rankProfileLabel(cfg.FTS.RankProfile), cfg.FTS.Filter, ftsEngine, documentsByID); err != nil {

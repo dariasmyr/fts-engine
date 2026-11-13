@@ -11,7 +11,7 @@ import (
 	pkgfts "github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
-func runExperimentMode(ctx context.Context, log *slog.Logger, service *pkgfts.Service, documents []models.Document) {
+func runExperimentMode(ctx context.Context, log *slog.Logger, service *pkgfts.Service, semanticEngine *semanticRuntime, documents []models.Document) {
 	startedAt := time.Now()
 	memStats := utils.MeasureMemory(func() {
 		for _, doc := range documents {
@@ -24,6 +24,9 @@ func runExperimentMode(ctx context.Context, log *slog.Logger, service *pkgfts.Se
 		"heapObjects", memStats.HeapObjects,
 		"totalAllocMB", memStats.TotalAlloc/1024/1024,
 	)
+	if err := populateSemanticDocuments(ctx, log, semanticEngine, documents); err != nil {
+		log.Error("semantic indexing experiment failed", "error", err)
+	}
 }
 
 func populateDocuments(rootCtx context.Context, ctx context.Context, log *slog.Logger, service *pkgfts.Service, documents []models.Document, documentsByID map[string]models.Document, skipIndexing bool) bool {

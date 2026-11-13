@@ -9,10 +9,36 @@ import (
 )
 
 type Config struct {
-	Env      string     `yaml:"env"`
-	DumpPath string     `yaml:"dump_path"`
-	FTS      FTSConfig  `yaml:"fts"`
-	Mode     ModeConfig `yaml:"mode"`
+	Env      string         `yaml:"env"`
+	DumpPath string         `yaml:"dump_path"`
+	FTS      FTSConfig      `yaml:"fts"`
+	Semantic SemanticConfig `yaml:"semantic"`
+	Mode     ModeConfig     `yaml:"mode"`
+}
+
+type SemanticConfig struct {
+	Enabled        bool                      `yaml:"enabled"`
+	Workers        int                       `yaml:"workers"`
+	MaxLiveVectors int                       `yaml:"max_live_vectors"`
+	Ollama         SemanticOllamaConfig      `yaml:"ollama"`
+	Persistence    SemanticPersistenceConfig `yaml:"persistence"`
+}
+
+type SemanticOllamaConfig struct {
+	BaseURL        string `yaml:"base_url"`
+	Model          string `yaml:"model"`
+	Dimensions     int    `yaml:"dimensions"`
+	ContextTokens  int    `yaml:"context_tokens"`
+	DocumentPrefix string `yaml:"document_prefix"`
+	QueryPrefix    string `yaml:"query_prefix"`
+	Truncate       bool   `yaml:"truncate"`
+}
+
+type SemanticPersistenceConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	Path        string `yaml:"path"`
+	LoadOnStart bool   `yaml:"load_on_start"`
+	SaveOnBuild bool   `yaml:"save_on_build"`
 }
 
 type FTSConfig struct {
@@ -179,6 +205,24 @@ func defaultConfig() Config {
 				MinLength:   3,
 			},
 		},
+		Semantic: SemanticConfig{
+			Workers:        2,
+			MaxLiveVectors: 1_000_000,
+			Ollama: SemanticOllamaConfig{
+				BaseURL:        "http://localhost:11434",
+				Model:          "nomic-embed-text:latest",
+				Dimensions:     768,
+				ContextTokens:  2048,
+				DocumentPrefix: "search_document: ",
+				QueryPrefix:    "search_query: ",
+			},
+			Persistence: SemanticPersistenceConfig{
+				Enabled:     true,
+				Path:        "./data/semantic/local",
+				LoadOnStart: true,
+				SaveOnBuild: true,
+			},
+		},
 		Mode: ModeConfig{Type: "prod"},
 	}
 }
@@ -243,11 +287,37 @@ func validateConfig(cfg *Config) error {
 	if cfg.Mode.Type == "" {
 		cfg.Mode.Type = defaults.Mode.Type
 	}
+	if cfg.Semantic.Workers <= 0 {
+		cfg.Semantic.Workers = defaults.Semantic.Workers
+	}
+	if cfg.Semantic.MaxLiveVectors <= 0 {
+		cfg.Semantic.MaxLiveVectors = defaults.Semantic.MaxLiveVectors
+	}
+	if cfg.Semantic.Ollama.BaseURL == "" {
+		cfg.Semantic.Ollama.BaseURL = defaults.Semantic.Ollama.BaseURL
+	}
+	if cfg.Semantic.Ollama.Model == "" {
+		cfg.Semantic.Ollama.Model = defaults.Semantic.Ollama.Model
+	}
+	if cfg.Semantic.Ollama.Dimensions <= 0 {
+		cfg.Semantic.Ollama.Dimensions = defaults.Semantic.Ollama.Dimensions
+	}
+	if cfg.Semantic.Ollama.ContextTokens <= 0 {
+		cfg.Semantic.Ollama.ContextTokens = defaults.Semantic.Ollama.ContextTokens
+	}
+	if cfg.Semantic.Ollama.DocumentPrefix == "" {
+		cfg.Semantic.Ollama.DocumentPrefix = defaults.Semantic.Ollama.DocumentPrefix
+	}
+	if cfg.Semantic.Ollama.QueryPrefix == "" {
+		cfg.Semantic.Ollama.QueryPrefix = defaults.Semantic.Ollama.QueryPrefix
+	}
+	if cfg.Semantic.Persistence.Path == "" {
+		cfg.Semantic.Persistence.Path = defaults.Semantic.Persistence.Path
+	}
 
 	if cfg.FTS.Compaction.LoadFactor < 0 || cfg.FTS.Compaction.LoadFactor > 1 {
 		return fmt.Errorf("compaction load_factor must be in range [0..1]")
 	}
-
 	switch cfg.FTS.Index {
 	case "slicedradix", "hamt", "flat":
 	default:

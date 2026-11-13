@@ -11,6 +11,7 @@ import (
 	"github.com/dariasmyr/fts-engine/demo/internal/domain/models"
 	pkgfts "github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/ftsstats"
+	semanticservice "github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 )
 
 func runCUI(ctx context.Context, log *slog.Logger, cfgIndex string, cfgScorer string, cfgProfile string, cfgFilter string, engine *serviceAdapter, documentsByID map[string]models.Document) error {
@@ -33,9 +34,14 @@ func runCUI(ctx context.Context, log *slog.Logger, cfgIndex string, cfgScorer st
 }
 
 type serviceAdapter struct {
-	service        *pkgfts.Service
-	snapshotLoaded bool
-	searchStats    *ftsstats.SearchStats
+	service         *pkgfts.Service
+	semanticService *semanticservice.Service
+	snapshotLoaded  bool
+	searchStats     *ftsstats.SearchStats
+}
+
+func (s *serviceAdapter) SemanticEnabled() bool {
+	return s != nil && s.semanticService != nil
 }
 
 func (s *serviceAdapter) Fields() []string {
@@ -122,6 +128,35 @@ func (s *serviceAdapter) SearchText(ctx context.Context, query string, maxResult
 		ResultData:        s.projectResults(ctx, query, result, true),
 		TotalResultsCount: result.TotalResultsCount,
 		Diagnostics:       projectDiagnostics(result.Diagnostics),
+	}, nil
+}
+
+func (s *serviceAdapter) SearchSemantic(ctx context.Context, query string, maxResults int) (*models.SearchResult, error) {
+	if s == nil || s.semanticService == nil {
+		return nil, fmt.Errorf("semantic search is disabled")
+	}
+	result, err := s.semanticService.Search(ctx, query, maxResults)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]models.ResultData, 0, len(result.Hits))
+	for _, hit := range result.Hits {
+		distance := hit.Distance
+		items = append(items, models.ResultData{ID: string(hit.DocID), Distance: &distance})
+	}
+	return &models.SearchResult{
+		ResultData:        items,
+		TotalResultsCount: result.DistinctDocuments,
+		Diagnostics: &models.SearchDiagnostics{
+			LogicalQueryType:     "semantic",
+			ExecutionStrategy:    "hnsw",
+			IndexSearches:        1,
+			CandidateDocs:        result.DistinctDocuments,
+			MatchedDocs:          result.DistinctDocuments,
+			ReturnedDocs:         len(result.Hits),
+			VisitedNodes:         result.Stats.VisitedNodes,
+			DistanceComputations: result.Stats.DistanceComputations,
+		},
 	}, nil
 }
 

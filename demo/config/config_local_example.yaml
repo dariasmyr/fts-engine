@@ -49,5 +49,22 @@ fts:
     stem_en: true
     stem_ru: false
     min_length: 3
+semantic:
+  enabled: true
+  workers: 2
+  max_live_vectors: 1000000
+  ollama:
+    base_url: "http://localhost:11434"
+    model: "nomic-embed-text:latest"
+    dimensions: 768
+    context_tokens: 2048
+    document_prefix: "search_document: "
+    query_prefix: "search_query: "
+    truncate: false
+  persistence:
+    enabled: true
+    path: "./data/semantic/local"
+    load_on_start: true
+    save_on_build: true
 mode:
   type: "prod"

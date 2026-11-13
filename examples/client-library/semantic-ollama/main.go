@@ -18,7 +18,7 @@ func main() {
 		BaseURL:        baseURL,
 		Model:          envOr("OLLAMA_MODEL", "nomic-embed-text:latest"),
 		Dimensions:     envIntOr("OLLAMA_DIMENSIONS", 768),
-		ContextTokens:  envIntOr("OLLAMA_CONTEXT_TOKENS", 8192),
+		ContextTokens:  envIntOr("OLLAMA_CONTEXT_TOKENS", 2048),
 		DocumentPrefix: "search_document: ",
 		QueryPrefix:    "search_query: ",
 	})

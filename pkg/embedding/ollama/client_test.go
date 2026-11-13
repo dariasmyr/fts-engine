@@ -26,7 +26,7 @@ func TestClientEmbed(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 		}
-		if request.Model != "digest" || !slices.Equal(request.Input, []string{"one", "two"}) ||
+		if request.Model != "test-model" || !slices.Equal(request.Input, []string{"one", "two"}) ||
 			!request.Truncate || request.Dimensions != 2 {
 			t.Errorf("request = %+v", request)
 		}
@@ -187,7 +187,7 @@ func TestNewRejectsRevisionChangeDuringInitialization(t *testing.T) {
 	}
 }
 
-func TestNewFailsClosedWhenDigestReferencesAreUnsupported(t *testing.T) {
+func TestNewUsesModelNameWhenDigestReferencesAreUnsupported(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
@@ -195,7 +195,22 @@ func TestNewFailsClosedWhenDigestReferencesAreUnsupported(t *testing.T) {
 				Name: "test-model", Model: "test-model", Digest: "digest",
 			}}})
 		case "/api/show":
-			http.Error(w, "model not found", http.StatusNotFound)
+			var request map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+			}
+			if request["model"] != "test-model" {
+				http.Error(w, "model not found", http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"capabilities": []string{"embedding"},
+				"model_info": map[string]any{
+					"general.architecture":  "test",
+					"test.embedding_length": 2,
+					"test.context_length":   512,
+				},
+			})
 		default:
 			http.NotFound(w, r)
 		}
@@ -204,10 +219,12 @@ func TestNewFailsClosedWhenDigestReferencesAreUnsupported(t *testing.T) {
 
 	config := testConfig()
 	config.BaseURL = server.URL
-	_, err := New(t.Context(), config)
-	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
-		t.Fatalf("New() error = %v, want 404 APIError", err)
+	client, err := New(t.Context(), config)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if client.Model().Revision != "digest" {
+		t.Fatalf("Model().Revision = %q, want digest", client.Model().Revision)
 	}
 }
 
@@ -263,8 +280,8 @@ func metadataHandler(
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Error(err)
 			}
-			if request["model"] != digest {
-				t.Errorf("show model = %q, want digest %q", request["model"], digest)
+			if request["model"] != "test-model" {
+				t.Errorf("show model = %q, want test-model", request["model"])
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"capabilities": capabilities,

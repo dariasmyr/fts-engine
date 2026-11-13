@@ -129,7 +129,7 @@ func (m model) renderHelpKeys(width int) string {
 		sectionTitle.Render("Shortcuts"),
 		kv("enter", "search"),
 		kv("tab", "switch focus"),
-		kv("ctrl+t", "toggle plain/syntax"),
+		kv("ctrl+t", "cycle search mode"),
 		kv("ctrl+c", "quit"),
 	}
 	if m.focus == focusResults {
@@ -147,10 +147,15 @@ func (m model) renderModeOverview(width int) string {
 			kv("active", "syntax"),
 			mutedStyle.Width(width).Render("Syntax mode parses operators, fields, phrases, prefix queries, and grouped boolean expressions."),
 		)
-	} else {
+	} else if m.mode == searchModePlain {
 		rows = append(rows,
 			kv("active", "plain"),
 			mutedStyle.Width(width).Render("Plain mode treats the input as regular text and does not parse query operators. Good for quick bag-of-words search."),
+		)
+	} else {
+		rows = append(rows,
+			kv("active", "semantic"),
+			mutedStyle.Width(width).Render("Semantic mode embeds the query and retrieves conceptually similar documents from the HNSW index."),
 		)
 	}
 	rows = append(rows, mutedStyle.Width(width).Render("Press Ctrl+T to switch modes at any time."))
@@ -162,6 +167,14 @@ func (m model) renderSyntaxHelp(width int) string {
 		return ""
 	}
 
+	if m.mode == searchModeSemantic {
+		return strings.Join([]string{
+			sectionTitle.Render("Semantic Mode Tips"),
+			kv("example", "a hotel on a French river"),
+			kv("example", "early programmable machines"),
+			mutedStyle.Width(width).Render("Use natural language; query operators and lexical highlighting are disabled in semantic mode."),
+		}, "\n")
+	}
 	if m.mode != searchModeSyntax {
 		return strings.Join([]string{
 			sectionTitle.Render("Plain Mode Tips"),
@@ -272,15 +285,19 @@ func (m model) renderResults() string {
 			break
 		}
 
-		header := lipgloss.JoinHorizontal(
-			lipgloss.Center,
-			accentBar.Render("▌ "),
-			docIDStyle.Render("doc "+result.ID),
-			"  ",
-			badgeUnique.Render(fmt.Sprintf("◆ %d unique", result.UniqueMatches)),
-			" ",
-			badgeTotal.Render(fmt.Sprintf("Σ %d total", result.TotalMatches)),
-		)
+		header := lipgloss.JoinHorizontal(lipgloss.Center, accentBar.Render("▌ "), docIDStyle.Render("doc "+result.ID))
+		if result.Distance != nil {
+			header = lipgloss.JoinHorizontal(lipgloss.Center, header, "  ", statStyle.Render(fmt.Sprintf("distance %.4f", *result.Distance)))
+		} else {
+			header = lipgloss.JoinHorizontal(
+				lipgloss.Center,
+				header,
+				"  ",
+				badgeUnique.Render(fmt.Sprintf("◆ %d unique", result.UniqueMatches)),
+				" ",
+				badgeTotal.Render(fmt.Sprintf("Σ %d total", result.TotalMatches)),
+			)
+		}
 		if result.Score > 0 {
 			header = lipgloss.JoinHorizontal(
 				lipgloss.Center,
@@ -501,6 +518,12 @@ func (m model) sectionDiagnostics(width int) string {
 		kvVal("matched", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.MatchedDocs))),
 		kvVal("returned", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.ReturnedDocs))),
 	)
+	if m.diagnostics.VisitedNodes > 0 || m.diagnostics.DistanceComputations > 0 {
+		rows = append(rows,
+			kvVal("visited_nodes", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.VisitedNodes))),
+			kvVal("distances", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.DistanceComputations))),
+		)
+	}
 	return strings.Join(rows, "\n")
 }
 

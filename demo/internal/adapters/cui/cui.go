@@ -12,6 +12,7 @@ import (
 
 type SearchEngine interface {
 	Fields() []string
+	SemanticEnabled() bool
 	HighlightPlainText(query string, text string) string
 	HighlightQueryString(query string, text string) string
 	SearchTerm(
@@ -20,6 +21,11 @@ type SearchEngine interface {
 		maxResults int,
 	) (*models.SearchResult, error)
 	SearchText(
+		ctx context.Context,
+		query string,
+		maxResults int,
+	) (*models.SearchResult, error)
+	SearchSemantic(
 		ctx context.Context,
 		query string,
 		maxResults int,
@@ -38,15 +44,23 @@ type Info struct {
 type searchMode string
 
 const (
-	searchModePlain  searchMode = "plain"
-	searchModeSyntax searchMode = "syntax"
+	searchModePlain    searchMode = "plain"
+	searchModeSyntax   searchMode = "syntax"
+	searchModeSemantic searchMode = "semantic"
 )
 
-func (m searchMode) toggle() searchMode {
-	if m == searchModeSyntax {
+func (m searchMode) toggle(semanticEnabled bool) searchMode {
+	switch m {
+	case searchModeSyntax:
 		return searchModePlain
+	case searchModePlain:
+		if semanticEnabled {
+			return searchModeSemantic
+		}
+		return searchModeSyntax
+	default:
+		return searchModeSyntax
 	}
-	return searchModeSyntax
 }
 
 func (m searchMode) inputTitle() string {

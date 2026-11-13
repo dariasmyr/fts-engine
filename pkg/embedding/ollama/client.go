@@ -125,7 +125,7 @@ func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, error)
 		Input      []string `json:"input"`
 		Truncate   bool     `json:"truncate"`
 		Dimensions int      `json:"dimensions,omitempty"`
-	}{Model: c.model.Revision, Input: texts, Truncate: c.truncate, Dimensions: c.model.Dimensions})
+	}{Model: c.model.ID, Input: texts, Truncate: c.truncate, Dimensions: c.model.Dimensions})
 	if err != nil {
 		return nil, fmt.Errorf("embedding/ollama: encode request: %w", err)
 	}
