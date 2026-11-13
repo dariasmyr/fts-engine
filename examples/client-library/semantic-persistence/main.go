@@ -88,9 +88,21 @@ func main() {
 
 	loader, err := semanticpersist.NewLoader(root, semanticpersist.LoadOptions{})
 	must(err)
-	loaded, _, err := service.Load(ctx, loader, persistenceEmbedder{})
+	loaded, generationID, err := service.Load(ctx, loader, persistenceEmbedder{})
 	must(err)
+	generation = semanticpersist.Generation{ID: generationID}
+	fmt.Printf("reopened generation=%d\n", generation.ID)
 	search(ctx, loaded, "query-v2", "after reopen")
+
+	must(loaded.AddDocument(ctx, document("doc-c", "c")))
+	generation, err = semanticpersist.CommitAndSaveService(
+		ctx,
+		root,
+		loaded,
+		semanticpersist.SaveOptions{ExpectedGeneration: &generation},
+	)
+	must(err)
+	fmt.Printf("post-reopen generation=%d\n", generation.ID)
 }
 
 func document(id fts.DocID, text string) fts.Document {
@@ -131,6 +143,7 @@ type persistenceEmbedder struct{}
 func (persistenceEmbedder) Model() embedding.Model {
 	return embedding.Model{
 		ID: "persistence-example", Revision: "v1", Dimensions: 2, ContextTokens: 512,
+		DocumentPrefix: "document: ", QueryPrefix: "query: ",
 	}
 }
 

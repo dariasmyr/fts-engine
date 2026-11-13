@@ -1,8 +1,10 @@
 package semanticpersist
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/storage"
@@ -87,6 +89,31 @@ func TestRecoverGenerationRejectsDifferentIndexLineage(t *testing.T) {
 	}
 	if head.GenerationID != current.ID {
 		t.Fatalf("CURRENT generation = %d, want %d", head.GenerationID, current.ID)
+	}
+}
+
+func TestRecoverGenerationRejectsCorruptCurrentWithoutPublishing(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	generations := saveTestGenerations(t, ctx, root, newTestIndex(t), 2)
+	currentPath := newLayout(root).current
+	corrupt := []byte("corrupt CURRENT")
+	if err := os.WriteFile(currentPath, corrupt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := RecoverGeneration(ctx, root, RecoverOptions{Generation: generations[0]})
+	if !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("RecoverGeneration() error = %v, want ErrCorrupt", err)
+	}
+	after, err := os.ReadFile(currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, corrupt) {
+		t.Fatalf("CURRENT changed after rejected recovery: %q", after)
 	}
 }
 

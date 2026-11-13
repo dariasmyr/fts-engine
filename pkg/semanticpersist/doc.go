@@ -11,7 +11,8 @@
 // semantic.Index directly. Save requires an explicit expected generation.
 // Inspect validates and returns a detached copy of the current generation's
 // stored index and optional pipeline contract without an embedding client or
-// opening segment objects.
+// opening segment objects. It still reads and decodes the complete semantic
+// state, so its cost grows with the stored rows.
 //
 // The first generation fixes the index identity, complete IndexConfig, optional
 // PipelineConfig, and raw/model-backed persistence mode for a root. Later writes

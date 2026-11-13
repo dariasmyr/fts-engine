@@ -10,7 +10,9 @@ import (
 )
 
 // RecoverGeneration explicitly validates generation and makes it current.
-// Normal Load never scans for or promotes orphan generations.
+// Normal Load never scans for or promotes orphan generations. Recovery is
+// strict: an existing CURRENT must be readable and compatible with the selected
+// generation. A corrupt CURRENT returns ErrCorrupt and is left unchanged.
 func RecoverGeneration(
 	ctx context.Context,
 	root string,

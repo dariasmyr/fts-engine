@@ -18,7 +18,9 @@ type StoredInfo struct {
 }
 
 // Inspect reads and validates the current generation metadata without restoring
-// the index or requiring an embedding client.
+// the index or requiring an embedding client. It decodes the complete semantic
+// state, so its cost grows with the stored rows even though it does not open
+// vector or HNSW segment objects.
 func Inspect(ctx context.Context, root string, options LoadOptions) (StoredInfo, error) {
 	cfg, err := prepareLoad(ctx, root, options)
 	if err != nil {

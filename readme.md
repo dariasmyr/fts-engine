@@ -772,9 +772,11 @@ semanticService = loaded
 ```
 
 `Inspect` validates the selected generation's metadata without an embedding
-client and without opening vector or HNSW segment objects. A later save must use
-the same index identity, complete `IndexConfig`, pipeline configuration, and
-raw/model-backed mode. Violations return `ErrIndexIdentityMismatch`,
+client and without opening vector or HNSW segment objects. It still reads and
+decodes the complete `semantic-state.bin`, so its cost grows with the number of
+stored rows and is not O(1). A later save must use the same index identity,
+complete `IndexConfig`, pipeline configuration, and raw/model-backed mode.
+Violations return `ErrIndexIdentityMismatch`,
 `ErrImmutableConfigMismatch`, or `ErrPersistenceModeMismatch`; a stale token
 returns `ErrStaleGeneration`. None of these errors changes `CURRENT`.
 
@@ -870,6 +872,10 @@ benchmark-owned `exact.Searcher` and is not a production fallback.
 
 `RecoverGeneration` provides an explicit recovery flow: it fully validates a
 selected generation and its referenced objects before replacing `CURRENT`.
+Recovery is strict: if the existing `CURRENT` is corrupt, recovery returns
+`ErrCorrupt` and does not publish the selected generation. It does not scan for
+or automatically promote orphan generations; repairing a corrupt `CURRENT`
+requires a separate administrative procedure.
 
 ### Stream Bundles
 
