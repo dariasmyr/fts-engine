@@ -64,7 +64,6 @@ func TestArchitectureRulesAllowIntendedDependencies(t *testing.T) {
 				"bytes",
 				"io",
 				rootModule + "/internal/format",
-				rootModule + "/pkg/semantic",
 			},
 		},
 		{
@@ -126,6 +125,12 @@ func TestArchitectureRulesRejectForbiddenEdges(t *testing.T) {
 			name: "generation format to filesystem",
 			from: rootModule + "/pkg/semanticpersist/internal/generationformat",
 			to:   "os",
+			rule: "generationformat",
+		},
+		{
+			name: "generation format to semantic runtime",
+			from: rootModule + "/pkg/semanticpersist/internal/generationformat",
+			to:   rootModule + "/pkg/semantic/service",
 			rule: "generationformat",
 		},
 		{

@@ -18,20 +18,21 @@ func TestValidateImmutableLineage(t *testing.T) {
 	t.Parallel()
 
 	index := newTestIndex(t)
-	base := generationformat.IndexState{
-		ID:     semantic.IndexID{1},
-		Config: index.Config(),
-		Pipeline: &service.PipelineConfig{
-			Model: embedding.Model{
-				ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 128,
-				DocumentPrefix: "document: ", QueryPrefix: "query: ",
-			},
-			Chunking:                chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4},
-			EncodingBehaviorVersion: service.CurrentEncodingBehaviorVersion,
-			Operational: service.PipelineOperationalLimits{Encoding: service.EncodingLimits{
-				MaxFields: 4, MaxSourceBytes: 1024, MaxEmbeddingBytes: 64,
-			}},
+	pipeline := pipelineConfigToFormat(service.PipelineConfig{
+		Model: embedding.Model{
+			ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 128,
+			DocumentPrefix: "document: ", QueryPrefix: "query: ",
 		},
+		Chunking:                chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4},
+		EncodingBehaviorVersion: service.CurrentEncodingBehaviorVersion,
+		Operational: service.PipelineOperationalLimits{Encoding: service.EncodingLimits{
+			MaxFields: 4, MaxSourceBytes: 1024, MaxEmbeddingBytes: 64,
+		}},
+	})
+	base := generationformat.IndexState{
+		ID:       [16]byte{1},
+		Config:   indexConfigToFormat(index.Config()),
+		Pipeline: &pipeline,
 	}
 
 	tests := []struct {
@@ -56,7 +57,7 @@ func TestValidateImmutableLineage(t *testing.T) {
 		{
 			name: "index metric",
 			mutate: func(state *generationformat.IndexState) {
-				state.Config.Metric = vector.MetricCosine
+				state.Config.Metric = uint8(vector.MetricCosine)
 			},
 			want: ErrImmutableConfigMismatch,
 		},

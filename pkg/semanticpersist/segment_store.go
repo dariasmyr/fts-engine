@@ -210,7 +210,7 @@ func (s segmentStore) verify(ref generationformat.SegmentRef) error {
 	return persistfs.SyncDirectory(path)
 }
 
-func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef, config semantic.IndexConfig, state generationformat.SegmentState) (semantic.SegmentState, error) {
+func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef, config semantic.IndexConfig, state semantic.SegmentState) (semantic.SegmentState, error) {
 	if !validObjectID(ref.ObjectID) || ref.ObjectID != segmentObjectID(ref.Vectors, ref.Graph) {
 		return semantic.SegmentState{}, ErrCorrupt
 	}

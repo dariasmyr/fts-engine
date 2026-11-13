@@ -29,13 +29,21 @@ func Inspect(ctx context.Context, root string, options LoadOptions) (StoredInfo,
 		if err != nil {
 			return StoredInfo{}, err
 		}
+		indexConfig, err := indexConfigFromFormat(persisted.state.Config)
+		if err != nil {
+			return StoredInfo{}, mapFormatError(err)
+		}
 		info := StoredInfo{
 			Generation:  generation,
-			IndexID:     persisted.state.ID,
-			IndexConfig: persisted.state.Config,
+			IndexID:     semantic.IndexID(persisted.state.ID),
+			IndexConfig: indexConfig,
 		}
 		if persisted.state.Pipeline != nil {
-			info.Pipeline = *persisted.state.Pipeline
+			pipeline, err := pipelineConfigFromFormat(*persisted.state.Pipeline, indexConfig)
+			if err != nil {
+				return StoredInfo{}, mapFormatError(err)
+			}
+			info.Pipeline = pipeline
 			info.HasPipeline = true
 		}
 		return info, nil

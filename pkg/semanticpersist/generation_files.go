@@ -34,6 +34,9 @@ func (s generationFiles) write(ctx context.Context, id uint64, state generationf
 	if id == 0 || len(state.Segments) != len(segments) {
 		return persistedGeneration{}, ErrCorrupt
 	}
+	if err := validateFormatState(state); err != nil {
+		return persistedGeneration{}, mapFormatError(err)
+	}
 	manifestPreview := generationformat.GenerationManifest{GenerationID: id, Segments: segments}
 	if err := validateManifestObjectRefs(manifestPreview); err != nil {
 		return persistedGeneration{}, err
@@ -153,6 +156,9 @@ func (s generationFiles) open(ctx context.Context, id uint64, expectedHash *[sha
 	}
 	state, err := generationformat.DecodeState(stateData, generationFormatConfig(s.limits))
 	if err != nil {
+		return persistedGeneration{}, mapFormatError(err)
+	}
+	if err := validateFormatState(state); err != nil {
 		return persistedGeneration{}, mapFormatError(err)
 	}
 	if len(state.Segments) != len(manifest.Segments) {

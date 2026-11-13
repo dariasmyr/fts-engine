@@ -309,7 +309,7 @@ func reusableSegments(
 	}
 	reusable := make(map[semantic.SegmentID]generationformat.SegmentRef, len(persisted.state.Segments))
 	for i, segment := range persisted.state.Segments {
-		reusable[segment.ID] = persisted.manifest.Segments[i]
+		reusable[semantic.SegmentID(segment.ID)] = persisted.manifest.Segments[i]
 	}
 	return reusable
 }
@@ -338,10 +338,14 @@ func (w *generationWriter) write(
 	cfg settings,
 ) (uint64, error) {
 	segments := newSegmentStore(w.layout, cfg)
+	indexConfig, err := indexConfigFromFormat(state.state.Config)
+	if err != nil {
+		return 0, mapFormatError(err)
+	}
 	segmentRefs := make([]generationformat.SegmentRef, len(state.segments))
 	reused := false
 	for i, segment := range state.segments {
-		if err := validateSegmentData(segment.state, state.state.Config, cfg.limits); err != nil {
+		if err := validateSegmentData(segment.state, indexConfig, cfg.limits); err != nil {
 			return 0, err
 		}
 		if ref, ok := w.reusable[segment.state.ID]; ok {
@@ -355,7 +359,7 @@ func (w *generationWriter) write(
 		ref, err := segments.put(
 			ctx,
 			segment.state,
-			state.state.Config.Operational.Search.MaxCandidateChunks,
+			indexConfig.Operational.Search.MaxCandidateChunks,
 		)
 		if err != nil {
 			return 0, err

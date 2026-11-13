@@ -112,14 +112,22 @@ func LoadService(
 		if err != nil {
 			return loadServiceOperationResult{}, err
 		}
-		if err := validatePersistedServiceClient(persisted.state.Pipeline, client); err != nil {
+		indexConfig, err := indexConfigFromFormat(persisted.state.Config)
+		if err != nil {
+			return loadServiceOperationResult{}, mapFormatError(err)
+		}
+		pipeline, err := optionalPipelineFromFormat(persisted.state.Pipeline, indexConfig)
+		if err != nil {
+			return loadServiceOperationResult{}, mapFormatError(err)
+		}
+		if err := validatePersistedServiceClient(pipeline, client); err != nil {
 			return loadServiceOperationResult{}, err
 		}
 		index, err := restoreIndex(ctx, persisted, newSegmentStore(operation.layout, cfg))
 		if err != nil {
 			return loadServiceOperationResult{}, corruptMissingReference(err)
 		}
-		semanticService, err := service.BindRestored(index, client, *persisted.state.Pipeline)
+		semanticService, err := service.BindRestored(index, client, *pipeline)
 		if err != nil {
 			return loadServiceOperationResult{}, err
 		}

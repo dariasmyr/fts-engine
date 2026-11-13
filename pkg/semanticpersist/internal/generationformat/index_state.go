@@ -1,13 +1,5 @@
 package generationformat
 
-import (
-	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
-	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
-	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
-)
-
 // SSTA wire-format version. Semantic persistence predates production use, so
 // old semantic state versions are intentionally not migrated.
 const stateVersion = uint16(18)
@@ -20,28 +12,120 @@ const (
 	stateIndexIDSize              = 16
 
 	stateConfigFixedSize    = stateConfigUint32FieldCount*wireUint32Size + wireUint64Size + 2*wireUint8Size + wireUint16Size
-	stateServiceFlagSize    = wireUint32Size
-	stateServiceFixedSize   = 7*wireUint32Size + 2*wireUint64Size
+	statePipelineFlagSize   = wireUint32Size
+	statePipelineFixedSize  = 7*wireUint32Size + 2*wireUint64Size
 	stateUint64MetadataSize = stateUint64MetadataFieldCount * wireUint64Size
-	stateFixedEncodedSize   = wireHeaderSize + stateIndexIDSize + stateConfigFixedSize + stateServiceFlagSize + stateUint64MetadataSize + wireUint32Size + wireChecksumSize
+	stateFixedEncodedSize   = wireHeaderSize + stateIndexIDSize + stateConfigFixedSize + statePipelineFlagSize + stateUint64MetadataSize + wireUint32Size + wireChecksumSize
 
 	stateSegmentFixedSize = wireUint64Size + 2*wireUint32Size
 	stateRowFixedSize     = wireUint64Size + wireUint32Size + 2*wireUint64Size
 )
 
+// IndexConfig is the format-owned representation of the persisted index
+// contract. Its fields intentionally use only wire-layer value types.
+type IndexConfig struct {
+	Dimensions  int
+	Metric      uint8
+	Build       BuildConfig
+	Operational OperationalLimits
+}
+
+type BuildConfig struct {
+	MaxNeighbors   int
+	EfConstruction int
+	Seed           uint64
+}
+
+type OperationalLimits struct {
+	Capacity       CapacityLimits
+	Ingestion      IngestionLimits
+	Search         SearchLimits
+	SearchDefaults SearchConfig
+}
+
+type CapacityLimits struct {
+	MaxLiveVectors  int
+	MaxStaleVectors int
+	MaxSegments     int
+}
+
+type IngestionLimits struct {
+	MaxChunksPerDocument int
+}
+
+type SearchLimits struct {
+	MaxResults         int
+	MaxCandidateChunks int
+	MaxChunksPerResult int
+	MaxQueryChunks     int
+	MaxEfSearch        int
+	MaxVisitLimit      int
+}
+
+type SearchConfig struct {
+	EfSearch   int
+	VisitLimit int
+}
+
+type PipelineConfig struct {
+	Model                   Model
+	Chunking                ChunkingConfig
+	EncodingBehaviorVersion uint32
+	Operational             PipelineOperationalLimits
+}
+
+type Model struct {
+	ID             string
+	Revision       string
+	Dimensions     int
+	ContextTokens  int
+	DocumentPrefix string
+	QueryPrefix    string
+}
+
+type ChunkingConfig struct {
+	TargetBytes  int
+	MaxBytes     int
+	OverlapBytes int
+}
+
+type PipelineOperationalLimits struct {
+	Encoding EncodingLimits
+}
+
+type EncodingLimits struct {
+	MaxFields         int
+	MaxSourceBytes    uint64
+	MaxEmbeddingBytes uint64
+}
+
+type Ref struct {
+	ID        string
+	DocID     string
+	Field     string
+	Ordinal   uint32
+	StartByte uint64
+	EndByte   uint64
+}
+
+type VectorRow struct {
+	VectorID uint64
+	Chunk    Ref
+}
+
 type SegmentState struct {
-	ID            semantic.SegmentID
-	Rows          []semantic.VectorRow
+	ID            uint64
+	Rows          []VectorRow
 	LivenessWords []uint64
 }
 
 type IndexState struct {
-	ID                   semantic.IndexID
-	Config               semantic.IndexConfig
-	Pipeline             *service.PipelineConfig
-	Revision             semantic.Revision
-	MaxAllocatedVectorID semantic.VectorID
-	NextSegmentID        semantic.SegmentID
+	ID                   [stateIndexIDSize]byte
+	Config               IndexConfig
+	Pipeline             *PipelineConfig
+	Revision             uint64
+	MaxAllocatedVectorID uint64
+	NextSegmentID        uint64
 	Segments             []SegmentState
 }
 
@@ -57,19 +141,19 @@ func EncodeState(value IndexState, limits Config) ([]byte, FileRef, error) {
 	e.writeBytes(value.ID[:])
 	encodeIndexConfig(e, value.Config)
 	encodePipelineConfig(e, value.Pipeline, limits.MaxStringBytes)
-	e.writeUint64(uint64(value.Revision))
-	e.writeUint64(uint64(value.MaxAllocatedVectorID))
-	e.writeUint64(uint64(value.NextSegmentID))
+	e.writeUint64(value.Revision)
+	e.writeUint64(value.MaxAllocatedVectorID)
+	e.writeUint64(value.NextSegmentID)
 	e.writeUint32(uint32(len(value.Segments)))
 	for _, segment := range value.Segments {
-		e.writeUint64(uint64(segment.ID))
+		e.writeUint64(segment.ID)
 		e.writeUint32(uint32(len(segment.Rows)))
 		e.writeUint32(uint32(len(segment.LivenessWords)))
 		for _, word := range segment.LivenessWords {
 			e.writeUint64(word)
 		}
 		for _, row := range segment.Rows {
-			e.writeUint64(uint64(row.VectorID))
+			e.writeUint64(row.VectorID)
 			encodeRef(e, row.Chunk, limits.MaxStringBytes)
 		}
 	}
@@ -88,9 +172,9 @@ func DecodeState(data []byte, limits Config) (IndexState, error) {
 	copy(value.ID[:], d.readBytes(stateIndexIDSize))
 	value.Config = decodeIndexConfig(d)
 	value.Pipeline = decodePipelineConfig(d)
-	value.Revision = semantic.Revision(d.readUint64())
-	value.MaxAllocatedVectorID = semantic.VectorID(d.readUint64())
-	value.NextSegmentID = semantic.SegmentID(d.readUint64())
+	value.Revision = d.readUint64()
+	value.MaxAllocatedVectorID = d.readUint64()
+	value.NextSegmentID = d.readUint64()
 	countValue := uint64(d.readUint32())
 	if countValue > uint64(limits.MaxSegments) || countValue > uint64(d.remaining()/16) {
 		return IndexState{}, ErrLimitExceeded
@@ -98,7 +182,7 @@ func DecodeState(data []byte, limits Config) (IndexState, error) {
 	value.Segments = make([]SegmentState, int(countValue))
 	totalRows := 0
 	for i := range value.Segments {
-		segment := SegmentState{ID: semantic.SegmentID(d.readUint64())}
+		segment := SegmentState{ID: d.readUint64()}
 		rowCountValue, wordCountValue := uint64(d.readUint32()), uint64(d.readUint32())
 		if rowCountValue > uint64(limits.MaxVectors-totalRows) || wordCountValue != (rowCountValue+63)/64 || wordCountValue > uint64(d.remaining()/8) {
 			return IndexState{}, ErrLimitExceeded
@@ -111,9 +195,9 @@ func DecodeState(data []byte, limits Config) (IndexState, error) {
 		if rowCount > d.remaining()/minimumRowBytes {
 			return IndexState{}, ErrLimitExceeded
 		}
-		segment.Rows = make([]semantic.VectorRow, rowCount)
+		segment.Rows = make([]VectorRow, rowCount)
 		for j := range segment.Rows {
-			segment.Rows[j] = semantic.VectorRow{VectorID: semantic.VectorID(d.readUint64()), Chunk: decodeRef(d)}
+			segment.Rows[j] = VectorRow{VectorID: d.readUint64(), Chunk: decodeRef(d)}
 			if err := d.err(); err != nil {
 				return IndexState{}, err
 			}
@@ -130,9 +214,9 @@ func DecodeState(data []byte, limits Config) (IndexState, error) {
 	return value, nil
 }
 
-func encodeIndexConfig(e *encoder, c semantic.IndexConfig) {
+func encodeIndexConfig(e *encoder, c IndexConfig) {
 	e.writeUint32(uint32(c.Dimensions))
-	e.writeUint8(uint8(c.Metric))
+	e.writeUint8(c.Metric)
 	e.writeUint8(0)
 	e.writeUint16(0)
 	values := []int{
@@ -157,26 +241,20 @@ func encodeIndexConfig(e *encoder, c semantic.IndexConfig) {
 	e.writeUint64(c.Build.Seed)
 }
 
-func decodeIndexConfig(d *decoder) semantic.IndexConfig {
-	c := semantic.IndexConfig{
-		Dimensions: int(d.readUint32()),
-		Metric:     vector.Metric(d.readUint8()),
-	}
+func decodeIndexConfig(d *decoder) IndexConfig {
+	c := IndexConfig{Dimensions: int(d.readUint32()), Metric: d.readUint8()}
 	if d.readUint8() != 0 || d.readUint16() != 0 {
 		d.decodeErr = ErrCorrupt
 	}
-	c.Operational.Capacity = semantic.CapacityLimits{
+	c.Operational.Capacity = CapacityLimits{
 		MaxLiveVectors: int(d.readUint32()), MaxStaleVectors: int(d.readUint32()), MaxSegments: int(d.readUint32()),
 	}
 	c.Operational.Ingestion.MaxChunksPerDocument = int(d.readUint32())
-	c.Operational.Search = semantic.SearchLimits{
+	c.Operational.Search = SearchLimits{
 		MaxResults: int(d.readUint32()), MaxCandidateChunks: int(d.readUint32()),
 		MaxChunksPerResult: int(d.readUint32()), MaxQueryChunks: int(d.readUint32()),
 	}
-	c.Build = hnsw.BuildConfig{
-		MaxNeighbors:   int(d.readUint32()),
-		EfConstruction: int(d.readUint32()),
-	}
+	c.Build = BuildConfig{MaxNeighbors: int(d.readUint32()), EfConstruction: int(d.readUint32())}
 	c.Operational.SearchDefaults.EfSearch = int(d.readUint32())
 	c.Operational.Search.MaxEfSearch = int(d.readUint32())
 	c.Operational.SearchDefaults.VisitLimit = int(d.readUint32())
@@ -185,7 +263,7 @@ func decodeIndexConfig(d *decoder) semantic.IndexConfig {
 	return c
 }
 
-func encodePipelineConfig(e *encoder, c *service.PipelineConfig, maxString int) {
+func encodePipelineConfig(e *encoder, c *PipelineConfig, maxString int) {
 	if c == nil {
 		e.writeUint32(0)
 		return
@@ -206,7 +284,7 @@ func encodePipelineConfig(e *encoder, c *service.PipelineConfig, maxString int) 
 	e.writeString(c.Model.QueryPrefix, maxString)
 }
 
-func decodePipelineConfig(d *decoder) *service.PipelineConfig {
+func decodePipelineConfig(d *decoder) *PipelineConfig {
 	present := d.readUint32()
 	if present == 0 {
 		return nil
@@ -215,7 +293,7 @@ func decodePipelineConfig(d *decoder) *service.PipelineConfig {
 		d.decodeErr = ErrCorrupt
 		return nil
 	}
-	c := &service.PipelineConfig{}
+	c := &PipelineConfig{}
 	c.Model.Dimensions = int(d.readUint32())
 	c.Model.ContextTokens = int(d.readUint32())
 	c.Chunking.TargetBytes = int(d.readUint32())
@@ -232,15 +310,15 @@ func decodePipelineConfig(d *decoder) *service.PipelineConfig {
 	return c
 }
 
-func encodeRef(e *encoder, ref semantic.Ref, maxString int) {
-	e.writeString(string(ref.ID), maxString)
-	e.writeString(string(ref.DocID), maxString)
+func encodeRef(e *encoder, ref Ref, maxString int) {
+	e.writeString(ref.ID, maxString)
+	e.writeString(ref.DocID, maxString)
 	e.writeString(ref.Field, maxString)
 	e.writeUint32(ref.Ordinal)
 	e.writeUint64(ref.StartByte)
 	e.writeUint64(ref.EndByte)
 }
 
-func decodeRef(d *decoder) semantic.Ref {
-	return semantic.Ref{ID: semantic.ChunkID(d.readString()), DocID: fts.DocID(d.readString()), Field: d.readString(), Ordinal: d.readUint32(), StartByte: d.readUint64(), EndByte: d.readUint64()}
+func decodeRef(d *decoder) Ref {
+	return Ref{ID: d.readString(), DocID: d.readString(), Field: d.readString(), Ordinal: d.readUint32(), StartByte: d.readUint64(), EndByte: d.readUint64()}
 }

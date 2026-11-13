@@ -4,17 +4,10 @@ import (
 	"math"
 	"math/bits"
 	"unicode/utf8"
-
-	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
-	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 )
 
 func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error) {
-	if err := value.Config.ValidateCanonical(); err != nil {
-		return 0, codecErrorf(ErrCorrupt, "state config is invalid: %v", err)
-	}
-	if value.ID == (semantic.IndexID{}) {
+	if value.ID == ([stateIndexIDSize]byte{}) {
 		return 0, codecErrorf(ErrCorrupt, "state index ID is zero")
 	}
 	if value.NextSegmentID == 0 {
@@ -58,13 +51,7 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 	}
 	if value.Pipeline != nil {
 		pipeline := *value.Pipeline
-		if pipeline.EncodingBehaviorVersion != service.CurrentEncodingBehaviorVersion {
-			return 0, codecErrorf(ErrUnsupportedVersion, "state encoding behavior version %d is unsupported", pipeline.EncodingBehaviorVersion)
-		}
-		if pipeline.ValidateCanonical(c) != nil {
-			return 0, codecErrorf(ErrCorrupt, "state service config is invalid")
-		}
-		serviceIntegers := []struct {
+		pipelineIntegers := []struct {
 			name  string
 			value int
 		}{
@@ -74,19 +61,19 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 			{name: "chunk max bytes", value: pipeline.Chunking.MaxBytes},
 			{name: "maximum encoding fields", value: pipeline.Operational.Encoding.MaxFields},
 		}
-		for _, field := range serviceIntegers {
+		for _, field := range pipelineIntegers {
 			if field.value <= 0 {
-				return 0, codecErrorf(ErrCorrupt, "state service config %s must be positive, got %d", field.name, field.value)
+				return 0, codecErrorf(ErrCorrupt, "state pipeline config %s must be positive, got %d", field.name, field.value)
 			}
 			if uint64(field.value) > math.MaxUint32 {
-				return 0, codecErrorf(ErrLimitExceeded, "state service config %s value %d exceeds uint32", field.name, field.value)
+				return 0, codecErrorf(ErrLimitExceeded, "state pipeline config %s value %d exceeds uint32", field.name, field.value)
 			}
 		}
 		if pipeline.Chunking.OverlapBytes < 0 || uint64(pipeline.Chunking.OverlapBytes) > math.MaxUint32 ||
 			pipeline.Operational.Encoding.MaxSourceBytes == 0 || pipeline.Operational.Encoding.MaxEmbeddingBytes == 0 {
-			return 0, codecErrorf(ErrCorrupt, "state service config limits are invalid")
+			return 0, codecErrorf(ErrCorrupt, "state pipeline config limits are invalid")
 		}
-		if !accumulateEncodedSize(&encodedSize, stateServiceFixedSize) {
+		if !accumulateEncodedSize(&encodedSize, statePipelineFixedSize) {
 			return 0, ErrLimitExceeded
 		}
 		for _, text := range []string{
@@ -142,9 +129,9 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 	}
 	totalRows := 0
 	liveRows := 0
-	documents := make(map[fts.DocID]struct{})
+	documents := make(map[string]struct{})
 	for segmentIndex, segment := range value.Segments {
-		documentChunks := make(map[fts.DocID]int)
+		documentChunks := make(map[string]int)
 		if !accumulateEncodedSize(&encodedSize, stateSegmentFixedSize) || uint64(len(segment.LivenessWords)) > math.MaxUint64/wireUint64Size || !accumulateEncodedSize(&encodedSize, uint64(len(segment.LivenessWords))*wireUint64Size) {
 			return 0, ErrLimitExceeded
 		}
@@ -171,7 +158,7 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 			if !accumulateEncodedSize(&encodedSize, stateRowFixedSize) {
 				return 0, ErrLimitExceeded
 			}
-			for _, text := range []string{string(row.Chunk.ID), string(row.Chunk.DocID), row.Chunk.Field} {
+			for _, text := range []string{row.Chunk.ID, row.Chunk.DocID, row.Chunk.Field} {
 				if !utf8.ValidString(text) || len(text) > limits.MaxStringBytes || !accumulateEncodedStringSize(&encodedSize, text) {
 					return 0, ErrLimitExceeded
 				}
