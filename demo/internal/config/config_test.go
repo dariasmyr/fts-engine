@@ -50,6 +50,7 @@ func TestValidateConfigAppliesFallbacksFromDefaultConfig(t *testing.T) {
 	cfg.FTS.Pipeline.Preset = ""
 	cfg.FTS.Pipeline.MinLength = 0
 	cfg.Semantic.Workers = 0
+	cfg.Semantic.CheckpointDocuments = 0
 	cfg.Semantic.MaxLiveVectors = 0
 	cfg.Semantic.Ollama = SemanticOllamaConfig{}
 	cfg.Semantic.Persistence.Path = ""

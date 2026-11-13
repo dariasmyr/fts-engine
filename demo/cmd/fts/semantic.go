@@ -28,6 +28,7 @@ type semanticRuntime struct {
 	persistence     bool
 	saveOnBuild     bool
 	workers         int
+	checkpointDocs  int
 }
 
 func buildSemanticRuntime(ctx context.Context, log *slog.Logger, cfg config.SemanticConfig) (*semanticRuntime, error) {
@@ -53,6 +54,7 @@ func buildSemanticRuntime(ctx context.Context, log *slog.Logger, cfg config.Sema
 		persistence:     cfg.Persistence.Enabled,
 		saveOnBuild:     cfg.Persistence.SaveOnBuild,
 		workers:         cfg.Workers,
+		checkpointDocs:  cfg.CheckpointDocuments,
 	}
 	currentPath := filepath.Join(cfg.Persistence.Path, "CURRENT")
 	if cfg.Persistence.Enabled && cfg.Persistence.LoadOnStart {
@@ -95,7 +97,7 @@ func populateSemanticDocuments(
 	runtimeState *semanticRuntime,
 	documents []models.Document,
 ) error {
-	if runtimeState == nil || runtimeState.service == nil || runtimeState.loadedFromDisk {
+	if runtimeState == nil || runtimeState.service == nil {
 		return nil
 	}
 
@@ -103,10 +105,116 @@ func populateSemanticDocuments(
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 
+	existingIDs, err := semanticDocumentIDs(ctx, runtimeState.service)
+	if err != nil {
+		return fmt.Errorf("inspect committed semantic documents: %w", err)
+	}
+	missing := make([]models.Document, 0, len(documents)-min(len(documents), len(existingIDs)))
+	for _, document := range documents {
+		if _, exists := existingIDs[pkgfts.DocID(document.ID)]; !exists {
+			missing = append(missing, document)
+		}
+	}
+	if len(existingIDs) > 0 {
+		log.Info("Resuming semantic indexing",
+			"committed_documents", len(existingIDs),
+			"remaining_documents", len(missing),
+			"generation", runtimeState.generation.ID,
+		)
+	}
+	if len(missing) == 0 {
+		log.Info("Semantic index already covers the corpus", "documents", len(existingIDs))
+		return nil
+	}
+
+	checkpointSize := len(missing)
+	if runtimeState.persistence && runtimeState.saveOnBuild {
+		checkpointSize = runtimeState.checkpointDocs
+		if err := os.MkdirAll(filepath.Dir(runtimeState.persistencePath), 0o755); err != nil {
+			return fmt.Errorf("create semantic persistence parent: %w", err)
+		}
+	}
+
+	var indexed atomic.Int64
+	var embeddingDuration, commitDuration, persistenceDuration time.Duration
+	for offset := 0; offset < len(missing); offset += checkpointSize {
+		end := min(offset+checkpointSize, len(missing))
+		embedStartedAt := time.Now()
+		if err := embedSemanticBatch(
+			ctx, log, runtimeState, missing[offset:end], int64(len(existingIDs)), &indexed, startedAt,
+		); err != nil {
+			return err
+		}
+		embeddingDuration += time.Since(embedStartedAt)
+
+		commitStartedAt := time.Now()
+		if err := runtimeState.service.Commit(ctx); err != nil {
+			return fmt.Errorf("commit semantic HNSW checkpoint: %w", err)
+		}
+		checkpointCommitDuration := time.Since(commitStartedAt)
+		commitDuration += checkpointCommitDuration
+		stats := runtimeState.service.Statistics()
+
+		var checkpointPersistenceDuration time.Duration
+		if runtimeState.persistence && runtimeState.saveOnBuild {
+			persistStartedAt := time.Now()
+			generation, err := semanticpersist.SaveService(ctx, runtimeState.persistencePath, runtimeState.service, semanticpersist.SaveOptions{
+				ExpectedGeneration: &runtimeState.generation,
+			})
+			if err != nil {
+				return fmt.Errorf("persist semantic index: %w", err)
+			}
+			runtimeState.generation = generation
+			checkpointPersistenceDuration = time.Since(persistStartedAt)
+			persistenceDuration += checkpointPersistenceDuration
+		}
+
+		log.Info("Semantic checkpoint committed",
+			"documents", stats.Documents,
+			"live_vectors", stats.LiveVectors,
+			"hnsw_duration", checkpointCommitDuration,
+			"persistence_duration", checkpointPersistenceDuration,
+			"generation", runtimeState.generation.ID,
+		)
+	}
+
+	stats := runtimeState.service.Statistics()
+	var persistedBytes int64
+	if runtimeState.persistence && runtimeState.saveOnBuild {
+		persistedBytes, err = directorySize(runtimeState.persistencePath)
+		if err != nil {
+			return fmt.Errorf("measure semantic persistence: %w", err)
+		}
+	}
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	log.Info("Semantic indexing summary",
+		"documents", stats.Documents,
+		"vectors", stats.LiveVectors,
+		"new_documents", indexed.Load(),
+		"embedding_duration", embeddingDuration,
+		"hnsw_duration", commitDuration,
+		"persistence_duration", persistenceDuration,
+		"total_duration", time.Since(startedAt),
+		"heap_alloc_bytes", after.HeapAlloc,
+		"allocated_bytes", after.TotalAlloc-before.TotalAlloc,
+		"persisted_bytes", persistedBytes,
+	)
+	return nil
+}
+
+func embedSemanticBatch(
+	ctx context.Context,
+	log *slog.Logger,
+	runtimeState *semanticRuntime,
+	documents []models.Document,
+	previouslyCommitted int64,
+	indexed *atomic.Int64,
+	startedAt time.Time,
+) error {
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	jobs := make(chan models.Document)
-	var indexed atomic.Int64
 	var firstErr error
 	var errOnce sync.Once
 	var workers sync.WaitGroup
@@ -124,7 +232,11 @@ func populateSemanticDocuments(
 				}
 				count := indexed.Add(1)
 				if count%10_000 == 0 {
-					log.Info("Semantic embedding progress", "documents", count, "elapsed", time.Since(startedAt))
+					log.Info("Semantic embedding progress",
+						"documents", previouslyCommitted+count,
+						"new_documents", count,
+						"elapsed", time.Since(startedAt),
+					)
 				}
 			}
 		}()
@@ -141,72 +253,30 @@ sendLoop:
 	close(jobs)
 	workers.Wait()
 	if firstErr != nil {
-		return fmt.Errorf("embed semantic document after %d documents: %w", indexed.Load(), firstErr)
+		return fmt.Errorf("embed semantic document after %d new documents: %w", indexed.Load(), firstErr)
 	}
-	if err := workerCtx.Err(); err != nil {
-		return err
+	return workerCtx.Err()
+}
+
+func semanticDocumentIDs(ctx context.Context, semanticService *service.Service) (map[pkgfts.DocID]struct{}, error) {
+	state, err := semanticService.ExportState(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	embeddingDuration := time.Since(startedAt)
-	log.Info("Semantic embeddings staged",
-		"documents", indexed.Load(),
-		"duration", embeddingDuration,
-		"documents_per_second", rate(indexed.Load(), embeddingDuration),
-	)
-
-	commitStartedAt := time.Now()
-	if err := runtimeState.service.Commit(ctx); err != nil {
-		return fmt.Errorf("commit semantic HNSW index: %w", err)
-	}
-	commitDuration := time.Since(commitStartedAt)
-	stats := runtimeState.service.Statistics()
-	log.Info("Semantic HNSW committed",
-		"duration", commitDuration,
-		"documents", stats.Documents,
-		"live_vectors", stats.LiveVectors,
-	)
-
-	var persistenceDuration time.Duration
-	var persistedBytes int64
-	if runtimeState.persistence && runtimeState.saveOnBuild {
-		if err := os.MkdirAll(filepath.Dir(runtimeState.persistencePath), 0o755); err != nil {
-			return fmt.Errorf("create semantic persistence parent: %w", err)
+	documentIDs := make(map[pkgfts.DocID]struct{})
+	for _, segment := range state.Segments {
+		for ordinal, row := range segment.Rows {
+			if livenessAllows(segment.LivenessWords, ordinal) {
+				documentIDs[row.Chunk.DocID] = struct{}{}
+			}
 		}
-		persistStartedAt := time.Now()
-		generation, err := semanticpersist.SaveService(ctx, runtimeState.persistencePath, runtimeState.service, semanticpersist.SaveOptions{
-			ExpectedGeneration: &runtimeState.generation,
-		})
-		if err != nil {
-			return fmt.Errorf("persist semantic index: %w", err)
-		}
-		runtimeState.generation = generation
-		persistenceDuration = time.Since(persistStartedAt)
-		persistedBytes, err = directorySize(runtimeState.persistencePath)
-		if err != nil {
-			return fmt.Errorf("measure semantic persistence: %w", err)
-		}
-		log.Info("Semantic index persisted",
-			"duration", persistenceDuration,
-			"path", runtimeState.persistencePath,
-			"bytes", persistedBytes,
-			"generation", generation.ID,
-		)
 	}
+	return documentIDs, nil
+}
 
-	var after runtime.MemStats
-	runtime.ReadMemStats(&after)
-	log.Info("Semantic indexing summary",
-		"documents", stats.Documents,
-		"vectors", stats.LiveVectors,
-		"embedding_duration", embeddingDuration,
-		"hnsw_duration", commitDuration,
-		"persistence_duration", persistenceDuration,
-		"total_duration", time.Since(startedAt),
-		"heap_alloc_bytes", after.HeapAlloc,
-		"allocated_bytes", after.TotalAlloc-before.TotalAlloc,
-		"persisted_bytes", persistedBytes,
-	)
-	return nil
+func livenessAllows(words []uint64, ordinal int) bool {
+	word := ordinal / 64
+	return word >= 0 && word < len(words) && words[word]&(uint64(1)<<uint(ordinal%64)) != 0
 }
 
 func addSemanticDocument(ctx context.Context, semanticService *service.Service, document models.Document) error {

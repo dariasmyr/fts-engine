@@ -52,6 +52,7 @@ fts:
 semantic:
   enabled: true
   workers: 2
+  checkpoint_documents: 25000
   max_live_vectors: 1000000
   ollama:
     base_url: "http://localhost:11434"

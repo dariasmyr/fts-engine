@@ -167,7 +167,7 @@ func main() {
 	}
 
 	if semanticEngine != nil && semanticEngine.loadedFromDisk {
-		log.Info("Skipping semantic re-indexing: persisted state loaded", "path", semanticEngine.persistencePath)
+		log.Info("Checking semantic checkpoint against corpus", "path", semanticEngine.persistencePath)
 	}
 	if err := populateSemanticDocuments(ctx, log, semanticEngine, documents); err != nil {
 		log.Error("Failed to index semantic corpus", "error", sl.Err(err))

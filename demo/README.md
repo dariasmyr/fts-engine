@@ -65,6 +65,7 @@ Enable the `semantic` section from `config/config_local_example.yaml`:
 semantic:
   enabled: true
   workers: 2
+  checkpoint_documents: 25000
   max_live_vectors: 1000000
   ollama:
     base_url: "http://localhost:11434"
@@ -88,6 +89,11 @@ roughly one vector per document instead of one vector per source field.
 
 The persisted semantic generation is model-bound. Changing the Ollama model,
 dimensions, prefixes, or chunking requires a fresh persistence path or rebuild.
+During a new build, the demo commits and persists a resumable checkpoint every
+`semantic.checkpoint_documents` source documents. On restart it reads committed
+document IDs from the saved generation and embeds only missing corpus documents.
+With the default 25,000-document interval, an interruption loses at most the
+currently uncommitted interval rather than the complete embedding run.
 
 ## Measure full-dump indexing
 
@@ -103,6 +109,7 @@ The structured log reports separate measurements for:
 - embedding (`documents_per_second`);
 - HNSW construction (`Semantic HNSW committed`);
 - persistence duration and on-disk bytes;
+- each resumable semantic checkpoint and generation;
 - total duration, current heap, and total allocated bytes.
 
 The measurement covers every document in the single file named by `dump_path`.

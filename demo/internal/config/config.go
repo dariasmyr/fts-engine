@@ -17,11 +17,12 @@ type Config struct {
 }
 
 type SemanticConfig struct {
-	Enabled        bool                      `yaml:"enabled"`
-	Workers        int                       `yaml:"workers"`
-	MaxLiveVectors int                       `yaml:"max_live_vectors"`
-	Ollama         SemanticOllamaConfig      `yaml:"ollama"`
-	Persistence    SemanticPersistenceConfig `yaml:"persistence"`
+	Enabled             bool                      `yaml:"enabled"`
+	Workers             int                       `yaml:"workers"`
+	CheckpointDocuments int                       `yaml:"checkpoint_documents"`
+	MaxLiveVectors      int                       `yaml:"max_live_vectors"`
+	Ollama              SemanticOllamaConfig      `yaml:"ollama"`
+	Persistence         SemanticPersistenceConfig `yaml:"persistence"`
 }
 
 type SemanticOllamaConfig struct {
@@ -206,8 +207,9 @@ func defaultConfig() Config {
 			},
 		},
 		Semantic: SemanticConfig{
-			Workers:        2,
-			MaxLiveVectors: 1_000_000,
+			Workers:             2,
+			CheckpointDocuments: 25_000,
+			MaxLiveVectors:      1_000_000,
 			Ollama: SemanticOllamaConfig{
 				BaseURL:        "http://localhost:11434",
 				Model:          "nomic-embed-text:latest",
@@ -289,6 +291,9 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.Semantic.Workers <= 0 {
 		cfg.Semantic.Workers = defaults.Semantic.Workers
+	}
+	if cfg.Semantic.CheckpointDocuments <= 0 {
+		cfg.Semantic.CheckpointDocuments = defaults.Semantic.CheckpointDocuments
 	}
 	if cfg.Semantic.MaxLiveVectors <= 0 {
 		cfg.Semantic.MaxLiveVectors = defaults.Semantic.MaxLiveVectors
