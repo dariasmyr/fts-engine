@@ -19,7 +19,7 @@ type persistenceState struct {
 func buildPersistenceState(
 	ctx context.Context,
 	committed *semantic.CommittedIndexState,
-	serviceConfig *semantic.ServiceConfig,
+	pipeline *semantic.PipelineConfig,
 ) (persistenceState, error) {
 	if committed == nil {
 		return persistenceState{}, ErrCorrupt
@@ -34,9 +34,9 @@ func buildPersistenceState(
 		},
 		segments: make([]segmentSource, len(segments)),
 	}
-	if serviceConfig != nil {
-		config := *serviceConfig
-		result.state.ServiceConfig = &config
+	if pipeline != nil {
+		config := *pipeline
+		result.state.Pipeline = &config
 	}
 	for i, segment := range segments {
 		if err := ctx.Err(); err != nil {

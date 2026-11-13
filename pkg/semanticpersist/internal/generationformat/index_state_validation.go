@@ -10,7 +10,7 @@ import (
 )
 
 func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error) {
-	if err := value.Config.Validate(); err != nil {
+	if err := value.Config.ValidateCanonical(); err != nil {
 		return 0, codecErrorf(ErrCorrupt, "state config is invalid: %v", err)
 	}
 	if value.ID == (semantic.IndexID{}) {
@@ -23,8 +23,8 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 		return 0, codecErrorf(ErrLimitExceeded, "state segment count %d exceeds limit %d", len(value.Segments), limits.MaxSegments)
 	}
 	c := value.Config
-	if len(value.Segments) > c.Limits.MaxSegments {
-		return 0, codecErrorf(ErrLimitExceeded, "state segment count %d exceeds configured limit %d", len(value.Segments), c.Limits.MaxSegments)
+	if len(value.Segments) > c.Operational.Capacity.MaxSegments {
+		return 0, codecErrorf(ErrLimitExceeded, "state segment count %d exceeds configured limit %d", len(value.Segments), c.Operational.Capacity.MaxSegments)
 	}
 	encodedSize := uint64(stateFixedEncodedSize)
 	integerFields := []struct {
@@ -32,20 +32,20 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 		value int
 	}{
 		{name: "dimensions", value: c.Dimensions},
-		{name: "max live vectors", value: c.Limits.MaxLiveVectors},
-		{name: "max stale vectors", value: c.Limits.MaxStaleVectors},
-		{name: "max segments", value: c.Limits.MaxSegments},
-		{name: "max chunks per document", value: c.Limits.MaxChunksPerDocument},
-		{name: "max documents per search", value: c.Search.MaxResults},
-		{name: "max chunk candidates", value: c.Search.MaxCandidateChunks},
-		{name: "max chunks per document hit", value: c.Search.MaxChunksPerResult},
-		{name: "max query chunks", value: c.Search.MaxQueryChunks},
-		{name: "HNSW max neighbors", value: c.HNSW.Build.MaxNeighbors},
-		{name: "HNSW ef construction", value: c.HNSW.Build.EfConstruction},
-		{name: "HNSW default ef search", value: c.HNSW.Search.EfSearch},
-		{name: "HNSW max ef search", value: c.Search.MaxEfSearch},
-		{name: "HNSW default visit limit", value: c.HNSW.Search.VisitLimit},
-		{name: "HNSW max visit limit", value: c.Search.MaxVisitLimit},
+		{name: "max live vectors", value: c.Operational.Capacity.MaxLiveVectors},
+		{name: "max stale vectors", value: c.Operational.Capacity.MaxStaleVectors},
+		{name: "max segments", value: c.Operational.Capacity.MaxSegments},
+		{name: "max chunks per document", value: c.Operational.Ingestion.MaxChunksPerDocument},
+		{name: "max documents per search", value: c.Operational.Search.MaxResults},
+		{name: "max chunk candidates", value: c.Operational.Search.MaxCandidateChunks},
+		{name: "max chunks per document hit", value: c.Operational.Search.MaxChunksPerResult},
+		{name: "max query chunks", value: c.Operational.Search.MaxQueryChunks},
+		{name: "HNSW max neighbors", value: c.Build.MaxNeighbors},
+		{name: "HNSW ef construction", value: c.Build.EfConstruction},
+		{name: "HNSW default ef search", value: c.Operational.SearchDefaults.EfSearch},
+		{name: "HNSW max ef search", value: c.Operational.Search.MaxEfSearch},
+		{name: "HNSW default visit limit", value: c.Operational.SearchDefaults.VisitLimit},
+		{name: "HNSW max visit limit", value: c.Operational.Search.MaxVisitLimit},
 	}
 	for _, field := range integerFields {
 		if field.value <= 0 {
@@ -55,13 +55,12 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 			return 0, codecErrorf(ErrLimitExceeded, "state config %s value %d exceeds uint32", field.name, field.value)
 		}
 	}
-	if value.ServiceConfig != nil {
-		service := *value.ServiceConfig
+	if value.Pipeline != nil {
+		service := *value.Pipeline
 		if service.EncodingBehaviorVersion != semantic.CurrentEncodingBehaviorVersion {
 			return 0, codecErrorf(ErrUnsupportedVersion, "state encoding behavior version %d is unsupported", service.EncodingBehaviorVersion)
 		}
-		serviceErr := service.Validate()
-		if service.Index != c || serviceErr != nil {
+		if service.ValidateCanonical(c) != nil {
 			return 0, codecErrorf(ErrCorrupt, "state service config is invalid")
 		}
 		serviceIntegers := []struct {
@@ -72,7 +71,7 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 			{name: "model context tokens", value: service.Model.ContextTokens},
 			{name: "chunk target bytes", value: service.Chunking.TargetBytes},
 			{name: "chunk max bytes", value: service.Chunking.MaxBytes},
-			{name: "maximum encoding fields", value: service.Encoding.MaxFields},
+			{name: "maximum encoding fields", value: service.Operational.Encoding.MaxFields},
 		}
 		for _, field := range serviceIntegers {
 			if field.value <= 0 {
@@ -83,7 +82,7 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 			}
 		}
 		if service.Chunking.OverlapBytes < 0 || uint64(service.Chunking.OverlapBytes) > math.MaxUint32 ||
-			service.Encoding.MaxSourceBytes == 0 || service.Encoding.MaxEmbeddingBytes == 0 {
+			service.Operational.Encoding.MaxSourceBytes == 0 || service.Operational.Encoding.MaxEmbeddingBytes == 0 {
 			return 0, codecErrorf(ErrCorrupt, "state service config limits are invalid")
 		}
 		if !accumulateEncodedSize(&encodedSize, stateServiceFixedSize) {
@@ -104,29 +103,29 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 	if c.Dimensions > limits.MaxDimensions {
 		return 0, codecErrorf(ErrLimitExceeded, "state dimensions %d exceed limit %d", c.Dimensions, limits.MaxDimensions)
 	}
-	if c.Limits.MaxLiveVectors > limits.MaxVectors {
-		return 0, codecErrorf(ErrLimitExceeded, "state max live vectors %d exceed limit %d", c.Limits.MaxLiveVectors, limits.MaxVectors)
+	if c.Operational.Capacity.MaxLiveVectors > limits.MaxVectors {
+		return 0, codecErrorf(ErrLimitExceeded, "state max live vectors %d exceed limit %d", c.Operational.Capacity.MaxLiveVectors, limits.MaxVectors)
 	}
-	if c.Limits.MaxStaleVectors > limits.MaxVectors-c.Limits.MaxLiveVectors {
+	if c.Operational.Capacity.MaxStaleVectors > limits.MaxVectors-c.Operational.Capacity.MaxLiveVectors {
 		return 0, codecErrorf(ErrLimitExceeded, "state physical vector limit exceeds %d", limits.MaxVectors)
 	}
-	if c.Limits.MaxSegments > limits.MaxSegments {
-		return 0, codecErrorf(ErrLimitExceeded, "state max segments %d exceed limit %d", c.Limits.MaxSegments, limits.MaxSegments)
+	if c.Operational.Capacity.MaxSegments > limits.MaxSegments {
+		return 0, codecErrorf(ErrLimitExceeded, "state max segments %d exceed limit %d", c.Operational.Capacity.MaxSegments, limits.MaxSegments)
 	}
-	if c.Limits.MaxChunksPerDocument > limits.MaxChunksPerDocument {
-		return 0, codecErrorf(ErrLimitExceeded, "state max chunks per document %d exceed limit %d", c.Limits.MaxChunksPerDocument, limits.MaxChunksPerDocument)
+	if c.Operational.Ingestion.MaxChunksPerDocument > limits.MaxChunksPerDocument {
+		return 0, codecErrorf(ErrLimitExceeded, "state max chunks per document %d exceed limit %d", c.Operational.Ingestion.MaxChunksPerDocument, limits.MaxChunksPerDocument)
 	}
-	if c.Search.MaxQueryChunks > limits.MaxQueryChunks {
-		return 0, codecErrorf(ErrLimitExceeded, "state max query chunks %d exceed limit %d", c.Search.MaxQueryChunks, limits.MaxQueryChunks)
+	if c.Operational.Search.MaxQueryChunks > limits.MaxQueryChunks {
+		return 0, codecErrorf(ErrLimitExceeded, "state max query chunks %d exceed limit %d", c.Operational.Search.MaxQueryChunks, limits.MaxQueryChunks)
 	}
-	if c.Search.MaxResults > limits.MaxK {
-		return 0, codecErrorf(ErrLimitExceeded, "state max documents per search %d exceed limit %d", c.Search.MaxResults, limits.MaxK)
+	if c.Operational.Search.MaxResults > limits.MaxK {
+		return 0, codecErrorf(ErrLimitExceeded, "state max documents per search %d exceed limit %d", c.Operational.Search.MaxResults, limits.MaxK)
 	}
-	if c.Search.MaxCandidateChunks > limits.MaxK {
-		return 0, codecErrorf(ErrLimitExceeded, "state max chunk candidates %d exceed limit %d", c.Search.MaxCandidateChunks, limits.MaxK)
+	if c.Operational.Search.MaxCandidateChunks > limits.MaxK {
+		return 0, codecErrorf(ErrLimitExceeded, "state max chunk candidates %d exceed limit %d", c.Operational.Search.MaxCandidateChunks, limits.MaxK)
 	}
 	dimensions := uint64(c.Dimensions)
-	maxPhysicalVectors := uint64(c.Limits.MaxLiveVectors + c.Limits.MaxStaleVectors)
+	maxPhysicalVectors := uint64(c.Operational.Capacity.MaxLiveVectors + c.Operational.Capacity.MaxStaleVectors)
 	if dimensions > math.MaxUint64/4 || maxPhysicalVectors > math.MaxUint64/(dimensions*4) {
 		return 0, codecErrorf(ErrLimitExceeded, "state maximum vector bytes overflow uint64")
 	}
@@ -134,11 +133,11 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 	if vectorBytes > limits.MaxVectorBytes {
 		return 0, codecErrorf(ErrLimitExceeded, "state maximum vector bytes %d exceed limit %d", vectorBytes, limits.MaxVectorBytes)
 	}
-	if c.Search.MaxEfSearch > limits.MaxEfSearch {
-		return 0, codecErrorf(ErrLimitExceeded, "state HNSW max ef search %d exceeds limit %d", c.Search.MaxEfSearch, limits.MaxEfSearch)
+	if c.Operational.Search.MaxEfSearch > limits.MaxEfSearch {
+		return 0, codecErrorf(ErrLimitExceeded, "state HNSW max ef search %d exceeds limit %d", c.Operational.Search.MaxEfSearch, limits.MaxEfSearch)
 	}
-	if c.Search.MaxVisitLimit > limits.MaxVisitLimit {
-		return 0, codecErrorf(ErrLimitExceeded, "state HNSW max visit limit %d exceeds limit %d", c.Search.MaxVisitLimit, limits.MaxVisitLimit)
+	if c.Operational.Search.MaxVisitLimit > limits.MaxVisitLimit {
+		return 0, codecErrorf(ErrLimitExceeded, "state HNSW max visit limit %d exceeds limit %d", c.Operational.Search.MaxVisitLimit, limits.MaxVisitLimit)
 	}
 	totalRows := 0
 	liveRows := 0
@@ -210,7 +209,7 @@ func validateStateAndEncodedSize(value IndexState, limits Config) (uint64, error
 		}
 		totalRows += len(segment.Rows)
 	}
-	if liveRows > c.Limits.MaxLiveVectors || totalRows-liveRows > c.Limits.MaxStaleVectors {
+	if liveRows > c.Operational.Capacity.MaxLiveVectors || totalRows-liveRows > c.Operational.Capacity.MaxStaleVectors {
 		return 0, codecErrorf(ErrLimitExceeded, "state lifecycle vector bounds exceeded")
 	}
 	if encodedSize > limits.MaxFileBytes {

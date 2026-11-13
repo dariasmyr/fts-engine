@@ -8,9 +8,9 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-func TestDefaultServiceConfigReturnsEffectiveConfig(t *testing.T) {
+func TestDefaultConfigReturnsEffectiveConfig(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
-	config, err := DefaultServiceConfig(client.Model())
+	config, err := DefaultConfig(client.Model())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,48 +19,48 @@ func TestDefaultServiceConfigReturnsEffectiveConfig(t *testing.T) {
 	}
 	wantChunking := chunk.Config{TargetBytes: 384, MaxBytes: 512, OverlapBytes: 64}
 	if config.Index.Dimensions != client.Model().Dimensions ||
-		config.Index.Metric != vector.MetricCosine || config.Chunking != wantChunking ||
-		config.EncodingBehaviorVersion != CurrentEncodingBehaviorVersion {
-		t.Fatalf("default config index/chunking = %+v/%+v", config.Index, config.Chunking)
+		config.Index.Metric != vector.MetricCosine || config.Pipeline.Chunking != wantChunking ||
+		config.Pipeline.EncodingBehaviorVersion != CurrentEncodingBehaviorVersion {
+		t.Fatalf("default config index/chunking = %+v/%+v", config.Index, config.Pipeline.Chunking)
 	}
-	if config.Index.Limits.MaxStaleVectors != defaultMaxLiveVectors || config.Index.Limits.MaxSegments != 16 {
-		t.Fatalf("default normalized limits = %+v", config.Index.Limits)
+	if config.Index.Operational.Capacity.MaxStaleVectors != defaultMaxLiveVectors || config.Index.Operational.Capacity.MaxSegments != 16 {
+		t.Fatalf("default normalized limits = %+v", config.Index.Operational.Capacity)
 	}
-	if config.Index.Search.MaxQueryChunks != defaultMaxChunksPerDocument ||
-		config.Index.Search.MaxEfSearch != defaultMaxChunkCandidates ||
-		config.Index.Search.MaxVisitLimit != defaultMaxLiveVectors {
-		t.Fatalf("default search policy = %+v", config.Index.Search)
+	if config.Index.Operational.Search.MaxQueryChunks != defaultMaxChunksPerDocument ||
+		config.Index.Operational.Search.MaxEfSearch != defaultMaxChunkCandidates ||
+		config.Index.Operational.Search.MaxVisitLimit != defaultMaxLiveVectors {
+		t.Fatalf("default search policy = %+v", config.Index.Operational.Search)
 	}
-	if config.Encoding != (EncodingLimits{
+	if config.Pipeline.Operational.Encoding != (EncodingLimits{
 		MaxFields: defaultMaxFields, MaxSourceBytes: defaultMaxSourceBytes,
 		MaxEmbeddingBytes: uint64(defaultMaxChunksPerDocument * client.Model().Dimensions * 4),
 	}) {
-		t.Fatalf("default encoding limits = %+v", config.Encoding)
+		t.Fatalf("default encoding limits = %+v", config.Pipeline.Operational.Encoding)
 	}
 }
 
-func TestServiceConfigRejectsUnsupportedEncodingBehavior(t *testing.T) {
+func TestConfigRejectsUnsupportedEncodingBehavior(t *testing.T) {
 	t.Parallel()
 
 	client, _ := modelServiceTestClient(t, 512)
-	config, err := DefaultServiceConfig(client.Model())
+	config, err := DefaultConfig(client.Model())
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.EncodingBehaviorVersion++
+	config.Pipeline.EncodingBehaviorVersion++
 	if err := config.Validate(); !errors.Is(err, ErrUnsupportedEncodingBehavior) {
 		t.Fatalf("Validate() error = %v, want ErrUnsupportedEncodingBehavior", err)
 	}
 }
 
-func TestServiceConfigDelegatesHNSWValidation(t *testing.T) {
+func TestConfigDelegatesHNSWValidation(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
-	config, err := DefaultServiceConfig(client.Model())
+	config, err := DefaultConfig(client.Model())
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.Index.HNSW.Build.MaxNeighbors = 1025
-	config.Index.HNSW.Build.EfConstruction = 1025
+	config.Index.Build.MaxNeighbors = 1025
+	config.Index.Build.EfConstruction = 1025
 	if err := config.Validate(); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("Validate() error = %v, want ErrInvalidConfig", err)
 	}

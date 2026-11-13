@@ -86,12 +86,12 @@ func TestCommitAndSaveLoadServiceRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLoadServiceRestoresSavedServiceConfig(t *testing.T) {
+func TestLoadServiceRestoresSavedConfig(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
 	client := persistentTestClient(t, "v1")
 	config := persistentTestConfig(t, client)
-	config.Chunking = chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
+	config.Pipeline.Chunking = chunk.Config{TargetBytes: 32, MaxBytes: 48, OverlapBytes: 4}
 	service, err := semantic.New(client, config)
 	if err != nil {
 		t.Fatal(err)
@@ -284,9 +284,9 @@ func persistentTestClient(t *testing.T, revision string) embedding.Client {
 	return client
 }
 
-func persistentTestConfig(t *testing.T, client embedding.Client) semantic.ServiceConfig {
+func persistentTestConfig(t *testing.T, client embedding.Client) semantic.Config {
 	t.Helper()
-	config, err := semantic.DefaultServiceConfig(client.Model())
+	config, err := semantic.DefaultConfig(client.Model())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -190,14 +190,12 @@ func benchmarkConfig(maxLive, maxStale, maxSegments int) IndexConfig {
 	return IndexConfig{
 		Dimensions: benchmarkDimensions,
 		Metric:     vector.MetricL2Squared,
-		Limits: LimitsConfig{
-			MaxLiveVectors: maxLive, MaxStaleVectors: maxStale, MaxSegments: maxSegments,
-			MaxChunksPerDocument: 1,
-		},
-		Search: SearchConfig{MaxResults: 10, MaxCandidateChunks: 64, MaxChunksPerResult: 1},
-		HNSW: hnsw.Config{
-			Build:  hnsw.BuildConfig{MaxNeighbors: 16, EfConstruction: 64, Seed: 1},
-			Search: hnsw.SearchConfig{EfSearch: 32, VisitLimit: maxLive},
+		Build:      hnsw.BuildConfig{MaxNeighbors: 16, EfConstruction: 64, Seed: 1},
+		Operational: OperationalLimits{
+			Capacity:       CapacityLimits{MaxLiveVectors: maxLive, MaxStaleVectors: maxStale, MaxSegments: maxSegments},
+			Ingestion:      IngestionLimits{MaxChunksPerDocument: 1},
+			Search:         SearchLimits{MaxResults: 10, MaxCandidateChunks: 64, MaxChunksPerResult: 1},
+			SearchDefaults: hnsw.SearchConfig{EfSearch: 32, VisitLimit: maxLive},
 		},
 	}
 }

@@ -33,11 +33,10 @@ func main() {
 	index, err := semantic.NewIndex(semantic.IndexConfig{
 		Dimensions: client.Model().Dimensions,
 		Metric:     vector.MetricL2Squared,
-		Limits: semantic.LimitsConfig{
-			MaxLiveVectors: 100, MaxStaleVectors: 100, MaxChunksPerDocument: 16,
-		},
-		Search: semantic.SearchConfig{
-			MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3,
+		Operational: semantic.OperationalLimits{
+			Capacity:  semantic.CapacityLimits{MaxLiveVectors: 100, MaxStaleVectors: 100},
+			Ingestion: semantic.IngestionLimits{MaxChunksPerDocument: 16},
+			Search:    semantic.SearchLimits{MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3},
 		},
 	})
 	must(err)

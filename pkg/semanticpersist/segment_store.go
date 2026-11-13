@@ -245,7 +245,7 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 		graphData,
 		vectors,
 		ref.Vectors,
-		config.HNSW,
+		hnsw.Config{Build: config.Build, Search: config.Operational.SearchDefaults},
 		hnswFormatConfig(s.limits),
 	)
 	if err != nil {
@@ -267,7 +267,7 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 }
 
 func validateSegmentData(data semantic.SegmentState, config semantic.IndexConfig, limits Config) error {
-	semanticLimits := config.Limits
+	semanticLimits := config.Operational.Capacity
 	if data.Vectors == nil || data.Index == nil {
 		return ErrLimitExceeded
 	}
@@ -278,9 +278,9 @@ func validateSegmentData(data semantic.SegmentState, config semantic.IndexConfig
 		semanticLimits.MaxLiveVectors <= 0 || semanticLimits.MaxStaleVectors < 0 ||
 		semanticLimits.MaxLiveVectors > limits.MaxVectors-semanticLimits.MaxStaleVectors ||
 		semanticLimits.MaxSegments <= 0 || semanticLimits.MaxSegments > limits.MaxVectors ||
-		config.Search.MaxResults <= 0 || config.Search.MaxResults > limits.MaxK ||
-		config.Search.MaxCandidateChunks < config.Search.MaxResults || config.Search.MaxCandidateChunks > limits.MaxK ||
-		config.Search.MaxChunksPerResult <= 0 || config.Search.MaxChunksPerResult > limits.MaxChunksPerDocument {
+		config.Operational.Search.MaxResults <= 0 || config.Operational.Search.MaxResults > limits.MaxK ||
+		config.Operational.Search.MaxCandidateChunks < config.Operational.Search.MaxResults || config.Operational.Search.MaxCandidateChunks > limits.MaxK ||
+		config.Operational.Search.MaxChunksPerResult <= 0 || config.Operational.Search.MaxChunksPerResult > limits.MaxChunksPerDocument {
 		return ErrLimitExceeded
 	}
 	components, ok := format.CheckedMultiplyUint64(uint64(length), uint64(dimensions))
@@ -292,9 +292,9 @@ func validateSegmentData(data semantic.SegmentState, config semantic.IndexConfig
 		return ErrLimitExceeded
 	}
 	directedLinks, ok := format.CheckedAddUint64(uint64(topology.Level0LinkCount), uint64(topology.UpperLinkCount))
-	if !ok || config.Search.MaxEfSearch > limits.MaxEfSearch || config.Search.MaxVisitLimit > limits.MaxVisitLimit ||
-		topology.MaxNeighbors != config.HNSW.Build.MaxNeighbors || topology.LevelZeroMaxNeighbors != config.HNSW.Build.MaxNeighbors*2 ||
-		topology.EfConstruction != config.HNSW.Build.EfConstruction || topology.Seed != config.HNSW.Build.Seed ||
+	if !ok || config.Operational.Search.MaxEfSearch > limits.MaxEfSearch || config.Operational.Search.MaxVisitLimit > limits.MaxVisitLimit ||
+		topology.MaxNeighbors != config.Build.MaxNeighbors || topology.LevelZeroMaxNeighbors != config.Build.MaxNeighbors*2 ||
+		topology.EfConstruction != config.Build.EfConstruction || topology.Seed != config.Build.Seed ||
 		directedLinks > limits.MaxGraphLinks {
 		return ErrLimitExceeded
 	}

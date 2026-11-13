@@ -23,7 +23,7 @@ func main() {
 		QueryPrefix:    "search_query: ",
 	})
 	must(err)
-	config, err := semantic.DefaultServiceConfig(client.Model())
+	config, err := semantic.DefaultConfig(client.Model())
 	must(err)
 	service, err := semantic.New(client, config)
 	must(err)

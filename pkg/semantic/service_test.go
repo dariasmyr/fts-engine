@@ -48,7 +48,7 @@ func TestServiceUsesSeparateDocumentAndQueryEncoders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config, ok := service.Config(); ok || config != (ServiceConfig{}) {
+	if config, ok := service.Config(); ok || config != (Config{}) {
 		t.Fatalf("Config() = %+v, %v; want unavailable", config, ok)
 	}
 	if err := service.AddDocument(t.Context(), fts.Document{ID: "doc", Fields: map[string]fts.FieldData{"body": {Text: "doc"}}}); err != nil {
@@ -88,7 +88,10 @@ func serviceTestConfig() IndexConfig {
 	return IndexConfig{
 		Dimensions: 2,
 		Metric:     vector.MetricCosine,
-		Limits:     LimitsConfig{MaxLiveVectors: 8, MaxChunksPerDocument: 2},
-		Search:     SearchConfig{MaxResults: 2, MaxCandidateChunks: 8, MaxChunksPerResult: 1},
+		Operational: OperationalLimits{
+			Capacity:  CapacityLimits{MaxLiveVectors: 8},
+			Ingestion: IngestionLimits{MaxChunksPerDocument: 2},
+			Search:    SearchLimits{MaxResults: 2, MaxCandidateChunks: 8, MaxChunksPerResult: 1},
+		},
 	}
 }

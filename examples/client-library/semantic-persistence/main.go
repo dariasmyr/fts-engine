@@ -20,18 +20,18 @@ func main() {
 	defer os.RemoveAll(root)
 
 	embedder := persistenceEmbedder{}
-	config, err := semantic.DefaultServiceConfig(embedder.Model())
+	config, err := semantic.DefaultConfig(embedder.Model())
 	must(err)
 	config.Index.Metric = vector.MetricL2Squared
-	config.Chunking = chunk.Config{
+	config.Pipeline.Chunking = chunk.Config{
 		TargetBytes: 512, MaxBytes: 768, OverlapBytes: 64,
 	}
-	config.Index.Limits.MaxLiveVectors = 100
-	config.Index.Limits.MaxStaleVectors = 100
-	config.Index.Limits.MaxChunksPerDocument = 10
-	config.Index.Search.MaxResults = 10
-	config.Index.Search.MaxCandidateChunks = 100
-	config.Index.Search.MaxChunksPerResult = 3
+	config.Index.Operational.Capacity.MaxLiveVectors = 100
+	config.Index.Operational.Capacity.MaxStaleVectors = 100
+	config.Index.Operational.Ingestion.MaxChunksPerDocument = 10
+	config.Index.Operational.Search.MaxResults = 10
+	config.Index.Operational.Search.MaxCandidateChunks = 100
+	config.Index.Operational.Search.MaxChunksPerResult = 3
 
 	service, err := semantic.New(embedder, config)
 	must(err)

@@ -214,8 +214,11 @@ func newPersistenceBenchmarkIndex(tb testing.TB) *semantic.Index {
 	index, err := semantic.NewIndex(semantic.IndexConfig{
 		Dimensions: persistenceBenchmarkDimensions,
 		Metric:     vector.MetricL2Squared,
-		Limits:     semantic.LimitsConfig{MaxLiveVectors: persistenceBenchmarkDocuments, MaxChunksPerDocument: 1},
-		Search:     semantic.SearchConfig{MaxResults: 10, MaxCandidateChunks: 64, MaxChunksPerResult: 1},
+		Operational: semantic.OperationalLimits{
+			Capacity:  semantic.CapacityLimits{MaxLiveVectors: persistenceBenchmarkDocuments},
+			Ingestion: semantic.IngestionLimits{MaxChunksPerDocument: 1},
+			Search:    semantic.SearchLimits{MaxResults: 10, MaxCandidateChunks: 64, MaxChunksPerResult: 1},
+		},
 	})
 	if err != nil {
 		tb.Fatal(err)
@@ -289,7 +292,7 @@ func newPersistenceBenchmarkService(
 ) *semantic.Service {
 	tb.Helper()
 	config := persistenceBenchmarkConfig(tb, client)
-	config.Index.Limits.MaxSegments = segmentCount + 1
+	config.Index.Operational.Capacity.MaxSegments = segmentCount + 1
 	service, err := semantic.New(client, config)
 	if err != nil {
 		tb.Fatal(err)
@@ -333,9 +336,9 @@ func benchmarkDirectoryBytes(tb testing.TB, root string) int64 {
 	return total
 }
 
-func persistenceBenchmarkConfig(tb testing.TB, client embedding.Client) semantic.ServiceConfig {
+func persistenceBenchmarkConfig(tb testing.TB, client embedding.Client) semantic.Config {
 	tb.Helper()
-	config, err := semantic.DefaultServiceConfig(client.Model())
+	config, err := semantic.DefaultConfig(client.Model())
 	if err != nil {
 		tb.Fatal(err)
 	}

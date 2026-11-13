@@ -18,8 +18,11 @@ func TestSaveLoadRestoresHNSWSearch(t *testing.T) {
 	config := semantic.IndexConfig{
 		Dimensions: 2,
 		Metric:     vector.MetricL2Squared,
-		Limits:     semantic.LimitsConfig{MaxLiveVectors: 16, MaxChunksPerDocument: 2},
-		Search:     semantic.SearchConfig{MaxResults: 4, MaxCandidateChunks: 16, MaxChunksPerResult: 2},
+		Operational: semantic.OperationalLimits{
+			Capacity:  semantic.CapacityLimits{MaxLiveVectors: 16},
+			Ingestion: semantic.IngestionLimits{MaxChunksPerDocument: 2},
+			Search:    semantic.SearchLimits{MaxResults: 4, MaxCandidateChunks: 16, MaxChunksPerResult: 2},
+		},
 	}
 	index, err := semantic.NewIndex(config)
 	if err != nil {
@@ -96,16 +99,14 @@ func TestCompactSaveLoadContinuesWriting(t *testing.T) {
 	config := semantic.IndexConfig{
 		Dimensions: 2,
 		Metric:     vector.MetricL2Squared,
-		Limits: semantic.LimitsConfig{
-			MaxLiveVectors:       16,
-			MaxStaleVectors:      16,
-			MaxSegments:          8,
-			MaxChunksPerDocument: 2,
-		},
-		Search: semantic.SearchConfig{
-			MaxResults:         4,
-			MaxCandidateChunks: 16,
-			MaxChunksPerResult: 2,
+		Operational: semantic.OperationalLimits{
+			Capacity:  semantic.CapacityLimits{MaxLiveVectors: 16, MaxStaleVectors: 16, MaxSegments: 8},
+			Ingestion: semantic.IngestionLimits{MaxChunksPerDocument: 2},
+			Search: semantic.SearchLimits{
+				MaxResults:         4,
+				MaxCandidateChunks: 16,
+				MaxChunksPerResult: 2,
+			},
 		},
 	}
 	index, err := semantic.NewIndex(config)

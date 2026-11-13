@@ -155,6 +155,11 @@ var architectureRules = []architectureRule{
 		rootModule+"/pkg/vector",
 	),
 	repositoryRule(
+		rootModule+"/pkg/semantic/service",
+		rootModule+"/pkg/embedding",
+		rootModule+"/pkg/semantic",
+	),
+	repositoryRule(
 		rootModule+"/pkg/semanticpersist",
 		rootModule+"/internal/format",
 		rootModule+"/internal/memorystore",

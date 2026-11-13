@@ -34,7 +34,7 @@ func TestBuiltinEncoderDocumentAndQueryContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := InputLimits{MaxFields: 2, MaxSourceBytes: 64, MaxChunks: 8, MaxEmbeddingBytes: 64}
-	model := newModelConfig(client.Model())
+	model := client.Model()
 	encoder, err := newEncoder(client, splitter, limits, limits, &model)
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestBuiltinEncoderPreservesErrorsAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	model := newModelConfig(client.Model())
+	model := client.Model()
 	encoder, err := newEncoder(
 		client,
 		splitter,

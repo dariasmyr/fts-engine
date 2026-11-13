@@ -16,11 +16,10 @@ func main() {
 	index, err := semantic.NewIndex(semantic.IndexConfig{
 		Dimensions: 2,
 		Metric:     vector.MetricCosine,
-		Limits: semantic.LimitsConfig{
-			MaxLiveVectors: 100, MaxStaleVectors: 100, MaxChunksPerDocument: 10,
-		},
-		Search: semantic.SearchConfig{
-			MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3,
+		Operational: semantic.OperationalLimits{
+			Capacity:  semantic.CapacityLimits{MaxLiveVectors: 100, MaxStaleVectors: 100},
+			Ingestion: semantic.IngestionLimits{MaxChunksPerDocument: 10},
+			Search:    semantic.SearchLimits{MaxResults: 10, MaxCandidateChunks: 100, MaxChunksPerResult: 3},
 		},
 	})
 	must(err)

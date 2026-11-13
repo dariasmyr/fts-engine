@@ -284,13 +284,12 @@ func newTestIndex(t *testing.T) *Index {
 	index, err := NewIndex(IndexConfig{
 		Dimensions: 2,
 		Metric:     vector.MetricL2Squared,
-		Limits: LimitsConfig{
-			MaxLiveVectors: 32, MaxStaleVectors: 32, MaxSegments: 8, MaxChunksPerDocument: 4,
-		},
-		Search: SearchConfig{MaxResults: 4, MaxCandidateChunks: 16, MaxChunksPerResult: 2},
-		HNSW: hnsw.Config{
-			Build:  hnsw.BuildConfig{MaxNeighbors: 2, EfConstruction: 4, Seed: 1},
-			Search: hnsw.SearchConfig{EfSearch: 8, VisitLimit: 32},
+		Build:      hnsw.BuildConfig{MaxNeighbors: 2, EfConstruction: 4, Seed: 1},
+		Operational: OperationalLimits{
+			Capacity:       CapacityLimits{MaxLiveVectors: 32, MaxStaleVectors: 32, MaxSegments: 8},
+			Ingestion:      IngestionLimits{MaxChunksPerDocument: 4},
+			Search:         SearchLimits{MaxResults: 4, MaxCandidateChunks: 16, MaxChunksPerResult: 2},
+			SearchDefaults: hnsw.SearchConfig{EfSearch: 8, VisitLimit: 32},
 		},
 	})
 	if err != nil {

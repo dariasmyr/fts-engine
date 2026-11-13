@@ -15,11 +15,11 @@ type Service struct {
 	index           *Index
 	documentEncoder DocumentEncoder
 	queryEncoder    QueryEncoder
-	config          *ServiceConfig
+	pipeline        *PipelineConfig
 }
 
 // New constructs a model-backed service with the built-in chunk splitter.
-func New(client embedding.Client, config ServiceConfig) (*Service, error) {
+func New(client embedding.Client, config Config) (*Service, error) {
 	components, err := prepareStandardModelService(client, config)
 	if err != nil {
 		return nil, err
@@ -32,7 +32,7 @@ func New(client embedding.Client, config ServiceConfig) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	service.config = &components.config
+	service.pipeline = &components.config.Pipeline
 	return service, nil
 }
 
@@ -41,23 +41,23 @@ func New(client embedding.Client, config ServiceConfig) (*Service, error) {
 func NewFromIndex(
 	client embedding.Client,
 	index *Index,
-	config ServiceConfig,
+	config Config,
 ) (*Service, error) {
 	if index == nil {
 		return nil, ErrInvalidConfig
 	}
-	components, err := prepareStandardModelService(client, config)
-	if err != nil {
+	if config.validateCanonical() != nil || config.Index != index.Config() {
 		return nil, ErrModelServiceUnavailable
 	}
-	if components.config.Index != index.config {
+	components, err := prepareStandardModelService(client, config)
+	if err != nil {
 		return nil, ErrModelServiceUnavailable
 	}
 	service, err := NewService(index, components.encoder, components.encoder)
 	if err != nil {
 		return nil, err
 	}
-	service.config = &components.config
+	service.pipeline = &components.config.Pipeline
 	return service, nil
 }
 
@@ -88,11 +88,11 @@ func (s *Service) Index() *Index {
 // Config returns the built-in model pipeline configuration. The second result
 // is false for services assembled from external encoders with NewService; use
 // Index().Config() to inspect their vector index configuration.
-func (s *Service) Config() (ServiceConfig, bool) {
-	if s.config == nil {
-		return ServiceConfig{}, false
+func (s *Service) Config() (Config, bool) {
+	if s.pipeline == nil {
+		return Config{}, false
 	}
-	return *s.config, true
+	return Config{Index: s.index.Config(), Pipeline: *s.pipeline}, true
 }
 
 // AddDocument encodes and stages a new document.

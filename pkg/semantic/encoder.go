@@ -78,7 +78,7 @@ func newEncoder(
 	splitter ChunkSplitter,
 	documentLimits InputLimits,
 	queryLimits InputLimits,
-	expectedModel *ModelConfig,
+	expectedModel *embedding.Model,
 ) (*Encoder, error) {
 	if client == nil || validateInputLimits(documentLimits) != nil || validateInputLimits(queryLimits) != nil {
 		return nil, ErrInvalidConfig
@@ -87,7 +87,7 @@ func newEncoder(
 	if err := model.Validate(); err != nil {
 		return nil, ErrInvalidConfig
 	}
-	if expectedModel != nil && (expectedModel.Validate() != nil || newModelConfig(model) != *expectedModel) {
+	if expectedModel != nil && (expectedModel.Validate() != nil || model != *expectedModel) {
 		return nil, ErrInvalidConfig
 	}
 	return &Encoder{

@@ -34,15 +34,15 @@ func modelLimits(
 }
 
 type modelServiceComponents struct {
-	config  ServiceConfig
+	config  Config
 	encoder *Encoder
 }
 
 func prepareStandardModelService(
 	client embedding.Client,
-	config ServiceConfig,
+	config Config,
 ) (modelServiceComponents, error) {
-	splitter, err := newConfiguredChunkSplitter(config.Chunking)
+	splitter, err := newConfiguredChunkSplitter(config.Pipeline.Chunking)
 	if err != nil {
 		return modelServiceComponents{}, err
 	}
@@ -51,10 +51,10 @@ func prepareStandardModelService(
 
 func prepareModelService(
 	client embedding.Client,
-	config ServiceConfig,
+	config Config,
 	splitter *chunk.Splitter,
 ) (modelServiceComponents, error) {
-	if client == nil || splitter == nil || newModelConfig(client.Model()) != config.Model {
+	if client == nil || splitter == nil || client.Model() != config.Pipeline.Model {
 		return modelServiceComponents{}, ErrInvalidConfig
 	}
 	config, err := config.normalized()
@@ -66,21 +66,21 @@ func prepareModelService(
 
 func buildModelService(
 	client embedding.Client,
-	config ServiceConfig,
+	config Config,
 	splitter *chunk.Splitter,
 ) (modelServiceComponents, error) {
 	documentLimits, err := modelLimits(
-		config.Encoding,
-		config.Model.Dimensions,
-		config.Index.Limits.MaxChunksPerDocument,
+		config.Pipeline.Operational.Encoding,
+		config.Pipeline.Model.Dimensions,
+		config.Index.Operational.Ingestion.MaxChunksPerDocument,
 	)
 	if err != nil {
 		return modelServiceComponents{}, err
 	}
 	queryLimits, err := modelLimits(
-		config.Encoding,
-		config.Model.Dimensions,
-		config.Index.Search.MaxQueryChunks,
+		config.Pipeline.Operational.Encoding,
+		config.Pipeline.Model.Dimensions,
+		config.Index.Operational.Search.MaxQueryChunks,
 	)
 	if err != nil {
 		return modelServiceComponents{}, err
@@ -90,7 +90,7 @@ func buildModelService(
 		splitter,
 		documentLimits,
 		queryLimits,
-		&config.Model,
+		&config.Pipeline.Model,
 	)
 	if err != nil {
 		return modelServiceComponents{}, err

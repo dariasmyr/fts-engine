@@ -111,14 +111,14 @@ func LoadService(
 		if err != nil {
 			return loadServiceOperationResult{}, err
 		}
-		if err := validatePersistedServiceClient(persisted.state.ServiceConfig, client); err != nil {
+		if err := validatePersistedServiceClient(persisted.state.Pipeline, client); err != nil {
 			return loadServiceOperationResult{}, err
 		}
 		index, err := restoreIndex(ctx, persisted, newSegmentStore(operation.layout, cfg))
 		if err != nil {
 			return loadServiceOperationResult{}, corruptMissingReference(err)
 		}
-		service, err := semantic.NewFromIndex(client, index, *persisted.state.ServiceConfig)
+		service, err := semantic.NewFromIndex(client, index, semantic.Config{Index: index.Config(), Pipeline: *persisted.state.Pipeline})
 		if err != nil {
 			return loadServiceOperationResult{}, err
 		}
@@ -135,7 +135,7 @@ type loadServiceOperationResult struct {
 	generation Generation
 }
 
-func validatePersistedServiceClient(config *semantic.ServiceConfig, client embedding.Client) error {
+func validatePersistedServiceClient(config *semantic.PipelineConfig, client embedding.Client) error {
 	if config == nil || client == nil {
 		return semantic.ErrModelServiceUnavailable
 	}
@@ -143,15 +143,7 @@ func validatePersistedServiceClient(config *semantic.ServiceConfig, client embed
 	if err := model.Validate(); err != nil {
 		return semantic.ErrModelServiceUnavailable
 	}
-	clientConfig := semantic.ModelConfig{
-		ID:             model.ID,
-		Revision:       model.Revision,
-		Dimensions:     model.Dimensions,
-		ContextTokens:  model.ContextTokens,
-		DocumentPrefix: model.DocumentPrefix,
-		QueryPrefix:    model.QueryPrefix,
-	}
-	if clientConfig != config.Model {
+	if model != config.Model {
 		return semantic.ErrModelServiceUnavailable
 	}
 	return nil

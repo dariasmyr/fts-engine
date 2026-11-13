@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
+	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
@@ -24,8 +25,8 @@ func TestStateVersionAndLifecycleLimitsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Config.Limits.MaxStaleVectors != 7 || decoded.Config.Limits.MaxSegments != 3 {
-		t.Fatalf("decoded lifecycle limits = %+v", decoded.Config.Limits)
+	if decoded.Config.Operational.Capacity.MaxStaleVectors != 7 || decoded.Config.Operational.Capacity.MaxSegments != 3 {
+		t.Fatalf("decoded lifecycle limits = %+v", decoded.Config.Operational.Capacity)
 	}
 	if decoded.ID != value.ID {
 		t.Fatalf("decoded index ID = %x, want %x", decoded.ID, value.ID)
@@ -53,18 +54,17 @@ func TestStateIndexConfigRoundTrip(t *testing.T) {
 	}
 }
 
-func TestStateServiceConfigRoundTrip(t *testing.T) {
+func TestStateConfigRoundTrip(t *testing.T) {
 	value := testIndexState(t)
-	value.ServiceConfig = &semantic.ServiceConfig{
-		Model: semantic.ModelConfig{
+	value.Pipeline = &semantic.PipelineConfig{
+		Model: embedding.Model{
 			ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 16,
 			DocumentPrefix: "document: ", QueryPrefix: "query: ",
 		},
-		Index:    value.Config,
 		Chunking: chunk.Config{TargetBytes: 8, MaxBytes: 16, OverlapBytes: 2},
-		Encoding: semantic.EncodingLimits{
+		Operational: semantic.PipelineOperationalLimits{Encoding: semantic.EncodingLimits{
 			MaxFields: 5, MaxSourceBytes: 2048, MaxEmbeddingBytes: 24,
-		},
+		}},
 		EncodingBehaviorVersion: semantic.CurrentEncodingBehaviorVersion,
 	}
 
@@ -76,8 +76,8 @@ func TestStateServiceConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.ServiceConfig == nil || *decoded.ServiceConfig != *value.ServiceConfig {
-		t.Fatalf("service config = %+v, want %+v", decoded.ServiceConfig, value.ServiceConfig)
+	if decoded.Pipeline == nil || *decoded.Pipeline != *value.Pipeline {
+		t.Fatalf("pipeline config = %+v, want %+v", decoded.Pipeline, value.Pipeline)
 	}
 }
 
@@ -86,13 +86,12 @@ func TestStateRejectsUnsupportedEncodingBehavior(t *testing.T) {
 
 	for _, version := range []uint32{0, semantic.CurrentEncodingBehaviorVersion + 1} {
 		value := testIndexState(t)
-		value.ServiceConfig = &semantic.ServiceConfig{
-			Model: semantic.ModelConfig{
+		value.Pipeline = &semantic.PipelineConfig{
+			Model: embedding.Model{
 				ID: "model", Revision: "v1", Dimensions: 2, ContextTokens: 16,
 			},
-			Index:                   value.Config,
 			Chunking:                chunk.Config{TargetBytes: 8, MaxBytes: 16, OverlapBytes: 2},
-			Encoding:                semantic.EncodingLimits{MaxFields: 5, MaxSourceBytes: 2048, MaxEmbeddingBytes: 24},
+			Operational:             semantic.PipelineOperationalLimits{Encoding: semantic.EncodingLimits{MaxFields: 5, MaxSourceBytes: 2048, MaxEmbeddingBytes: 24}},
 			EncodingBehaviorVersion: version,
 		}
 
@@ -110,14 +109,14 @@ func TestStateLifecycleLimitsValidation(t *testing.T) {
 		{
 			name: "physical vectors",
 			mutate: func(value *IndexState) {
-				value.Config.Limits.MaxLiveVectors = 100
-				value.Config.Limits.MaxStaleVectors = 100
+				value.Config.Operational.Capacity.MaxLiveVectors = 100
+				value.Config.Operational.Capacity.MaxStaleVectors = 100
 			},
 		},
 		{
 			name: "segments",
 			mutate: func(value *IndexState) {
-				value.Config.Limits.MaxSegments = 17
+				value.Config.Operational.Capacity.MaxSegments = 17
 			},
 		},
 	}
@@ -153,11 +152,10 @@ func testIndexState(t testing.TB) IndexState {
 	config := semantic.IndexConfig{
 		Dimensions: 2,
 		Metric:     vector.MetricL2Squared,
-		Limits: semantic.LimitsConfig{
-			MaxLiveVectors: 8, MaxStaleVectors: 7, MaxSegments: 3, MaxChunksPerDocument: 2,
-		},
-		Search: semantic.SearchConfig{
-			MaxResults: 2, MaxCandidateChunks: 8, MaxChunksPerResult: 1, MaxQueryChunks: 3,
+		Operational: semantic.OperationalLimits{
+			Capacity:  semantic.CapacityLimits{MaxLiveVectors: 8, MaxStaleVectors: 7, MaxSegments: 3},
+			Ingestion: semantic.IngestionLimits{MaxChunksPerDocument: 2},
+			Search:    semantic.SearchLimits{MaxResults: 2, MaxCandidateChunks: 8, MaxChunksPerResult: 1, MaxQueryChunks: 3},
 		},
 	}
 	index, err := semantic.NewIndex(config)

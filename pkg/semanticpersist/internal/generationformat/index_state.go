@@ -37,7 +37,7 @@ type SegmentState struct {
 type IndexState struct {
 	ID                   semantic.IndexID
 	Config               semantic.IndexConfig
-	ServiceConfig        *semantic.ServiceConfig
+	Pipeline             *semantic.PipelineConfig
 	Revision             semantic.Revision
 	MaxAllocatedVectorID semantic.VectorID
 	NextSegmentID        semantic.SegmentID
@@ -55,7 +55,7 @@ func EncodeState(value IndexState, limits Config) ([]byte, FileRef, error) {
 	e := newEncoder("SSTA", stateVersion, expectedSize, limits)
 	e.writeBytes(value.ID[:])
 	encodeIndexConfig(e, value.Config)
-	encodeServiceConfig(e, value.ServiceConfig, limits.MaxStringBytes)
+	encodePipelineConfig(e, value.Pipeline, limits.MaxStringBytes)
 	e.writeUint64(uint64(value.Revision))
 	e.writeUint64(uint64(value.MaxAllocatedVectorID))
 	e.writeUint64(uint64(value.NextSegmentID))
@@ -86,7 +86,7 @@ func DecodeState(data []byte, limits Config) (IndexState, error) {
 	value := IndexState{}
 	copy(value.ID[:], d.readBytes(stateIndexIDSize))
 	value.Config = decodeIndexConfig(d)
-	value.ServiceConfig = decodeServiceConfig(d, value.Config)
+	value.Pipeline = decodePipelineConfig(d)
 	value.Revision = semantic.Revision(d.readUint64())
 	value.MaxAllocatedVectorID = semantic.VectorID(d.readUint64())
 	value.NextSegmentID = semantic.SegmentID(d.readUint64())
@@ -135,25 +135,25 @@ func encodeIndexConfig(e *encoder, c semantic.IndexConfig) {
 	e.writeUint8(0)
 	e.writeUint16(0)
 	values := []int{
-		c.Limits.MaxLiveVectors,
-		c.Limits.MaxStaleVectors,
-		c.Limits.MaxSegments,
-		c.Limits.MaxChunksPerDocument,
-		c.Search.MaxResults,
-		c.Search.MaxCandidateChunks,
-		c.Search.MaxChunksPerResult,
-		c.Search.MaxQueryChunks,
-		c.HNSW.Build.MaxNeighbors,
-		c.HNSW.Build.EfConstruction,
-		c.HNSW.Search.EfSearch,
-		c.Search.MaxEfSearch,
-		c.HNSW.Search.VisitLimit,
-		c.Search.MaxVisitLimit,
+		c.Operational.Capacity.MaxLiveVectors,
+		c.Operational.Capacity.MaxStaleVectors,
+		c.Operational.Capacity.MaxSegments,
+		c.Operational.Ingestion.MaxChunksPerDocument,
+		c.Operational.Search.MaxResults,
+		c.Operational.Search.MaxCandidateChunks,
+		c.Operational.Search.MaxChunksPerResult,
+		c.Operational.Search.MaxQueryChunks,
+		c.Build.MaxNeighbors,
+		c.Build.EfConstruction,
+		c.Operational.SearchDefaults.EfSearch,
+		c.Operational.Search.MaxEfSearch,
+		c.Operational.SearchDefaults.VisitLimit,
+		c.Operational.Search.MaxVisitLimit,
 	}
 	for _, value := range values {
 		e.writeUint32(uint32(value))
 	}
-	e.writeUint64(c.HNSW.Build.Seed)
+	e.writeUint64(c.Build.Seed)
 }
 
 func decodeIndexConfig(d *decoder) semantic.IndexConfig {
@@ -164,33 +164,27 @@ func decodeIndexConfig(d *decoder) semantic.IndexConfig {
 	if d.readUint8() != 0 || d.readUint16() != 0 {
 		d.decodeErr = ErrCorrupt
 	}
-	c.Limits = semantic.LimitsConfig{
-		MaxLiveVectors:       int(d.readUint32()),
-		MaxStaleVectors:      int(d.readUint32()),
-		MaxSegments:          int(d.readUint32()),
-		MaxChunksPerDocument: int(d.readUint32()),
+	c.Operational.Capacity = semantic.CapacityLimits{
+		MaxLiveVectors: int(d.readUint32()), MaxStaleVectors: int(d.readUint32()), MaxSegments: int(d.readUint32()),
 	}
-	c.Search = semantic.SearchConfig{
-		MaxResults:         int(d.readUint32()),
-		MaxCandidateChunks: int(d.readUint32()),
-		MaxChunksPerResult: int(d.readUint32()),
-		MaxQueryChunks:     int(d.readUint32()),
+	c.Operational.Ingestion.MaxChunksPerDocument = int(d.readUint32())
+	c.Operational.Search = semantic.SearchLimits{
+		MaxResults: int(d.readUint32()), MaxCandidateChunks: int(d.readUint32()),
+		MaxChunksPerResult: int(d.readUint32()), MaxQueryChunks: int(d.readUint32()),
 	}
-	c.HNSW = hnsw.Config{
-		Build: hnsw.BuildConfig{
-			MaxNeighbors:   int(d.readUint32()),
-			EfConstruction: int(d.readUint32()),
-		},
-		Search: hnsw.SearchConfig{EfSearch: int(d.readUint32())},
+	c.Build = hnsw.BuildConfig{
+		MaxNeighbors:   int(d.readUint32()),
+		EfConstruction: int(d.readUint32()),
 	}
-	c.Search.MaxEfSearch = int(d.readUint32())
-	c.HNSW.Search.VisitLimit = int(d.readUint32())
-	c.Search.MaxVisitLimit = int(d.readUint32())
-	c.HNSW.Build.Seed = d.readUint64()
+	c.Operational.SearchDefaults.EfSearch = int(d.readUint32())
+	c.Operational.Search.MaxEfSearch = int(d.readUint32())
+	c.Operational.SearchDefaults.VisitLimit = int(d.readUint32())
+	c.Operational.Search.MaxVisitLimit = int(d.readUint32())
+	c.Build.Seed = d.readUint64()
 	return c
 }
 
-func encodeServiceConfig(e *encoder, c *semantic.ServiceConfig, maxString int) {
+func encodePipelineConfig(e *encoder, c *semantic.PipelineConfig, maxString int) {
 	if c == nil {
 		e.writeUint32(0)
 		return
@@ -201,17 +195,17 @@ func encodeServiceConfig(e *encoder, c *semantic.ServiceConfig, maxString int) {
 	e.writeUint32(uint32(c.Chunking.TargetBytes))
 	e.writeUint32(uint32(c.Chunking.MaxBytes))
 	e.writeUint32(uint32(c.Chunking.OverlapBytes))
-	e.writeUint32(uint32(c.Encoding.MaxFields))
+	e.writeUint32(uint32(c.Operational.Encoding.MaxFields))
 	e.writeUint32(c.EncodingBehaviorVersion)
-	e.writeUint64(c.Encoding.MaxSourceBytes)
-	e.writeUint64(c.Encoding.MaxEmbeddingBytes)
+	e.writeUint64(c.Operational.Encoding.MaxSourceBytes)
+	e.writeUint64(c.Operational.Encoding.MaxEmbeddingBytes)
 	e.writeString(c.Model.ID, maxString)
 	e.writeString(c.Model.Revision, maxString)
 	e.writeString(c.Model.DocumentPrefix, maxString)
 	e.writeString(c.Model.QueryPrefix, maxString)
 }
 
-func decodeServiceConfig(d *decoder, index semantic.IndexConfig) *semantic.ServiceConfig {
+func decodePipelineConfig(d *decoder) *semantic.PipelineConfig {
 	present := d.readUint32()
 	if present == 0 {
 		return nil
@@ -220,16 +214,16 @@ func decodeServiceConfig(d *decoder, index semantic.IndexConfig) *semantic.Servi
 		d.decodeErr = ErrCorrupt
 		return nil
 	}
-	c := &semantic.ServiceConfig{Index: index}
+	c := &semantic.PipelineConfig{}
 	c.Model.Dimensions = int(d.readUint32())
 	c.Model.ContextTokens = int(d.readUint32())
 	c.Chunking.TargetBytes = int(d.readUint32())
 	c.Chunking.MaxBytes = int(d.readUint32())
 	c.Chunking.OverlapBytes = int(d.readUint32())
-	c.Encoding.MaxFields = int(d.readUint32())
+	c.Operational.Encoding.MaxFields = int(d.readUint32())
 	c.EncodingBehaviorVersion = d.readUint32()
-	c.Encoding.MaxSourceBytes = d.readUint64()
-	c.Encoding.MaxEmbeddingBytes = d.readUint64()
+	c.Operational.Encoding.MaxSourceBytes = d.readUint64()
+	c.Operational.Encoding.MaxEmbeddingBytes = d.readUint64()
 	c.Model.ID = d.readString()
 	c.Model.Revision = d.readString()
 	c.Model.DocumentPrefix = d.readString()

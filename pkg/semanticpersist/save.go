@@ -38,7 +38,7 @@ func Save(
 }
 
 // SaveService persists one committed model-backed service generation. The
-// saved ServiceConfig is restored by LoadService and cannot be replaced by the
+// saved pipeline config is restored by LoadService and cannot be replaced by the
 // caller during loading.
 func SaveService(
 	ctx context.Context,
@@ -97,7 +97,7 @@ func CommitAndSave(
 }
 
 // CommitAndSaveService atomically commits and persists a model-backed service,
-// including the immutable ServiceConfig required by LoadService.
+// including the immutable pipeline config required by LoadService.
 func CommitAndSaveService(
 	ctx context.Context,
 	root string,
@@ -126,26 +126,26 @@ func CommitAndSaveService(
 	return Generation{ID: generationID}, err
 }
 
-func persistedService(service *semantic.Service) (semantic.ServiceConfig, *semantic.Index, error) {
+func persistedService(service *semantic.Service) (semantic.PipelineConfig, *semantic.Index, error) {
 	if service == nil {
-		return semantic.ServiceConfig{}, nil, ErrCorrupt
+		return semantic.PipelineConfig{}, nil, ErrCorrupt
 	}
 	config, ok := service.Config()
 	if !ok {
-		return semantic.ServiceConfig{}, nil, semantic.ErrModelServiceUnavailable
+		return semantic.PipelineConfig{}, nil, semantic.ErrModelServiceUnavailable
 	}
 	index := service.Index()
 	if index == nil || config.Index != index.Config() {
-		return semantic.ServiceConfig{}, nil, ErrCorrupt
+		return semantic.PipelineConfig{}, nil, ErrCorrupt
 	}
-	return config, index, nil
+	return config.Pipeline, index, nil
 }
 
 func commitAndSave(
 	ctx context.Context,
 	root string,
 	index *semantic.Index,
-	serviceConfig *semantic.ServiceConfig,
+	serviceConfig *semantic.PipelineConfig,
 	expectedGenerationID uint64,
 	cfg settings,
 ) (uint64, error) {
@@ -187,7 +187,7 @@ func save(
 	ctx context.Context,
 	root string,
 	index *semantic.Index,
-	serviceConfig *semantic.ServiceConfig,
+	serviceConfig *semantic.PipelineConfig,
 	expectedGenerationID uint64,
 	cfg settings,
 ) (uint64, error) {
@@ -211,7 +211,7 @@ func saveCommittedState(
 	ctx context.Context,
 	root string,
 	committed *semantic.CommittedIndexState,
-	serviceConfig *semantic.ServiceConfig,
+	serviceConfig *semantic.PipelineConfig,
 	expectedGenerationID uint64,
 	cfg settings,
 ) (uint64, error) {
@@ -360,7 +360,7 @@ func (w *generationWriter) write(
 		ref, err := segments.put(
 			ctx,
 			segment.state,
-			state.state.Config.Search.MaxCandidateChunks,
+			state.state.Config.Operational.Search.MaxCandidateChunks,
 		)
 		if err != nil {
 			return 0, err

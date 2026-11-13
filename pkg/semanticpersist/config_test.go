@@ -14,14 +14,10 @@ func TestDefaultConfigAcceptsValidSemanticCapacity(t *testing.T) {
 	index, err := semantic.NewIndex(semantic.IndexConfig{
 		Dimensions: 768,
 		Metric:     vector.MetricCosine,
-		Limits: semantic.LimitsConfig{
-			MaxLiveVectors:       1_000_000,
-			MaxStaleVectors:      1_000_000,
-			MaxSegments:          16,
-			MaxChunksPerDocument: 64,
-		},
-		Search: semantic.SearchConfig{
-			MaxResults: 20, MaxCandidateChunks: 200, MaxChunksPerResult: 3,
+		Operational: semantic.OperationalLimits{
+			Capacity:  semantic.CapacityLimits{MaxLiveVectors: 1_000_000, MaxStaleVectors: 1_000_000, MaxSegments: 16},
+			Ingestion: semantic.IngestionLimits{MaxChunksPerDocument: 64},
+			Search:    semantic.SearchLimits{MaxResults: 20, MaxCandidateChunks: 200, MaxChunksPerResult: 3},
 		},
 	})
 	if err != nil {
