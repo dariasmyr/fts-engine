@@ -60,7 +60,11 @@ func main() {
 		ctx,
 		[]semantic.ChunkEmbedding{{Embedding: []float32{1, 0}}},
 		2,
-		semantic.QueryConfig{},
+		semantic.QueryConfig{
+			EfSearch:        16,
+			VisitLimit:      100,
+			CandidateChunks: 10,
+		},
 	)
 	must(err)
 	for _, hit := range result.Hits {

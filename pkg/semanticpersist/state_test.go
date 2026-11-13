@@ -58,7 +58,7 @@ func TestSegmentStateWireMappingRoundTrip(t *testing.T) {
 	}
 }
 
-func TestValidateWireStateRejectsRuntimeContractMismatch(t *testing.T) {
+func TestValidateFormatStateRejectsRuntimeContractMismatch(t *testing.T) {
 	t.Parallel()
 
 	config, err := service.DefaultConfig(embedding.Model{ID: "model", Revision: "v1", Dimensions: 4, ContextTokens: 512})

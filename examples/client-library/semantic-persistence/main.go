@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/dariasmyr/fts-engine/v2/pkg/chunk"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
@@ -62,6 +64,28 @@ func main() {
 	must(err)
 	fmt.Printf("updated generation=%d\n", generation.ID)
 
+	info, err := semanticpersist.Inspect(ctx, root, semanticpersist.LoadOptions{})
+	must(err)
+	fmt.Printf(
+		"stored generation=%d dimensions=%d model=%s\n",
+		info.Generation.ID,
+		info.IndexConfig.Dimensions,
+		info.Pipeline.Model.ID,
+	)
+
+	otherService, err := service.New(embedder, config)
+	must(err)
+	_, err = semanticpersist.SaveService(
+		ctx,
+		root,
+		otherService,
+		semanticpersist.SaveOptions{ExpectedGeneration: &generation},
+	)
+	if !errors.Is(err, semanticpersist.ErrIndexIdentityMismatch) {
+		panic(fmt.Errorf("save with another index identity: %w", err))
+	}
+	fmt.Println("save with another index identity was rejected")
+
 	loaded, _, err := semanticpersist.LoadService(
 		ctx,
 		root,
@@ -83,11 +107,15 @@ func document(id fts.DocID, text string) fts.Document {
 
 func search(
 	ctx context.Context,
-	service *service.Service,
+	semanticService *service.Service,
 	query string,
 	label string,
 ) {
-	result, err := service.Search(ctx, query, 1)
+	result, err := semanticService.SearchWithConfig(ctx, query, 1, semantic.QueryConfig{
+		EfSearch:        8,
+		VisitLimit:      100,
+		CandidateChunks: 10,
+	})
 	must(err)
 	if len(result.Hits) == 0 {
 		fmt.Printf("%s: no hits\n", label)

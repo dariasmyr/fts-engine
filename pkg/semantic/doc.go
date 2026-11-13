@@ -7,5 +7,6 @@
 // state before its matching view becomes searchable. Physical ANN storage is
 // segmented and may be compacted without changing semantic identities. Index
 // operations are in-memory only; package semanticpersist provides durable
-// filesystem persistence.
+// filesystem persistence. Document and query encoding live in semantic/encoding,
+// while semantic/service coordinates encoders with an Index.
 package semantic

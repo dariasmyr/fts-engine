@@ -39,6 +39,27 @@ func TestArchitectureRulesAllowIntendedDependencies(t *testing.T) {
 			},
 		},
 		{
+			ImportPath: rootModule + "/pkg/semantic/encoding",
+			Imports: []string{
+				rootModule + "/pkg/chunk",
+				rootModule + "/pkg/embedding",
+				rootModule + "/pkg/fts",
+				rootModule + "/pkg/semantic",
+				rootModule + "/pkg/vector",
+			},
+		},
+		{
+			ImportPath: rootModule + "/pkg/semantic/service",
+			Imports: []string{
+				rootModule + "/pkg/chunk",
+				rootModule + "/pkg/embedding",
+				rootModule + "/pkg/fts",
+				rootModule + "/pkg/semantic",
+				rootModule + "/pkg/semantic/encoding",
+				rootModule + "/pkg/vector",
+			},
+		},
+		{
 			ImportPath: rootModule + "/pkg/semanticpersist",
 			Imports: []string{
 				rootModule + "/internal/format",
@@ -107,7 +128,31 @@ func TestArchitectureRulesRejectForbiddenEdges(t *testing.T) {
 			name: "semantic to persistence",
 			from: rootModule + "/pkg/semantic",
 			to:   rootModule + "/pkg/semanticpersist",
-			rule: "pkg/semantic",
+			rule: "semantic index domain",
+		},
+		{
+			name: "semantic to encoding",
+			from: rootModule + "/pkg/semantic",
+			to:   rootModule + "/pkg/semantic/encoding",
+			rule: "semantic index domain",
+		},
+		{
+			name: "semantic to service",
+			from: rootModule + "/pkg/semantic",
+			to:   rootModule + "/pkg/semantic/service",
+			rule: "semantic index domain",
+		},
+		{
+			name: "encoding to service",
+			from: rootModule + "/pkg/semantic/encoding",
+			to:   rootModule + "/pkg/semantic/service",
+			rule: "semantic encoding",
+		},
+		{
+			name: "service to persistence",
+			from: rootModule + "/pkg/semantic/service",
+			to:   rootModule + "/pkg/semanticpersist",
+			rule: "semantic service",
 		},
 		{
 			name: "semantic storage to public persistence",

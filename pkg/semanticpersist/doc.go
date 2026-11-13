@@ -9,6 +9,14 @@
 //
 // Save and Load are the lower-level operations for callers that manage
 // semantic.Index directly. Save requires an explicit expected generation.
+// Inspect validates and returns a detached copy of the current generation's
+// stored index and optional pipeline contract without an embedding client or
+// opening segment objects.
+//
+// The first generation fixes the index identity, complete IndexConfig, optional
+// PipelineConfig, and raw/model-backed persistence mode for a root. Later writes
+// reject incompatible contracts before creating generation data or replacing
+// CURRENT.
 //
 // The package persists a committed semantic index state as a sequence of
 // immutable generations. A generation references immutable semantic segment
