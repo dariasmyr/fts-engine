@@ -6,9 +6,18 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 )
 
+// RestoreMetadata is the immutable identity and configuration snapshot checked
+// before a Loader opens the index's segment objects.
+type RestoreMetadata struct {
+	IndexID      semantic.IndexID
+	GenerationID uint64
+	IndexConfig  semantic.IndexConfig
+	Pipeline     PipelineConfig
+}
+
 // RestorePreflight validates persisted metadata before a Loader opens the
 // index's segment objects.
-type RestorePreflight func(index semantic.IndexConfig, pipeline PipelineConfig) error
+type RestorePreflight func(RestoreMetadata) error
 
 // LoadedState is the result of one consistent service restore operation.
 type LoadedState struct {

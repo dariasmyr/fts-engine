@@ -44,7 +44,7 @@ func TestLoaderKeepsOneOperationLockAcrossPreflightAndRestore(t *testing.T) {
 	}
 
 	preflightCalls := 0
-	loaded, err := loader.LoadServiceState(t.Context(), func(indexConfig semantic.IndexConfig, pipeline service.PipelineConfig) error {
+	loaded, err := loader.LoadServiceState(t.Context(), func(metadata service.RestoreMetadata) error {
 		preflightCalls++
 		lock, err := storage.AcquireOperationLock(newLayout(root).lock)
 		if err == nil {
@@ -54,8 +54,9 @@ func TestLoaderKeepsOneOperationLockAcrossPreflightAndRestore(t *testing.T) {
 		if !errors.Is(err, storage.ErrLocked) {
 			t.Fatalf("lock error = %v, want ErrLocked", err)
 		}
-		if indexConfig.Dimensions != pipeline.Model.Dimensions {
-			t.Fatalf("dimensions = %d/%d", indexConfig.Dimensions, pipeline.Model.Dimensions)
+		if metadata.IndexID == (semantic.IndexID{}) || metadata.GenerationID != 1 ||
+			metadata.IndexConfig.Dimensions != metadata.Pipeline.Model.Dimensions {
+			t.Fatalf("metadata = %+v", metadata)
 		}
 		return nil
 	})
@@ -77,13 +78,13 @@ func TestLoaderReleasesLockOnPreflightFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := errors.New("preflight failed")
-	if _, err := loader.LoadServiceState(t.Context(), func(semantic.IndexConfig, service.PipelineConfig) error {
+	if _, err := loader.LoadServiceState(t.Context(), func(service.RestoreMetadata) error {
 		return want
 	}); !errors.Is(err, want) {
 		t.Fatalf("LoadServiceState() error = %v, want preflight error", err)
 	}
 
-	if _, err := loader.LoadServiceState(t.Context(), func(semantic.IndexConfig, service.PipelineConfig) error {
+	if _, err := loader.LoadServiceState(t.Context(), func(service.RestoreMetadata) error {
 		return nil
 	}); err != nil {
 		t.Fatalf("LoadServiceState() after failure: %v", err)
@@ -100,7 +101,7 @@ func TestLoaderRejectsInvalidCallback(t *testing.T) {
 		t.Fatalf("LoadServiceState() nil callback error = %v, want ErrInvalidLoadedState", err)
 	}
 	var nilLoader *Loader
-	if _, err := nilLoader.LoadServiceState(t.Context(), func(semantic.IndexConfig, service.PipelineConfig) error {
+	if _, err := nilLoader.LoadServiceState(t.Context(), func(service.RestoreMetadata) error {
 		return nil
 	}); !errors.Is(err, service.ErrInvalidLoadedState) {
 		t.Fatalf("nil Loader error = %v, want ErrInvalidLoadedState", err)

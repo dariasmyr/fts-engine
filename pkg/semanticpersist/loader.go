@@ -3,6 +3,7 @@ package semanticpersist
 import (
 	"context"
 
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 )
 
@@ -62,7 +63,13 @@ func (l *Loader) LoadServiceState(
 		if pipeline == nil {
 			return service.LoadedState{}, service.ErrModelServiceUnavailable
 		}
-		if err := preflight(indexConfig, *pipeline); err != nil {
+		metadata := service.RestoreMetadata{
+			IndexID:      semantic.IndexID(persisted.state.ID),
+			GenerationID: generation.ID,
+			IndexConfig:  indexConfig,
+			Pipeline:     *pipeline,
+		}
+		if err := preflight(metadata); err != nil {
 			return service.LoadedState{}, err
 		}
 
@@ -70,7 +77,7 @@ func (l *Loader) LoadServiceState(
 		if err != nil {
 			return service.LoadedState{}, corruptMissingReference(err)
 		}
-		if index.Config() != indexConfig {
+		if index.ID() != metadata.IndexID || index.Config() != indexConfig {
 			return service.LoadedState{}, service.ErrInvalidLoadedState
 		}
 		return service.LoadedState{

@@ -339,7 +339,12 @@ func (l lineageTestLoader) LoadServiceState(
 	if err := ctx.Err(); err != nil {
 		return service.LoadedState{}, err
 	}
-	if err := preflight(l.state.Index.Config(), l.state.Pipeline); err != nil {
+	if err := preflight(service.RestoreMetadata{
+		IndexID:      l.state.Index.ID(),
+		GenerationID: l.state.GenerationID,
+		IndexConfig:  l.state.Index.Config(),
+		Pipeline:     l.state.Pipeline,
+	}); err != nil {
 		return service.LoadedState{}, err
 	}
 	return l.state, nil

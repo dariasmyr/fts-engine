@@ -40,7 +40,7 @@ func TestLoadRestoresExactState(t *testing.T) {
 	preflightCalls := 0
 	loader := loaderFunc(func(_ context.Context, preflight RestorePreflight) (LoadedState, error) {
 		preflightCalls++
-		if err := preflight(config.Index, config.Pipeline); err != nil {
+		if err := preflight(testRestoreMetadata(original.index, config.Pipeline, 42)); err != nil {
 			return LoadedState{}, err
 		}
 		return LoadedState{Index: original.index, Pipeline: config.Pipeline, GenerationID: 42}, nil
@@ -141,6 +141,11 @@ func TestLoadRejectsInvalidLoaderResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sameConfigIndex, err := semantic.NewIndex(config.Index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := testRestoreMetadata(original.index, config.Pipeline, 1)
 	otherPipeline := config.Pipeline
 	otherPipeline.Model.DocumentPrefix = "other: "
 
@@ -157,15 +162,15 @@ func TestLoadRejectsInvalidLoaderResults(t *testing.T) {
 		{
 			name: "preflight called twice",
 			loader: loaderFunc(func(_ context.Context, preflight RestorePreflight) (LoadedState, error) {
-				_ = preflight(config.Index, config.Pipeline)
-				_ = preflight(config.Index, config.Pipeline)
+				_ = preflight(metadata)
+				_ = preflight(metadata)
 				return LoadedState{Index: original.index, Pipeline: config.Pipeline, GenerationID: 1}, nil
 			}),
 		},
 		{
 			name: "returned pipeline differs",
 			loader: loaderFunc(func(_ context.Context, preflight RestorePreflight) (LoadedState, error) {
-				if err := preflight(config.Index, config.Pipeline); err != nil {
+				if err := preflight(metadata); err != nil {
 					return LoadedState{}, err
 				}
 				return LoadedState{Index: original.index, Pipeline: otherPipeline, GenerationID: 1}, nil
@@ -174,16 +179,25 @@ func TestLoadRejectsInvalidLoaderResults(t *testing.T) {
 		{
 			name: "returned index config differs",
 			loader: loaderFunc(func(_ context.Context, preflight RestorePreflight) (LoadedState, error) {
-				if err := preflight(config.Index, config.Pipeline); err != nil {
+				if err := preflight(metadata); err != nil {
 					return LoadedState{}, err
 				}
 				return LoadedState{Index: otherIndex, Pipeline: config.Pipeline, GenerationID: 1}, nil
 			}),
 		},
 		{
+			name: "returned index identity differs",
+			loader: loaderFunc(func(_ context.Context, preflight RestorePreflight) (LoadedState, error) {
+				if err := preflight(metadata); err != nil {
+					return LoadedState{}, err
+				}
+				return LoadedState{Index: sameConfigIndex, Pipeline: config.Pipeline, GenerationID: 1}, nil
+			}),
+		},
+		{
 			name: "nil index",
 			loader: loaderFunc(func(_ context.Context, preflight RestorePreflight) (LoadedState, error) {
-				if err := preflight(config.Index, config.Pipeline); err != nil {
+				if err := preflight(metadata); err != nil {
 					return LoadedState{}, err
 				}
 				return LoadedState{Pipeline: config.Pipeline, GenerationID: 1}, nil
@@ -192,10 +206,19 @@ func TestLoadRejectsInvalidLoaderResults(t *testing.T) {
 		{
 			name: "zero generation ID",
 			loader: loaderFunc(func(_ context.Context, preflight RestorePreflight) (LoadedState, error) {
-				if err := preflight(config.Index, config.Pipeline); err != nil {
+				if err := preflight(metadata); err != nil {
 					return LoadedState{}, err
 				}
 				return LoadedState{Index: original.index, Pipeline: config.Pipeline}, nil
+			}),
+		},
+		{
+			name: "returned generation differs",
+			loader: loaderFunc(func(_ context.Context, preflight RestorePreflight) (LoadedState, error) {
+				if err := preflight(metadata); err != nil {
+					return LoadedState{}, err
+				}
+				return LoadedState{Index: original.index, Pipeline: config.Pipeline, GenerationID: 2}, nil
 			}),
 		},
 	}
@@ -209,15 +232,60 @@ func TestLoadRejectsInvalidLoaderResults(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsMissingPreflightIdentity(t *testing.T) {
+	client, _ := modelServiceTestClient(t, 512)
+	config := defaultModelConfig(t, client)
+	original, err := New(client, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*RestoreMetadata)
+	}{
+		{
+			name: "zero index ID",
+			mutate: func(metadata *RestoreMetadata) {
+				metadata.IndexID = semantic.IndexID{}
+			},
+		},
+		{
+			name: "zero generation ID",
+			mutate: func(metadata *RestoreMetadata) {
+				metadata.GenerationID = 0
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata := testRestoreMetadata(original.index, config.Pipeline, 1)
+			tt.mutate(&metadata)
+			loader := loaderFunc(func(_ context.Context, preflight RestorePreflight) (LoadedState, error) {
+				return LoadedState{}, preflight(metadata)
+			})
+
+			_, _, err := Load(t.Context(), loader, client)
+			if !errors.Is(err, ErrInvalidLoadedState) {
+				t.Fatalf("Load() error = %v, want ErrInvalidLoadedState", err)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsNonCanonicalPreflightWithoutDefaults(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
 	config := defaultModelConfig(t, client)
+	original, err := New(client, config)
+	if err != nil {
+		t.Fatal(err)
+	}
 	config.Pipeline.Operational.Encoding = EncodingLimits{}
 	loader := loaderFunc(func(_ context.Context, preflight RestorePreflight) (LoadedState, error) {
-		return LoadedState{}, preflight(config.Index, config.Pipeline)
+		return LoadedState{}, preflight(testRestoreMetadata(original.index, config.Pipeline, 1))
 	})
 
-	_, _, err := Load(t.Context(), loader, client)
+	_, _, err = Load(t.Context(), loader, client)
 	if !errors.Is(err, ErrInvalidLoadedState) {
 		t.Fatalf("Load() error = %v, want ErrInvalidLoadedState", err)
 	}
@@ -226,13 +294,26 @@ func TestLoadRejectsNonCanonicalPreflightWithoutDefaults(t *testing.T) {
 func TestLoadRejectsModelMismatchBeforeReturningState(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
 	config := defaultModelConfig(t, client)
+	original, err := New(client, config)
+	if err != nil {
+		t.Fatal(err)
+	}
 	config.Pipeline.Model.DocumentPrefix = "other: "
 	loader := loaderFunc(func(_ context.Context, preflight RestorePreflight) (LoadedState, error) {
-		return LoadedState{}, preflight(config.Index, config.Pipeline)
+		return LoadedState{}, preflight(testRestoreMetadata(original.index, config.Pipeline, 1))
 	})
 
-	_, _, err := Load(t.Context(), loader, client)
+	_, _, err = Load(t.Context(), loader, client)
 	if !errors.Is(err, ErrModelServiceUnavailable) {
 		t.Fatalf("Load() error = %v, want ErrModelServiceUnavailable", err)
+	}
+}
+
+func testRestoreMetadata(index *semantic.Index, pipeline PipelineConfig, generationID uint64) RestoreMetadata {
+	return RestoreMetadata{
+		IndexID:      index.ID(),
+		GenerationID: generationID,
+		IndexConfig:  index.Config(),
+		Pipeline:     pipeline,
 	}
 }

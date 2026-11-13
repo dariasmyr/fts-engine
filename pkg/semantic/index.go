@@ -77,6 +77,9 @@ func NewIndex(config IndexConfig) (*Index, error) {
 // Config returns the static vector index configuration.
 func (i *Index) Config() IndexConfig { return i.config }
 
+// ID returns the immutable identity of the index lineage.
+func (i *Index) ID() IndexID { return i.id }
+
 // AddDocument validates, copies, prepares, and stages one document's raw chunk
 // embeddings in memory. It never retains caller-owned embedding buffers and is
 // invisible to search until Commit. It performs no persistence I/O.

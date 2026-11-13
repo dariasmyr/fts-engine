@@ -35,26 +35,26 @@ func Load(
 
 	var (
 		preflightCalls    int
-		preflightIndex    semantic.IndexConfig
-		preflightPipeline PipelineConfig
+		preflightMetadata RestoreMetadata
 		preflightErr      error
 	)
-	preflight := func(index semantic.IndexConfig, pipeline PipelineConfig) error {
+	preflight := func(metadata RestoreMetadata) error {
 		preflightCalls++
 		if preflightCalls != 1 {
 			preflightErr = ErrInvalidLoadedState
 			return preflightErr
 		}
-		if index.ValidateCanonical() != nil || pipeline.ValidateCanonical(index) != nil {
+		if metadata.IndexID == (semantic.IndexID{}) || metadata.GenerationID == 0 ||
+			metadata.IndexConfig.ValidateCanonical() != nil ||
+			metadata.Pipeline.ValidateCanonical(metadata.IndexConfig) != nil {
 			preflightErr = ErrInvalidLoadedState
 			return preflightErr
 		}
-		if pipeline.Model != model {
+		if metadata.Pipeline.Model != model {
 			preflightErr = ErrModelServiceUnavailable
 			return preflightErr
 		}
-		preflightIndex = index
-		preflightPipeline = pipeline
+		preflightMetadata = metadata
 		return nil
 	}
 
@@ -66,7 +66,10 @@ func Load(
 		return nil, 0, preflightErr
 	}
 	if preflightCalls != 1 || loaded.Index == nil || loaded.GenerationID == 0 ||
-		loaded.Index.Config() != preflightIndex || loaded.Pipeline != preflightPipeline ||
+		loaded.Index.ID() != preflightMetadata.IndexID ||
+		loaded.GenerationID != preflightMetadata.GenerationID ||
+		loaded.Index.Config() != preflightMetadata.IndexConfig ||
+		loaded.Pipeline != preflightMetadata.Pipeline ||
 		loaded.Index.Config().ValidateCanonical() != nil ||
 		loaded.Pipeline.ValidateCanonical(loaded.Index.Config()) != nil {
 		return nil, 0, ErrInvalidLoadedState
