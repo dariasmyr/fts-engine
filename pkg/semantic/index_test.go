@@ -51,6 +51,55 @@ func TestIndexOwnsMetricPreparation(t *testing.T) {
 	}
 }
 
+func TestIndexRejectsMalformedUTF8MetadataWithoutMutation(t *testing.T) {
+	invalidUTF8 := string([]byte{0xff})
+	tests := []struct {
+		name  string
+		docID fts.DocID
+		ref   Ref
+		want  error
+	}{
+		{
+			name: "document ID", docID: fts.DocID(invalidUTF8),
+			ref:  Ref{ID: "chunk", DocID: fts.DocID(invalidUTF8), Field: "body", EndByte: 1},
+			want: ErrInvalidDocID,
+		},
+		{
+			name: "ref document ID", docID: "doc",
+			ref:  Ref{ID: "chunk", DocID: fts.DocID(invalidUTF8), Field: "body", EndByte: 1},
+			want: ErrInvalidBatch,
+		},
+		{
+			name: "chunk ID", docID: "doc",
+			ref:  Ref{ID: ChunkID(invalidUTF8), DocID: "doc", Field: "body", EndByte: 1},
+			want: ErrInvalidBatch,
+		},
+		{
+			name: "field", docID: "doc",
+			ref:  Ref{ID: "chunk", DocID: "doc", Field: invalidUTF8, EndByte: 1},
+			want: ErrInvalidBatch,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			index := newTestIndex(t)
+			before := index.Statistics()
+			err := index.AddDocument(t.Context(), tt.docID, []ChunkEmbedding{{
+				Ref: tt.ref, Embedding: []float32{1, 0},
+			}})
+			if !errors.Is(err, tt.want) || !errors.Is(err, ErrInvalidUTF8) {
+				t.Fatalf("AddDocument() error = %v, want %v and ErrInvalidUTF8", err, tt.want)
+			}
+			if after := index.Statistics(); after != before {
+				t.Fatalf("Statistics() changed from %+v to %+v", before, after)
+			}
+			if !index.state.pending.empty() {
+				t.Fatal("invalid metadata changed pending state")
+			}
+		})
+	}
+}
+
 func TestIndexDocumentLifecycleAndCompaction(t *testing.T) {
 	t.Parallel()
 

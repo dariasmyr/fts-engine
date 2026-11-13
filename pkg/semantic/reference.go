@@ -27,8 +27,8 @@ type ChunkEmbedding struct {
 	Embedding []float32
 }
 
-// Validate verifies metadata and byte boundaries against the source field.
-func (r Ref) Validate(text string) error {
+// ValidateMetadata verifies metadata that does not require source text.
+func (r Ref) ValidateMetadata() error {
 	if r.DocID == "" {
 		return ErrInvalidDocID
 	}
@@ -38,10 +38,30 @@ func (r Ref) Validate(text string) error {
 	if r.Field == "" {
 		return ErrInvalidField
 	}
+	if !utf8.ValidString(string(r.DocID)) {
+		return fmt.Errorf("%w: document ID", ErrInvalidUTF8)
+	}
+	if !utf8.ValidString(string(r.ID)) {
+		return fmt.Errorf("%w: chunk ID", ErrInvalidUTF8)
+	}
+	if !utf8.ValidString(r.Field) {
+		return fmt.Errorf("%w: field", ErrInvalidUTF8)
+	}
+	if r.StartByte > r.EndByte {
+		return fmt.Errorf("%w: [%d,%d)", ErrInvalidRange, r.StartByte, r.EndByte)
+	}
+	return nil
+}
+
+// Validate verifies metadata and byte boundaries against the source field.
+func (r Ref) Validate(text string) error {
+	if err := r.ValidateMetadata(); err != nil {
+		return err
+	}
 	if !utf8.ValidString(text) {
 		return ErrInvalidUTF8
 	}
-	if r.StartByte > r.EndByte || r.EndByte > uint64(len(text)) {
+	if r.EndByte > uint64(len(text)) {
 		return fmt.Errorf("%w: [%d,%d) for %d bytes", ErrInvalidRange, r.StartByte, r.EndByte, len(text))
 	}
 	if (r.StartByte < uint64(len(text)) && !utf8.RuneStart(text[r.StartByte])) ||

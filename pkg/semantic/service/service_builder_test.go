@@ -164,6 +164,51 @@ func TestNewPreservesProviderAndContextErrors(t *testing.T) {
 	}
 }
 
+func TestServiceRejectsMalformedMetadataBeforeEmbedding(t *testing.T) {
+	invalidUTF8 := string([]byte{0xff})
+	tests := []struct {
+		name     string
+		document fts.Document
+	}{
+		{
+			name: "document ID",
+			document: fts.Document{ID: fts.DocID(invalidUTF8), Fields: map[string]fts.FieldData{
+				"body": {Text: "text"},
+			}},
+		},
+		{
+			name: "field",
+			document: fts.Document{ID: "doc", Fields: map[string]fts.FieldData{
+				invalidUTF8: {Text: "text"},
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			client, err := embedding.NewClient(embedding.Model{
+				ID: "model", Revision: "revision", Dimensions: 2, ContextTokens: 512,
+			}, func(_ context.Context, texts []string) ([][]float32, error) {
+				calls++
+				return make([][]float32, len(texts)), nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			semanticService, err := New(client, defaultModelConfig(t, client))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := semanticService.AddDocument(t.Context(), tt.document); !errors.Is(err, encoding.ErrInvalidDocument) {
+				t.Fatalf("AddDocument() error = %v, want ErrInvalidDocument", err)
+			}
+			if calls != 0 {
+				t.Fatalf("embedding calls = %d, want 0", calls)
+			}
+		})
+	}
+}
+
 func TestNewRejectsInvalidConfig(t *testing.T) {
 	client, _ := modelServiceTestClient(t, 512)
 	tests := []struct {

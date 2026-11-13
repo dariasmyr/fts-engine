@@ -60,6 +60,42 @@ func TestEncoderRejectsEmbeddingCountMismatch(t *testing.T) {
 	}
 }
 
+func TestEncoderRejectsMalformedMetadataBeforeEmbedding(t *testing.T) {
+	invalidUTF8 := string([]byte{0xff})
+	tests := []struct {
+		name     string
+		document fts.Document
+	}{
+		{
+			name: "document ID",
+			document: fts.Document{ID: fts.DocID(invalidUTF8), Fields: map[string]fts.FieldData{
+				"body": {Text: "text"},
+			}},
+		},
+		{
+			name: "field",
+			document: fts.Document{ID: "doc", Fields: map[string]fts.FieldData{
+				invalidUTF8: {Text: "text"},
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			encoder := newTestEncoder(t, testEmbeddingClient(t, func(_ context.Context, texts []string) ([][]float32, error) {
+				calls++
+				return make([][]float32, len(texts)), nil
+			}))
+			if _, err := encoder.EncodeDocument(t.Context(), tt.document); !errors.Is(err, ErrInvalidDocument) {
+				t.Fatalf("EncodeDocument() error = %v, want ErrInvalidDocument", err)
+			}
+			if calls != 0 {
+				t.Fatalf("embedding calls = %d, want 0", calls)
+			}
+		})
+	}
+}
+
 func TestNewEncoderRejectsInvalidConfig(t *testing.T) {
 	t.Parallel()
 

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/contextcheck"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
@@ -170,13 +171,19 @@ func (i *Index) prepareBatch(ctx context.Context, docID fts.DocID, batch []Chunk
 	if docID == "" {
 		return nil, ErrInvalidDocID
 	}
+	if !utf8.ValidString(string(docID)) {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidDocID, ErrInvalidUTF8)
+	}
 	seenChunks := make(map[ChunkID]struct{}, len(batch))
 	prepared := make([]preparedChunk, len(batch))
 	for n, item := range batch {
 		if err := contextcheck.PeriodicError(ctx, n); err != nil {
 			return nil, err
 		}
-		if item.Ref.DocID != docID || item.Ref.ID == "" || item.Ref.Field == "" || item.Ref.StartByte > item.Ref.EndByte {
+		if err := item.Ref.ValidateMetadata(); err != nil {
+			return nil, fmt.Errorf("%w: chunk %d metadata: %w", ErrInvalidBatch, n, err)
+		}
+		if item.Ref.DocID != docID {
 			return nil, ErrInvalidBatch
 		}
 		if _, exists := seenChunks[item.Ref.ID]; exists {

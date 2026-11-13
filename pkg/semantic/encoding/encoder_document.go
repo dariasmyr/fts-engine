@@ -47,7 +47,7 @@ func (e *Encoder) documentInputs(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if document.ID == "" || len(document.Fields) == 0 {
+	if document.ID == "" || !utf8.ValidString(string(document.ID)) || len(document.Fields) == 0 {
 		return nil, ErrInvalidDocument
 	}
 	if len(document.Fields) > limits.MaxFields {
@@ -66,7 +66,7 @@ func (e *Encoder) documentInputs(
 			return nil, err
 		}
 		text := fieldText(value)
-		if field == "" || text == "" || !utf8.ValidString(text) {
+		if field == "" || !utf8.ValidString(field) || text == "" || !utf8.ValidString(text) {
 			return nil, ErrInvalidDocument
 		}
 		if uint64(len(text)) > limits.MaxSourceBytes-totalBytes {

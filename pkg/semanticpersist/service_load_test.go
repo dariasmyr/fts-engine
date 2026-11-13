@@ -134,6 +134,56 @@ func TestServiceLoadRestoresSavedConfig(t *testing.T) {
 	}
 }
 
+func TestServiceLoadRoundTripsUnicodeMetadata(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	client := persistentTestClient(t, "v1")
+	semanticService, err := service.New(client, persistentTestConfig(t, client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := fts.Document{
+		ID: "документ",
+		Fields: map[string]fts.FieldData{
+			"заголовок": {Text: "привет"},
+		},
+	}
+	if err := semanticService.AddDocument(ctx, document); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := semanticpersist.CommitAndSaveService(
+		ctx,
+		root,
+		semanticService,
+		semanticpersist.SaveOptions{ExpectedGeneration: &semanticpersist.Generation{}},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	loader, err := semanticpersist.NewLoader(root, semanticpersist.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := service.Load(ctx, loader, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := loaded.ExportState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Segments) != 1 {
+		t.Fatalf("loaded segments = %d, want 1", len(state.Segments))
+	}
+	if len(state.Segments[0].Rows) != 1 {
+		t.Fatalf("loaded rows = %d, want 1", len(state.Segments[0].Rows))
+	}
+	ref := state.Segments[0].Rows[0].Chunk
+	if ref.DocID != document.ID || ref.Field != "заголовок" || ref.ID != "заголовок/chunk-000000" {
+		t.Fatalf("loaded ref = %+v", ref)
+	}
+}
+
 func TestServiceLoadChecksModelBeforeSegmentObjects(t *testing.T) {
 	t.Parallel()
 
