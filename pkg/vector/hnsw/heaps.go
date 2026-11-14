@@ -1,0 +1,149 @@
+package hnsw
+
+import (
+	"math"
+	"slices"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
+)
+
+func candidateCloser(a, b candidate) bool {
+	if a.distance != b.distance {
+		return a.distance < b.distance
+	}
+	return a.node < b.node
+}
+
+func resultBetter(a, b candidate) bool {
+	if a.distance != b.distance {
+		return a.distance < b.distance
+	}
+	return a.node < b.node
+}
+
+func resultWorse(a, b candidate) bool { return resultBetter(b, a) }
+
+type candidateHeap struct {
+	items []candidate
+}
+
+func (h *candidateHeap) Len() int { return len(h.items) }
+
+func (h *candidateHeap) Push(value candidate) {
+	h.items = append(h.items, value)
+	for child := len(h.items) - 1; child > 0; {
+		parent := (child - 1) / 2
+		if !candidateCloser(h.items[child], h.items[parent]) {
+			break
+		}
+		h.items[parent], h.items[child] = h.items[child], h.items[parent]
+		child = parent
+	}
+}
+
+func (h *candidateHeap) Pop() (candidate, bool) {
+	if len(h.items) == 0 {
+		return candidate{}, false
+	}
+	result := h.items[0]
+	last := len(h.items) - 1
+	h.items[0] = h.items[last]
+	h.items = h.items[:last]
+	for parent := 0; ; {
+		left := parent*2 + 1
+		if left >= len(h.items) {
+			break
+		}
+		best := left
+		right := left + 1
+		if right < len(h.items) && candidateCloser(h.items[right], h.items[left]) {
+			best = right
+		}
+		if !candidateCloser(h.items[best], h.items[parent]) {
+			break
+		}
+		h.items[parent], h.items[best] = h.items[best], h.items[parent]
+		parent = best
+	}
+	return result, true
+}
+
+type resultHeap struct {
+	items    []candidate
+	capacity int
+}
+
+func newResultHeapWithBuffer(capacity int, buffer []candidate) resultHeap {
+	return resultHeap{items: prepareCandidateBuffer(buffer, capacity), capacity: capacity}
+}
+
+func (h *resultHeap) Len() int { return len(h.items) }
+
+func (h *resultHeap) Worst() (candidate, bool) {
+	if len(h.items) == 0 {
+		return candidate{}, false
+	}
+	return h.items[0], true
+}
+
+func (h *resultHeap) Add(value candidate) {
+	if h.capacity == 0 || math.IsNaN(value.distance) || math.IsInf(value.distance, 0) {
+		return
+	}
+	if len(h.items) == h.capacity {
+		if !resultBetter(value, h.items[0]) {
+			return
+		}
+		h.items[0] = value
+		h.siftDown(0)
+		return
+	}
+	h.items = append(h.items, value)
+	for child := len(h.items) - 1; child > 0; {
+		parent := (child - 1) / 2
+		if !resultWorse(h.items[child], h.items[parent]) {
+			break
+		}
+		h.items[parent], h.items[child] = h.items[child], h.items[parent]
+		child = parent
+	}
+}
+
+func (h *resultHeap) Hits(k int) []vector.Hit {
+	slices.SortFunc(h.items, compareResults)
+	items := h.items[:min(k, len(h.items))]
+	hits := make([]vector.Hit, len(items))
+	for i, item := range items {
+		hits[i] = vector.Hit{Ordinal: vector.Ordinal(item.node), Distance: item.distance}
+	}
+	return hits
+}
+
+func compareResults(a, b candidate) int {
+	if resultBetter(a, b) {
+		return -1
+	}
+	if resultBetter(b, a) {
+		return 1
+	}
+	return 0
+}
+
+func (h *resultHeap) siftDown(parent int) {
+	for {
+		left := parent*2 + 1
+		if left >= len(h.items) {
+			return
+		}
+		worst := left
+		right := left + 1
+		if right < len(h.items) && resultWorse(h.items[right], h.items[left]) {
+			worst = right
+		}
+		if !resultWorse(h.items[worst], h.items[parent]) {
+			return
+		}
+		h.items[parent], h.items[worst] = h.items[worst], h.items[parent]
+		parent = worst
+	}
+}

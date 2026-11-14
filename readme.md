@@ -9,6 +9,8 @@ It provides:
 - query-string, phrase, boolean, field-scoped, and prefix search
 - optional pipelines, stemming, and language presets via `pkg/textproc` and `pkg/ftspreset`
 - mutable snapshots and sealed read-only segments via `pkg/ftspersist`
+- chunk-aware dense-vector search via `pkg/vector` and `pkg/semantic`
+- immutable semantic generations via `pkg/semanticpersist`
 - per-request diagnostics and aggregated search stats via `pkg/ftsstats`
 
 ## Public API Surface
@@ -29,6 +31,12 @@ For external integrations, prefer these public packages:
 - `pkg/ftspreset` - ready-to-use pipeline presets
 - `pkg/filter` - bloom, cuckoo, and ribbon filters
 - `pkg/ftsstats` - aggregated search observability
+- `pkg/vector` - dense-vector metrics, search contracts, and immutable result filters
+- `pkg/vector/hnsw` - deterministic HNSW construction and immutable approximate search
+- `pkg/embedding` - provider-neutral embedding clients and transformations
+- `pkg/embedding/ollama` - Ollama `/api/embed` transport
+- `pkg/semantic` - document encoding, model-bound indexing, and chunk-aware semantic search
+- `pkg/semanticpersist` - generation-based persistence for committed semantic index states
 
 `cmd/*`, `internal/*`, and `benchmarks/*` are repository-owned tooling, not the main library surface.
 
@@ -83,6 +91,218 @@ Notes:
 - in practice that means the regular single-field index uses the field name `_default`
 - if you do not set a pipeline, the default behavior is alphanumeric tokenization plus lowercasing
 - add `fts.WithScorer(fts.BM25())` or `fts.WithScorer(fts.TFIDF())` when you want score-based ranking
+
+## Semantic Search
+
+`pkg/semantic` owns the vector index and request-local search configuration.
+`pkg/semantic/service` adds document encoding and model-backed text search, while
+`pkg/semantic/encoding` contains the reusable input adapter.
+
+Embedding providers implement the provider-neutral `embedding.Client` interface.
+Every client is permanently bound to one validated `embedding.Model`; custom
+functions can be adapted with `embedding.NewClient`. `service.New` creates the
+document and query paths and applies model prefixes. `service.Config` combines
+the immutable index contract with the immutable model pipeline contract:
+
+```go
+config, err := service.DefaultConfig(client.Model())
+if err != nil {
+	return err
+}
+semanticService, err := service.New(client, config)
+if err != nil {
+	return err
+}
+```
+
+Index capacity, ingestion, search ceilings, and defaults live under
+`semantic.IndexConfig.Operational`. The built-in model pipeline separately owns
+chunking and encoding limits:
+
+```go
+config, err := service.DefaultConfig(client.Model())
+if err != nil {
+	return err
+}
+config.Index.Operational.Capacity.MaxLiveVectors = 2_000_000
+config.Index.Operational.Capacity.MaxStaleVectors = 2_000_000
+config.Index.Operational.Ingestion.MaxChunksPerDocument = 96
+config.Index.Operational.Search = semantic.SearchLimits{
+	MaxResults:         50,
+	MaxCandidateChunks: 500,
+	MaxChunksPerResult: 3,
+	MaxQueryChunks:     96,
+	MaxEfSearch:        500,
+	MaxVisitLimit:      2_000_000,
+}
+config.Pipeline.Operational.Encoding.MaxFields = 16
+config.Pipeline.Operational.Encoding.MaxSourceBytes = 1 << 20
+config.Pipeline.Operational.Encoding.MaxEmbeddingBytes = uint64(96 * client.Model().Dimensions * 4)
+semanticService, err := service.New(client, config)
+```
+
+`service.New` owns a reproducible built-in encoding pipeline. Advanced callers
+can create an index directly from `IndexConfig`, provide their own document and
+query encoders, and bind them through `service.NewService`.
+
+Index documents, commit pending vectors, and search them:
+
+```go
+ctx := context.Background()
+
+if err := semanticService.AddDocument(ctx, fts.Document{
+	ID: "doc-1", Fields: map[string]fts.FieldData{"body": {Text: "French hotel on a river"}},
+}); err != nil {
+	return err
+}
+if err := semanticService.AddDocument(ctx, fts.Document{
+	ID: "doc-2", Fields: map[string]fts.FieldData{"body": {Text: "Boat operations in France"}},
+}); err != nil {
+	return err
+}
+
+// Commit makes all staged document mutations searchable.
+if err := semanticService.Commit(ctx); err != nil {
+	return err
+}
+
+result, err := semanticService.SearchWithConfig(ctx, "French hotel", 10, semantic.QueryConfig{
+	EfSearch:        64,
+	VisitLimit:      10_000,
+	CandidateChunks: 200,
+})
+if err != nil {
+	return err
+}
+for _, hit := range result.Hits {
+	fmt.Printf("doc=%s distance=%.4f\n", hit.DocID, hit.Distance)
+}
+```
+
+Text queries use the same splitter as indexed documents. Short queries produce
+one embedding; long queries are split into overlapping chunks automatically.
+
+`AddDocument`, `ReplaceDocument`, and `DeleteDocument` queue mutations. They
+become visible to the committed read view after `Commit`. Replacement and
+deletion keep old physical rows as stale rows; search excludes them through
+liveness filters. Call `semanticService.Compact(ctx)` to rebuild the in-memory HNSW
+segments using only live rows and reclaim stale capacity.
+
+The runtime is HNSW-first. It does not run an exact fallback when recall is
+low. Increase `EfSearch`, `VisitLimit`, or `CandidateChunks` for a more
+expensive search, and compact when stale-row accumulation becomes significant.
+
+### Low-level semantic API
+
+Use `semantic.Index` directly when the application owns chunking and embedding.
+The index accepts ready-to-use `semantic.ChunkEmbedding` values and has no
+dependency on an embedding client or text encoder:
+
+```go
+index, err := semantic.NewIndex(semantic.IndexConfig{
+	Dimensions: 768,
+	Metric:     vector.MetricCosine,
+	Operational: semantic.OperationalLimits{
+		Capacity: semantic.CapacityLimits{
+			MaxLiveVectors:  1_000_000,
+			MaxStaleVectors: 1_000_000,
+			MaxSegments:     16,
+		},
+		Ingestion: semantic.IngestionLimits{MaxChunksPerDocument: 64},
+		Search: semantic.SearchLimits{
+			MaxResults:         20,
+			MaxCandidateChunks: 200,
+			MaxChunksPerResult: 3,
+			MaxQueryChunks:     64,
+			MaxEfSearch:        200,
+			MaxVisitLimit:      1_000_000,
+		},
+	},
+})
+if err != nil {
+	return err
+}
+
+err = index.AddDocument(ctx, "doc-1", []semantic.ChunkEmbedding{{
+	Ref: semantic.Ref{
+		ID: "body/chunk-000000", DocID: "doc-1", Field: "body",
+		Ordinal: 0, StartByte: 0, EndByte: 24,
+	},
+	Embedding: documentVector,
+}})
+if err != nil {
+	return err
+}
+
+// Add, Replace, and Delete only stage mutations.
+if err := index.Commit(ctx); err != nil {
+	return err
+}
+
+result, err := index.Search(
+	ctx,
+	[]semantic.ChunkEmbedding{{Embedding: queryVector}},
+	10,
+	semantic.QueryConfig{
+		EfSearch:        64,
+		VisitLimit:      10_000,
+		CandidateChunks: 200,
+	},
+)
+if err != nil {
+	return err
+}
+for _, hit := range result.Hits {
+	fmt.Printf("doc=%s distance=%.4f\n", hit.DocID, hit.Distance)
+}
+```
+
+Every document chunk requires a non-empty chunk ID, document ID, field, valid
+byte range, and a finite vector with exactly `IndexConfig.Dimensions`
+components. The index copies input vectors and performs metric-specific
+preparation once; callers do not need to normalize cosine vectors. Query
+embeddings need only their vectors. `QueryConfig` applies to one request and
+cannot exceed the frozen ceilings in `IndexConfig.Operational.Search`.
+
+`Index.Config()` returns the immutable effective configuration,
+`Index.Statistics()` reports current logical and physical counts, and
+`Index.View()` returns the current committed immutable view. Pending mutations
+are intentionally absent from search and from the view until `Commit` succeeds.
+`Compact` rebuilds segments from live vectors without changing semantic IDs.
+
+If the application wants document-level methods but still owns encoding, bind
+consumer-side encoders to an index:
+
+```go
+semanticService, err := service.NewService(
+	index,
+	documentEncoder, // service.DocumentEncoder
+	queryEncoder,    // service.QueryEncoder
+)
+if err != nil {
+	return err
+}
+```
+
+`encoding.Encoder` is one ready-made implementation of both interfaces, but
+applications may provide their own. Services assembled with `NewService` have
+no persisted model pipeline: `Config()` returns `ok == false`, while
+`Index().Config()` remains available for the raw index contract.
+
+See the runnable [`semantic-commit` example](examples/client-library/semantic-commit/main.go)
+for commit visibility, [`semantic-index`](examples/client-library/semantic-index/main.go)
+for direct index use, and
+[`semantic-custom-encoder`](examples/client-library/semantic-custom-encoder/main.go)
+for `encoding.NewEncoder` with `service.NewService`. The
+[`semantic-ollama` example](examples/client-library/semantic-ollama/main.go)
+shows the higher-level model-backed path.
+
+At the vector layer, `vector.Space.Prepare` returns an opaque
+`vector.PreparedVector`, not a `[]float32`. Its backing storage cannot be
+mutated by callers; `CopyTo` is the explicit bridge into trusted prepared
+storage. Raw `[]float32` buffers remain only in the low-level
+`PreparedVectorStore` contract so search can reuse caller-provided buffers
+without allocating per distance calculation.
 
 ## Choosing an Index
 
@@ -356,6 +576,38 @@ engine := fts.NewMultiField(
 )
 ```
 
+## HNSW Vector Index
+
+`pkg/vector/hnsw` provides observable deterministic construction, an immutable
+packed HNSW index, and a binary graph format bound to a separate authoritative
+vector file. Production search is HNSW-only; the independent exhaustive exact
+search lives in the benchmark module.
+
+`pkg/semantic` uses immutable HNSW segments and an explicit flush lifecycle.
+Ordinary semantic search is in-memory and does not require disk persistence.
+
+```go
+config := hnsw.Config{
+	Build: hnsw.BuildConfig{
+		MaxNeighbors: 8, EfConstruction: 64, Seed: 1,
+	},
+	Search: hnsw.SearchConfig{
+		EfSearch: 32, VisitLimit: 10_000,
+	},
+}
+
+index, err := hnsw.Build(ctx, preparedVectors, config)
+if err != nil {
+	return err
+}
+result, err := index.Search(ctx, query, 10, hnsw.QueryConfig{EfSearch: 64})
+```
+
+`hnsw.Build` reads prepared rows in stable dense ordinal order and hides manual
+graph construction. Use `index.Report()` to inspect build provenance, search
+limits, graph structure, and packed storage. Run parameter sweeps with
+`go run ./cmd/vector-search` from `benchmarks/`.
+
 ## Score Explanation
 
 Use `Explain(...)` to inspect why a specific document received its score for a
@@ -387,7 +639,11 @@ and the applied field and query type weights.
 
 ## Persistence
 
-The recommended persistence surface for library consumers is `pkg/ftspersist`.
+Lexical and semantic search use separate persistence APIs. Use `pkg/ftspersist`
+for `pkg/fts` snapshots and sealed segments, and `pkg/semanticpersist` for
+immutable semantic generations.
+
+### Lexical Persistence
 
 | Mode | Writable after load | Recommended API | Notes |
 | --- | --- | --- | --- |
@@ -454,6 +710,173 @@ Current working persistence examples:
 
 See `examples/client-library/README.md` for the exact run order. The load examples expect artifacts created by the corresponding save examples.
 
+### Semantic Persistence
+
+Create the model-bound service in memory, then atomically commit and capture the
+revision that will be saved:
+
+```go
+config, err := service.DefaultConfig(embeddingClient.Model())
+if err != nil {
+	return err
+}
+semanticService, err := service.New(embeddingClient, config)
+if err != nil {
+	return err
+}
+
+if err := semanticService.AddDocument(ctx, document); err != nil {
+	return err
+}
+generation, err := semanticpersist.CommitAndSaveService(
+	ctx,
+	"./data/semantic",
+	semanticService,
+	semanticpersist.SaveOptions{
+		ExpectedGeneration: &semanticpersist.Generation{},
+	},
+)
+```
+
+`CommitAndSaveService` prepares one revision, persists that exact candidate, and
+only then makes it searchable. The generation stores `IndexConfig` plus the
+service-level model, chunking, prefixes, and encoding limits. `service.Load`
+restores that configuration through a persistence loader and only requires a
+matching embedding client:
+
+```go
+info, err := semanticpersist.Inspect(
+	ctx,
+	"./data/semantic",
+	semanticpersist.LoadOptions{},
+)
+if err != nil {
+	return err
+}
+fmt.Printf("generation=%d dimensions=%d model=%s\n",
+	info.Generation.ID, info.IndexConfig.Dimensions, info.Pipeline.Model.ID)
+
+loader, err := semanticpersist.NewLoader(
+	"./data/semantic",
+	semanticpersist.LoadOptions{},
+)
+if err != nil {
+	return err
+}
+loaded, generationID, err := service.Load(ctx, loader, embeddingClient)
+if err != nil {
+	return err
+}
+generation = semanticpersist.Generation{ID: generationID}
+semanticService = loaded
+```
+
+`Inspect` validates the selected generation's metadata without an embedding
+client and without opening vector or HNSW segment objects. It still reads and
+decodes the complete `semantic-state.bin`, so its cost grows with the number of
+stored rows and is not O(1). A later save must use the same index identity,
+complete `IndexConfig`, pipeline configuration, and raw/model-backed mode.
+Violations return `ErrIndexIdentityMismatch`,
+`ErrImmutableConfigMismatch`, or `ErrPersistenceModeMismatch`; a stale token
+returns `ErrStaleGeneration`. None of these errors changes `CURRENT`.
+
+#### Raw index persistence
+
+Raw indexes and services with external encoders use `CommitAndSave` or `Save`
+instead of their `*Service` counterparts:
+
+```go
+generation, err := semanticpersist.CommitAndSave(
+	ctx,
+	"./data/semantic-raw",
+	index,
+	semanticpersist.SaveOptions{
+		ExpectedGeneration: &semanticpersist.Generation{},
+	},
+)
+if err != nil {
+	return err
+}
+fmt.Printf("saved generation=%d\n", generation.ID)
+
+loadedIndex, generation, err := semanticpersist.Load(
+	ctx,
+	"./data/semantic-raw",
+	semanticpersist.LoadOptions{},
+)
+if err != nil {
+	return err
+}
+fmt.Printf("loaded generation=%d\n", generation.ID)
+
+// Encoders are application dependencies and are not serialized.
+semanticService, err := service.NewService(
+	loadedIndex,
+	documentEncoder,
+	queryEncoder,
+)
+if err != nil {
+	return err
+}
+```
+
+`CommitAndSave` prepares pending mutations, persists that exact candidate, and
+publishes it in memory only after the storage commit point. `Save` accepts only
+an already committed index and rejects pending mutations. Both require an
+explicit `ExpectedGeneration` token.
+
+Raw persistence stores `IndexConfig`, refs, vectors, liveness, revisions, and
+allocation metadata, but never stores embedding clients or custom encoders.
+`Inspect` reports `HasPipeline == false` for this mode. A persistence root cannot
+later be switched between raw and model-backed modes; such a save returns
+`ErrPersistenceModeMismatch`.
+
+See the runnable
+[`semantic-persistence` example](examples/client-library/semantic-persistence/main.go)
+for the model-backed save and load flow. The
+[`semantic-index-persistence` example](examples/client-library/semantic-index-persistence/main.go)
+shows raw `Index` persistence with caller-owned embeddings.
+
+Replacement and deletion leave stale physical vectors in the service until
+`semanticService.Compact(ctx)` is called. Compaction preserves stable `VectorID` values
+and removes stale rows from the new committed in-memory view. Persistence does
+not delete old on-disk generations; retention and garbage collection are
+separate operations. `Compact` publishes the rewritten layout in memory without
+persistence I/O. Call `semanticpersist.Save` or `semanticpersist.SaveService`
+afterward to persist that layout. A crash before that save restores the previous
+layout; if the current logical revision was already durable, only the compaction
+work is lost.
+
+`CommitAndSave` holds the index mutation gate through preparation, persistence,
+and publication. Concurrent mutations wait, while searches continue against the
+previous committed view. A stale generation or failure before replacement of
+`CURRENT` leaves the candidate invisible and its mutations pending for retry.
+After successful persistence, the matching view is made searchable with a
+non-failing in-memory transition. `ErrIndeterminate` means `CURRENT` may already
+reference the candidate; the candidate is therefore made searchable and a
+subsequent `Load` determines the current generation. A loaded semantic service
+owns no filesystem resources and requires no persistence cleanup. Saving always
+uses file and directory `fsync` before returning successfully.
+
+Advanced callers that manage an already committed `semantic.Index` directly can
+use the low-level `semanticpersist.Save` and `semanticpersist.Load` operations.
+`Save` rejects pending mutations. Saving requires an explicit expected
+generation. `CommitAndSave`, `Save`, `Load`, `Prune`, and `RecoverGeneration`
+acquire a filesystem lock only for the duration of the operation; write
+operations always fully sync their changes. Operation locking is supported on
+Linux, macOS, and FreeBSD.
+
+Intermediate single-segment semantic formats are rejected rather than migrated.
+Semantic runtime uses HNSW-only immutable segments; exact comparison remains a
+benchmark-owned `exact.Searcher` and is not a production fallback.
+
+`RecoverGeneration` provides an explicit recovery flow: it fully validates a
+selected generation and its referenced objects before replacing `CURRENT`.
+Recovery is strict: if the existing `CURRENT` is corrupt, recovery returns
+`ErrCorrupt` and does not publish the selected generation. It does not scan for
+or automatically promote orphan generations; repairing a corrupt `CURRENT`
+requires a separate administrative procedure.
+
 ### Stream Bundles
 
 Use `pkg/segmentbundle` when the sealed index should be stored as one self-contained
@@ -486,9 +909,6 @@ formats must be rebuilt.
 When exporting custom `posting.Exporter` values directly, pass pipeline identities
 through `segmentbundle.BundleSaveOptions{Pipelines: ...}` instead of using
 `SaveService`.
-
-See [`docs/fts-storage-migration.md`](docs/fts-storage-migration.md) for the
-low-level posting API migration table and FTSE format compatibility policy.
 
 ## Diagnostics and Stats
 
@@ -526,6 +946,10 @@ Runtime diagnostics are separate from `textproc.ObservabilityPipeline()`.
 - `flat-observability` - flat index with technical-token analysis
 - `segment-pipeline-compatibility` - pipeline-compatible sealed segment restore
 - `rank-profile` - multi-field ranking with weighted field scoring
+- `semantic-commit` - mutable document search with explicit commit visibility
+- `semantic-custom-encoder` - low-level semantic index with caller-owned encoders
+- `semantic-index` - direct semantic index usage with caller-produced vectors
+- `semantic-persistence` - persisted writable restart and generation update
 - `snapshot-*` - mutable snapshot save and restore
 - `segment-*` - sealed segment save and restore, including `mmap`
 

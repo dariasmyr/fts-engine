@@ -158,7 +158,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.ToggleMode):
-			m.mode = m.mode.toggle()
+			m.mode = m.mode.toggle(m.engine.SemanticEnabled())
 			m.updateStatus(fmt.Sprintf("Search mode: %s", m.mode))
 			m.refreshResultsView()
 			return m, nil
@@ -302,6 +302,8 @@ func (m model) runSearch(query string) tea.Cmd {
 		)
 		if mode == searchModeSyntax {
 			searchResult, err = engine.SearchText(ctx, query, maxResults)
+		} else if mode == searchModeSemantic {
+			searchResult, err = engine.SearchSemantic(ctx, query, maxResults)
 		} else {
 			searchResult, err = engine.SearchTerm(ctx, query, maxResults)
 		}
@@ -344,6 +346,9 @@ func (m *model) refreshResultsView() {
 }
 
 func (m model) highlightQuery(query string, text string) string {
+	if m.mode == searchModeSemantic {
+		return text
+	}
 	if m.mode == searchModeSyntax {
 		return m.engine.HighlightQueryString(query, text)
 	}

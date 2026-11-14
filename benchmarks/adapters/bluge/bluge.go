@@ -11,7 +11,7 @@ import (
 	"github.com/blugelabs/bluge/analysis"
 	blugeanalyzer "github.com/blugelabs/bluge/analysis/analyzer"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/harness"
 )
 
 type Adapter struct {

@@ -1,4 +1,4 @@
-module github.com/dariasmyr/fts-engine/benchmarks
+module github.com/dariasmyr/fts-engine/v2/benchmarks
 
 go 1.25.0
 

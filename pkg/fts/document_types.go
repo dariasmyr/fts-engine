@@ -37,11 +37,23 @@ const DefaultField = "_default"
 
 type Document struct {
 	ID     DocID
-	Fields map[string]Field
+	Fields map[string]FieldData
 }
 
-type Field struct {
-	Value string
+type FieldData struct {
+	Text     string
+	Value    string
+	Pipeline Pipeline
+}
+
+// Field is kept as an alias for compatibility with the v2 field API.
+type Field = FieldData
+
+func (f FieldData) text() string {
+	if f.Text != "" {
+		return f.Text
+	}
+	return f.Value
 }
 
 type PositionalPosting = posting.PositionalPosting

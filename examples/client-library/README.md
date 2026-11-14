@@ -44,6 +44,10 @@ Standalone examples:
 - `segment-pipeline-compatibility/main.go` - self-contained segment save and pipeline-compatible restore
 - `segment-bundle/main.go` - save and restore one sealed segment as an `io.Writer`/`io.Reader` blob
 - `rank-profile/main.go` - multi-field ranking with weighted field scoring
+- `semantic-commit/main.go` - mutable document search and explicit `Commit` visibility
+- `semantic-persistence/main.go` - `service.New`, `CommitAndSaveService`, `Inspect`, mismatch rejection, and `service.Load`
+- `semantic-index-persistence/main.go` - raw `Index` persistence with `CommitAndSave`, `Load`, and request-local `QueryConfig`
+- `semantic-ollama/main.go` - external Ollama embeddings with separate document and query prompts
 
 Snapshot examples:
 
@@ -74,7 +78,24 @@ go run ./examples/client-library/filtered-presence
 go run ./examples/client-library/segment-pipeline-compatibility
 go run ./examples/client-library/segment-bundle
 go run ./examples/client-library/rank-profile
+go run ./examples/client-library/semantic-commit
+go run ./examples/client-library/semantic-persistence
+go run ./examples/client-library/semantic-index-persistence
 ```
+
+The Ollama example additionally requires a running model:
+
+```bash
+ollama pull nomic-embed-text
+OLLAMA_MODEL=nomic-embed-text:latest \
+OLLAMA_DIMENSIONS=768 OLLAMA_CONTEXT_TOKENS=2048 \
+  go run ./examples/client-library/semantic-ollama
+```
+
+The client obtains the immutable model digest from Ollama automatically. It
+also verifies dimensions, context capacity, and embedding capability before
+accepting requests. The resolved digest is available through
+`client.Model().Revision` and is used for semantic compatibility metadata.
 
 Snapshot restore examples depend on files created by the snapshot save example:
 

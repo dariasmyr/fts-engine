@@ -9,14 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/adapters/bleve"
-	"github.com/dariasmyr/fts-engine/benchmarks/adapters/bluge"
-	benchftsengine "github.com/dariasmyr/fts-engine/benchmarks/adapters/ftsengine"
-	"github.com/dariasmyr/fts-engine/benchmarks/adapters/mock"
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/dataset"
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/metrics"
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/quality"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/adapters/bleve"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/adapters/bluge"
+	benchftsengine "github.com/dariasmyr/fts-engine/v2/benchmarks/adapters/ftsengine"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/adapters/mock"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/dataset"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/harness"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/metrics"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/quality"
 )
 
 type config struct {

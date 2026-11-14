@@ -1,0 +1,53 @@
+package semanticpersist
+
+import (
+	"context"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
+)
+
+// StoredInfo is a detached copy of the immutable contract stored in CURRENT.
+// Inspect validates metadata but does not open vector or HNSW segment objects.
+type StoredInfo struct {
+	Generation  Generation
+	IndexID     semantic.IndexID
+	IndexConfig semantic.IndexConfig
+	Pipeline    service.PipelineConfig
+	HasPipeline bool
+}
+
+// Inspect reads and validates the current generation metadata without restoring
+// the index or requiring an embedding client. It decodes the complete semantic
+// state, so its cost grows with the stored rows even though it does not open
+// vector or HNSW segment objects.
+func Inspect(ctx context.Context, root string, options LoadOptions) (StoredInfo, error) {
+	cfg, err := prepareLoad(ctx, root, options)
+	if err != nil {
+		return StoredInfo{}, err
+	}
+	return withStorageOperationResult(root, operationLayoutExisting, func(operation *storageOperation) (StoredInfo, error) {
+		persisted, generation, err := openCurrentGeneration(ctx, operation.layout, cfg)
+		if err != nil {
+			return StoredInfo{}, err
+		}
+		indexConfig, err := indexConfigFromFormat(persisted.state.Config)
+		if err != nil {
+			return StoredInfo{}, mapFormatError(err)
+		}
+		info := StoredInfo{
+			Generation:  generation,
+			IndexID:     semantic.IndexID(persisted.state.ID),
+			IndexConfig: indexConfig,
+		}
+		if persisted.state.Pipeline != nil {
+			pipeline, err := pipelineConfigFromFormat(*persisted.state.Pipeline, indexConfig)
+			if err != nil {
+				return StoredInfo{}, mapFormatError(err)
+			}
+			info.Pipeline = pipeline
+			info.HasPipeline = true
+		}
+		return info, nil
+	})
+}
