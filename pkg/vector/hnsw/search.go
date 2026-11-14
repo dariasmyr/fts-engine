@@ -9,13 +9,13 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-type searchCandidate struct {
+type candidate struct {
 	node     nodeOrdinal
 	distance float64
 	accepted bool
 }
 
-type searchState struct {
+type state struct {
 	ctx           context.Context
 	index         *Index
 	preparedQuery []float32
@@ -26,29 +26,32 @@ type searchState struct {
 	stats         SearchStats
 }
 
-type searchRequest struct {
-	k            int
-	efSearch     int
-	visitLimit   int
-	allowedCount int
-	filter       vector.ResultFilter
+type request struct {
+	k                  int
+	configuredEfSearch int
+	appliedEfSearch    int
+	visitLimit         int
+	allowedCount       int
+	filter             vector.ResultFilter
 }
 
-func resolveSearchRequest(defaults SearchConfig, vectorCount, k int, config QueryConfig) (searchRequest, error) {
+func resolveSearchRequest(defaults SearchConfig, vectorCount, k int, config QueryConfig) (request, error) {
 	if k <= 0 {
-		return searchRequest{}, vector.ErrInvalidK
+		return request{}, vector.ErrInvalidK
 	}
 	if err := config.Validate(); err != nil {
-		return searchRequest{}, err
+		return request{}, err
 	}
 
-	efSearch := config.EfSearch
-	if efSearch == 0 {
-		efSearch = defaults.EfSearch
+	configuredEfSearch := config.EfSearch
+	if configuredEfSearch == 0 {
+		configuredEfSearch = defaults.EfSearch
 	}
-	efSearch = max(k, efSearch)
+	appliedEfSearch := max(k, configuredEfSearch)
 	if vectorCount > 0 {
-		efSearch = min(efSearch, vectorCount)
+		appliedEfSearch = min(appliedEfSearch, vectorCount)
+	} else {
+		appliedEfSearch = 0
 	}
 
 	visitLimit := config.VisitLimit
@@ -62,14 +65,17 @@ func resolveSearchRequest(defaults SearchConfig, vectorCount, k int, config Quer
 	allowedCount := vectorCount
 	if config.ResultFilter != nil {
 		if config.ResultFilter.TotalOrdinalCount() != uint32(vectorCount) {
-			return searchRequest{}, fmt.Errorf("%w: got %d, want %d", vector.ErrResultFilterSizeMismatch, config.ResultFilter.TotalOrdinalCount(), vectorCount)
+			return request{}, fmt.Errorf("%w: got %d, want %d", vector.ErrResultFilterSizeMismatch, config.ResultFilter.TotalOrdinalCount(), vectorCount)
 		}
 		allowedCount = config.ResultFilter.AllowedOrdinalCount()
 		if allowedCount < 0 || allowedCount > vectorCount {
-			return searchRequest{}, ErrInvalidQueryConfig
+			return request{}, ErrInvalidQueryConfig
 		}
 	}
-	return searchRequest{k: k, efSearch: efSearch, visitLimit: visitLimit, allowedCount: allowedCount, filter: config.ResultFilter}, nil
+	return request{
+		k: k, configuredEfSearch: configuredEfSearch, appliedEfSearch: appliedEfSearch,
+		visitLimit: visitLimit, allowedCount: allowedCount, filter: config.ResultFilter,
+	}, nil
 }
 
 func search(ctx context.Context, reader *Index, query []float32, prepared *vector.PreparedVector, k int, config QueryConfig) (SearchResult, error) {
@@ -98,24 +104,29 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 	} else if err := space.ValidatePreparedVector(*prepared); err != nil {
 		return SearchResult{}, err
 	}
-	complete := SearchResult{Hits: []vector.Hit{}, Stats: SearchStats{Termination: TerminationComplete}}
+	stats := SearchStats{
+		ConfiguredEfSearch: request.configuredEfSearch,
+		AppliedEfSearch:    request.appliedEfSearch,
+		Termination:        TerminationComplete,
+	}
+	complete := SearchResult{Hits: []vector.Hit{}, Stats: stats}
 	if vectorCount == 0 || request.allowedCount == 0 {
 		if err := ctx.Err(); err != nil {
 			return SearchResult{}, err
 		}
 		return complete, nil
 	}
-	workspace.resetSearch(vectorCount, space.Dimensions(), request.visitLimit, request.efSearch)
+	workspace.resetSearch(vectorCount, space.Dimensions(), request.visitLimit, request.appliedEfSearch)
 	entry, maxLevel, ok := reader.entryPoint()
 	if !ok || maxLevel < 0 || maxLevel > maxLevelLimit || uint64(entry) >= uint64(vectorCount) {
 		return SearchResult{}, errInvalidGraph
 	}
-	state := searchState{
+	state := state{
 		ctx: ctx, index: reader, preparedQuery: workspace.preparedQuery, filter: request.filter,
 		reusableQuery: prepared,
 		visitLimit:    request.visitLimit,
 		workspace:     workspace,
-		stats:         SearchStats{Termination: TerminationComplete},
+		stats:         stats,
 	}
 	entryCandidate, err := state.score(entry)
 	if err != nil {
@@ -124,49 +135,49 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 	// Sparse upper levels choose one local minimum; level 0 then widens into a beam.
 	entryCandidate, err = greedySearch(&state, entryCandidate, maxLevel)
 	if err != nil {
-		return finishSearch(state, state.acceptedResults(min(request.efSearch, request.allowedCount)), request.k, err)
+		return finishSearch(state, state.acceptedResults(min(request.appliedEfSearch, request.allowedCount)), request.k, err)
 	}
 	workspace.stopTrackingScored()
-	results, err := levelSearch(&state, entryCandidate, request.efSearch, request.allowedCount)
+	results, err := levelSearch(&state, entryCandidate, request.appliedEfSearch, request.allowedCount)
 	return finishSearch(state, results, request.k, err)
 }
 
-func greedySearch(state *searchState, current searchCandidate, maxLevel int) (searchCandidate, error) {
+func greedySearch(state *state, currentCandidate candidate, maxLevel int) (candidate, error) {
 	for level := maxLevel; level > 0; level-- {
 		for {
 			if err := state.ctx.Err(); err != nil {
-				return searchCandidate{}, err
+				return candidate{}, err
 			}
 			state.stats.ExpandedNodes++
-			best := current
-			neighbors, ok := state.index.neighborView(current.node, level)
+			best := currentCandidate
+			neighbors, ok := state.index.neighborView(currentCandidate.node, level)
 			if !ok {
-				return searchCandidate{}, errInvalidGraph
+				return candidate{}, errInvalidGraph
 			}
 			for i, neighbor := range neighbors {
 				if err := periodicContextError(state.ctx, i); err != nil {
-					return searchCandidate{}, err
+					return candidate{}, err
 				}
-				candidate, err := state.score(neighbor)
+				candidateScore, err := state.score(neighbor)
 				if err != nil {
-					return searchCandidate{}, err
+					return candidate{}, err
 				}
-				if candidate.distance < current.distance && navigationBetter(candidate, best) {
-					best = candidate
+				if candidateScore.distance < currentCandidate.distance && candidateCloser(candidateScore, best) {
+					best = candidateScore
 				}
 			}
-			if best.node == current.node {
+			if best.node == currentCandidate.node {
 				break
 			}
-			current = best
+			currentCandidate = best
 		}
 	}
-	return current, nil
+	return currentCandidate, nil
 }
 
 func levelSearch(
-	state *searchState,
-	entry searchCandidate,
+	state *state,
+	entry candidate,
 	efSearch, allowedCount int,
 ) (results resultHeap, err error) {
 	resultCapacity := min(efSearch, allowedCount)
@@ -265,9 +276,9 @@ func levelSearch(
 	return results, nil
 }
 
-func (state *searchState) score(node nodeOrdinal) (searchCandidate, error) {
+func (state *state) score(node nodeOrdinal) (candidate, error) {
 	if uint64(node) >= uint64(state.index.Len()) {
-		return searchCandidate{}, errInvalidGraph
+		return candidate{}, errInvalidGraph
 	}
 	if candidate, exists := state.workspace.candidate(node); exists {
 		return candidate, nil
@@ -275,15 +286,15 @@ func (state *searchState) score(node nodeOrdinal) (searchCandidate, error) {
 	// VisitedNodes and the visit budget count unique query-to-node scores across
 	// all levels. The cache prevents duplicate distance work through converging paths.
 	if state.stats.VisitedNodes >= state.visitLimit {
-		return searchCandidate{}, errVisitLimit
+		return candidate{}, errVisitLimit
 	}
 	ordinal := vector.Ordinal(node)
 	value := state.workspace.vector
 	if err := state.index.vectors.ReadVectorInto(state.ctx, ordinal, value); err != nil {
 		if state.ctx.Err() != nil {
-			return searchCandidate{}, state.ctx.Err()
+			return candidate{}, state.ctx.Err()
 		}
-		return searchCandidate{}, fmt.Errorf("%w: read vector row %d: %v", errInvalidGraph, ordinal, err)
+		return candidate{}, fmt.Errorf("%w: read vector row %d: %v", errInvalidGraph, ordinal, err)
 	}
 	var distance float64
 	if state.reusableQuery != nil {
@@ -292,10 +303,10 @@ func (state *searchState) score(node nodeOrdinal) (searchCandidate, error) {
 		distance = state.index.topology.space.DistancePrepared(state.preparedQuery, value)
 	}
 	if math.IsNaN(distance) || math.IsInf(distance, 0) {
-		return searchCandidate{}, errInvalidGraph
+		return candidate{}, errInvalidGraph
 	}
 	accepted := state.filter == nil || state.filter.Allows(ordinal)
-	candidate := searchCandidate{node: node, distance: distance, accepted: accepted}
+	candidate := candidate{node: node, distance: distance, accepted: accepted}
 	state.workspace.storeCandidate(candidate)
 	state.stats.VisitedNodes++
 	state.stats.DistanceComputations++
@@ -305,7 +316,7 @@ func (state *searchState) score(node nodeOrdinal) (searchCandidate, error) {
 	return candidate, nil
 }
 
-func (state *searchState) acceptedResults(capacity int) resultHeap {
+func (state *state) acceptedResults(capacity int) resultHeap {
 	results := newResultHeapWithBuffer(capacity, state.workspace.results)
 	for _, node := range state.workspace.scoredNodes {
 		candidate, _ := state.workspace.candidate(node)
@@ -324,7 +335,7 @@ func periodicContextError(ctx context.Context, iteration int) error {
 	return ctx.Err()
 }
 
-func finishSearch(state searchState, results resultHeap, k int, err error) (SearchResult, error) {
+func finishSearch(state state, results resultHeap, k int, err error) (SearchResult, error) {
 	if err != nil && !errors.Is(err, errVisitLimit) {
 		return SearchResult{}, err
 	}

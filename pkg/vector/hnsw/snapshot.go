@@ -79,7 +79,8 @@ func Restore(snapshot hnswmodel.Snapshot, vectors vector.PreparedVectorStore, co
 	}
 	if err := config.Validate(); err != nil || config.Build != build ||
 		snapshot.LevelZeroMaxNeighbors != snapshot.MaxNeighbors*2 ||
-		snapshot.BuildVersion == 0 || snapshot.LevelGeneratorVersion == 0 {
+		snapshot.BuildVersion == 0 || snapshot.BuildVersion > buildVersion ||
+		snapshot.LevelGeneratorVersion != levelGeneratorVersion {
 		return nil, errInvalidGraph
 	}
 

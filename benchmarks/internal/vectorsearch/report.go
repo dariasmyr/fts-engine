@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	SchemaVersion = "vector-ann.synthetic-phase6-baseline.v3"
+	SchemaVersion = "vector-ann.synthetic-phase6-baseline.v4"
 	BenchmarkName = "synthetic_phase6_baseline"
 )
 
@@ -89,11 +89,11 @@ type SearchParameters struct {
 }
 
 type RequestParameters struct {
-	K                 int                    `json:"k"`
-	RequestedEfSearch int                    `json:"requested_ef_search"`
-	EffectiveEfSearch int                    `json:"effective_ef_search"`
-	VisitLimit        int                    `json:"visit_limit"`
-	ResultFilter      FilterParametersReport `json:"result_filter"`
+	K                  int                    `json:"k"`
+	ConfiguredEfSearch int                    `json:"configured_ef_search"`
+	AppliedEfSearch    int                    `json:"applied_ef_search"`
+	VisitLimit         int                    `json:"visit_limit"`
+	ResultFilter       FilterParametersReport `json:"result_filter"`
 }
 
 type FilterParametersReport struct {
@@ -200,14 +200,14 @@ func WriteJSON(writer io.Writer, report Report) error {
 
 func WriteTable(writer io.Writer, report Report) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(table, "DATASET\tMETRIC\tORDER/PATH\tFILTER\tM\tEFC\tEFS(req/eff)\tSEED\tRECALL@K\tDOC-RECALL\tP50(us)\tP95(us)\tP99(us)\tVISITED\tDISTANCES\tINCOMPLETE"); err != nil {
+	if _, err := fmt.Fprintln(table, "DATASET\tMETRIC\tORDER/PATH\tFILTER\tM\tEFC\tEFS(config/applied)\tSEED\tRECALL@K\tDOC-RECALL\tP50(us)\tP95(us)\tP99(us)\tVISITED\tDISTANCES\tINCOMPLETE"); err != nil {
 		return err
 	}
 	for _, run := range report.Runs {
 		if _, err := fmt.Fprintf(table, "%s\t%s\t%s/%s\t%.1f%%\t%d\t%d\t%d/%d\t%d\t%.4f\t%.4f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f%%\n",
 			run.Dataset.Kind, run.Dataset.Metric, run.BuildOrder.Name, run.BuildPath,
 			run.Request.ResultFilter.EffectiveSelectivity*100, run.BuildParameters.MaxNeighbors,
-			run.BuildParameters.EfConstruction, run.Request.RequestedEfSearch, run.Request.EffectiveEfSearch, run.BuildParameters.Seed,
+			run.BuildParameters.EfConstruction, run.Request.ConfiguredEfSearch, run.Request.AppliedEfSearch, run.BuildParameters.Seed,
 			run.Quality.MeanRecallAtK, run.Quality.MeanDocumentRecallAtK,
 			float64(run.Latency.P50NS)/1e3, float64(run.Latency.P95NS)/1e3,
 			float64(run.Latency.P99NS)/1e3, run.SearchWork.AverageVisitedNodes, run.SearchWork.AverageDistanceComputations, run.SearchOutcome.IncompleteRate*100); err != nil {

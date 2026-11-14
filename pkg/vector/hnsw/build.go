@@ -46,20 +46,23 @@ func Build(
 	}
 
 	builder := newBuilder(config.Build, space, vectorCount, int(components))
-	scratch := make([]float32, space.Dimensions())
+	vectorContainer := make([]float32, space.Dimensions())
+	// for each vector in the source, read it and add it to the builder
 	for row := range vectorCount {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		ordinal := vector.Ordinal(row)
-		if err := source.ReadVectorInto(ctx, ordinal, scratch); err != nil {
-			return nil, fmt.Errorf("vector/hnsw: read source row %d: %w", ordinal, err)
+		if err := source.ReadVectorInto(ctx, ordinal, vectorContainer); err != nil {
+			return nil, fmt.Errorf("vector/hnsw: read source vector %d: %w", ordinal, err)
 		}
-		if err := builder.add(ctx, scratch); err != nil {
-			return nil, fmt.Errorf("vector/hnsw: add source row %d: %w", ordinal, err)
+		if err := builder.add(ctx, vectorContainer); err != nil {
+			return nil, fmt.Errorf("vector/hnsw: add source vector %d: %w", ordinal, err)
 		}
 	}
-	return builder.freeze(source, config)
+
+	// freeze the builder into an immutable index
+	return builder.freeze(ctx, source, config)
 }
 
 func checkedMultiply(a, b uint64) (uint64, bool) {

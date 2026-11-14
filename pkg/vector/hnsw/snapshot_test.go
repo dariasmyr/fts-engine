@@ -47,6 +47,9 @@ func TestSnapshotRestorePreservesSearchAndOrdinals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if restoredSnapshot := hnsw.Snapshot(restored); !reflect.DeepEqual(restoredSnapshot, snapshot) {
+		t.Fatal("Snapshot/Restore changed the validated topology")
+	}
 	got, err := restored.Search(context.Background(), []float32{1.1, 0}, 4, hnsw.QueryConfig{})
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +61,46 @@ func TestSnapshotRestorePreservesSearchAndOrdinals(t *testing.T) {
 	snapshot.Levels[0] = 63
 	if hnsw.Snapshot(index).Levels[0] == 63 {
 		t.Fatal("snapshot aliases immutable index topology")
+	}
+}
+
+func TestRestoreAcceptsOlderBuildAndRejectsUnknownVersions(t *testing.T) {
+	t.Parallel()
+
+	space, err := vector.NewSpace(1, vector.MetricL2Squared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectors, err := memorystore.New(space, [][]float32{{0}, {1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := hnsw.Config{
+		Build:  hnsw.BuildConfig{MaxNeighbors: 2, EfConstruction: 4, Seed: 7},
+		Search: hnsw.SearchConfig{EfSearch: 4, VisitLimit: 4},
+	}
+	index, err := hnsw.Build(t.Context(), vectors, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := hnsw.Snapshot(index)
+	currentVersion := snapshot.BuildVersion
+	if currentVersion < 2 {
+		t.Fatalf("current build version = %d, want at least 2", currentVersion)
+	}
+
+	snapshot.BuildVersion = currentVersion - 1
+	if _, err := hnsw.Restore(snapshot, vectors, config); err != nil {
+		t.Fatalf("Restore() older compatible build: %v", err)
+	}
+	snapshot.BuildVersion = currentVersion + 1
+	if _, err := hnsw.Restore(snapshot, vectors, config); err == nil {
+		t.Fatal("Restore() accepted an unknown future build version")
+	}
+	snapshot.BuildVersion = currentVersion
+	snapshot.LevelGeneratorVersion++
+	if _, err := hnsw.Restore(snapshot, vectors, config); err == nil {
+		t.Fatal("Restore() accepted an unknown level generator version")
 	}
 }
 

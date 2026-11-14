@@ -16,8 +16,8 @@ func (b *builder) vectorByNode(node nodeOrdinal) []float32 {
 	return b.graph.values[start : start+b.space.Dimensions()]
 }
 
-func (b *builder) selectNeighbors(ctx context.Context, candidates []searchCandidate, limit int) ([]nodeOrdinal, error) {
-	if err := b.orderNeighbors(ctx, candidates); err != nil {
+func (b *builder) selectClosestNeighbors(ctx context.Context, candidates []candidate, limit int) ([]nodeOrdinal, error) {
+	if err := b.sortNeighbors(ctx, candidates); err != nil {
 		return nil, err
 	}
 	selected := make([]nodeOrdinal, 0, min(limit, len(candidates)))
@@ -30,6 +30,8 @@ func (b *builder) selectNeighbors(ctx context.Context, candidates []searchCandid
 			return nil, err
 		}
 		work++
+
+		// diverce means that the candidate is not too close to any already selected neighbor, so we can add it to the selected list.
 		diverse := true
 		for _, existing := range selected {
 			if err := periodicContextError(ctx, work); err != nil {
@@ -41,6 +43,8 @@ func (b *builder) selectNeighbors(ctx context.Context, candidates []searchCandid
 				break
 			}
 		}
+		// If the candidate is not too close to any already selected neighbor,
+		// we add it to the selected list. If not, we add it to the rejected list.
 		if diverse {
 			selected = append(selected, candidate.node)
 			if len(selected) == limit {
@@ -50,7 +54,7 @@ func (b *builder) selectNeighbors(ctx context.Context, candidates []searchCandid
 			rejected = append(rejected, candidate.node)
 		}
 	}
-	// Fill unused slots only after choosing diverse neighbors. This may
+	// fill unused slots only after choosing diverse neighbors. This may
 	// increase graph degree and recall, at the cost of more traversed links.
 	for i, node := range rejected {
 		if err := periodicContextError(ctx, i); err != nil {
@@ -64,11 +68,12 @@ func (b *builder) selectNeighbors(ctx context.Context, candidates []searchCandid
 	return selected, ctx.Err()
 }
 
-func (b *builder) orderNeighbors(ctx context.Context, candidates []searchCandidate) error {
+func (b *builder) sortNeighbors(ctx context.Context, candidates []candidate) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	slices.SortFunc(candidates, func(a, c searchCandidate) int {
+	// sort candidates by distance, then by node ordinal
+	slices.SortFunc(candidates, func(a, c candidate) int {
 		if a.distance < c.distance {
 			return -1
 		}
@@ -86,42 +91,48 @@ func (b *builder) orderNeighbors(ctx context.Context, candidates []searchCandida
 	return ctx.Err()
 }
 
-func (b *builder) addReverseLink(ctx context.Context, owner, neighbor nodeOrdinal, level int) error {
-	links := b.graph.nodes[owner].links[level]
-	candidates := resetSearchCandidates(b.workspace.neighbors, len(links)+1)
+// addReverseLink adds existingNode → newNode. If existingNode is full, its
+// links are selected again using distances from existingNode.
+func (b *builder) addReverseLink(ctx context.Context, existingNode, newNode nodeOrdinal, level int) error {
+	links := b.graph.nodes[existingNode].links[level]
+	candidates := prepareCandidateBuffer(b.workspace.reverseLinkCandidates, len(links)+1)
 	for i, link := range links {
 		if err := periodicContextError(ctx, i); err != nil {
 			return err
 		}
-		candidates = append(candidates, searchCandidate{node: link, distance: b.distanceNodes(owner, link)})
+		candidates = append(candidates, candidate{node: link, distance: b.distanceNodes(existingNode, link)})
 	}
-	candidates = append(candidates, searchCandidate{node: neighbor, distance: b.distanceNodes(owner, neighbor)})
+	candidates = append(candidates, candidate{node: newNode, distance: b.distanceNodes(existingNode, newNode)})
+	// the maximum number of links allowed for a node is determined by the level
+	// base level (level 0) allows for twice as many links as higher levels
 	limit := b.config.MaxNeighbors
 	if level == 0 {
 		limit *= 2
 	}
-	// Reverse insertion can overflow an existing node even though the new node
-	// selected only MaxNeighbors links, so prune relative to the existing owner.
+	closestNeighbors := links
+	// if the number of candidates exceeds the limit, we select the closest neighbors
 	if len(candidates) > limit {
 		var err error
-		links, err = b.selectNeighbors(ctx, candidates, limit)
+		closestNeighbors, err = b.selectClosestNeighbors(ctx, candidates, limit)
 		if err != nil {
 			return err
 		}
 	} else {
-		if err := b.orderNeighbors(ctx, candidates); err != nil {
+		// if the number of candidates is within the limit, we sort them and keep all
+		if err := b.sortNeighbors(ctx, candidates); err != nil {
 			return err
 		}
-		if cap(links) < len(candidates) {
-			links = make([]nodeOrdinal, len(candidates))
+		if cap(closestNeighbors) < len(candidates) {
+			closestNeighbors = make([]nodeOrdinal, len(candidates))
 		} else {
-			links = links[:len(candidates)]
+			closestNeighbors = closestNeighbors[:len(candidates)]
 		}
+		// fill the closestNeighbors slice with the node ordinals from the candidates
 		for i := range candidates {
-			links[i] = candidates[i].node
+			closestNeighbors[i] = candidates[i].node
 		}
 	}
-	b.graph.nodes[owner].links[level] = links
-	b.workspace.neighbors = candidates[:0]
+	b.graph.nodes[existingNode].links[level] = closestNeighbors
+	b.workspace.reverseLinkCandidates = candidates[:0]
 	return ctx.Err()
 }

@@ -7,33 +7,33 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
-func navigationBetter(a, b searchCandidate) bool {
+func candidateCloser(a, b candidate) bool {
 	if a.distance != b.distance {
 		return a.distance < b.distance
 	}
 	return a.node < b.node
 }
 
-func resultBetter(a, b searchCandidate) bool {
+func resultBetter(a, b candidate) bool {
 	if a.distance != b.distance {
 		return a.distance < b.distance
 	}
 	return a.node < b.node
 }
 
-func resultWorse(a, b searchCandidate) bool { return resultBetter(b, a) }
+func resultWorse(a, b candidate) bool { return resultBetter(b, a) }
 
 type candidateHeap struct {
-	items []searchCandidate
+	items []candidate
 }
 
 func (h *candidateHeap) Len() int { return len(h.items) }
 
-func (h *candidateHeap) Push(value searchCandidate) {
+func (h *candidateHeap) Push(value candidate) {
 	h.items = append(h.items, value)
 	for child := len(h.items) - 1; child > 0; {
 		parent := (child - 1) / 2
-		if !navigationBetter(h.items[child], h.items[parent]) {
+		if !candidateCloser(h.items[child], h.items[parent]) {
 			break
 		}
 		h.items[parent], h.items[child] = h.items[child], h.items[parent]
@@ -41,9 +41,9 @@ func (h *candidateHeap) Push(value searchCandidate) {
 	}
 }
 
-func (h *candidateHeap) Pop() (searchCandidate, bool) {
+func (h *candidateHeap) Pop() (candidate, bool) {
 	if len(h.items) == 0 {
-		return searchCandidate{}, false
+		return candidate{}, false
 	}
 	result := h.items[0]
 	last := len(h.items) - 1
@@ -56,10 +56,10 @@ func (h *candidateHeap) Pop() (searchCandidate, bool) {
 		}
 		best := left
 		right := left + 1
-		if right < len(h.items) && navigationBetter(h.items[right], h.items[left]) {
+		if right < len(h.items) && candidateCloser(h.items[right], h.items[left]) {
 			best = right
 		}
-		if !navigationBetter(h.items[best], h.items[parent]) {
+		if !candidateCloser(h.items[best], h.items[parent]) {
 			break
 		}
 		h.items[parent], h.items[best] = h.items[best], h.items[parent]
@@ -69,24 +69,24 @@ func (h *candidateHeap) Pop() (searchCandidate, bool) {
 }
 
 type resultHeap struct {
-	items    []searchCandidate
+	items    []candidate
 	capacity int
 }
 
-func newResultHeapWithBuffer(capacity int, buffer []searchCandidate) resultHeap {
-	return resultHeap{items: resetSearchCandidates(buffer, capacity), capacity: capacity}
+func newResultHeapWithBuffer(capacity int, buffer []candidate) resultHeap {
+	return resultHeap{items: prepareCandidateBuffer(buffer, capacity), capacity: capacity}
 }
 
 func (h *resultHeap) Len() int { return len(h.items) }
 
-func (h *resultHeap) Worst() (searchCandidate, bool) {
+func (h *resultHeap) Worst() (candidate, bool) {
 	if len(h.items) == 0 {
-		return searchCandidate{}, false
+		return candidate{}, false
 	}
 	return h.items[0], true
 }
 
-func (h *resultHeap) Add(value searchCandidate) {
+func (h *resultHeap) Add(value candidate) {
 	if h.capacity == 0 || math.IsNaN(value.distance) || math.IsInf(value.distance, 0) {
 		return
 	}
@@ -119,7 +119,7 @@ func (h *resultHeap) Hits(k int) []vector.Hit {
 	return hits
 }
 
-func compareResults(a, b searchCandidate) int {
+func compareResults(a, b candidate) int {
 	if resultBetter(a, b) {
 		return -1
 	}

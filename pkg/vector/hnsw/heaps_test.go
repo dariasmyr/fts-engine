@@ -11,7 +11,7 @@ func TestResultHeapRetainsLowestOrdinalsForEqualDistances(t *testing.T) {
 
 	heap := newResultHeapWithBuffer(3, nil)
 	for _, node := range []nodeOrdinal{3, 1, 2, 0} {
-		heap.Add(searchCandidate{node: node, distance: 1, accepted: true})
+		heap.Add(candidate{node: node, distance: 1, accepted: true})
 	}
 	hits := heap.Hits(3)
 	for ordinal, hit := range hits {

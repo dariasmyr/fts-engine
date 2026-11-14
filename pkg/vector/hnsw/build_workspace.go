@@ -4,10 +4,10 @@ type buildWorkspace struct {
 	seenEpoch []uint32
 	epoch     uint32
 
-	frontier  []searchCandidate
-	results   []searchCandidate
-	entries   []nodeOrdinal
-	neighbors []searchCandidate
+	pendingCandidates     []candidate
+	nearestCandidates     []candidate
+	levelStartNodes       []nodeOrdinal
+	reverseLinkCandidates []candidate
 }
 
 func (w *buildWorkspace) nextEpoch() {

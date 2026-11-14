@@ -15,17 +15,19 @@ func TestResolveSearchRequestAppliesDefaultsOverridesAndBounds(t *testing.T) {
 
 	defaults := SearchConfig{EfSearch: 8, VisitLimit: 9}
 	tests := []struct {
-		name      string
-		count     int
-		k         int
-		config    QueryConfig
-		wantEf    int
-		wantVisit int
+		name             string
+		count            int
+		k                int
+		config           QueryConfig
+		wantConfiguredEf int
+		wantAppliedEf    int
+		wantVisit        int
 	}{
-		{name: "defaults", count: 10, k: 3, wantEf: 8, wantVisit: 9},
-		{name: "request overrides", count: 10, k: 2, config: QueryConfig{EfSearch: 5, VisitLimit: 6}, wantEf: 5, wantVisit: 6},
-		{name: "k raises ef", count: 10, k: 7, config: QueryConfig{EfSearch: 2}, wantEf: 7, wantVisit: 9},
-		{name: "vector count caps budgets", count: 4, k: 2, config: QueryConfig{EfSearch: 20, VisitLimit: 20}, wantEf: 4, wantVisit: 4},
+		{name: "defaults", count: 10, k: 3, wantConfiguredEf: 8, wantAppliedEf: 8, wantVisit: 9},
+		{name: "request overrides", count: 10, k: 2, config: QueryConfig{EfSearch: 5, VisitLimit: 6}, wantConfiguredEf: 5, wantAppliedEf: 5, wantVisit: 6},
+		{name: "k raises ef", count: 10, k: 7, config: QueryConfig{EfSearch: 2}, wantConfiguredEf: 2, wantAppliedEf: 7, wantVisit: 9},
+		{name: "vector count caps execution budget", count: 4, k: 2, config: QueryConfig{EfSearch: 20, VisitLimit: 20}, wantConfiguredEf: 20, wantAppliedEf: 4, wantVisit: 4},
+		{name: "empty index applies zero", count: 0, k: 2, config: QueryConfig{EfSearch: 20}, wantConfiguredEf: 20, wantAppliedEf: 0, wantVisit: 9},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -34,8 +36,8 @@ func TestResolveSearchRequestAppliesDefaultsOverridesAndBounds(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.efSearch != tt.wantEf || got.visitLimit != tt.wantVisit {
-				t.Fatalf("request budgets = ef:%d visit:%d, want ef:%d visit:%d", got.efSearch, got.visitLimit, tt.wantEf, tt.wantVisit)
+			if got.configuredEfSearch != tt.wantConfiguredEf || got.appliedEfSearch != tt.wantAppliedEf || got.visitLimit != tt.wantVisit {
+				t.Fatalf("request budgets = configured ef:%d applied ef:%d visit:%d, want %d/%d/%d", got.configuredEfSearch, got.appliedEfSearch, got.visitLimit, tt.wantConfiguredEf, tt.wantAppliedEf, tt.wantVisit)
 			}
 		})
 	}

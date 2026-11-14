@@ -13,7 +13,7 @@ func TestSearchWorkspaceDenseResetDoesNotLeakState(t *testing.T) {
 	if !workspace.nodes.dense {
 		t.Fatal("workspace selected sparse state, want dense")
 	}
-	workspace.storeCandidate(searchCandidate{node: 7, distance: 1})
+	workspace.storeCandidate(candidate{node: 7, distance: 1})
 	if !workspace.markSeen(7) {
 		t.Fatal("first markSeen() = false")
 	}
@@ -57,7 +57,7 @@ func TestSearchWorkspaceSparseResetDoesNotLeakState(t *testing.T) {
 	if workspace.nodes.dense {
 		t.Fatal("workspace selected dense state, want sparse")
 	}
-	workspace.storeCandidate(searchCandidate{node: 7, distance: 1})
+	workspace.storeCandidate(candidate{node: 7, distance: 1})
 	if !workspace.markSeen(7) {
 		t.Fatal("first markSeen() = false")
 	}

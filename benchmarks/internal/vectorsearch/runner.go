@@ -146,9 +146,9 @@ func runBuild(ctx context.Context, config Config, dataset Dataset, metric vector
 	}
 
 	runs := make([]RunReport, 0, len(config.EfSearch)*len(truth))
-	for _, requestedEfSearch := range config.EfSearch {
+	for _, configuredEfSearch := range config.EfSearch {
 		for _, filteredTruth := range truth {
-			run, err := runQueries(ctx, config, dataset, metric, order, buildPath, reader, filteredTruth, hnswConfig, timing, requestedEfSearch)
+			run, err := runQueries(ctx, config, dataset, metric, order, buildPath, reader, filteredTruth, hnswConfig, timing, configuredEfSearch)
 			if err != nil {
 				return nil, err
 			}
@@ -198,12 +198,12 @@ func ordinalOrder(count int, seed uint64) []int {
 	return order
 }
 
-func runQueries(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, buildPath string, reader *hnsw.Index, truth truthSweep, hnswConfig hnsw.Config, timing buildTiming, requestedEfSearch int) (RunReport, error) {
-	effectiveEfSearch := max(config.K, requestedEfSearch)
+func runQueries(ctx context.Context, config Config, dataset Dataset, metric vector.Metric, order BuildOrder, buildPath string, reader *hnsw.Index, truth truthSweep, hnswConfig hnsw.Config, timing buildTiming, configuredEfSearch int) (RunReport, error) {
 	latencies := make([]time.Duration, len(dataset.Queries))
 	var recall, documentRecall, exactDocuments, annDocuments float64
 	var visited, expanded, distances, rejected, incomplete, visitLimit int
-	request := hnsw.QueryConfig{EfSearch: effectiveEfSearch, VisitLimit: config.VisitLimit, ResultFilter: truth.filter}
+	var appliedEfSearch int
+	request := hnsw.QueryConfig{EfSearch: configuredEfSearch, VisitLimit: config.VisitLimit, ResultFilter: truth.filter}
 	for i, query := range dataset.Queries {
 		started := time.Now()
 		result, err := reader.Search(ctx, query, config.K, request)
@@ -219,6 +219,7 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 		expanded += result.Stats.ExpandedNodes
 		distances += result.Stats.DistanceComputations
 		rejected += result.Stats.RejectedNodes
+		appliedEfSearch = result.Stats.AppliedEfSearch
 		if result.Incomplete {
 			incomplete++
 		}
@@ -252,7 +253,7 @@ func runQueries(ctx context.Context, config Config, dataset Dataset, metric vect
 			DefaultVisitLimit: hnswConfig.Search.VisitLimit, MaxVisitLimit: config.VisitLimit, MaxK: config.K,
 		},
 		Request: RequestParameters{
-			K: config.K, RequestedEfSearch: requestedEfSearch, EffectiveEfSearch: effectiveEfSearch,
+			K: config.K, ConfiguredEfSearch: configuredEfSearch, AppliedEfSearch: appliedEfSearch,
 			VisitLimit: config.VisitLimit, ResultFilter: truth.report,
 		},
 		GraphStats: GraphStatsReport{
@@ -399,7 +400,7 @@ func validateConfig(config Config) error {
 	}
 	for _, efSearch := range config.EfSearch {
 		if efSearch <= 0 {
-			return fmt.Errorf("vectorsearch: requested ef search must be positive")
+			return fmt.Errorf("vectorsearch: configured ef search must be positive")
 		}
 	}
 	for _, selectivity := range config.FilterSelectivities {

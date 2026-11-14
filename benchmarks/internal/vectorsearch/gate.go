@@ -1,11 +1,11 @@
 package vectorsearch
 
 // QualityGate describes the minimum quality required for one dataset, metric,
-// and effective ANN search budget.
+// and applied ANN search budget.
 type QualityGate struct {
 	Dataset              DatasetKind
 	Metric               string
-	EffectiveEfSearch    int
+	AppliedEfSearch      int
 	MinRecallAtK         float64
 	MinDocumentRecallAtK float64
 	RequireComplete      bool
@@ -24,7 +24,7 @@ func CheckQualityGates(report Report, gates []QualityGate) []QualityGateFailure 
 	var failures []QualityGateFailure
 	for _, run := range report.Runs {
 		for _, gate := range gates {
-			if run.Dataset.Kind != gate.Dataset || run.Dataset.Metric != gate.Metric || run.Request.EffectiveEfSearch != gate.EffectiveEfSearch {
+			if run.Dataset.Kind != gate.Dataset || run.Dataset.Metric != gate.Metric || run.Request.AppliedEfSearch != gate.AppliedEfSearch {
 				continue
 			}
 			if run.Quality.MeanRecallAtK < gate.MinRecallAtK {

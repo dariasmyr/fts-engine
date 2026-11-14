@@ -21,8 +21,8 @@ type searchWorkspace struct {
 	scoredNodes   []nodeOrdinal
 	preparedQuery []float32
 	vector        []float32
-	frontier      []searchCandidate
-	results       []searchCandidate
+	frontier      []candidate
+	results       []candidate
 	trackScored   bool
 }
 
@@ -30,11 +30,11 @@ type nodeSearchState struct {
 	dense bool
 	epoch uint32
 
-	candidates     []searchCandidate
+	candidates     []candidate
 	candidateEpoch []uint32
 	seenEpoch      []uint32
 
-	sparseCandidates map[nodeOrdinal]searchCandidate
+	sparseCandidates map[nodeOrdinal]candidate
 	sparseSeen       map[nodeOrdinal]struct{}
 }
 
@@ -71,8 +71,8 @@ func (w *searchWorkspace) prepareQuery(dimensions int) {
 func (w *searchWorkspace) resetSearch(nodeCount, dimensions, visitLimit, efSearch int) {
 	w.scoredNodes = w.scoredNodes[:0]
 	w.trackScored = true
-	w.frontier = resetSearchCandidates(w.frontier, min(nodeCount, efSearch))
-	w.results = resetSearchCandidates(w.results, min(nodeCount, efSearch))
+	w.frontier = prepareCandidateBuffer(w.frontier, min(nodeCount, efSearch))
+	w.results = prepareCandidateBuffer(w.results, min(nodeCount, efSearch))
 	w.vector = resetFloat32s(w.vector, dimensions)
 
 	denseLimit := maxDenseSearchNodes
@@ -101,7 +101,7 @@ func (w *searchWorkspace) resetSearch(nodeCount, dimensions, visitLimit, efSearc
 	w.nodes.seenEpoch = nil
 	initialRows := min(nodeCount, visitLimit, sparseSearchInitialRows)
 	if w.nodes.sparseCandidates == nil {
-		w.nodes.sparseCandidates = make(map[nodeOrdinal]searchCandidate, initialRows)
+		w.nodes.sparseCandidates = make(map[nodeOrdinal]candidate, initialRows)
 	} else {
 		clear(w.nodes.sparseCandidates)
 	}
@@ -112,10 +112,10 @@ func (w *searchWorkspace) resetSearch(nodeCount, dimensions, visitLimit, efSearc
 	}
 }
 
-func (w *searchWorkspace) candidate(node nodeOrdinal) (searchCandidate, bool) {
+func (w *searchWorkspace) candidate(node nodeOrdinal) (candidate, bool) {
 	if w.nodes.dense {
 		if uint64(node) >= uint64(len(w.nodes.candidates)) || w.nodes.candidateEpoch[node] != w.nodes.epoch {
-			return searchCandidate{}, false
+			return candidate{}, false
 		}
 		return w.nodes.candidates[node], true
 	}
@@ -123,7 +123,7 @@ func (w *searchWorkspace) candidate(node nodeOrdinal) (searchCandidate, bool) {
 	return candidate, ok
 }
 
-func (w *searchWorkspace) storeCandidate(candidate searchCandidate) {
+func (w *searchWorkspace) storeCandidate(candidate candidate) {
 	if w.nodes.dense {
 		w.nodes.candidates[candidate.node] = candidate
 		w.nodes.candidateEpoch[candidate.node] = w.nodes.epoch
@@ -191,16 +191,16 @@ func (w *searchWorkspace) prepareForPool() {
 	}
 }
 
-func resetSearchCandidates(values []searchCandidate, capacity int) []searchCandidate {
-	if cap(values) < capacity {
-		return make([]searchCandidate, 0, capacity)
+func prepareCandidateBuffer(buffer []candidate, requiredCapacity int) []candidate {
+	if cap(buffer) < requiredCapacity {
+		return make([]candidate, 0, requiredCapacity)
 	}
-	return values[:0]
+	return buffer[:0]
 }
 
-func resetCandidateSlots(values []searchCandidate, length int) []searchCandidate {
+func resetCandidateSlots(values []candidate, length int) []candidate {
 	if cap(values) < length {
-		return make([]searchCandidate, length)
+		return make([]candidate, length)
 	}
 	return values[:length]
 }

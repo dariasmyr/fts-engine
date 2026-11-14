@@ -165,13 +165,17 @@ func TestPercentileNearestRankWithoutMutatingInput(t *testing.T) {
 func TestReportJSON(t *testing.T) {
 	report := Report{SchemaVersion: SchemaVersion, Benchmark: BenchmarkName, Runs: []RunReport{{
 		Dataset: DatasetReport{Kind: DatasetUniform, Hash: "abc", Metric: "l2_squared", Dimensions: 4, VectorCount: 8, QueryCount: 2},
-		Request: RequestParameters{K: 2, RequestedEfSearch: 1, EffectiveEfSearch: 2, VisitLimit: 8,
+		Request: RequestParameters{K: 2, ConfiguredEfSearch: 1, AppliedEfSearch: 2, VisitLimit: 8,
 			ResultFilter: FilterParametersReport{RequestedSelectivity: 1, EffectiveSelectivity: 1, EligibleOrdinals: 8, Method: "all_ordinals"}},
 		Mode: "hnsw_ann",
 	}}}
 	var output bytes.Buffer
 	if err := WriteJSON(&output, report); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"configured_ef_search": 1`) ||
+		!strings.Contains(output.String(), `"applied_ef_search": 2`) {
+		t.Fatalf("report omitted ef search diagnostics:\n%s", output.String())
 	}
 	var decoded Report
 	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
@@ -231,7 +235,7 @@ func TestSmokeRunner(t *testing.T) {
 		if run.BuildPath != BuildPathProduction || run.Dataset.GeneratorVersion != SyntheticGeneratorVersion {
 			t.Fatalf("run %d provenance = path %q generator %q", i, run.BuildPath, run.Dataset.GeneratorVersion)
 		}
-		if run.Request.EffectiveEfSearch != max(config.K, run.Request.RequestedEfSearch) {
+		if run.Request.AppliedEfSearch != min(max(config.K, run.Request.ConfiguredEfSearch), config.VectorCount) {
 			t.Fatalf("run %d efSearch = %+v", i, run.Request)
 		}
 		if run.GraphStats.VectorCount != config.VectorCount || run.StorageStats.VectorRows != config.VectorCount {
@@ -284,14 +288,14 @@ func TestQualityGateSmokeRunner(t *testing.T) {
 	for _, dataset := range config.DatasetKinds {
 		for _, metric := range config.Metrics {
 			gates = append(gates, QualityGate{
-				Dataset: dataset, Metric: metric.String(), EffectiveEfSearch: 64,
+				Dataset: dataset, Metric: metric.String(), AppliedEfSearch: 64,
 				MinRecallAtK: 0.90, MinDocumentRecallAtK: 0.90, RequireComplete: true,
 			})
 		}
 	}
 	if failures := CheckQualityGates(report, gates); len(failures) != 0 {
 		for _, failure := range failures {
-			t.Errorf("quality gate failed dataset=%s metric=%s ef=%d metric=%s got=%v expected=%v", failure.Run.Dataset.Kind, failure.Run.Dataset.Metric, failure.Run.Request.EffectiveEfSearch, failure.Metric, failure.Got, failure.Expected)
+			t.Errorf("quality gate failed dataset=%s metric=%s ef=%d metric=%s got=%v expected=%v", failure.Run.Dataset.Kind, failure.Run.Dataset.Metric, failure.Run.Request.AppliedEfSearch, failure.Metric, failure.Got, failure.Expected)
 		}
 	}
 }

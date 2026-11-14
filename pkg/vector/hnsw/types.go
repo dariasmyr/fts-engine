@@ -25,6 +25,12 @@ func (c QueryConfig) Validate() error {
 
 // SearchStats describes HNSW traversal work for one request.
 type SearchStats struct {
+	// ConfiguredEfSearch is the query override, or the index default when the
+	// override is zero.
+	ConfiguredEfSearch int
+	// AppliedEfSearch is the runtime limit after raising ConfiguredEfSearch to
+	// at least k and capping it by the index size. It is zero for an empty index.
+	AppliedEfSearch      int
 	VisitedNodes         int
 	ExpandedNodes        int
 	UpperExpandedNodes   int

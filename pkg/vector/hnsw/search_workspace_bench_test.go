@@ -35,12 +35,12 @@ func BenchmarkSearchWorkspacePool(b *testing.B) {
 }
 
 func benchmarkWorkspaceRetainedBytes(workspace *searchWorkspace) uintptr {
-	return uintptr(cap(workspace.nodes.candidates))*unsafe.Sizeof(searchCandidate{}) +
+	return uintptr(cap(workspace.nodes.candidates))*unsafe.Sizeof(candidate{}) +
 		uintptr(cap(workspace.nodes.candidateEpoch))*unsafe.Sizeof(uint32(0)) +
 		uintptr(cap(workspace.nodes.seenEpoch))*unsafe.Sizeof(uint32(0)) +
 		uintptr(cap(workspace.scoredNodes))*unsafe.Sizeof(nodeOrdinal(0)) +
 		uintptr(cap(workspace.preparedQuery))*unsafe.Sizeof(float32(0)) +
 		uintptr(cap(workspace.vector))*unsafe.Sizeof(float32(0)) +
-		uintptr(cap(workspace.frontier))*unsafe.Sizeof(searchCandidate{}) +
-		uintptr(cap(workspace.results))*unsafe.Sizeof(searchCandidate{})
+		uintptr(cap(workspace.frontier))*unsafe.Sizeof(candidate{}) +
+		uintptr(cap(workspace.results))*unsafe.Sizeof(candidate{})
 }
