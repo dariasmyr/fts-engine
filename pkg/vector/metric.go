@@ -245,12 +245,3 @@ func (s Space) prepareIntoValidated(dst, value []float32, normSquared float64) {
 		}
 	}
 }
-
-func dotFloat64(a, b []float32) float64 {
-	var sum float64
-	// We don't check dimensions here because the caller is expected to have validated them.
-	for i := range a {
-		sum += float64(a[i]) * float64(b[i])
-	}
-	return sum
-}

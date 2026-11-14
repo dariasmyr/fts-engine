@@ -174,6 +174,103 @@ func TestBuildRecallAtTen(t *testing.T) {
 	}
 }
 
+func TestBuildCosineTopologyAndRecallAtTen(t *testing.T) {
+	t.Parallel()
+
+	const (
+		rows       = 300
+		dimensions = 768
+		queries    = 20
+	)
+	values := make([]float32, rows*dimensions)
+	randomState := uint64(1)
+	for i := range values {
+		randomState = randomState*6364136223846793005 + 1442695040888963407
+		values[i] = float32(int32(randomState>>32)) / float32(1<<31)
+	}
+	space, err := vector.NewSpace(dimensions, vector.MetricCosine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for row := range rows {
+		value := values[row*dimensions : (row+1)*dimensions]
+		if err := space.PrepareInto(value, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := memorystore.NewPrepared(space, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		Build:  BuildConfig{MaxNeighbors: 16, EfConstruction: 64, Seed: 1},
+		Search: SearchConfig{EfSearch: 64, VisitLimit: rows},
+	}
+	first, err := Build(t.Context(), store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Build(t.Context(), store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSnapshot := Snapshot(first)
+	secondSnapshot := Snapshot(second)
+	if !reflect.DeepEqual(firstSnapshot, secondSnapshot) {
+		t.Fatal("cosine builds with identical inputs and seed produced different topologies")
+	}
+	assertTopologyInvariants(t, firstSnapshot)
+	fingerprint := sha256.Sum256([]byte(fmt.Sprintf("%#v", firstSnapshot)))
+	const baseline = "71dfd2b5d7776b77a6b1078c34cc56d1a2c2e3b3c04fcc5d973ed13975f41040"
+	if got := fmt.Sprintf("%x", fingerprint); got != baseline {
+		t.Fatalf("cosine topology fingerprint = %s, want baseline %s", got, baseline)
+	}
+
+	matches := 0
+	for queryIndex := range queries {
+		queryNode := queryIndex * (rows / queries)
+		query := values[queryNode*dimensions : (queryNode+1)*dimensions]
+		candidates := make([]candidate, rows)
+		for row := range rows {
+			candidates[row] = candidate{
+				node:     nodeOrdinal(row),
+				distance: space.DistancePrepared(query, values[row*dimensions:(row+1)*dimensions]),
+			}
+		}
+		slices.SortFunc(candidates, func(a, c candidate) int {
+			if candidateCloser(a, c) {
+				return -1
+			}
+			if candidateCloser(c, a) {
+				return 1
+			}
+			return 0
+		})
+		result, err := first.Search(
+			t.Context(),
+			query,
+			10,
+			QueryConfig{EfSearch: 64, VisitLimit: rows},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, hit := range result.Hits {
+			for _, exact := range candidates[:10] {
+				if nodeOrdinal(hit.Ordinal) == exact.node {
+					matches++
+					break
+				}
+			}
+		}
+	}
+	recall := float64(matches) / float64(queries*10)
+	t.Logf("cosine recall@10=%.4f", recall)
+	if recall < 0.99 {
+		t.Fatalf("cosine recall@10 = %.4f, want at least 0.99", recall)
+	}
+}
+
 func assertTopologyInvariants(t *testing.T, snapshot hnswmodel.Snapshot) {
 	t.Helper()
 

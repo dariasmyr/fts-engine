@@ -44,9 +44,38 @@ func BenchmarkBuildMatrix(b *testing.B) {
 	}
 }
 
+func BenchmarkBuildMatrixCosine(b *testing.B) {
+	const (
+		rows       = 1_000
+		dimensions = 768
+	)
+	source := newBuildBenchmarkStoreForMetric(b, rows, dimensions, vector.MetricCosine)
+	config := Config{
+		Build:  BuildConfig{MaxNeighbors: 16, EfConstruction: 64, Seed: 1},
+		Search: SearchConfig{EfSearch: 32, VisitLimit: rows},
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		index, err := Build(context.Background(), source, config)
+		if err != nil {
+			b.Fatal(err)
+		}
+		buildBenchmarkIndex = index
+	}
+	b.ReportMetric(float64(rows*dimensions*4), "source-bytes")
+}
+
 func newBuildBenchmarkStore(tb testing.TB, rows, dimensions int) vector.PreparedVectorStore {
+	return newBuildBenchmarkStoreForMetric(tb, rows, dimensions, vector.MetricL2Squared)
+}
+
+func newBuildBenchmarkStoreForMetric(
+	tb testing.TB,
+	rows, dimensions int,
+	metric vector.Metric,
+) vector.PreparedVectorStore {
 	tb.Helper()
-	space, err := vector.NewSpace(dimensions, vector.MetricL2Squared)
+	space, err := vector.NewSpace(dimensions, metric)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -54,6 +83,12 @@ func newBuildBenchmarkStore(tb testing.TB, rows, dimensions int) vector.Prepared
 	for row := range rows {
 		for dimension := range dimensions {
 			values[row*dimensions+dimension] = float32(math.Sin(float64((row + 1) * (dimension + 1))))
+		}
+		if err := space.PrepareInto(
+			values[row*dimensions:(row+1)*dimensions],
+			values[row*dimensions:(row+1)*dimensions],
+		); err != nil {
+			tb.Fatal(err)
 		}
 	}
 	store, err := memorystore.NewPrepared(space, values)
