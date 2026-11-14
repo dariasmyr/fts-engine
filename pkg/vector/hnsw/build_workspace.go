@@ -6,7 +6,7 @@ type buildWorkspace struct {
 
 	pendingCandidates     []candidate
 	nearestCandidates     []candidate
-	levelStartNodes       []nodeOrdinal
+	levelStartCandidates  []candidate
 	reverseLinkCandidates []candidate
 
 	reverseDistanceChecks uint64

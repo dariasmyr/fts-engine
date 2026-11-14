@@ -202,10 +202,15 @@ func (b *builder) findLinkToUnreachableNode(
 	unreachableNode nodeOrdinal,
 	state level0Reachability,
 ) (level0LinkChange, error) {
+	startCandidates := []candidate{{
+		node:     b.graph.entry,
+		distance: b.distanceNodes(unreachableNode, b.graph.entry),
+		accepted: true,
+	}}
 	reachableCandidates, err := b.findNearestCandidatesOnLevel(
 		ctx,
 		unreachableNode,
-		[]nodeOrdinal{b.graph.entry},
+		startCandidates,
 		b.config.EfConstruction,
 		0,
 	)

@@ -92,13 +92,17 @@ func (b *builder) insert(ctx context.Context, newNode nodeOrdinal) error {
 	newNodeLevel := int(b.graph.nodes[newNode].level)
 	entryNode := b.graph.entry
 	entryLevel := int(b.graph.nodes[entryNode].level)
-	closestNode := entryNode
+	closestCandidate := candidate{
+		node:     entryNode,
+		distance: b.distanceNodes(newNode, entryNode),
+		accepted: true,
+	}
 
 	// Descend through levels where the new node will not have links. The
 	// closest node found on one level is the starting point for the next.
 	for level := entryLevel; level > newNodeLevel; level-- {
 		var err error
-		closestNode, err = b.findClosestNodeOnLevel(ctx, newNode, closestNode, level)
+		closestCandidate, err = b.findClosestCandidateOnLevel(ctx, newNode, closestCandidate, level)
 		if err != nil {
 			return err
 		}
@@ -106,7 +110,7 @@ func (b *builder) insert(ctx context.Context, newNode nodeOrdinal) error {
 
 	// On levels shared with the existing graph, find candidate neighbors,
 	// select actual links, and use those candidates to seed the next level.
-	levelStartNodes := append(b.workspace.levelStartNodes[:0], closestNode)
+	levelStartCandidates := append(b.workspace.levelStartCandidates[:0], closestCandidate)
 	for level := min(newNodeLevel, entryLevel); level >= 0; level-- {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -114,7 +118,7 @@ func (b *builder) insert(ctx context.Context, newNode nodeOrdinal) error {
 		nearestCandidatesOnLevel, err := b.findNearestCandidatesOnLevel(
 			ctx,
 			newNode,
-			levelStartNodes,
+			levelStartCandidates,
 			b.config.EfConstruction,
 			level,
 		)
@@ -136,95 +140,99 @@ func (b *builder) insert(ctx context.Context, newNode nodeOrdinal) error {
 				return err
 			}
 		}
-		// аt the next lower level, we start searching from the selected neighbors of this level
+		// At the next lower level, reuse both the nodes and their target-relative
+		// distances as search starting points.
 		if len(nearestCandidatesOnLevel) > 0 {
-			levelStartNodes = levelStartNodes[:0]
-			for _, candidate := range nearestCandidatesOnLevel {
-				levelStartNodes = append(levelStartNodes, candidate.node)
-			}
+			levelStartCandidates = append(levelStartCandidates[:0], nearestCandidatesOnLevel...)
 		}
 		// reset the workspace for the next level
 		b.workspace.nearestCandidates = nearestCandidatesOnLevel[:0]
 	}
 	// reset the workspace for the next insertion
-	b.workspace.levelStartNodes = levelStartNodes[:0]
+	b.workspace.levelStartCandidates = levelStartCandidates[:0]
 	if newNodeLevel > entryLevel {
 		b.graph.entry = newNode
 	}
 	return ctx.Err()
 }
 
-func (b *builder) findClosestNodeOnLevel(
+// findClosestCandidateOnLevel performs greedy descent through a level above
+// the new node's own level. The new node cannot have links there, so this only
+// finds a closer entry point for the next lower level.
+func (b *builder) findClosestCandidateOnLevel(
 	ctx context.Context,
-	targetNode, startNode nodeOrdinal,
+	targetNode nodeOrdinal,
+	startCandidate candidate,
 	level int,
-) (nodeOrdinal, error) {
-	closestNode := startNode
-	closestDistance := b.distanceNodes(targetNode, closestNode)
+) (candidate, error) {
+	closestCandidate := startCandidate
 	processedItems := 0
 	for {
 		if err := periodicContextError(ctx, processedItems); err != nil {
-			return 0, err
+			return candidate{}, err
 		}
 		processedItems++
-		closerNode := closestNode
-		closerDistance := closestDistance
-		for _, neighbor := range b.graph.nodes[closestNode].links[level] {
+		closerCandidate := closestCandidate
+		for _, neighbor := range b.graph.nodes[closestCandidate.node].links[level] {
 			if err := periodicContextError(ctx, processedItems); err != nil {
-				return 0, err
+				return candidate{}, err
 			}
 			processedItems++
 			distance := b.distanceNodes(targetNode, neighbor.node)
-			if distance < closestDistance &&
-				(distance < closerDistance || distance == closerDistance && neighbor.node < closerNode) {
-				closerNode = neighbor.node
-				closerDistance = distance
+			if distance < closestCandidate.distance &&
+				(distance < closerCandidate.distance ||
+					distance == closerCandidate.distance && neighbor.node < closerCandidate.node) {
+				closerCandidate = candidate{
+					node:     neighbor.node,
+					distance: distance,
+					accepted: true,
+				}
 			}
 		}
-		if closerNode == closestNode {
-			return closestNode, nil
+		if closerCandidate.node == closestCandidate.node {
+			return closestCandidate, nil
 		}
-		closestNode = closerNode
-		closestDistance = closerDistance
+		closestCandidate = closerCandidate
 	}
 }
 
-// findNearestCandidatesOnLevel searches only links from one graph level. It
-// keeps up to candidateLimit nearest nodes while expanding the nearest pending
-// node first.
+// findNearestCandidatesOnLevel searches a level shared by the new node and the
+// existing graph, from the new node's highest shared level down through level
+// 0. It keeps up to candidateLimit nearest nodes for neighbor selection while
+// expanding the nearest pending node first.
 func (b *builder) findNearestCandidatesOnLevel(
 	ctx context.Context,
 	targetNode nodeOrdinal,
-	startNodes []nodeOrdinal,
+	startCandidates []candidate,
 	candidateLimit int,
 	level int,
 ) ([]candidate, error) {
 	maxCandidates := min(candidateLimit, len(b.graph.nodes)-1)
 	nearestCandidates := newResultHeapWithBuffer(maxCandidates, b.workspace.nearestCandidates)
 	pendingCandidates := candidateHeap{
-		items: prepareCandidateBuffer(b.workspace.pendingCandidates, min(maxCandidates, len(startNodes))),
+		items: prepareCandidateBuffer(b.workspace.pendingCandidates, min(maxCandidates, len(startCandidates))),
 	}
 	b.workspace.nextEpoch()
 
-	considerNode := func(candidateNode nodeOrdinal) {
-		if candidateNode == targetNode || !b.workspace.markSeen(candidateNode) {
+	considerCandidate := func(start candidate) {
+		if start.node == targetNode || !b.workspace.markSeen(start.node) {
 			return
 		}
 		candidate := candidate{
-			node:     candidateNode,
-			distance: b.distanceNodes(targetNode, candidateNode),
+			node:     start.node,
+			distance: start.distance,
 			accepted: true,
 		}
 		pendingCandidates.Push(candidate)
 		nearestCandidates.Add(candidate)
 	}
 	processedItems := 0
-	for _, startNode := range startNodes {
+	for _, startCandidate := range startCandidates {
 		if err := periodicContextError(ctx, processedItems); err != nil {
 			return nil, err
 		}
 		processedItems++
-		considerNode(startNode)
+		considerCandidate(startCandidate)
 	}
 	for pendingCandidates.Len() > 0 {
 		if err := periodicContextError(ctx, processedItems); err != nil {
