@@ -140,6 +140,11 @@ func (s Space) compatiblePrepared(prepared PreparedVector) bool {
 func (s Space) DistancePrepared(a, b []float32) float64 {
 	switch s.metric {
 	case MetricCosine:
+		// Example:
+		// a = [0.6, 0.8]
+		// b = [0.8, 0.6]
+		// dot(a, b) = 0.6*0.8 + 0.8*0.6 = 0.96
+		// distance = 1 - dot(a, b) = 1 - 0.96 = 0.04
 		similarity := dotFloat64(a, b)
 		// float32 normalization can leave a small rounding error outside [-1, 1].
 		similarity = max(-1, min(1, similarity))
@@ -199,6 +204,7 @@ func (s Space) ValidatePrepared(value []float32) error {
 	if len(value) != s.dimensions {
 		return fmt.Errorf("%w: got %d, want %d", ErrDimensionMismatch, len(value), s.dimensions)
 	}
+	// normSquared is only used for unit-length normalization, but we still compute it to check for non-finite values.
 	var normSquared float64
 	for i, component := range value {
 		v := float64(component)
@@ -221,6 +227,12 @@ func (s Space) ValidatePrepared(value []float32) error {
 func (s Space) prepareIntoValidated(dst, value []float32, normSquared float64) {
 	copy(dst, value)
 	if s.normalization == NormalizationUnitLength {
+		// Example:
+		// values [3,4]
+		// normSquared = 3*3 + 4*4 = 25
+		// inverseNorm = 1 / sqrt(25) = 1/5 = 0.2
+		// dst[0] = 3 * 0.2 = 0.6
+		// dst[1] = 4 * 0.2 = 0.8
 		inverseNorm := 1 / math.Sqrt(normSquared)
 		for i := range dst {
 			dst[i] = float32(float64(dst[i]) * inverseNorm)
@@ -228,13 +240,15 @@ func (s Space) prepareIntoValidated(dst, value []float32, normSquared float64) {
 	}
 	for i := range dst {
 		if dst[i] == 0 {
-			dst[i] = 0 // canonicalize input and normalization-created negative zero
+			// Canonicalize negative zero to positive zero.
+			dst[i] = 0
 		}
 	}
 }
 
 func dotFloat64(a, b []float32) float64 {
 	var sum float64
+	// We don't check dimensions here because the caller is expected to have validated them.
 	for i := range a {
 		sum += float64(a[i]) * float64(b[i])
 	}
