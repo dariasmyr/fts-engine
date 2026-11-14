@@ -8,6 +8,9 @@ type buildWorkspace struct {
 	nearestCandidates     []candidate
 	levelStartNodes       []nodeOrdinal
 	reverseLinkCandidates []candidate
+
+	reverseDistanceChecks uint64
+	reverseSkippedChecks  uint64
 }
 
 func (w *buildWorkspace) nextEpoch() {

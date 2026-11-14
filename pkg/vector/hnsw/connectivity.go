@@ -149,6 +149,7 @@ func (b *builder) repairLevel0Connectivity(
 		reachableNode := linkChange.fromNode
 		previousReachableNodeLinks := b.graph.nodes[reachableNode].links[0]
 		b.graph.nodes[reachableNode].links[0] = linkChange.updatedLinks
+		b.clearVerifiedLinks(reachableNode, 0)
 		previousUnreachableNodeLinks := b.graph.nodes[unreachableNode].links[0]
 		addedReverseLink, err := b.addReverseRepairLinkIfSpace(
 			ctx,
@@ -157,6 +158,7 @@ func (b *builder) repairLevel0Connectivity(
 		)
 		if err != nil {
 			b.graph.nodes[reachableNode].links[0] = previousReachableNodeLinks
+			b.clearVerifiedLinks(reachableNode, 0)
 			return stats, err
 		}
 
@@ -169,8 +171,10 @@ func (b *builder) repairLevel0Connectivity(
 		)
 		if err != nil || state.reachableCount <= reachableBefore {
 			b.graph.nodes[reachableNode].links[0] = previousReachableNodeLinks
+			b.clearVerifiedLinks(reachableNode, 0)
 			if addedReverseLink {
 				b.graph.nodes[unreachableNode].links[0] = previousUnreachableNodeLinks
+				b.clearVerifiedLinks(unreachableNode, 0)
 			}
 			undoReachabilityMarks(&state, newlyReachableNodes)
 			if err != nil {
@@ -455,6 +459,7 @@ func (b *builder) addReverseRepairLinkIfSpace(
 		return false, err
 	}
 	b.graph.nodes[newlyReachableNode].links[0] = updated
+	b.clearVerifiedLinks(newlyReachableNode, 0)
 	return true, nil
 }
 

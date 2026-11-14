@@ -13,6 +13,9 @@ type candidate struct {
 	node     nodeOrdinal
 	distance float64
 	accepted bool
+	// verified is build-only state: this link passed diversification together
+	// with every other verified link currently owned by the same node and level.
+	verified bool
 }
 
 type state struct {

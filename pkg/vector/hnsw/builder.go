@@ -121,11 +121,13 @@ func (b *builder) insert(ctx context.Context, newNode nodeOrdinal) error {
 		if err != nil {
 			return err
 		}
-		selectedNeighbors, err := b.selectClosestNeighbors(ctx, nearestCandidatesOnLevel, b.config.MaxNeighbors)
+		selection, err := b.selectNeighbors(ctx, nearestCandidatesOnLevel, b.config.MaxNeighbors, true)
 		if err != nil {
 			return err
 		}
+		selectedNeighbors := selection.neighbors
 		b.graph.nodes[newNode].links[level] = selectedNeighbors
+		b.setVerifiedPrefix(newNode, level, selection.verifiedCount)
 		for i, neighbor := range selectedNeighbors {
 			if err := periodicContextError(ctx, i); err != nil {
 				return err

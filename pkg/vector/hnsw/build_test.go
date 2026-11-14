@@ -2,7 +2,10 @@ package hnsw
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/hnswmodel"
@@ -43,6 +46,132 @@ func TestBuildProducesDeterministicValidTopology(t *testing.T) {
 		t.Fatal("Build() topology differs for identical source, config, and seed")
 	}
 	assertTopologyInvariants(t, firstSnapshot)
+}
+
+func TestBuildMatchesReversePruningBaselineTopology(t *testing.T) {
+	t.Parallel()
+
+	const rows = 512
+	values := make([][]float32, rows)
+	for row := range rows {
+		values[row] = []float32{
+			float32((row*17)%101) / 101,
+			float32((row*31)%103) / 103,
+			float32((row*47)%107) / 107,
+			float32((row*61)%109) / 109,
+		}
+	}
+	space, err := vector.NewSpace(4, vector.MetricL2Squared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := memorystore.New(space, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := Build(t.Context(), store, Config{
+		Build:  BuildConfig{MaxNeighbors: 8, EfConstruction: 32, Seed: 7},
+		Search: SearchConfig{EfSearch: 32, VisitLimit: rows},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fingerprint := sha256.Sum256([]byte(fmt.Sprintf("%#v", Snapshot(index))))
+	const baseline = "dbad36cca1c64fa0877e70403b69f1ce1e2a05ae60d7d9b11db1430e7cfbda22"
+	if got := fmt.Sprintf("%x", fingerprint); got != baseline {
+		t.Fatalf("topology fingerprint = %s, want baseline %s", got, baseline)
+	}
+}
+
+func TestBuildRecallAtTen(t *testing.T) {
+	t.Parallel()
+
+	const (
+		rows       = 1_000
+		dimensions = 32
+		queries    = 50
+	)
+	values := make([]float32, rows*dimensions)
+	randomState := uint64(1)
+	for i := range values {
+		randomState = randomState*6364136223846793005 + 1442695040888963407
+		values[i] = float32(int32(randomState>>32)) / float32(1<<31)
+	}
+	space, err := vector.NewSpace(dimensions, vector.MetricL2Squared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := memorystore.NewPrepared(space, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		Build:  BuildConfig{MaxNeighbors: 16, EfConstruction: 64, Seed: 1},
+		Search: SearchConfig{EfSearch: 32, VisitLimit: rows},
+	}
+	index, err := Build(t.Context(), store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exact := make([][]nodeOrdinal, queries)
+	for queryIndex := range queries {
+		queryNode := queryIndex * (rows / queries)
+		query := values[queryNode*dimensions : (queryNode+1)*dimensions]
+		candidates := make([]candidate, rows)
+		for row := range rows {
+			candidates[row] = candidate{
+				node:     nodeOrdinal(row),
+				distance: space.DistancePrepared(query, values[row*dimensions:(row+1)*dimensions]),
+			}
+		}
+		slices.SortFunc(candidates, func(a, c candidate) int {
+			if candidateCloser(a, c) {
+				return -1
+			}
+			if candidateCloser(c, a) {
+				return 1
+			}
+			return 0
+		})
+		exact[queryIndex] = make([]nodeOrdinal, 10)
+		for i := range 10 {
+			exact[queryIndex][i] = candidates[i].node
+		}
+	}
+
+	previousRecall := 0.0
+	for _, efSearch := range []int{16, 32, 64, 200} {
+		matches := 0
+		for queryIndex := range queries {
+			queryNode := queryIndex * (rows / queries)
+			query := values[queryNode*dimensions : (queryNode+1)*dimensions]
+			result, err := index.Search(
+				t.Context(),
+				query,
+				10,
+				QueryConfig{EfSearch: efSearch, VisitLimit: rows},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, hit := range result.Hits {
+				if slices.Contains(exact[queryIndex], nodeOrdinal(hit.Ordinal)) {
+					matches++
+				}
+			}
+		}
+		recall := float64(matches) / float64(queries*10)
+		t.Logf("efSearch=%d recall@10=%.4f", efSearch, recall)
+		if recall < previousRecall {
+			t.Fatalf("recall decreased from %.4f to %.4f at efSearch=%d", previousRecall, recall, efSearch)
+		}
+		previousRecall = recall
+	}
+	if previousRecall < 0.99 {
+		t.Fatalf("recall@10 at efSearch=200 = %.4f, want at least 0.99", previousRecall)
+	}
 }
 
 func assertTopologyInvariants(t *testing.T, snapshot hnswmodel.Snapshot) {
