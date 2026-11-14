@@ -39,6 +39,18 @@ func NewPrepared(space vector.Space, flatVectors []float32) (*MemoryVectorStore,
 	return &MemoryVectorStore{space: space, vectors: flatVectors}, nil
 }
 
+// BorrowPreparedMatrix returns a read-only view of the contiguous matrix when
+// source is a MemoryVectorStore. The view remains valid while source is alive.
+// Callers must not modify the returned slice.
+func BorrowPreparedMatrix(source vector.PreparedVectorStore) ([]float32, bool) {
+	store, ok := source.(*MemoryVectorStore)
+	if !ok || store == nil {
+		return nil, false
+	}
+	// Do not expose spare capacity that could be appended into.
+	return store.vectors[:len(store.vectors):len(store.vectors)], true
+}
+
 func (s *MemoryVectorStore) Len() int { return len(s.vectors) / s.space.Dimensions() }
 
 func (s *MemoryVectorStore) Dimensions() int { return s.space.Dimensions() }

@@ -71,7 +71,7 @@ func TestStandardConstructionRepairsOnlyObservedDisconnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := newBuilder(
+	b := newOwningBuilder(
 		BuildConfig{MaxNeighbors: 2, EfConstruction: 16, Seed: 1},
 		space,
 		vectorCount,
@@ -279,7 +279,7 @@ func newConnectivityTestBuilder(
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := newBuilder(
+	b := newOwningBuilder(
 		BuildConfig{MaxNeighbors: maxNeighbors, EfConstruction: max(1, maxNeighbors), Seed: 1},
 		space,
 		len(values),

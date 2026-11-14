@@ -206,7 +206,7 @@ func newNeighborSelectionTestBuilder(t testing.TB, values [][]float32, maxNeighb
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := newBuilder(
+	b := newOwningBuilder(
 		BuildConfig{MaxNeighbors: maxNeighbors, EfConstruction: maxNeighbors, Seed: 1},
 		space,
 		len(values),

@@ -49,20 +49,35 @@ func BenchmarkBuildMatrixCosine(b *testing.B) {
 		rows       = 1_000
 		dimensions = 768
 	)
-	source := newBuildBenchmarkStoreForMetric(b, rows, dimensions, vector.MetricCosine)
+	borrowedSource := newBuildBenchmarkStoreForMetric(b, rows, dimensions, vector.MetricCosine)
 	config := Config{
 		Build:  BuildConfig{MaxNeighbors: 16, EfConstruction: 64, Seed: 1},
 		Search: SearchConfig{EfSearch: 32, VisitLimit: rows},
 	}
-	b.ReportAllocs()
-	for b.Loop() {
-		index, err := Build(context.Background(), source, config)
-		if err != nil {
-			b.Fatal(err)
-		}
-		buildBenchmarkIndex = index
+	for _, test := range []struct {
+		name   string
+		source vector.PreparedVectorStore
+	}{
+		{name: "memory-borrowed", source: borrowedSource},
+		{
+			name: "generic-owned-fallback",
+			source: &forwardingPreparedStore{
+				PreparedVectorStore: borrowedSource,
+			},
+		},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				index, err := Build(context.Background(), test.source, config)
+				if err != nil {
+					b.Fatal(err)
+				}
+				buildBenchmarkIndex = index
+			}
+			b.ReportMetric(float64(rows*dimensions*4), "source-bytes")
+		})
 	}
-	b.ReportMetric(float64(rows*dimensions*4), "source-bytes")
 }
 
 func newBuildBenchmarkStore(tb testing.TB, rows, dimensions int) vector.PreparedVectorStore {

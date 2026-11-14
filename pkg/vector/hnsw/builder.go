@@ -8,30 +8,50 @@ import (
 
 // builder constructs one HNSW graph. It is single-writer and is not searchable.
 type builder struct {
-	config    BuildConfig
-	space     vector.Space
-	graph     graphData
-	rng       levelRNG
-	workspace buildWorkspace
+	config BuildConfig
+	space  vector.Space
+	graph  graphData
+	// ownsValues distinguishes the generic copied fallback from the borrowed
+	// memory-store fast path. Borrowed values are immutable and must never be
+	// written, including through a self-copy.
+	ownsValues bool
+	rng        levelRNG
+	workspace  buildWorkspace
 }
 
-func newBuilder(config BuildConfig, space vector.Space, vectorCount, components int) *builder {
+func newOwningBuilder(config BuildConfig, space vector.Space, vectorCount, components int) *builder {
+	return newBuilderWithValues(config, space, vectorCount, make([]float32, components), true)
+}
+
+func newBorrowingBuilder(config BuildConfig, space vector.Space, vectorCount int, values []float32) *builder {
+	return newBuilderWithValues(config, space, vectorCount, values, false)
+}
+
+func newBuilderWithValues(
+	config BuildConfig,
+	space vector.Space,
+	vectorCount int,
+	values []float32,
+	ownsValues bool,
+) *builder {
 	return &builder{
 		config: config,
 		space:  space,
 		graph: graphData{
-			values: make([]float32, components),
+			values: values,
 			nodes:  make([]mutableNode, 0, vectorCount),
 		},
-		rng: newLevelRNG(config.Seed),
+		ownsValues: ownsValues,
+		rng:        newLevelRNG(config.Seed),
 		workspace: buildWorkspace{
 			seenEpoch: make([]uint32, vectorCount),
 		},
 	}
 }
 
-// add validates and copies the next prepared vector. Its node ordinal is the
-// source vector ordinal, preserving the package-wide node == vector invariant.
+// add validates and registers the next prepared vector. Owning builders copy it;
+// borrowing builders only read the corresponding row already in graph.values.
+// Its node ordinal is the source ordinal, preserving node == vector.
 func (b *builder) add(ctx context.Context, prepared []float32) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -46,8 +66,11 @@ func (b *builder) add(ctx context.Context, prepared []float32) error {
 	ordinal := nodeOrdinal(len(b.graph.nodes))
 	level := b.rng.level(b.config.MaxNeighbors)
 	start := int(ordinal) * b.space.Dimensions()
-	// Copy the prepared vector into the graph's values slice.
-	copy(b.graph.values[start:start+b.space.Dimensions()], prepared)
+	if b.ownsValues {
+		// Generic stores do not expose contiguous storage, so retain one
+		// builder-owned matrix for direct access in the distance hot path.
+		copy(b.graph.values[start:start+b.space.Dimensions()], prepared)
+	}
 	b.graph.nodes = append(b.graph.nodes, mutableNode{
 		level: level,
 		// preallocate the slice of links for each level

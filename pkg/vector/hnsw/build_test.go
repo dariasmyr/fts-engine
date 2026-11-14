@@ -3,15 +3,50 @@ package hnsw
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"math"
 	"reflect"
+	"runtime"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/hnswmodel"
 	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
+
+type forwardingPreparedStore struct {
+	vector.PreparedVectorStore
+}
+
+type countingPreparedStore struct {
+	vector.PreparedVectorStore
+	reads int
+}
+
+type failingPreparedStore struct {
+	vector.PreparedVectorStore
+	err error
+}
+
+func (s failingPreparedStore) ReadVectorInto(
+	context.Context,
+	vector.Ordinal,
+	[]float32,
+) error {
+	return s.err
+}
+
+func (s *countingPreparedStore) ReadVectorInto(
+	ctx context.Context,
+	ordinal vector.Ordinal,
+	dst []float32,
+) error {
+	s.reads++
+	return s.PreparedVectorStore.ReadVectorInto(ctx, ordinal, dst)
+}
 
 func TestBuildProducesDeterministicValidTopology(t *testing.T) {
 	t.Parallel()
@@ -268,6 +303,190 @@ func TestBuildCosineTopologyAndRecallAtTen(t *testing.T) {
 	t.Logf("cosine recall@10=%.4f", recall)
 	if recall < 0.99 {
 		t.Fatalf("cosine recall@10 = %.4f, want at least 0.99", recall)
+	}
+}
+
+func TestBuildBorrowedAndOwnedFallbackProduceIdenticalTopology(t *testing.T) {
+	const (
+		rows       = 128
+		dimensions = 32
+	)
+	space, err := vector.NewSpace(dimensions, vector.MetricCosine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make([]float32, rows*dimensions)
+	for row := range rows {
+		value := values[row*dimensions : (row+1)*dimensions]
+		for dimension := range dimensions {
+			value[dimension] = float32(math.Sin(float64((row + 1) * (dimension + 1))))
+		}
+		if err := space.PrepareInto(value, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wantValues := slices.Clone(values)
+	borrowedStore, err := memorystore.NewPrepared(space, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallbackStore, err := memorystore.NewPrepared(space, slices.Clone(values))
+	if err != nil {
+		t.Fatal(err)
+	}
+	countingFallback := &countingPreparedStore{PreparedVectorStore: &forwardingPreparedStore{
+		PreparedVectorStore: fallbackStore,
+	}}
+	config := Config{
+		Build:  BuildConfig{MaxNeighbors: 16, EfConstruction: 64, Seed: 1},
+		Search: SearchConfig{EfSearch: 32, VisitLimit: rows},
+	}
+
+	borrowedIndex, err := Build(t.Context(), borrowedStore, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownedIndex, err := Build(t.Context(), countingFallback, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if countingFallback.reads != rows {
+		t.Fatalf("owned fallback source reads = %d, want %d", countingFallback.reads, rows)
+	}
+	if !reflect.DeepEqual(Snapshot(borrowedIndex), Snapshot(ownedIndex)) {
+		t.Fatal("borrowed and owned fallback builds produced different topologies")
+	}
+	borrowedValues, ok := memorystore.BorrowPreparedMatrix(borrowedStore)
+	if !ok {
+		t.Fatal("memory store did not expose its internal borrowed matrix")
+	}
+	if !slices.Equal(borrowedValues, wantValues) {
+		t.Fatal("borrowed build modified the source matrix")
+	}
+
+	query := slices.Clone(wantValues[:dimensions])
+	borrowedResult, err := borrowedIndex.Search(t.Context(), query, 10, QueryConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownedResult, err := ownedIndex.Search(t.Context(), query, 10, QueryConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(borrowedResult, ownedResult) {
+		t.Fatal("borrowed and owned fallback indexes produced different search results")
+	}
+}
+
+func TestBuildOwnedFallbackPreservesReadErrors(t *testing.T) {
+	space, err := vector.NewSpace(2, vector.MetricL2Squared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := memorystore.NewPrepared(space, []float32{1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("read failed")
+	_, err = Build(t.Context(), failingPreparedStore{
+		PreparedVectorStore: &forwardingPreparedStore{PreparedVectorStore: store},
+		err:                 wantErr,
+	}, Config{
+		Build:  BuildConfig{MaxNeighbors: 2, EfConstruction: 2, Seed: 1},
+		Search: SearchConfig{EfSearch: 1, VisitLimit: 1},
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Build() error = %v, want wrapped read error", err)
+	}
+}
+
+func TestBuildBorrowedPathStillValidatesPreparedRows(t *testing.T) {
+	space, err := vector.NewSpace(2, vector.MetricL2Squared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := memorystore.NewPrepared(space, []float32{1, float32(math.NaN())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Build(t.Context(), store, Config{
+		Build:  BuildConfig{MaxNeighbors: 2, EfConstruction: 2, Seed: 1},
+		Search: SearchConfig{EfSearch: 1, VisitLimit: 1},
+	})
+	if !errors.Is(err, vector.ErrNonFiniteVector) {
+		t.Fatalf("Build() error = %v, want ErrNonFiniteVector", err)
+	}
+}
+
+func TestBuildBorrowedMatrixLifetimeAndConcurrentReads(t *testing.T) {
+	const (
+		rows       = 512
+		dimensions = 64
+	)
+	space, err := vector.NewSpace(dimensions, vector.MetricL2Squared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make([]float32, rows*dimensions)
+	for i := range values {
+		values[i] = float32(math.Sin(float64(i + 1)))
+	}
+	store, err := memorystore.NewPrepared(space, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		Build:  BuildConfig{MaxNeighbors: 16, EfConstruction: 64, Seed: 1},
+		Search: SearchConfig{EfSearch: 32, VisitLimit: rows},
+	}
+
+	done := make(chan struct{})
+	started := make(chan struct{})
+	readErr := make(chan error, 1)
+	var readers sync.WaitGroup
+	readers.Add(1)
+	go func() {
+		defer readers.Done()
+		row := make([]float32, dimensions)
+		firstRead := true
+		for ordinal := 0; ; ordinal = (ordinal + 1) % rows {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			if err := store.ReadVectorInto(t.Context(), vector.Ordinal(ordinal), row); err != nil {
+				readErr <- err
+				return
+			}
+			if firstRead {
+				close(started)
+				firstRead = false
+			}
+		}
+	}()
+	<-started
+	index, buildErr := Build(t.Context(), store, config)
+	close(done)
+	readers.Wait()
+	select {
+	case err := <-readErr:
+		t.Fatal(err)
+	default:
+	}
+	if buildErr != nil {
+		t.Fatal(buildErr)
+	}
+
+	store = nil
+	values = nil
+	runtime.GC()
+	result, err := index.Search(t.Context(), make([]float32, dimensions), 10, QueryConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Hits) != 10 {
+		t.Fatalf("Search() returned %d hits after source GC, want 10", len(result.Hits))
 	}
 }
 

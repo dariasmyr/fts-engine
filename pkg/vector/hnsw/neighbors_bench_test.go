@@ -106,7 +106,7 @@ func BenchmarkBuildVerificationMetadata(b *testing.B) {
 	b.ReportAllocs()
 	var built *builder
 	for b.Loop() {
-		built = newBuilder(config, space, rows, len(values))
+		built = newOwningBuilder(config, space, rows, len(values))
 		for row := range rows {
 			if err := built.add(
 				context.Background(),

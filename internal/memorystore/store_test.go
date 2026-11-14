@@ -81,4 +81,14 @@ func TestMemoryVectorStoreOwnershipContracts(t *testing.T) {
 	if &owned.vectors[0] != &ownedInput[0] {
 		t.Fatal("ownership-taking constructor copied its input")
 	}
+	borrowed, ok := BorrowPreparedMatrix(owned)
+	if !ok {
+		t.Fatal("BorrowPreparedMatrix() did not recognize MemoryVectorStore")
+	}
+	if &borrowed[0] != &ownedInput[0] {
+		t.Fatal("BorrowPreparedMatrix() copied the owned matrix")
+	}
+	if cap(borrowed) != len(borrowed) {
+		t.Fatalf("borrowed matrix capacity = %d, want %d", cap(borrowed), len(borrowed))
+	}
 }
