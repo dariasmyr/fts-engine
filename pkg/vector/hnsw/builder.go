@@ -52,7 +52,7 @@ func (b *builder) add(ctx context.Context, prepared []float32) error {
 		level: level,
 		// preallocate the slice of links for each level
 		// we will fill the links later during the insert process
-		links: make([][]nodeOrdinal, int(level)+1),
+		links: make([][]buildNeighbor, int(level)+1),
 	})
 
 	if !b.graph.hasEntry {
@@ -132,7 +132,7 @@ func (b *builder) insert(ctx context.Context, newNode nodeOrdinal) error {
 			if err := periodicContextError(ctx, i); err != nil {
 				return err
 			}
-			if err := b.addReverseLink(ctx, neighbor, newNode, level); err != nil {
+			if err := b.addReverseLink(ctx, neighbor.node, newNode, level); err != nil {
 				return err
 			}
 		}
@@ -174,10 +174,10 @@ func (b *builder) findClosestNodeOnLevel(
 				return 0, err
 			}
 			processedItems++
-			distance := b.distanceNodes(targetNode, neighbor)
+			distance := b.distanceNodes(targetNode, neighbor.node)
 			if distance < closestDistance &&
-				(distance < closerDistance || distance == closerDistance && neighbor < closerNode) {
-				closerNode = neighbor
+				(distance < closerDistance || distance == closerDistance && neighbor.node < closerNode) {
+				closerNode = neighbor.node
 				closerDistance = distance
 			}
 		}
@@ -243,12 +243,12 @@ func (b *builder) findNearestCandidatesOnLevel(
 				return nil, err
 			}
 			processedItems++
-			if neighbor == targetNode || !b.workspace.markSeen(neighbor) {
+			if neighbor.node == targetNode || !b.workspace.markSeen(neighbor.node) {
 				continue
 			}
 			neighborCandidate := candidate{
-				node:     neighbor,
-				distance: b.distanceNodes(targetNode, neighbor),
+				node:     neighbor.node,
+				distance: b.distanceNodes(targetNode, neighbor.node),
 				accepted: true,
 			}
 			farthestNearestCandidate, hasNearestCandidate := nearestCandidates.Worst()

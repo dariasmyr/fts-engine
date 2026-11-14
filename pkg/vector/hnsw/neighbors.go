@@ -8,7 +8,7 @@ import (
 const maxVerifiedLinkWords = (maxSupportedNeighbors*2 + 63) / 64
 
 type neighborSelection struct {
-	neighbors      []nodeOrdinal
+	neighbors      []buildNeighbor
 	verifiedCount  int
 	distanceChecks uint64
 	skippedChecks  uint64
@@ -25,7 +25,7 @@ func (b *builder) vectorByNode(node nodeOrdinal) []float32 {
 	return b.graph.values[start : start+b.space.Dimensions()]
 }
 
-func (b *builder) selectClosestNeighbors(ctx context.Context, candidates []candidate, limit int) ([]nodeOrdinal, error) {
+func (b *builder) selectClosestNeighbors(ctx context.Context, candidates []candidate, limit int) ([]buildNeighbor, error) {
 	selection, err := b.selectNeighbors(ctx, candidates, limit, true)
 	return selection.neighbors, err
 }
@@ -41,10 +41,10 @@ func (b *builder) selectNeighbors(
 		return neighborSelection{}, err
 	}
 	invalidateDuplicateVerification(candidates)
-	selected := make([]nodeOrdinal, 0, min(limit, len(candidates)))
-	var rejected []nodeOrdinal
+	selected := make([]buildNeighbor, 0, min(limit, len(candidates)))
+	var rejected []buildNeighbor
 	if fillFromRejected {
-		rejected = make([]nodeOrdinal, 0, min(limit, len(candidates)))
+		rejected = make([]buildNeighbor, 0, min(limit, len(candidates)))
 	}
 	// temporary bitmap to track which existing neighbors have been verified, to avoid redundant distance checks
 	var previouslyVerified [maxVerifiedLinkWords]uint64
@@ -77,7 +77,7 @@ func (b *builder) selectNeighbors(
 			}
 			distanceChecks++
 			// if current candidate closer to the existing neighbor than the target node, reject it
-			if b.distanceNodes(candidate.node, existing) < candidate.distance {
+			if b.distanceNodes(candidate.node, existing.node) < candidate.distance {
 				diverse = false
 				break
 			}
@@ -86,7 +86,10 @@ func (b *builder) selectNeighbors(
 			if candidate.verified {
 				setVerifiedBit(previouslyVerified[:], len(selected))
 			}
-			selected = append(selected, candidate.node)
+			selected = append(selected, buildNeighbor{
+				node:     candidate.node,
+				distance: candidate.distance,
+			})
 			if len(selected) == limit {
 				return neighborSelection{
 					neighbors:      selected,
@@ -97,21 +100,24 @@ func (b *builder) selectNeighbors(
 			}
 		} else {
 			if fillFromRejected {
-				rejected = append(rejected, candidate.node)
+				rejected = append(rejected, buildNeighbor{
+					node:     candidate.node,
+					distance: candidate.distance,
+				})
 			}
 		}
 	}
 	verifiedCount := len(selected)
 	// fill unused slots only after choosing diverse neighbors. This may
 	// increase graph degree and recall, at the cost of more traversed links.
-	for i, node := range rejected {
+	for i, neighbor := range rejected {
 		if err := periodicContextError(ctx, i); err != nil {
 			return neighborSelection{}, err
 		}
 		if len(selected) == limit {
 			break
 		}
-		selected = append(selected, node)
+		selected = append(selected, neighbor)
 	}
 	return neighborSelection{
 		neighbors:      selected,
@@ -172,8 +178,8 @@ func (b *builder) addReverseLink(ctx context.Context, existingNode, newNode node
 			return err
 		}
 		candidates = append(candidates, candidate{
-			node:     link,
-			distance: b.distanceNodes(existingNode, link),
+			node:     link.node,
+			distance: link.distance,
 			verified: b.linkVerified(existingNode, level, i),
 		})
 	}
@@ -202,13 +208,16 @@ func (b *builder) addReverseLink(ctx context.Context, existingNode, newNode node
 			return err
 		}
 		if cap(closestNeighbors) < len(candidates) {
-			closestNeighbors = make([]nodeOrdinal, len(candidates))
+			closestNeighbors = make([]buildNeighbor, len(candidates))
 		} else {
 			closestNeighbors = closestNeighbors[:len(candidates)]
 		}
-		// fill the closestNeighbors slice with the node ordinals from the candidates
+		// Preserve each candidate's owner-relative distance in the mutable graph.
 		for i := range candidates {
-			closestNeighbors[i] = candidates[i].node
+			closestNeighbors[i] = buildNeighbor{
+				node:     candidates[i].node,
+				distance: candidates[i].distance,
+			}
 		}
 	}
 	b.graph.nodes[existingNode].links[level] = closestNeighbors

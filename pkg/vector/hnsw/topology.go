@@ -59,10 +59,14 @@ func packGraph(space vector.Space, build buildInfo, graph graphData) (topology, 
 
 	placement := 0
 	for _, node := range graph.nodes {
-		packed.level0Neighbors = append(packed.level0Neighbors, node.links[0]...)
+		for _, neighbor := range node.links[0] {
+			packed.level0Neighbors = append(packed.level0Neighbors, neighbor.node)
+		}
 		for level := 1; level <= int(node.level); level++ {
 			packed.upperLinkOffsets[placement] = uint32(len(packed.upperNeighbors))
-			packed.upperNeighbors = append(packed.upperNeighbors, node.links[level]...)
+			for _, neighbor := range node.links[level] {
+				packed.upperNeighbors = append(packed.upperNeighbors, neighbor.node)
+			}
 			placement++
 		}
 	}

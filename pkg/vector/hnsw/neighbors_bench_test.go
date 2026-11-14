@@ -120,12 +120,13 @@ func BenchmarkBuildVerificationMetadata(b *testing.B) {
 	b.ReportMetric(float64(built.workspace.reverseDistanceChecks), "pair-checks/op")
 	b.ReportMetric(float64(built.workspace.reverseSkippedChecks), "skipped-checks/op")
 	b.ReportMetric(float64(verifiedLinkMetadataBytes(built))/rows, "metadata-B/node")
+	b.ReportMetric(float64(unsafe.Sizeof(buildNeighbor{})-unsafe.Sizeof(nodeOrdinal(0))), "distance-cache-B/link")
 }
 
 func verifiedLinkMetadataBytes(b *builder) uintptr {
 	type mutableNodeWithoutVerification struct {
 		level uint8
-		links [][]nodeOrdinal
+		links [][]buildNeighbor
 	}
 	bytes := uintptr(len(b.graph.nodes)) *
 		(unsafe.Sizeof(mutableNode{}) - unsafe.Sizeof(mutableNodeWithoutVerification{}))

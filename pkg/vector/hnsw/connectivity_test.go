@@ -44,10 +44,10 @@ func TestReversePruningCanRemoveLastReachableIncomingLink(t *testing.T) {
 	if err := b.addReverseLink(t.Context(), 0, 5, 0); err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(b.graph.nodes[0].links[0], nodeOrdinal(1)) {
+	if containsBuildNeighbor(b.graph.nodes[0].links[0], nodeOrdinal(1)) {
 		t.Fatal("reverse pruning retained the deliberately distant link 0 -> 1")
 	}
-	if !slices.Contains(b.graph.nodes[1].links[0], nodeOrdinal(0)) {
+	if !containsBuildNeighbor(b.graph.nodes[1].links[0], nodeOrdinal(0)) {
 		t.Fatal("test setup lost the opposite directed link 1 -> 0")
 	}
 	state, err := validateLevel0Reachability(t.Context(), b.graph)
@@ -60,7 +60,7 @@ func TestReversePruningCanRemoveLastReachableIncomingLink(t *testing.T) {
 	if _, err := b.repairLevel0Connectivity(t.Context(), state); err != nil {
 		t.Fatal(err)
 	}
-	assertMutableGraphReachable(t, b.graph)
+	assertMutableGraphReachable(t, b)
 }
 
 func TestStandardConstructionRepairsOnlyObservedDisconnection(t *testing.T) {
@@ -97,7 +97,7 @@ func TestStandardConstructionRepairsOnlyObservedDisconnection(t *testing.T) {
 		t.Fatalf("repair stats = %+v, initial unreachable = %d", stats, len(state.unreachableNodes))
 	}
 	t.Logf("initial unreachable=%d, added links=%d, replaced links=%d", stats.initiallyUnreachable, stats.addedLinks, stats.replacedLinks)
-	assertMutableGraphReachable(t, b.graph)
+	assertMutableGraphReachable(t, b)
 }
 
 func TestRepairLevel0ConnectivityConnectsDirectedComponent(t *testing.T) {
@@ -123,7 +123,7 @@ func TestRepairLevel0ConnectivityConnectsDirectedComponent(t *testing.T) {
 	if stats.addedLinks != 1 {
 		t.Fatalf("repair links = %d, want 1", stats.addedLinks)
 	}
-	assertMutableGraphReachable(t, b.graph)
+	assertMutableGraphReachable(t, b)
 }
 
 func TestRepairLevel0ConnectivityConnectsMultipleComponents(t *testing.T) {
@@ -146,7 +146,7 @@ func TestRepairLevel0ConnectivityConnectsMultipleComponents(t *testing.T) {
 	if stats.addedLinks != 2 {
 		t.Fatalf("repair links = %d, want 2", stats.addedLinks)
 	}
-	assertMutableGraphReachable(t, b.graph)
+	assertMutableGraphReachable(t, b)
 }
 
 func TestRepairLevel0ConnectivitySkipsFullOwnerWithoutSafeEdge(t *testing.T) {
@@ -158,7 +158,7 @@ func TestRepairLevel0ConnectivitySkipsFullOwnerWithoutSafeEdge(t *testing.T) {
 		[][]nodeOrdinal{{1, 2, 3, 4}, nil, nil, nil, nil, nil},
 		2,
 	)
-	before := slices.Clone(b.graph.nodes[0].links[0])
+	before := neighborOrdinals(b.graph.nodes[0].links[0])
 	state, err := validateLevel0Reachability(t.Context(), b.graph)
 	if err != nil {
 		t.Fatal(err)
@@ -166,17 +166,17 @@ func TestRepairLevel0ConnectivitySkipsFullOwnerWithoutSafeEdge(t *testing.T) {
 	if _, err := b.repairLevel0Connectivity(t.Context(), state); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(b.graph.nodes[0].links[0], before) {
+	if !slices.Equal(neighborOrdinals(b.graph.nodes[0].links[0]), before) {
 		t.Fatalf("full owner tree links changed: got %v, want %v", b.graph.nodes[0].links[0], before)
 	}
 	found := false
 	for owner := 1; owner <= 4; owner++ {
-		found = found || slices.Contains(b.graph.nodes[owner].links[0], nodeOrdinal(5))
+		found = found || containsBuildNeighbor(b.graph.nodes[owner].links[0], nodeOrdinal(5))
 	}
 	if !found {
 		t.Fatal("repair did not use another reachable owner")
 	}
-	assertMutableGraphReachable(t, b.graph)
+	assertMutableGraphReachable(t, b)
 }
 
 func TestRepairLevel0ConnectivityReplacesOnlyNonTreeEdge(t *testing.T) {
@@ -200,11 +200,11 @@ func TestRepairLevel0ConnectivityReplacesOnlyNonTreeEdge(t *testing.T) {
 		t.Fatalf("repair replacements = %d, want 1", stats.replacedLinks)
 	}
 	for _, node := range []nodeOrdinal{2, 3, 4} {
-		if !slices.Contains(b.graph.nodes[1].links[0], node) {
+		if !containsBuildNeighbor(b.graph.nodes[1].links[0], node) {
 			t.Fatalf("repair removed reachability-tree edge 1 -> %d", node)
 		}
 	}
-	assertMutableGraphReachable(t, b.graph)
+	assertMutableGraphReachable(t, b)
 }
 
 func TestRepairLevel0ConnectivityReturnsErrorWithoutSafeCapacity(t *testing.T) {
@@ -286,9 +286,9 @@ func newConnectivityTestBuilder(
 		len(values),
 	)
 	copy(b.graph.values, values)
-	for _, nodeLinks := range links {
+	for owner, nodeLinks := range links {
 		b.graph.nodes = append(b.graph.nodes, mutableNode{
-			links: [][]nodeOrdinal{slices.Clone(nodeLinks)},
+			links: [][]buildNeighbor{buildNeighborsFromOrdinals(b, nodeOrdinal(owner), nodeLinks)},
 		})
 	}
 	b.graph.entry = 0
@@ -299,18 +299,54 @@ func newConnectivityTestBuilder(
 func cloneLevel0Links(graph graphData) [][]nodeOrdinal {
 	result := make([][]nodeOrdinal, len(graph.nodes))
 	for node := range graph.nodes {
-		result[node] = slices.Clone(graph.nodes[node].links[0])
+		result[node] = neighborOrdinals(graph.nodes[node].links[0])
 	}
 	return result
 }
 
-func assertMutableGraphReachable(t *testing.T, graph graphData) {
+func buildNeighborsFromOrdinals(b *builder, owner nodeOrdinal, nodes []nodeOrdinal) []buildNeighbor {
+	neighbors := make([]buildNeighbor, len(nodes))
+	for i, node := range nodes {
+		neighbors[i] = buildNeighbor{
+			node:     node,
+			distance: b.distanceNodes(owner, node),
+		}
+	}
+	return neighbors
+}
+
+func neighborOrdinals(neighbors []buildNeighbor) []nodeOrdinal {
+	nodes := make([]nodeOrdinal, len(neighbors))
+	for i, neighbor := range neighbors {
+		nodes[i] = neighbor.node
+	}
+	return nodes
+}
+
+func assertMutableGraphReachable(t *testing.T, b *builder) {
 	t.Helper()
-	state, err := validateLevel0Reachability(t.Context(), graph)
+	state, err := validateLevel0Reachability(t.Context(), b.graph)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(state.unreachableNodes) != 0 {
 		t.Fatalf("unreachable nodes after repair: %v", state.unreachableNodes)
+	}
+	for owner, mutable := range b.graph.nodes {
+		for level, links := range mutable.links {
+			for _, neighbor := range links {
+				want := b.distanceNodes(nodeOrdinal(owner), neighbor.node)
+				if neighbor.distance != want {
+					t.Fatalf(
+						"node %d level %d neighbor %d distance = %v, want %v",
+						owner,
+						level,
+						neighbor.node,
+						neighbor.distance,
+						want,
+					)
+				}
+			}
+		}
 	}
 }

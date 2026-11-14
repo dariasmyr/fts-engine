@@ -28,15 +28,15 @@ func TestNeighborSelectionUsesFallbackOnlyForDirectLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []nodeOrdinal{1, 2, 3, 4}; !slices.Equal(direct, want) {
+	if want := []nodeOrdinal{1, 2, 3, 4}; !slices.Equal(neighborOrdinals(direct), want) {
 		t.Fatalf("direct links = %v, want fallback-filled %v", direct, want)
 	}
 
-	b.graph.nodes[0].links[0] = []nodeOrdinal{1, 2, 3, 4}
+	b.graph.nodes[0].links[0] = buildNeighborsFromOrdinals(b, 0, []nodeOrdinal{1, 2, 3, 4})
 	if err := b.addReverseLink(t.Context(), 0, 5, 0); err != nil {
 		t.Fatal(err)
 	}
-	if want := []nodeOrdinal{1}; !slices.Equal(b.graph.nodes[0].links[0], want) {
+	if want := []nodeOrdinal{1}; !slices.Equal(neighborOrdinals(b.graph.nodes[0].links[0]), want) {
 		t.Fatalf("reverse links = %v, want diversified-only %v", b.graph.nodes[0].links[0], want)
 	}
 }
@@ -176,7 +176,7 @@ func TestVerifiedLinkBitsSupportUpperLevelsAndLargeDegrees(t *testing.T) {
 
 	b := newNeighborSelectionTestBuilder(t, [][]float32{{0}}, 65)
 	b.graph.nodes[0].level = 1
-	b.graph.nodes[0].links = make([][]nodeOrdinal, 2)
+	b.graph.nodes[0].links = make([][]buildNeighbor, 2)
 	b.setVerifiedPrefix(0, 0, 130)
 	b.setVerifiedPrefix(0, 1, 65)
 
@@ -217,7 +217,7 @@ func newNeighborSelectionTestBuilder(t testing.TB, values [][]float32, maxNeighb
 			t.Fatal("inconsistent test vector dimensions")
 		}
 		copy(b.graph.values[len(b.graph.nodes)*space.Dimensions():], value)
-		b.graph.nodes = append(b.graph.nodes, mutableNode{links: [][]nodeOrdinal{nil}})
+		b.graph.nodes = append(b.graph.nodes, mutableNode{links: [][]buildNeighbor{nil}})
 	}
 	return b
 }

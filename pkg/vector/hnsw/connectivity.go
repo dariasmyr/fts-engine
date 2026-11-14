@@ -24,7 +24,7 @@ type connectivityRepairStats struct {
 // example, to add C → B it contains fromNode=C and C's complete updated list.
 type level0LinkChange struct {
 	fromNode        nodeOrdinal
-	updatedLinks    []nodeOrdinal
+	updatedLinks    []buildNeighbor
 	replacesOldLink bool
 }
 
@@ -78,16 +78,16 @@ func validateLevel0Reachability(ctx context.Context, graph graphData) (level0Rea
 				return level0Reachability{}, err
 			}
 			work++
-			if uint64(neighbor) >= uint64(nodes) || neighbor == node {
+			if uint64(neighbor.node) >= uint64(nodes) || neighbor.node == node {
 				return level0Reachability{}, errInvalidGraph
 			}
-			if state.isReachable[neighbor] {
+			if state.isReachable[neighbor.node] {
 				continue
 			}
-			state.isReachable[neighbor] = true
-			state.reachedFrom[neighbor] = node
+			state.isReachable[neighbor.node] = true
+			state.reachedFrom[neighbor.node] = node
 			state.reachableCount++
-			queue = append(queue, neighbor)
+			queue = append(queue, neighbor.node)
 		}
 	}
 	state.unreachableNodes = make([]nodeOrdinal, 0, nodes-state.reachableCount)
@@ -314,13 +314,16 @@ func (b *builder) planLinkToUnreachableNode(
 	if limit <= 0 {
 		return level0LinkChange{}, false, nil
 	}
-	if len(links) > limit || slices.Contains(links, unreachableNode) {
+	if len(links) > limit || containsBuildNeighbor(links, unreachableNode) {
 		return level0LinkChange{}, false, errInvalidGraph
 	}
 	if len(links) < limit {
-		updatedLinks := append([]nodeOrdinal(nil), links...)
-		updatedLinks = append(updatedLinks, unreachableNode)
-		if err := b.sortNodeLinksByDistance(ctx, reachableNode, updatedLinks); err != nil {
+		updatedLinks := append([]buildNeighbor(nil), links...)
+		updatedLinks = append(updatedLinks, buildNeighbor{
+			node:     unreachableNode,
+			distance: b.distanceNodes(reachableNode, unreachableNode),
+		})
+		if err := sortBuildNeighbors(ctx, updatedLinks); err != nil {
 			return level0LinkChange{}, false, err
 		}
 		return level0LinkChange{fromNode: reachableNode, updatedLinks: updatedLinks}, true, nil
@@ -330,7 +333,7 @@ func (b *builder) planLinkToUnreachableNode(
 		selectionCandidates := make([]candidate, 0, len(links)+1)
 		for _, neighbor := range links {
 			selectionCandidates = append(selectionCandidates, candidate{
-				node: neighbor, distance: b.distanceNodes(reachableNode, neighbor),
+				node: neighbor.node, distance: neighbor.distance,
 			})
 		}
 		selectionCandidates = append(selectionCandidates, candidate{
@@ -340,12 +343,12 @@ func (b *builder) planLinkToUnreachableNode(
 		if err != nil {
 			return level0LinkChange{}, false, err
 		}
-		if !slices.Contains(selectedLinks, unreachableNode) {
+		if !containsBuildNeighbor(selectedLinks, unreachableNode) {
 			return level0LinkChange{}, false, nil
 		}
 		for _, previousNeighbor := range links {
-			wasRemoved := !slices.Contains(selectedLinks, previousNeighbor)
-			isNeededForKnownPath := state.reachedFrom[previousNeighbor] == reachableNode
+			wasRemoved := !containsBuildNeighbor(selectedLinks, previousNeighbor.node)
+			isNeededForKnownPath := state.reachedFrom[previousNeighbor.node] == reachableNode
 			if wasRemoved && isNeededForKnownPath {
 				return level0LinkChange{}, false, nil
 			}
@@ -361,9 +364,12 @@ func (b *builder) planLinkToUnreachableNode(
 	if !found {
 		return level0LinkChange{}, false, nil
 	}
-	updatedLinks := append([]nodeOrdinal(nil), links...)
-	updatedLinks[replaceIndex] = unreachableNode
-	if err := b.sortNodeLinksByDistance(ctx, reachableNode, updatedLinks); err != nil {
+	updatedLinks := append([]buildNeighbor(nil), links...)
+	updatedLinks[replaceIndex] = buildNeighbor{
+		node:     unreachableNode,
+		distance: b.distanceNodes(reachableNode, unreachableNode),
+	}
+	if err := sortBuildNeighbors(ctx, updatedLinks); err != nil {
 		return level0LinkChange{}, false, err
 	}
 	return level0LinkChange{
@@ -405,12 +411,12 @@ func (b *builder) findReplaceableLink(
 	replaceIndex := -1
 	farthestDistance := 0.0
 	for i, neighbor := range links {
-		if state.reachedFrom[neighbor] == reachableNode {
+		if state.reachedFrom[neighbor.node] == reachableNode {
 			continue
 		}
-		distance := b.distanceNodes(reachableNode, neighbor)
+		distance := neighbor.distance
 		if replaceIndex < 0 || distance > farthestDistance ||
-			distance == farthestDistance && neighbor > links[replaceIndex] {
+			distance == farthestDistance && neighbor.node > links[replaceIndex].node {
 			replaceIndex = i
 			farthestDistance = distance
 		}
@@ -418,24 +424,32 @@ func (b *builder) findReplaceableLink(
 	return replaceIndex, replaceIndex >= 0
 }
 
-func (b *builder) sortNodeLinksByDistance(
-	ctx context.Context,
-	node nodeOrdinal,
-	links []nodeOrdinal,
-) error {
-	candidates := make([]candidate, 0, len(links))
-	for _, neighbor := range links {
-		candidates = append(candidates, candidate{
-			node: neighbor, distance: b.distanceNodes(node, neighbor),
-		})
-	}
-	if err := b.sortNeighbors(ctx, candidates); err != nil {
+func sortBuildNeighbors(ctx context.Context, links []buildNeighbor) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	for i := range candidates {
-		links[i] = candidates[i].node
-	}
+	slices.SortFunc(links, func(a, c buildNeighbor) int {
+		if a.distance < c.distance {
+			return -1
+		}
+		if a.distance > c.distance {
+			return 1
+		}
+		if a.node < c.node {
+			return -1
+		}
+		if a.node > c.node {
+			return 1
+		}
+		return 0
+	})
 	return ctx.Err()
+}
+
+func containsBuildNeighbor(links []buildNeighbor, node nodeOrdinal) bool {
+	return slices.ContainsFunc(links, func(neighbor buildNeighbor) bool {
+		return neighbor.node == node
+	})
 }
 
 // addReverseRepairLinkIfSpace optionally turns:
@@ -450,12 +464,15 @@ func (b *builder) addReverseRepairLinkIfSpace(
 	newlyReachableNode, reachableNode nodeOrdinal,
 ) (bool, error) {
 	links := b.graph.nodes[newlyReachableNode].links[0]
-	if slices.Contains(links, reachableNode) || len(links) >= b.config.MaxNeighbors*2 {
+	if containsBuildNeighbor(links, reachableNode) || len(links) >= b.config.MaxNeighbors*2 {
 		return false, nil
 	}
-	updated := append([]nodeOrdinal(nil), links...)
-	updated = append(updated, reachableNode)
-	if err := b.sortNodeLinksByDistance(ctx, newlyReachableNode, updated); err != nil {
+	updated := append([]buildNeighbor(nil), links...)
+	updated = append(updated, buildNeighbor{
+		node:     reachableNode,
+		distance: b.distanceNodes(newlyReachableNode, reachableNode),
+	})
+	if err := sortBuildNeighbors(ctx, updated); err != nil {
 		return false, err
 	}
 	b.graph.nodes[newlyReachableNode].links[0] = updated
@@ -493,16 +510,16 @@ func (b *builder) markNodesReachableFrom(
 				return newlyReachableNodes, err
 			}
 			work++
-			if uint64(neighbor) >= uint64(len(b.graph.nodes)) || neighbor == node {
+			if uint64(neighbor.node) >= uint64(len(b.graph.nodes)) || neighbor.node == node {
 				return newlyReachableNodes, errInvalidGraph
 			}
-			if state.isReachable[neighbor] {
+			if state.isReachable[neighbor.node] {
 				continue
 			}
-			state.isReachable[neighbor] = true
-			state.reachedFrom[neighbor] = node
+			state.isReachable[neighbor.node] = true
+			state.reachedFrom[neighbor.node] = node
 			state.reachableCount++
-			newlyReachableNodes = append(newlyReachableNodes, neighbor)
+			newlyReachableNodes = append(newlyReachableNodes, neighbor.node)
 		}
 	}
 	return newlyReachableNodes, ctx.Err()
