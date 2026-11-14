@@ -110,6 +110,7 @@ func (c IndexConfig) normalized() (IndexConfig, error) {
 	}
 	if c.Dimensions <= 0 || !c.Metric.Valid() || capacity.MaxSegments <= 0 ||
 		search.MaxCandidateChunks > capacity.MaxLiveVectors || search.MaxChunksPerResult > ingestion.MaxChunksPerDocument ||
+		min(defaultCandidateChunks, search.MaxCandidateChunks) > search.MaxEfSearch ||
 		defaults.EfSearch > search.MaxEfSearch || defaults.VisitLimit > search.MaxVisitLimit {
 		return IndexConfig{}, ErrInvalidConfig
 	}

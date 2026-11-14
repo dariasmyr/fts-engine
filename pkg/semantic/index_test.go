@@ -110,6 +110,7 @@ func TestIndexDocumentLifecycleAndCompaction(t *testing.T) {
 	mustCommit(t, index)
 	assertStatistics(t, index.Statistics(), Statistics{
 		Documents:            2,
+		Segments:             1,
 		PhysicalVectors:      2,
 		LiveVectors:          2,
 		MaxAllocatedVectorID: 2,
@@ -125,6 +126,7 @@ func TestIndexDocumentLifecycleAndCompaction(t *testing.T) {
 	assertNearestDocument(t, index, []float32{20, 0}, "doc-a")
 	assertStatistics(t, index.Statistics(), Statistics{
 		Documents:            2,
+		Segments:             2,
 		PhysicalVectors:      3,
 		LiveVectors:          2,
 		StaleVectors:         1,
@@ -138,6 +140,7 @@ func TestIndexDocumentLifecycleAndCompaction(t *testing.T) {
 	mustCommit(t, index)
 	assertStatistics(t, index.Statistics(), Statistics{
 		Documents:            1,
+		Segments:             2,
 		PhysicalVectors:      3,
 		LiveVectors:          1,
 		StaleVectors:         2,
@@ -150,6 +153,7 @@ func TestIndexDocumentLifecycleAndCompaction(t *testing.T) {
 	}
 	assertStatistics(t, index.Statistics(), Statistics{
 		Documents:            1,
+		Segments:             1,
 		PhysicalVectors:      1,
 		LiveVectors:          1,
 		MaxAllocatedVectorID: 3,

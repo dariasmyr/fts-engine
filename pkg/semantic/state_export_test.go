@@ -41,6 +41,7 @@ func TestCommittedIndexStateRestoreRoundTripPreservesCommittedIndex(t *testing.T
 	}
 	assertStatistics(t, restored.Statistics(), Statistics{
 		Documents:            2,
+		Segments:             1,
 		PhysicalVectors:      3,
 		LiveVectors:          3,
 		MaxAllocatedVectorID: 3,

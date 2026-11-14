@@ -8,6 +8,8 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
+const defaultCandidateChunks = 20
+
 // segmentView binds an immutable physical segment to an immutable local
 // liveness filter. The filter is view state, not mutable segment state.
 type segmentView struct {
@@ -22,6 +24,8 @@ type chunkSearchResult struct {
 }
 
 func mergeSearchStats(total *hnsw.SearchStats, partial hnsw.SearchStats) {
+	total.ConfiguredEfSearch = max(total.ConfiguredEfSearch, partial.ConfiguredEfSearch)
+	total.AppliedEfSearch = max(total.AppliedEfSearch, partial.AppliedEfSearch)
 	total.VisitedNodes += partial.VisitedNodes
 	total.ExpandedNodes += partial.ExpandedNodes
 	total.DistanceComputations += partial.DistanceComputations
@@ -35,12 +39,19 @@ func mergeSearchStats(total *hnsw.SearchStats, partial hnsw.SearchStats) {
 
 func resolveCandidateBudget(candidateChunks, maxCandidates int) (int, error) {
 	if candidateChunks == 0 {
-		return maxCandidates, nil
+		return min(defaultCandidateChunks, maxCandidates), nil
 	}
 	if candidateChunks < 0 || candidateChunks > maxCandidates {
 		return 0, fmt.Errorf("%w: candidate chunks %d, max %d", ErrInvalidQueryConfig, candidateChunks, maxCandidates)
 	}
 	return candidateChunks, nil
+}
+
+func resolveEfSearch(efSearch int, defaults hnsw.SearchConfig) int {
+	if efSearch == 0 {
+		return defaults.EfSearch
+	}
+	return efSearch
 }
 
 func searchSegmentChunksPrepared(ctx context.Context, space vector.Space, view segmentView, query vector.PreparedVector, k int, searchOptions hnsw.QueryConfig) (chunkSearchResult, error) {

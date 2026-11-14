@@ -2,6 +2,7 @@ package semantic
 
 type Statistics struct {
 	Documents       int
+	Segments        int
 	PhysicalVectors int
 	LiveVectors     int
 	StaleVectors    int

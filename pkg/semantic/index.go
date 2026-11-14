@@ -216,8 +216,13 @@ func (i *Index) Statistics() Statistics {
 	i.stateMu.RLock()
 	defer i.stateMu.RUnlock()
 	physical := i.physicalVectorCountLocked()
+	segmentCount := 0
+	if i.state.view != nil {
+		segmentCount = len(i.state.view.segments)
+	}
 	return Statistics{
 		Documents:            len(i.state.documents),
+		Segments:             segmentCount,
 		PhysicalVectors:      physical,
 		LiveVectors:          i.state.liveVectorCount,
 		StaleVectors:         physical - i.state.liveVectorCount,

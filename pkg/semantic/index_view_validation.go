@@ -22,12 +22,29 @@ func (v *IndexView) validateSearchLimits(ctx context.Context, maxResultCount int
 	if maxResultCount <= 0 || maxResultCount > v.resultLimits.maxDocumentsPerSearch {
 		return fmt.Errorf("%w: got %d, max %d", vector.ErrInvalidK, maxResultCount, v.resultLimits.maxDocumentsPerSearch)
 	}
-	if _, err := resolveCandidateBudget(config.CandidateChunks, v.searchLimits.maxChunkCandidates); err != nil {
+	candidateBudget, err := resolveCandidateBudget(config.CandidateChunks, v.searchLimits.maxChunkCandidates)
+	if err != nil {
 		return err
 	}
-	if config.EfSearch > v.searchLimits.maxEfSearch ||
-		config.VisitLimit > v.searchLimits.maxVisitLimit {
-		return ErrInvalidQueryConfig
+	configuredEfSearch := resolveEfSearch(config.EfSearch, v.searchConfig)
+	requiredEfSearch := max(candidateBudget, configuredEfSearch)
+	if requiredEfSearch > v.searchLimits.maxEfSearch {
+		return fmt.Errorf(
+			"%w: required ef search %d (configured %d, candidate chunks %d), max %d",
+			ErrInvalidQueryConfig,
+			requiredEfSearch,
+			configuredEfSearch,
+			candidateBudget,
+			v.searchLimits.maxEfSearch,
+		)
+	}
+	if config.VisitLimit > v.searchLimits.maxVisitLimit {
+		return fmt.Errorf(
+			"%w: visit limit %d, max %d",
+			ErrInvalidQueryConfig,
+			config.VisitLimit,
+			v.searchLimits.maxVisitLimit,
+		)
 	}
 	return nil
 }

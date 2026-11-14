@@ -28,10 +28,7 @@ func (s *IndexView) collectChunkCandidates(
 	if visitBudget == 0 {
 		visitBudget = s.searchConfig.VisitLimit
 	}
-	efSearch := config.EfSearch
-	if efSearch == 0 {
-		efSearch = s.searchConfig.EfSearch
-	}
+	efSearch := resolveEfSearch(config.EfSearch, s.searchConfig)
 
 	active := make([]segmentView, 0, len(s.segments))
 	segmentCapacities := make([]int, 0, len(s.segments))
@@ -79,6 +76,7 @@ func (s *IndexView) collectChunkCandidates(
 			if err != nil {
 				return nil, DocumentSearchResult{}, err
 			}
+			result.HNSWSearches++
 			mergeSearchStats(&result.Stats, partial.Stats)
 			visitLimited = visitLimited || partial.Incomplete
 			for _, hit := range partial.Hits {

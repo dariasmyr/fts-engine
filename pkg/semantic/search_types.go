@@ -26,6 +26,8 @@ type DocumentHit struct {
 // are aggregated across all encoded query chunks.
 type DocumentSearchResult struct {
 	Hits []DocumentHit
+	// HNSWSearches is the number of segment-level HNSW searches actually run.
+	HNSWSearches int
 	// CandidateChunks is the total number of chunk candidates considered.
 	CandidateChunks int
 	// DistinctDocuments is counted before Hits is limited to the requested

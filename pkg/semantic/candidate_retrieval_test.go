@@ -34,3 +34,15 @@ func TestCandidateMergeCapacity(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveCandidateBudgetUsesRequestBudgetInsteadOfMaximum(t *testing.T) {
+	t.Parallel()
+
+	got, err := resolveCandidateBudget(0, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != defaultCandidateChunks {
+		t.Fatalf("resolveCandidateBudget(0, 200) = %d, want %d", got, defaultCandidateChunks)
+	}
+}
