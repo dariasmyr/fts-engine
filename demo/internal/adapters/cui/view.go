@@ -426,20 +426,32 @@ func (m model) sidebarWidth() int {
 }
 
 func (m model) sectionSystem(width int) string {
-	return strings.Join([]string{
+	rows := []string{
 		sectionTitle.Render("⚙ system"),
 		kvVal("version", statStyle.Render(orDash(m.info.Version))),
-		kv("engine", orDash(m.info.Engine)),
-		kv("index", orDash(m.info.Index)),
-		kv("scorer", orDash(m.info.Scorer)),
-		kv("profile", orDash(m.info.Profile)),
-		kv("filter", orDash(m.info.Filter)),
-		kv("shape", m.indexShape()),
-		kv("fields", m.fieldListLabel(width)),
+	}
+	if m.mode == searchModeSemantic {
+		rows = append(rows,
+			kv("engine", orDash(m.info.SemanticEngine)),
+			kv("index", orDash(m.info.SemanticIndex)),
+		)
+	} else {
+		rows = append(rows,
+			kv("engine", orDash(m.info.Engine)),
+			kv("index", orDash(m.info.Index)),
+			kv("scorer", orDash(m.info.Scorer)),
+			kv("profile", orDash(m.info.Profile)),
+			kv("filter", orDash(m.info.Filter)),
+			kv("shape", m.indexShape()),
+			kv("fields", m.fieldListLabel(width)),
+		)
+	}
+	rows = append(rows,
 		kvVal("docs", statStyle.Render(fmtInt(m.docCount))),
 		kvVal("limit", statStyle.Render(fmt.Sprintf("%d", m.maxResults))),
 		kv("uptime", fmtDuration(m.now.Sub(m.startTime))),
-	}, "\n")
+	)
+	return strings.Join(rows, "\n")
 }
 
 func (m model) indexShape() string {
@@ -506,6 +518,22 @@ func (m model) sectionDiagnostics(width int) string {
 		rows = append(rows, kvVal(key, timingValStyle.Render(m.diagnostics.Timings[key])))
 	}
 
+	if m.diagnostics.LogicalQueryType == "semantic" {
+		rows = append(rows,
+			kvVal("searches", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.IndexSearches))),
+			kvVal("configured_ef", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.ConfiguredEfSearch))),
+			kvVal("applied_ef", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.AppliedEfSearch))),
+			kvVal("candidate_chunks", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.CandidateChunks))),
+			kvVal("candidate_docs", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.CandidateDocs))),
+			kvVal("visited_nodes", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.VisitedNodes))),
+			kvVal("distances", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.DistanceComputations))),
+			kvVal("rejected_nodes", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.RejectedNodes))),
+			kvVal("matched", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.MatchedDocs))),
+			kvVal("returned", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.ReturnedDocs))),
+		)
+		return strings.Join(rows, "\n")
+	}
+
 	rows = append(rows,
 		kvVal("tokens", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.ProcessedTokens))),
 		kvVal("fields", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.FieldsVisited))),
@@ -518,12 +546,6 @@ func (m model) sectionDiagnostics(width int) string {
 		kvVal("matched", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.MatchedDocs))),
 		kvVal("returned", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.ReturnedDocs))),
 	)
-	if m.diagnostics.VisitedNodes > 0 || m.diagnostics.DistanceComputations > 0 {
-		rows = append(rows,
-			kvVal("visited_nodes", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.VisitedNodes))),
-			kvVal("distances", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.DistanceComputations))),
-		)
-	}
 	return strings.Join(rows, "\n")
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/dariasmyr/fts-engine/demo/internal/domain/models"
 	"github.com/dariasmyr/fts-engine/v2/pkg/embedding"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist"
 )
@@ -54,7 +55,10 @@ func TestServiceAdapterSearchSemantic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	adapter := &serviceAdapter{semanticService: semanticService}
+	adapter := &serviceAdapter{
+		semanticService: semanticService,
+		semanticSearch:  semantic.QueryConfig{EfSearch: 1, CandidateChunks: 2},
+	}
 	result, err := adapter.SearchSemantic(t.Context(), "river hotel", 2)
 	if err != nil {
 		t.Fatalf("SearchSemantic() error = %v", err)
@@ -67,6 +71,10 @@ func TestServiceAdapterSearchSemantic(t *testing.T) {
 	}
 	if result.Diagnostics == nil || result.Diagnostics.ExecutionStrategy != "hnsw" {
 		t.Fatalf("SearchSemantic() diagnostics = %+v", result.Diagnostics)
+	}
+	if result.Diagnostics.ConfiguredEfSearch != 1 || result.Diagnostics.AppliedEfSearch != 2 ||
+		result.Diagnostics.CandidateChunks != 2 || result.Diagnostics.IndexSearches != 1 {
+		t.Fatalf("SearchSemantic() HNSW diagnostics = %+v", result.Diagnostics)
 	}
 }
 

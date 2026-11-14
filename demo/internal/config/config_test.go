@@ -34,6 +34,46 @@ func TestLoadReadsQueryTypeWeights(t *testing.T) {
 	}
 }
 
+func TestLoadReadsSemanticSearchConfig(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte(`semantic:
+  search:
+    ef_search: 12
+    candidate_chunks: 18
+`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := SemanticSearchConfig{EfSearch: 12, CandidateChunks: 18}
+	if cfg.Semantic.Search != want {
+		t.Fatalf("Semantic.Search = %+v, want %+v", cfg.Semantic.Search, want)
+	}
+}
+
+func TestLoadReadsMaxDocuments(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("max_documents: 25000\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.MaxDocuments != 25_000 {
+		t.Fatalf("MaxDocuments = %d, want 25000", cfg.MaxDocuments)
+	}
+}
+
 func TestValidateConfigAppliesFallbacksFromDefaultConfig(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Env = ""
@@ -54,6 +94,7 @@ func TestValidateConfigAppliesFallbacksFromDefaultConfig(t *testing.T) {
 	cfg.Semantic.MaxLiveVectors = 0
 	cfg.Semantic.Ollama = SemanticOllamaConfig{}
 	cfg.Semantic.Persistence.Path = ""
+	cfg.Semantic.Persistence.MaxFileBytes = 0
 	cfg.Semantic.Persistence.MaxOpenBytes = 0
 	cfg.Mode.Type = ""
 
@@ -73,6 +114,18 @@ func TestValidateConfigAllowsFlatObservability(t *testing.T) {
 
 	if err := validateConfig(&cfg); err != nil {
 		t.Fatalf("validateConfig() error = %v", err)
+	}
+}
+
+func TestValidateConfigRejectsNegativeMaxDocuments(t *testing.T) {
+	t.Parallel()
+
+	cfg := defaultConfig()
+	cfg.MaxDocuments = -1
+
+	err := validateConfig(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "max_documents must be >= 0") {
+		t.Fatalf("validateConfig() error = %v, want max_documents error", err)
 	}
 }
 
@@ -131,8 +184,10 @@ func TestConfigStructsDoNotUseEnvDefaults(t *testing.T) {
 		reflect.TypeOf(ModeConfig{}),
 		reflect.TypeOf(PipelineConfig{}),
 		reflect.TypeOf(SemanticConfig{}),
+		reflect.TypeOf(SemanticSearchConfig{}),
 		reflect.TypeOf(SemanticOllamaConfig{}),
 		reflect.TypeOf(SemanticPersistenceConfig{}),
+		reflect.TypeOf(SemanticCompactionConfig{}),
 	} {
 		for i := 0; i < typ.NumField(); i++ {
 			field := typ.Field(i)
@@ -140,6 +195,62 @@ func TestConfigStructsDoNotUseEnvDefaults(t *testing.T) {
 				t.Fatalf("field %s.%s still uses env-default tag %q", typ.Name(), field.Name, tag)
 			}
 		}
+	}
+}
+
+func TestValidateConfigAllowsSemanticCompaction(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Semantic.Enabled = true
+	cfg.Semantic.Compaction = SemanticCompactionConfig{
+		Enabled: true,
+		Prune:   true,
+	}
+
+	if err := validateConfig(&cfg); err != nil {
+		t.Fatalf("validateConfig() error = %v", err)
+	}
+}
+
+func TestValidateConfigRejectsSemanticPersistenceOpenLimitBelowFileLimit(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Semantic.Persistence.MaxFileBytes = 2 << 30
+	cfg.Semantic.Persistence.MaxOpenBytes = 1 << 30
+
+	err := validateConfig(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "max_open_bytes must be at least max_file_bytes") {
+		t.Fatalf("validateConfig() error = %v, want semantic persistence limit error", err)
+	}
+}
+
+func TestValidateConfigRejectsUnsafeSemanticCompaction(t *testing.T) {
+	tests := []struct {
+		name        string
+		configure   func(*Config)
+		wantErrPart string
+	}{
+		{
+			name: "without persistence",
+			configure: func(cfg *Config) {
+				cfg.Semantic.Persistence.Enabled = false
+			},
+			wantErrPart: "requires persistence",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := defaultConfig()
+			cfg.Semantic.Enabled = true
+			cfg.Semantic.Compaction = SemanticCompactionConfig{
+				Enabled: true,
+			}
+			tt.configure(&cfg)
+
+			err := validateConfig(&cfg)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErrPart) {
+				t.Fatalf("validateConfig() error = %v, want %q", err, tt.wantErrPart)
+			}
+		})
 	}
 }
 

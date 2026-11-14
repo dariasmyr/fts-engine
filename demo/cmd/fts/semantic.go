@@ -30,6 +30,7 @@ type semanticRuntime struct {
 	workers           int
 	checkpointDocs    int
 	persistenceLimits semanticpersist.Limits
+	compaction        config.SemanticCompactionConfig
 }
 
 func buildSemanticRuntime(ctx context.Context, log *slog.Logger, cfg config.SemanticConfig) (*semanticRuntime, error) {
@@ -51,12 +52,16 @@ func buildSemanticRuntime(ctx context.Context, log *slog.Logger, cfg config.Sema
 	}
 
 	runtimeState := &semanticRuntime{
-		persistencePath:   cfg.Persistence.Path,
-		persistence:       cfg.Persistence.Enabled,
-		saveOnBuild:       cfg.Persistence.SaveOnBuild,
-		workers:           cfg.Workers,
-		checkpointDocs:    cfg.CheckpointDocuments,
-		persistenceLimits: semanticpersist.Limits{MaxOpenBytes: cfg.Persistence.MaxOpenBytes},
+		persistencePath: cfg.Persistence.Path,
+		persistence:     cfg.Persistence.Enabled,
+		saveOnBuild:     cfg.Persistence.SaveOnBuild,
+		workers:         cfg.Workers,
+		checkpointDocs:  cfg.CheckpointDocuments,
+		persistenceLimits: semanticpersist.Limits{
+			MaxFileBytes: cfg.Persistence.MaxFileBytes,
+			MaxOpenBytes: cfg.Persistence.MaxOpenBytes,
+		},
+		compaction: cfg.Compaction,
 	}
 	currentPath := filepath.Join(cfg.Persistence.Path, "CURRENT")
 	if cfg.Persistence.Enabled && cfg.Persistence.LoadOnStart {
@@ -140,7 +145,7 @@ func populateSemanticDocuments(
 	}
 
 	var indexed atomic.Int64
-	var embeddingDuration, commitDuration, persistenceDuration time.Duration
+	var embeddingDuration, commitDuration, saveDuration, pruneDuration, persistenceDuration time.Duration
 	for offset := 0; offset < len(missing); offset += checkpointSize {
 		end := min(offset+checkpointSize, len(missing))
 		embedStartedAt := time.Now()
@@ -159,9 +164,10 @@ func populateSemanticDocuments(
 		commitDuration += checkpointCommitDuration
 		stats := runtimeState.service.Statistics()
 
-		var checkpointPersistenceDuration time.Duration
+		var checkpointSaveDuration, checkpointPruneDuration, checkpointPersistenceDuration time.Duration
 		if runtimeState.persistence && runtimeState.saveOnBuild {
-			persistStartedAt := time.Now()
+			persistenceStartedAt := time.Now()
+			saveStartedAt := time.Now()
 			generation, err := semanticpersist.SaveService(ctx, runtimeState.persistencePath, runtimeState.service, semanticpersist.SaveOptions{
 				ExpectedGeneration: &runtimeState.generation,
 				Limits:             runtimeState.persistenceLimits,
@@ -169,14 +175,19 @@ func populateSemanticDocuments(
 			if err != nil {
 				return fmt.Errorf("persist semantic index: %w", err)
 			}
+			checkpointSaveDuration = time.Since(saveStartedAt)
+			saveDuration += checkpointSaveDuration
 			runtimeState.generation = generation
+			pruneStartedAt := time.Now()
 			if _, pruneErr := semanticpersist.Prune(ctx, runtimeState.persistencePath, semanticpersist.PruneOptions{
 				RetainGenerations: 2,
 				Limits:            runtimeState.persistenceLimits,
 			}); pruneErr != nil {
 				log.Warn("Could not prune old semantic generations", "error", pruneErr)
 			}
-			checkpointPersistenceDuration = time.Since(persistStartedAt)
+			checkpointPruneDuration = time.Since(pruneStartedAt)
+			pruneDuration += checkpointPruneDuration
+			checkpointPersistenceDuration = time.Since(persistenceStartedAt)
 			persistenceDuration += checkpointPersistenceDuration
 		}
 
@@ -184,6 +195,8 @@ func populateSemanticDocuments(
 			"documents", stats.Documents,
 			"live_vectors", stats.LiveVectors,
 			"hnsw_duration", checkpointCommitDuration,
+			"save_duration", checkpointSaveDuration,
+			"prune_duration", checkpointPruneDuration,
 			"persistence_duration", checkpointPersistenceDuration,
 			"generation", runtimeState.generation.ID,
 		)
@@ -205,6 +218,8 @@ func populateSemanticDocuments(
 		"embedded_this_run", indexed.Load(),
 		"embedding_duration", embeddingDuration,
 		"hnsw_duration", commitDuration,
+		"save_duration", saveDuration,
+		"prune_duration", pruneDuration,
 		"persistence_duration", persistenceDuration,
 		"total_duration", time.Since(startedAt),
 		"heap_alloc_bytes", after.HeapAlloc,

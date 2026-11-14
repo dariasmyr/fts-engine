@@ -33,12 +33,14 @@ type SearchEngine interface {
 }
 
 type Info struct {
-	Engine  string
-	Index   string
-	Scorer  string
-	Profile string
-	Filter  string
-	Version string
+	Engine         string
+	Index          string
+	Scorer         string
+	Profile        string
+	Filter         string
+	SemanticEngine string
+	SemanticIndex  string
+	Version        string
 }
 
 type searchMode string

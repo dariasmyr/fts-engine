@@ -26,6 +26,10 @@ func runExperimentMode(ctx context.Context, log *slog.Logger, service *pkgfts.Se
 	)
 	if err := populateSemanticDocuments(ctx, log, semanticEngine, documents); err != nil {
 		log.Error("semantic indexing experiment failed", "error", err)
+		return
+	}
+	if _, err := runSemanticCompaction(ctx, log, semanticEngine); err != nil {
+		log.Error("semantic compaction experiment failed", "error", err)
 	}
 }
 

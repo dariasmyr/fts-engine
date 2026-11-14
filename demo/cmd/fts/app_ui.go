@@ -11,17 +11,20 @@ import (
 	"github.com/dariasmyr/fts-engine/demo/internal/domain/models"
 	pkgfts "github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/ftsstats"
+	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	semanticservice "github.com/dariasmyr/fts-engine/v2/pkg/semantic/service"
 )
 
 func runCUI(ctx context.Context, log *slog.Logger, cfgIndex string, cfgScorer string, cfgProfile string, cfgFilter string, engine *serviceAdapter, documentsByID map[string]models.Document) error {
 	appCUI := cui.New(ctx, log, engine, documentsByID, 10, cui.Info{
-		Engine:  "pkg/fts",
-		Index:   cfgIndex,
-		Scorer:  cfgScorer,
-		Profile: cfgProfile,
-		Filter:  cfgFilter,
-		Version: buildVersion(),
+		Engine:         "pkg/fts",
+		Index:          cfgIndex,
+		Scorer:         cfgScorer,
+		Profile:        cfgProfile,
+		Filter:         cfgFilter,
+		SemanticEngine: "pkg/semantic",
+		SemanticIndex:  "hnsw",
+		Version:        buildVersion(),
 	})
 
 	if err := appCUI.Start(); err != nil {
@@ -36,6 +39,7 @@ func runCUI(ctx context.Context, log *slog.Logger, cfgIndex string, cfgScorer st
 type serviceAdapter struct {
 	service         *pkgfts.Service
 	semanticService *semanticservice.Service
+	semanticSearch  semantic.QueryConfig
 	snapshotLoaded  bool
 	searchStats     *ftsstats.SearchStats
 }
@@ -135,7 +139,7 @@ func (s *serviceAdapter) SearchSemantic(ctx context.Context, query string, maxRe
 	if s == nil || s.semanticService == nil {
 		return nil, fmt.Errorf("semantic search is disabled")
 	}
-	result, err := s.semanticService.Search(ctx, query, maxResults)
+	result, err := s.semanticService.SearchWithConfig(ctx, query, maxResults, s.semanticSearch)
 	if err != nil {
 		return nil, err
 	}
@@ -150,12 +154,16 @@ func (s *serviceAdapter) SearchSemantic(ctx context.Context, query string, maxRe
 		Diagnostics: &models.SearchDiagnostics{
 			LogicalQueryType:     "semantic",
 			ExecutionStrategy:    "hnsw",
-			IndexSearches:        1,
+			IndexSearches:        result.HNSWSearches,
 			CandidateDocs:        result.DistinctDocuments,
+			CandidateChunks:      result.CandidateChunks,
 			MatchedDocs:          result.DistinctDocuments,
 			ReturnedDocs:         len(result.Hits),
 			VisitedNodes:         result.Stats.VisitedNodes,
 			DistanceComputations: result.Stats.DistanceComputations,
+			RejectedNodes:        result.Stats.RejectedNodes,
+			ConfiguredEfSearch:   result.Stats.ConfiguredEfSearch,
+			AppliedEfSearch:      result.Stats.AppliedEfSearch,
 		},
 	}, nil
 }

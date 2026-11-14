@@ -14,12 +14,13 @@ import (
 )
 
 type Loader struct {
-	log      *slog.Logger
-	dumpPath string
+	log          *slog.Logger
+	dumpPath     string
+	maxDocuments int
 }
 
-func New(log *slog.Logger, dumpPath string) *Loader {
-	return &Loader{log: log, dumpPath: dumpPath}
+func New(log *slog.Logger, dumpPath string, maxDocuments int) *Loader {
+	return &Loader{log: log, dumpPath: dumpPath, maxDocuments: maxDocuments}
 }
 
 func (l *Loader) LoadDocuments(ctx context.Context) (documents []models.Document, err error) {
@@ -35,9 +36,11 @@ func (l *Loader) LoadDocuments(ctx context.Context) (documents []models.Document
 		return nil, err
 	}
 	defer func() {
-		err = f.Close()
-		if err != nil {
-			l.log.Error("Failed to close file", "error", err)
+		if closeErr := f.Close(); closeErr != nil {
+			l.log.Error("Failed to close file", "error", closeErr)
+			if err == nil {
+				err = closeErr
+			}
 		}
 	}()
 
@@ -46,28 +49,44 @@ func (l *Loader) LoadDocuments(ctx context.Context) (documents []models.Document
 		return nil, err
 	}
 	defer func() {
-		_ = gz.Close()
+		if closeErr := gz.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
 	}()
 
 	dec := xml.NewDecoder(gz)
-	dump := struct {
-		Documents []models.Document `xml:"doc"`
-	}{}
-
-	if decodeErr := dec.Decode(&dump); decodeErr != nil {
-		return nil, decodeErr
-	}
-
-	for i := range dump.Documents {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			dump.Documents[i].ID = l.generateID(dump.Documents[i])
+	documents = make([]models.Document, 0, initialCapacity(l.maxDocuments))
+	for l.maxDocuments == 0 || len(documents) < l.maxDocuments {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
+		token, decodeErr := dec.Token()
+		if decodeErr == io.EOF {
+			break
+		}
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok || start.Name.Local != "doc" {
+			continue
+		}
+		var document models.Document
+		if decodeErr := dec.DecodeElement(&document, &start); decodeErr != nil {
+			return nil, decodeErr
+		}
+		document.ID = l.generateID(document)
+		documents = append(documents, document)
 	}
 
-	return dump.Documents, nil
+	return documents, nil
+}
+
+func initialCapacity(maxDocuments int) int {
+	if maxDocuments > 0 {
+		return min(maxDocuments, 25_000)
+	}
+	return 0
 }
 
 func (l *Loader) generateID(document models.Document) string {

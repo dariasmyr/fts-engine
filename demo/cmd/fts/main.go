@@ -80,7 +80,14 @@ func main() {
 	log.Info("fts", "compaction_load_factor", cfg.FTS.Compaction.LoadFactor)
 	log.Info("fts", "compaction_auto_check", cfg.FTS.Compaction.AutoCheck)
 	log.Info("fts", "mode", cfg.Mode.Type)
-	log.Info("semantic", "enabled", cfg.Semantic.Enabled, "model", cfg.Semantic.Ollama.Model, "workers", cfg.Semantic.Workers)
+	log.Info("semantic",
+		"enabled", cfg.Semantic.Enabled,
+		"model", cfg.Semantic.Ollama.Model,
+		"workers", cfg.Semantic.Workers,
+		"persistence_path", cfg.Semantic.Persistence.Path,
+		"compaction_enabled", cfg.Semantic.Compaction.Enabled,
+		"compaction_prune", cfg.Semantic.Compaction.Prune,
+	)
 
 	registry, err := ftsbuiltin.NewSnapshotRegistry()
 	if err != nil {
@@ -113,11 +120,13 @@ func main() {
 	}
 	if semanticEngine != nil {
 		ftsEngine.semanticService = semanticEngine.service
+		ftsEngine.semanticSearch.EfSearch = cfg.Semantic.Search.EfSearch
+		ftsEngine.semanticSearch.CandidateChunks = cfg.Semantic.Search.CandidateChunks
 	}
 
 	log.Info("FTS engine initialised")
 
-	dumpLoader := wiki.New(log, cfg.DumpPath)
+	dumpLoader := wiki.New(log, cfg.DumpPath, cfg.MaxDocuments)
 	log.Info("Loader initialised")
 
 	startTime := time.Now()
@@ -173,7 +182,10 @@ func main() {
 		log.Error("Failed to index semantic corpus", "error", sl.Err(err))
 		return
 	}
-
+	if _, err := runSemanticCompaction(ctx, log, semanticEngine); err != nil {
+		log.Error("Failed to compact semantic index", "error", sl.Err(err))
+		return
+	}
 	if err := runCUI(ctx, log, cfg.FTS.Index, cfg.FTS.Scorer, rankProfileLabel(cfg.FTS.RankProfile), cfg.FTS.Filter, ftsEngine, documentsByID); err != nil {
 		log.Error("Failed to start appCUI", "error", sl.Err(err))
 		return

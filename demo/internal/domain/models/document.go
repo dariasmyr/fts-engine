@@ -50,14 +50,18 @@ type SearchDiagnostics struct {
 	FieldsVisited        int               `json:"fields_visited"`
 	GeneratedKeys        int               `json:"generated_keys"`
 	IndexSearches        int               `json:"index_searches"`
+	ConfiguredEfSearch   int               `json:"configured_ef_search,omitempty"`
+	AppliedEfSearch      int               `json:"applied_ef_search,omitempty"`
 	FilterChecks         int               `json:"filter_checks"`
 	FilterRejects        int               `json:"filter_rejects"`
 	PostingEntriesRead   int               `json:"posting_entries_read"`
 	CandidateDocs        int               `json:"candidate_docs"`
+	CandidateChunks      int               `json:"candidate_chunks,omitempty"`
 	MatchedDocs          int               `json:"matched_docs"`
 	ReturnedDocs         int               `json:"returned_docs"`
 	VisitedNodes         int               `json:"visited_nodes,omitempty"`
 	DistanceComputations int               `json:"distance_computations,omitempty"`
+	RejectedNodes        int               `json:"rejected_nodes,omitempty"`
 }
 
 type SearchResult struct {
