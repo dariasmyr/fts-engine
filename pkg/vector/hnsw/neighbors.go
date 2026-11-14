@@ -17,11 +17,29 @@ func (b *builder) vectorByNode(node nodeOrdinal) []float32 {
 }
 
 func (b *builder) selectClosestNeighbors(ctx context.Context, candidates []candidate, limit int) ([]nodeOrdinal, error) {
+	return b.selectNeighbors(ctx, candidates, limit, true)
+}
+
+// selectDiverseNeighbors does not refill slots rejected by diversification.
+// Reverse-link pruning uses this to avoid immediately filling a pruned list.
+func (b *builder) selectDiverseNeighbors(ctx context.Context, candidates []candidate, limit int) ([]nodeOrdinal, error) {
+	return b.selectNeighbors(ctx, candidates, limit, false)
+}
+
+func (b *builder) selectNeighbors(
+	ctx context.Context,
+	candidates []candidate,
+	limit int,
+	fillFromRejected bool,
+) ([]nodeOrdinal, error) {
 	if err := b.sortNeighbors(ctx, candidates); err != nil {
 		return nil, err
 	}
 	selected := make([]nodeOrdinal, 0, min(limit, len(candidates)))
-	rejected := make([]nodeOrdinal, 0, min(limit, len(candidates)))
+	var rejected []nodeOrdinal
+	if fillFromRejected {
+		rejected = make([]nodeOrdinal, 0, min(limit, len(candidates)))
+	}
 	// Reject candidates already represented by a selected, closer neighbor. This
 	// preserves links into different regions instead of only the nearest cluster.
 	work := 0
@@ -31,7 +49,7 @@ func (b *builder) selectClosestNeighbors(ctx context.Context, candidates []candi
 		}
 		work++
 
-		// diverce means that the candidate is not too close to any already selected neighbor, so we can add it to the selected list.
+		// A diverse candidate is not too close to an already selected neighbor.
 		diverse := true
 		for _, existing := range selected {
 			if err := periodicContextError(ctx, work); err != nil {
@@ -43,15 +61,15 @@ func (b *builder) selectClosestNeighbors(ctx context.Context, candidates []candi
 				break
 			}
 		}
-		// If the candidate is not too close to any already selected neighbor,
-		// we add it to the selected list. If not, we add it to the rejected list.
 		if diverse {
 			selected = append(selected, candidate.node)
 			if len(selected) == limit {
 				return selected, ctx.Err()
 			}
 		} else {
-			rejected = append(rejected, candidate.node)
+			if fillFromRejected {
+				rejected = append(rejected, candidate.node)
+			}
 		}
 	}
 	// fill unused slots only after choosing diverse neighbors. This may
@@ -113,7 +131,7 @@ func (b *builder) addReverseLink(ctx context.Context, existingNode, newNode node
 	// if the number of candidates exceeds the limit, we select the closest neighbors
 	if len(candidates) > limit {
 		var err error
-		closestNeighbors, err = b.selectClosestNeighbors(ctx, candidates, limit)
+		closestNeighbors, err = b.selectDiverseNeighbors(ctx, candidates, limit)
 		if err != nil {
 			return err
 		}
