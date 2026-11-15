@@ -8,6 +8,9 @@ type buildWorkspace struct {
 	nearestCandidates     []candidate
 	levelStartCandidates  []candidate
 	reverseLinkCandidates []candidate
+	// rejectedNeighbors is selection-only scratch. Selected neighbors use a
+	// caller-owned buffer because they become persistent graph links.
+	rejectedNeighbors []buildNeighbor
 
 	reverseDistanceChecks uint64
 	reverseSkippedChecks  uint64

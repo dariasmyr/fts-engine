@@ -115,11 +115,11 @@ func TestIncrementalNeighborSelectionMatchesFullRecomputation(t *testing.T) {
 				fullCandidates[i].verified = false
 			}
 
-			incremental, err := b.selectNeighbors(t.Context(), incrementalCandidates, tt.limit, tt.fillFromRejected)
+			incremental, err := b.selectNeighbors(t.Context(), incrementalCandidates, tt.limit, tt.fillFromRejected, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			full, err := b.selectNeighbors(t.Context(), fullCandidates, tt.limit, tt.fillFromRejected)
+			full, err := b.selectNeighbors(t.Context(), fullCandidates, tt.limit, tt.fillFromRejected, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -151,7 +151,7 @@ func TestIncrementalNeighborSelectionSkipsConfirmedPairs(t *testing.T) {
 		{node: 4, distance: b.distanceNodes(0, 4), verified: true},
 		{node: 5, distance: b.distanceNodes(0, 5)},
 	}
-	selection, err := b.selectNeighbors(t.Context(), candidates, 4, false)
+	selection, err := b.selectNeighbors(t.Context(), candidates, 4, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,12 +162,89 @@ func TestIncrementalNeighborSelectionSkipsConfirmedPairs(t *testing.T) {
 	for i := range fullCandidates {
 		fullCandidates[i].verified = false
 	}
-	full, err := b.selectNeighbors(t.Context(), fullCandidates, 4, false)
+	full, err := b.selectNeighbors(t.Context(), fullCandidates, 4, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if selection.distanceChecks >= full.distanceChecks {
 		t.Fatalf("incremental checks = %d, full checks = %d", selection.distanceChecks, full.distanceChecks)
+	}
+}
+
+func TestNeighborSelectionReusesProvidedAndScratchBuffers(t *testing.T) {
+	t.Parallel()
+
+	b := newNeighborSelectionTestBuilder(
+		t,
+		[][]float32{{0}, {1}, {2}, {3}, {4}, {5}},
+		2,
+	)
+	candidates := []candidate{
+		{node: 1, distance: b.distanceNodes(0, 1)},
+		{node: 2, distance: b.distanceNodes(0, 2)},
+		{node: 3, distance: b.distanceNodes(0, 3)},
+		{node: 4, distance: b.distanceNodes(0, 4)},
+		{node: 5, distance: b.distanceNodes(0, 5)},
+	}
+	selected := make([]buildNeighbor, 0, 4)
+	selectedStorage := &selected[:cap(selected)][0]
+
+	selection, err := b.selectNeighbors(t.Context(), candidates, 4, true, selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selection.neighbors) == 0 || &selection.neighbors[0] != selectedStorage {
+		t.Fatal("neighbor selection did not reuse the provided output buffer")
+	}
+	if cap(b.workspace.rejectedNeighbors) < len(candidates) {
+		t.Fatalf("rejected scratch capacity = %d, want at least %d", cap(b.workspace.rejectedNeighbors), len(candidates))
+	}
+	rejectedStorage := &b.workspace.rejectedNeighbors[:cap(b.workspace.rejectedNeighbors)][0]
+
+	selection, err = b.selectNeighbors(t.Context(), candidates, 4, false, selection.neighbors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if &b.workspace.rejectedNeighbors[:cap(b.workspace.rejectedNeighbors)][0] != rejectedStorage {
+		t.Fatal("strict neighbor selection discarded rejected scratch owned by fallback selection")
+	}
+
+	selection, err = b.selectNeighbors(t.Context(), candidates, 4, true, selection.neighbors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if &selection.neighbors[0] != selectedStorage {
+		t.Fatal("neighbor selection replaced the reusable output buffer")
+	}
+	if &b.workspace.rejectedNeighbors[:cap(b.workspace.rejectedNeighbors)][0] != rejectedStorage {
+		t.Fatal("neighbor selection replaced sufficiently sized rejected scratch")
+	}
+}
+
+func TestAddReverseLinkPreallocatesAndReusesLevelCapacity(t *testing.T) {
+	t.Parallel()
+
+	b := newConnectivityTestBuilder(
+		t,
+		[]float32{0, 1, 2},
+		make([][]nodeOrdinal, 3),
+		2,
+	)
+	if err := b.addReverseLink(t.Context(), 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	links := b.graph.nodes[0].links[0]
+	if cap(links) != 4 {
+		t.Fatalf("level-0 link capacity = %d, want 4", cap(links))
+	}
+	linkStorage := &links[0]
+
+	if err := b.addReverseLink(t.Context(), 0, 2, 0); err != nil {
+		t.Fatal(err)
+	}
+	links = b.graph.nodes[0].links[0]
+	if &links[0] != linkStorage {
+		t.Fatal("reverse-link growth replaced preallocated storage")
 	}
 }
 

@@ -26,7 +26,7 @@ func (b *builder) vectorByNode(node nodeOrdinal) []float32 {
 }
 
 func (b *builder) selectClosestNeighbors(ctx context.Context, candidates []candidate, limit int) ([]buildNeighbor, error) {
-	selection, err := b.selectNeighbors(ctx, candidates, limit, true)
+	selection, err := b.selectNeighbors(ctx, candidates, limit, true, nil)
 	return selection.neighbors, err
 }
 
@@ -35,16 +35,27 @@ func (b *builder) selectNeighbors(
 	candidates []candidate,
 	limit int,
 	fillFromRejected bool,
+	selectedBuffer []buildNeighbor,
 ) (neighborSelection, error) {
+	// The returned neighbors reuse selectedBuffer when it has enough capacity.
+	// Callers that install the result in the graph therefore transfer that
+	// buffer to the graph; rejected candidates remain builder scratch.
 	// sort candidates by distance, then by node ordinal
 	if err := b.sortNeighbors(ctx, candidates); err != nil {
 		return neighborSelection{}, err
 	}
 	invalidateDuplicateVerification(candidates)
-	selected := make([]buildNeighbor, 0, min(limit, len(candidates)))
+	selectedCapacity := 0
+	if len(candidates) > 0 {
+		selectedCapacity = limit
+	}
+	selected := prepareEmptyBuffer(selectedBuffer, selectedCapacity)
 	var rejected []buildNeighbor
 	if fillFromRejected {
-		rejected = make([]buildNeighbor, 0, min(limit, len(candidates)))
+		rejected = prepareEmptyBuffer(b.workspace.rejectedNeighbors, len(candidates))
+		defer func() {
+			b.workspace.rejectedNeighbors = rejected[:0]
+		}()
 	}
 	// temporary bitmap to track which existing neighbors have been verified, to avoid redundant distance checks
 	var previouslyVerified [maxVerifiedLinkWords]uint64
@@ -171,9 +182,9 @@ func (b *builder) sortNeighbors(ctx context.Context, candidates []candidate) err
 // addReverseLink adds existingNode → newNode. If existingNode is full, its
 // links are selected again using distances from existingNode.
 func (b *builder) addReverseLink(ctx context.Context, existingNode, newNode nodeOrdinal, level int) error {
-	links := b.graph.nodes[existingNode].links[level]
-	candidates := prepareCandidateBuffer(b.workspace.reverseLinkCandidates, len(links)+1)
-	for i, link := range links {
+	existingLinks := b.graph.nodes[existingNode].links[level]
+	candidates := prepareEmptyBuffer(b.workspace.reverseLinkCandidates, len(existingLinks)+1)
+	for i, link := range existingLinks {
 		if err := periodicContextError(ctx, i); err != nil {
 			return err
 		}
@@ -190,11 +201,13 @@ func (b *builder) addReverseLink(ctx context.Context, existingNode, newNode node
 	if level == 0 {
 		limit *= 2
 	}
-	closestNeighbors := links
+	closestNeighbors := existingLinks
 	verifiedCount := 0
 	// if the number of candidates exceeds the limit, we select the closest neighbors
 	if len(candidates) > limit {
-		selection, err := b.selectNeighbors(ctx, candidates, limit, false)
+		// The old links are already copied into candidates. Selection can safely
+		// overwrite their backing array while building the replacement list.
+		selection, err := b.selectNeighbors(ctx, candidates, limit, false, existingLinks)
 		if err != nil {
 			return err
 		}
@@ -207,8 +220,11 @@ func (b *builder) addReverseLink(ctx context.Context, existingNode, newNode node
 		if err := b.sortNeighbors(ctx, candidates); err != nil {
 			return err
 		}
-		if cap(closestNeighbors) < len(candidates) {
-			closestNeighbors = make([]buildNeighbor, len(candidates))
+		if cap(closestNeighbors) < limit {
+			// Reserve the complete level capacity once. Repeated exact-size growth
+			// here previously reallocated the same node's links for every reverse
+			// edge added before it reached the level limit.
+			closestNeighbors = make([]buildNeighbor, len(candidates), limit)
 		} else {
 			closestNeighbors = closestNeighbors[:len(candidates)]
 		}

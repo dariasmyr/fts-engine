@@ -71,8 +71,8 @@ func (w *searchWorkspace) prepareQuery(dimensions int) {
 func (w *searchWorkspace) resetSearch(nodeCount, dimensions, visitLimit, efSearch int) {
 	w.scoredNodes = w.scoredNodes[:0]
 	w.trackScored = true
-	w.frontier = prepareCandidateBuffer(w.frontier, min(nodeCount, efSearch))
-	w.results = prepareCandidateBuffer(w.results, min(nodeCount, efSearch))
+	w.frontier = prepareEmptyBuffer(w.frontier, min(nodeCount, efSearch))
+	w.results = prepareEmptyBuffer(w.results, min(nodeCount, efSearch))
 	w.vector = resetFloat32s(w.vector, dimensions)
 
 	denseLimit := maxDenseSearchNodes
@@ -191,9 +191,12 @@ func (w *searchWorkspace) prepareForPool() {
 	}
 }
 
-func prepareCandidateBuffer(buffer []candidate, requiredCapacity int) []candidate {
+// prepareEmptyBuffer returns an empty slice with at least requiredCapacity.
+// Resetting the length keeps reusable backing storage while making the buffer
+// ready for append-based construction.
+func prepareEmptyBuffer[T any](buffer []T, requiredCapacity int) []T {
 	if cap(buffer) < requiredCapacity {
-		return make([]candidate, 0, requiredCapacity)
+		return make([]T, 0, requiredCapacity)
 	}
 	return buffer[:0]
 }

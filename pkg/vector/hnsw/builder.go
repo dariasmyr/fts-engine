@@ -148,7 +148,13 @@ func (b *builder) insert(ctx context.Context, newNode nodeOrdinal) error {
 		if err != nil {
 			return err
 		}
-		selection, err := b.selectNeighbors(ctx, nearestCandidatesOnLevel, b.config.MaxNeighbors, true)
+		selection, err := b.selectNeighbors(
+			ctx,
+			nearestCandidatesOnLevel,
+			b.config.MaxNeighbors,
+			true,
+			b.graph.nodes[newNode].links[level],
+		)
 		if err != nil {
 			return err
 		}
@@ -233,7 +239,7 @@ func (b *builder) findNearestCandidatesOnLevel(
 	maxCandidates := min(candidateLimit, len(b.graph.nodes)-1)
 	nearestCandidates := newResultHeapWithBuffer(maxCandidates, b.workspace.nearestCandidates)
 	pendingCandidates := candidateHeap{
-		items: prepareCandidateBuffer(b.workspace.pendingCandidates, min(maxCandidates, len(startCandidates))),
+		items: prepareEmptyBuffer(b.workspace.pendingCandidates, min(maxCandidates, len(startCandidates))),
 	}
 	b.workspace.nextEpoch()
 

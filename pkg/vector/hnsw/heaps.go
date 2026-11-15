@@ -74,7 +74,7 @@ type resultHeap struct {
 }
 
 func newResultHeapWithBuffer(capacity int, buffer []candidate) resultHeap {
-	return resultHeap{items: prepareCandidateBuffer(buffer, capacity), capacity: capacity}
+	return resultHeap{items: prepareEmptyBuffer(buffer, capacity), capacity: capacity}
 }
 
 func (h *resultHeap) Len() int { return len(h.items) }

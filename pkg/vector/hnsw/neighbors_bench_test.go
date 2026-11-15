@@ -32,16 +32,20 @@ func BenchmarkSelectNeighbors(b *testing.B) {
 
 	for _, fillFromRejected := range []bool{true, false} {
 		b.Run(fmt.Sprintf("fallback=%t", fillFromRejected), func(b *testing.B) {
+			selected := make([]buildNeighbor, 0, 16)
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := builder.selectNeighbors(
+				selection, err := builder.selectNeighbors(
 					context.Background(),
 					candidates,
 					16,
 					fillFromRejected,
-				); err != nil {
+					selected,
+				)
+				if err != nil {
 					b.Fatal(err)
 				}
+				selected = selection.neighbors
 			}
 		})
 	}
@@ -72,12 +76,14 @@ func BenchmarkIncrementalReversePruning(b *testing.B) {
 			}
 			b.ReportAllocs()
 			var selection neighborSelection
+			selected := make([]buildNeighbor, 0, 16)
 			for b.Loop() {
 				var err error
-				selection, err = builder.selectNeighbors(context.Background(), candidates, 16, false)
+				selection, err = builder.selectNeighbors(context.Background(), candidates, 16, false, selected)
 				if err != nil {
 					b.Fatal(err)
 				}
+				selected = selection.neighbors
 				neighborSelectionBenchmarkResult = selection
 			}
 			b.ReportMetric(float64(selection.distanceChecks), "pair-checks/op")
