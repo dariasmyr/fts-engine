@@ -3,15 +3,19 @@ package hnsw
 import (
 	"context"
 
+	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 // Index is an immutable HNSW topology paired with authoritative prepared vectors.
 type Index struct {
-	topology   topology
-	vectors    vector.PreparedVectorStore
-	config     Config
-	workspaces *searchWorkspacePool
+	topology topology
+	vectors  vector.PreparedVectorStore
+	// borrowedVectors aliases immutable MemoryVectorStore storage. Keeping vectors
+	// retains the owner for at least as long as this read-only search view.
+	borrowedVectors []float32
+	config          Config
+	workspaces      *searchWorkspacePool
 }
 
 func newIndex(topology topology, vectors vector.PreparedVectorStore, config Config) (*Index, error) {
@@ -24,11 +28,13 @@ func newIndex(topology topology, vectors vector.PreparedVectorStore, config Conf
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+	borrowedVectors, _ := memorystore.BorrowPreparedMatrix(vectors)
 	return &Index{
-		topology:   topology,
-		vectors:    vectors,
-		config:     config,
-		workspaces: newSearchWorkspacePool(),
+		topology:        topology,
+		vectors:         vectors,
+		borrowedVectors: borrowedVectors,
+		config:          config,
+		workspaces:      newSearchWorkspacePool(),
 	}, nil
 }
 

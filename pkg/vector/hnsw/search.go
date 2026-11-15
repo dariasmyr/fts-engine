@@ -119,7 +119,11 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 		}
 		return complete, nil
 	}
-	workspace.resetSearch(vectorCount, space.Dimensions(), request.visitLimit, request.appliedEfSearch)
+	vectorBufferDimensions := space.Dimensions()
+	if reader.borrowedVectors != nil {
+		vectorBufferDimensions = 0
+	}
+	workspace.resetSearch(vectorCount, vectorBufferDimensions, request.visitLimit, request.appliedEfSearch)
 	entry, maxLevel, ok := reader.entryPoint()
 	if !ok || maxLevel < 0 || maxLevel > maxLevelLimit || uint64(entry) >= uint64(vectorCount) {
 		return SearchResult{}, errInvalidGraph
@@ -293,11 +297,20 @@ func (state *state) score(node nodeOrdinal) (candidate, error) {
 	}
 	ordinal := vector.Ordinal(node)
 	value := state.workspace.vector
-	if err := state.index.vectors.ReadVectorInto(state.ctx, ordinal, value); err != nil {
-		if state.ctx.Err() != nil {
-			return candidate{}, state.ctx.Err()
+	if state.index.borrowedVectors != nil {
+		if err := state.ctx.Err(); err != nil {
+			return candidate{}, err
 		}
-		return candidate{}, fmt.Errorf("%w: read vector row %d: %v", errInvalidGraph, ordinal, err)
+		dimensions := state.index.topology.space.Dimensions()
+		start := int(node) * dimensions
+		value = state.index.borrowedVectors[start : start+dimensions]
+	} else {
+		if err := state.index.vectors.ReadVectorInto(state.ctx, ordinal, value); err != nil {
+			if state.ctx.Err() != nil {
+				return candidate{}, state.ctx.Err()
+			}
+			return candidate{}, fmt.Errorf("%w: read vector row %d: %v", errInvalidGraph, ordinal, err)
+		}
 	}
 	var distance float64
 	if state.reusableQuery != nil {
