@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/quality"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/harness"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/quality"
 )
 
 func TestWriteJSONStableSchema(t *testing.T) {

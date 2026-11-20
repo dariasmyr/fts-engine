@@ -1,5 +1,6 @@
 env: "local"
 dump_path: "./data/enwiki-latest-abstract1.xml.gz"
+max_documents: 0 # 0 indexes the complete dump; use 25000 for a small test corpus
 fts:
   index: "slicedradix" # slicedradix|hamt|flat
   keygen: "word"
@@ -49,5 +50,31 @@ fts:
     stem_en: true
     stem_ru: false
     min_length: 3
+semantic:
+  enabled: true
+  workers: 2
+  checkpoint_documents: 25000
+  max_live_vectors: 1000000
+  search:
+    ef_search: 20
+    candidate_chunks: 20
+  ollama:
+    base_url: "http://localhost:11434"
+    model: "nomic-embed-text:latest"
+    dimensions: 768
+    context_tokens: 2048
+    document_prefix: "search_document: "
+    query_prefix: "search_query: "
+    truncate: false
+  persistence:
+    enabled: true
+    path: "./data/semantic/local"
+    load_on_start: true
+    save_on_build: true
+    max_file_bytes: 1073741824 # 1 GiB; compacted 244k x 768 vectors.bin is about 715 MiB
+    max_open_bytes: 8589934592 # 8 GiB safety budget for loading a generation
+  compaction:
+    enabled: true
+    prune: true
 mode:
   type: "prod"

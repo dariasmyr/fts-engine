@@ -26,8 +26,8 @@ func run(out io.Writer) error {
 	service := fts.New(slicedradix.New(), fts.WordKeys, fts.WithPipeline(pipeline))
 	if err := service.Index(ctx, fts.Document{
 		ID: "doc-1",
-		Fields: map[string]fts.Field{
-			fts.DefaultField: {Value: "stream bundle example"},
+		Fields: map[string]fts.FieldData{
+			fts.DefaultField: {Text: "stream bundle example"},
 		},
 	}); err != nil {
 		return err

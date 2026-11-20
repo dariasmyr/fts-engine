@@ -26,7 +26,7 @@ func (s *Service) Index(ctx context.Context, doc Document) error {
 	return nil
 }
 
-func (s *Service) indexField(ctx context.Context, docID DocID, name string, field Field) error {
+func (s *Service) indexField(ctx context.Context, docID DocID, name string, field FieldData) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -34,7 +34,10 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 		return fmt.Errorf("fts: index document %q: field %q is not available in single-field mode; use %q or fts.NewMultiField", docID, name, DefaultField)
 	}
 
-	pipeline := s.pipelineForField(name)
+	pipeline := field.Pipeline
+	if pipeline == nil {
+		pipeline = s.pipelineForField(name)
+	}
 	if err := s.recordFieldPipeline(name, pipeline); err != nil {
 		return fmt.Errorf("fts: index document %q: %w", docID, err)
 	}
@@ -49,7 +52,7 @@ func (s *Service) indexField(ctx context.Context, docID DocID, name string, fiel
 	if !supportsPositions && !supportsInsert {
 		return fmt.Errorf("fts: index document %q: field %q index is read-only", docID, name)
 	}
-	tokens := pipeline.Process(field.Value)
+	tokens := pipeline.Process(field.text())
 	ord := s.registry.GetOrAssign(docID)
 	if s.scorer != nil {
 		s.collection.observe(name, ord, uint32(len(tokens)))

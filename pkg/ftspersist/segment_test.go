@@ -32,7 +32,7 @@ func TestSaveLoadSegmentRoundTripSingleField(t *testing.T) {
 	}
 
 	svc := fts.New(idx, fts.WordKeys, fts.WithFilter(flt), fts.WithScorer(fts.BM25()))
-	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "segment roundtrip"}}}); err != nil {
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "segment roundtrip"}}}); err != nil {
 		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 	if err := svc.Index(context.Background(), fts.Document{ID: "doc-2", Fields: map[string]fts.Field{fts.DefaultField: {Value: "segment candidate"}}}); err != nil {
@@ -240,7 +240,7 @@ func TestSaveLoadSegmentRoundTripMmap(t *testing.T) {
 		t.Fatalf("BuildIndex() error = %v", err)
 	}
 	svc := fts.New(idx, fts.WordKeys, fts.WithScorer(fts.BM25()))
-	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "segment mmap roundtrip"}}}); err != nil {
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "segment mmap roundtrip"}}}); err != nil {
 		t.Fatalf("Index(doc-1) error = %v", err)
 	}
 
@@ -275,7 +275,7 @@ func TestSegmentPipelineFingerprintGate(t *testing.T) {
 	pipeline := textproc.ObservabilityPipeline()
 	svc := fts.New(slicedradix.New(), fts.WordKeys, fts.WithPipeline(pipeline))
 	if err := svc.Index(context.Background(), fts.Document{
-		ID: "doc-1", Fields: map[string]fts.Field{fts.DefaultField: {Value: "io.EOF"}},
+		ID: "doc-1", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "io.EOF"}},
 	}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}

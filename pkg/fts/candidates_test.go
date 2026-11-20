@@ -216,7 +216,7 @@ func TestSearchOptionsRestrictWANDTopK(t *testing.T) {
 	}
 }
 
-func TestSearchOptionsCandidateOracleMultiFieldAndNearPhrase(t *testing.T) {
+func TestSearchOptionsCandidateReferenceResultsMultiFieldAndNearPhrase(t *testing.T) {
 	svc := NewMultiField(func(string) (MutableIndex, error) {
 		return newOrdAwareMemoryIndex(), nil
 	}, WordKeys, WithScorer(BM25()))
@@ -280,7 +280,7 @@ func TestSearchOptionsCandidateOracleMultiFieldAndNearPhrase(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !slices.Equal(filtered.Results, want) {
-				t.Fatalf("filtered results = %+v, oracle = %+v", filtered.Results, want)
+				t.Fatalf("filtered results = %+v, expected = %+v", filtered.Results, want)
 			}
 		})
 	}

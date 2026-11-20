@@ -11,7 +11,7 @@ import (
 	pkgfts "github.com/dariasmyr/fts-engine/v2/pkg/fts"
 )
 
-func runExperimentMode(ctx context.Context, log *slog.Logger, service *pkgfts.Service, documents []models.Document) {
+func runExperimentMode(ctx context.Context, log *slog.Logger, service *pkgfts.Service, semanticEngine *semanticRuntime, documents []models.Document) {
 	startedAt := time.Now()
 	memStats := utils.MeasureMemory(func() {
 		for _, doc := range documents {
@@ -24,6 +24,13 @@ func runExperimentMode(ctx context.Context, log *slog.Logger, service *pkgfts.Se
 		"heapObjects", memStats.HeapObjects,
 		"totalAllocMB", memStats.TotalAlloc/1024/1024,
 	)
+	if err := populateSemanticDocuments(ctx, log, semanticEngine, documents); err != nil {
+		log.Error("semantic indexing experiment failed", "error", err)
+		return
+	}
+	if _, err := runSemanticCompaction(ctx, log, semanticEngine); err != nil {
+		log.Error("semantic compaction experiment failed", "error", err)
+	}
 }
 
 func populateDocuments(rootCtx context.Context, ctx context.Context, log *slog.Logger, service *pkgfts.Service, documents []models.Document, documentsByID map[string]models.Document, skipIndexing bool) bool {
@@ -55,15 +62,15 @@ func indexDocument(ctx context.Context, service *pkgfts.Service, doc models.Docu
 	if service == nil {
 		return fmt.Errorf("nil service")
 	}
-	fields := make(map[string]pkgfts.Field, 3)
+	fields := make(map[string]pkgfts.FieldData, 3)
 	if doc.Title != "" {
-		fields["title"] = pkgfts.Field{Value: doc.Title}
+		fields["title"] = pkgfts.FieldData{Text: doc.Title}
 	}
 	if doc.Abstract != "" {
-		fields["abstract"] = pkgfts.Field{Value: doc.Abstract}
+		fields["abstract"] = pkgfts.FieldData{Text: doc.Abstract}
 	}
 	if doc.Extract != "" {
-		fields["extract"] = pkgfts.Field{Value: doc.Extract}
+		fields["extract"] = pkgfts.FieldData{Text: doc.Extract}
 	}
 	if len(fields) == 0 {
 		return nil

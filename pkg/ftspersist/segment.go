@@ -1,4 +1,3 @@
-// Package ftspersist provides filesystem persistence for FTS snapshots and segments.
 package ftspersist
 
 import (

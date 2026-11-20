@@ -9,10 +9,53 @@ import (
 )
 
 type Config struct {
-	Env      string     `yaml:"env"`
-	DumpPath string     `yaml:"dump_path"`
-	FTS      FTSConfig  `yaml:"fts"`
-	Mode     ModeConfig `yaml:"mode"`
+	Env          string         `yaml:"env"`
+	DumpPath     string         `yaml:"dump_path"`
+	MaxDocuments int            `yaml:"max_documents"`
+	FTS          FTSConfig      `yaml:"fts"`
+	Semantic     SemanticConfig `yaml:"semantic"`
+	Mode         ModeConfig     `yaml:"mode"`
+}
+
+type SemanticConfig struct {
+	Enabled             bool                      `yaml:"enabled"`
+	Workers             int                       `yaml:"workers"`
+	CheckpointDocuments int                       `yaml:"checkpoint_documents"`
+	MaxLiveVectors      int                       `yaml:"max_live_vectors"`
+	Search              SemanticSearchConfig      `yaml:"search"`
+	Ollama              SemanticOllamaConfig      `yaml:"ollama"`
+	Persistence         SemanticPersistenceConfig `yaml:"persistence"`
+	Compaction          SemanticCompactionConfig  `yaml:"compaction"`
+}
+
+type SemanticSearchConfig struct {
+	EfSearch        int `yaml:"ef_search"`
+	CandidateChunks int `yaml:"candidate_chunks"`
+}
+
+type SemanticOllamaConfig struct {
+	BaseURL        string `yaml:"base_url"`
+	Model          string `yaml:"model"`
+	Dimensions     int    `yaml:"dimensions"`
+	ContextTokens  int    `yaml:"context_tokens"`
+	DocumentPrefix string `yaml:"document_prefix"`
+	QueryPrefix    string `yaml:"query_prefix"`
+	Truncate       bool   `yaml:"truncate"`
+}
+
+type SemanticPersistenceConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	Path         string `yaml:"path"`
+	LoadOnStart  bool   `yaml:"load_on_start"`
+	SaveOnBuild  bool   `yaml:"save_on_build"`
+	MaxFileBytes uint64 `yaml:"max_file_bytes"`
+	MaxOpenBytes uint64 `yaml:"max_open_bytes"`
+}
+
+type SemanticCompactionConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	Prune       bool   `yaml:"prune"`
+	ProfilePath string `yaml:"profile_path"`
 }
 
 type FTSConfig struct {
@@ -179,6 +222,31 @@ func defaultConfig() Config {
 				MinLength:   3,
 			},
 		},
+		Semantic: SemanticConfig{
+			Workers:             2,
+			CheckpointDocuments: 25_000,
+			MaxLiveVectors:      1_000_000,
+			Search: SemanticSearchConfig{
+				EfSearch:        20,
+				CandidateChunks: 20,
+			},
+			Ollama: SemanticOllamaConfig{
+				BaseURL:        "http://localhost:11434",
+				Model:          "nomic-embed-text:latest",
+				Dimensions:     768,
+				ContextTokens:  2048,
+				DocumentPrefix: "search_document: ",
+				QueryPrefix:    "search_query: ",
+			},
+			Persistence: SemanticPersistenceConfig{
+				Enabled:      true,
+				Path:         "./data/semantic/local",
+				LoadOnStart:  true,
+				SaveOnBuild:  true,
+				MaxFileBytes: 1 << 30,
+				MaxOpenBytes: 8 << 30,
+			},
+		},
 		Mode: ModeConfig{Type: "prod"},
 	}
 }
@@ -192,6 +260,9 @@ func validateConfig(cfg *Config) error {
 
 	if cfg.DumpPath == "" {
 		cfg.DumpPath = defaults.DumpPath
+	}
+	if cfg.MaxDocuments < 0 {
+		return fmt.Errorf("max_documents must be >= 0")
 	}
 
 	if cfg.FTS.Index == "" {
@@ -243,11 +314,69 @@ func validateConfig(cfg *Config) error {
 	if cfg.Mode.Type == "" {
 		cfg.Mode.Type = defaults.Mode.Type
 	}
+	if cfg.Semantic.Workers <= 0 {
+		cfg.Semantic.Workers = defaults.Semantic.Workers
+	}
+	if cfg.Semantic.CheckpointDocuments <= 0 {
+		cfg.Semantic.CheckpointDocuments = defaults.Semantic.CheckpointDocuments
+	}
+	if cfg.Semantic.MaxLiveVectors <= 0 {
+		cfg.Semantic.MaxLiveVectors = defaults.Semantic.MaxLiveVectors
+	}
+	if cfg.Semantic.Search.EfSearch < 0 {
+		return fmt.Errorf("semantic search ef_search must be >= 0")
+	}
+	if cfg.Semantic.Search.EfSearch == 0 {
+		cfg.Semantic.Search.EfSearch = defaults.Semantic.Search.EfSearch
+	}
+	if cfg.Semantic.Search.CandidateChunks < 0 {
+		return fmt.Errorf("semantic search candidate_chunks must be >= 0")
+	}
+	if cfg.Semantic.Search.CandidateChunks == 0 {
+		cfg.Semantic.Search.CandidateChunks = defaults.Semantic.Search.CandidateChunks
+	}
+	if cfg.Semantic.Ollama.BaseURL == "" {
+		cfg.Semantic.Ollama.BaseURL = defaults.Semantic.Ollama.BaseURL
+	}
+	if cfg.Semantic.Ollama.Model == "" {
+		cfg.Semantic.Ollama.Model = defaults.Semantic.Ollama.Model
+	}
+	if cfg.Semantic.Ollama.Dimensions <= 0 {
+		cfg.Semantic.Ollama.Dimensions = defaults.Semantic.Ollama.Dimensions
+	}
+	if cfg.Semantic.Ollama.ContextTokens <= 0 {
+		cfg.Semantic.Ollama.ContextTokens = defaults.Semantic.Ollama.ContextTokens
+	}
+	if cfg.Semantic.Ollama.DocumentPrefix == "" {
+		cfg.Semantic.Ollama.DocumentPrefix = defaults.Semantic.Ollama.DocumentPrefix
+	}
+	if cfg.Semantic.Ollama.QueryPrefix == "" {
+		cfg.Semantic.Ollama.QueryPrefix = defaults.Semantic.Ollama.QueryPrefix
+	}
+	if cfg.Semantic.Persistence.Path == "" {
+		cfg.Semantic.Persistence.Path = defaults.Semantic.Persistence.Path
+	}
+	if cfg.Semantic.Persistence.MaxFileBytes == 0 {
+		cfg.Semantic.Persistence.MaxFileBytes = defaults.Semantic.Persistence.MaxFileBytes
+	}
+	if cfg.Semantic.Persistence.MaxOpenBytes == 0 {
+		cfg.Semantic.Persistence.MaxOpenBytes = defaults.Semantic.Persistence.MaxOpenBytes
+	}
+	if cfg.Semantic.Persistence.MaxOpenBytes < cfg.Semantic.Persistence.MaxFileBytes {
+		return fmt.Errorf("semantic persistence max_open_bytes must be at least max_file_bytes")
+	}
+	if cfg.Semantic.Compaction.Enabled {
+		if !cfg.Semantic.Enabled {
+			return fmt.Errorf("semantic compaction requires semantic search to be enabled")
+		}
+		if !cfg.Semantic.Persistence.Enabled {
+			return fmt.Errorf("semantic compaction requires persistence to be enabled")
+		}
+	}
 
 	if cfg.FTS.Compaction.LoadFactor < 0 || cfg.FTS.Compaction.LoadFactor > 1 {
 		return fmt.Errorf("compaction load_factor must be in range [0..1]")
 	}
-
 	switch cfg.FTS.Index {
 	case "slicedradix", "hamt", "flat":
 	default:

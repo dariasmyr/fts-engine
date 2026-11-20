@@ -12,6 +12,7 @@ import (
 
 type SearchEngine interface {
 	Fields() []string
+	SemanticEnabled() bool
 	HighlightPlainText(query string, text string) string
 	HighlightQueryString(query string, text string) string
 	SearchTerm(
@@ -24,29 +25,44 @@ type SearchEngine interface {
 		query string,
 		maxResults int,
 	) (*models.SearchResult, error)
+	SearchSemantic(
+		ctx context.Context,
+		query string,
+		maxResults int,
+	) (*models.SearchResult, error)
 }
 
 type Info struct {
-	Engine  string
-	Index   string
-	Scorer  string
-	Profile string
-	Filter  string
-	Version string
+	Engine         string
+	Index          string
+	Scorer         string
+	Profile        string
+	Filter         string
+	SemanticEngine string
+	SemanticIndex  string
+	Version        string
 }
 
 type searchMode string
 
 const (
-	searchModePlain  searchMode = "plain"
-	searchModeSyntax searchMode = "syntax"
+	searchModePlain    searchMode = "plain"
+	searchModeSyntax   searchMode = "syntax"
+	searchModeSemantic searchMode = "semantic"
 )
 
-func (m searchMode) toggle() searchMode {
-	if m == searchModeSyntax {
+func (m searchMode) toggle(semanticEnabled bool) searchMode {
+	switch m {
+	case searchModeSyntax:
 		return searchModePlain
+	case searchModePlain:
+		if semanticEnabled {
+			return searchModeSemantic
+		}
+		return searchModeSyntax
+	default:
+		return searchModeSyntax
 	}
-	return searchModeSyntax
 }
 
 func (m searchMode) inputTitle() string {
@@ -74,12 +90,6 @@ func New(ctx context.Context, log *slog.Logger, ftsService SearchEngine, documen
 		maxResults: maxResults,
 		mode:       searchModeSyntax,
 		info:       info,
-	}
-}
-
-func (c *CUI) Close() {
-	if c.program != nil {
-		c.program.Quit()
 	}
 }
 

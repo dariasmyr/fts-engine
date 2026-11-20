@@ -21,10 +21,10 @@ func TestBundleRestoreServiceRoundTrip(t *testing.T) {
 	svc := fts.New(idx, fts.WordKeys, fts.WithPipeline(pipeline), fts.WithScorer(fts.BM25()))
 	ctx := context.Background()
 
-	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.Field{fts.DefaultField: {Value: "alpha beta"}}}); err != nil {
+	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "alpha beta"}}}); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.Index(ctx, fts.Document{ID: "doc-b", Fields: map[string]fts.Field{fts.DefaultField: {Value: "alpha alpha"}}}); err != nil {
+	if err := svc.Index(ctx, fts.Document{ID: "doc-b", Fields: map[string]fts.FieldData{fts.DefaultField: {Text: "alpha alpha"}}}); err != nil {
 		t.Fatalf("Index(doc-b) error = %v", err)
 	}
 	if !svc.Delete("doc-a") {
@@ -209,15 +209,15 @@ func TestMultiFieldBundleRestoreServiceRoundTrip(t *testing.T) {
 	svc := fts.NewMultiField(factory, fts.WordKeys, fts.WithPipeline(pipeline), fts.WithScorer(fts.BM25()))
 	ctx := context.Background()
 
-	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.Field{
-		"title": {Value: "alpha title"},
-		"body":  {Value: "stale body"},
+	if err := svc.Index(ctx, fts.Document{ID: "doc-a", Fields: map[string]fts.FieldData{
+		"title": {Text: "alpha title"},
+		"body":  {Text: "stale body"},
 	}}); err != nil {
 		t.Fatalf("Index(doc-a) error = %v", err)
 	}
-	if err := svc.Index(ctx, fts.Document{ID: "doc-b", Fields: map[string]fts.Field{
-		"title": {Value: "fresh title"},
-		"body":  {Value: "alpha body"},
+	if err := svc.Index(ctx, fts.Document{ID: "doc-b", Fields: map[string]fts.FieldData{
+		"title": {Text: "fresh title"},
+		"body":  {Text: "alpha body"},
 	}}); err != nil {
 		t.Fatalf("Index(doc-b) error = %v", err)
 	}
@@ -342,8 +342,8 @@ func TestBundleRejectsMismatchedKeyGenerator(t *testing.T) {
 	keyGenerator := func(token string) ([]string, error) { return []string{"prefix:" + token}, nil }
 	keyDescriptor := fts.NewKeyGeneratorDescriptor("prefix-keys", 1)
 	svc := fts.New(slicedradix.New(), keyGenerator, fts.WithKeyGeneratorDescriptor(keyDescriptor))
-	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.Field{
-		fts.DefaultField: {Value: "alpha"},
+	if err := svc.Index(context.Background(), fts.Document{ID: "doc-1", Fields: map[string]fts.FieldData{
+		fts.DefaultField: {Text: "alpha"},
 	}}); err != nil {
 		t.Fatalf("Index() error = %v", err)
 	}

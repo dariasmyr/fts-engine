@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/harness"
 )
 
 func TestRecall(t *testing.T) {

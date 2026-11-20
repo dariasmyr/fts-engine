@@ -11,7 +11,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/metrics"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/metrics"
 )
 
 type scenario struct {
