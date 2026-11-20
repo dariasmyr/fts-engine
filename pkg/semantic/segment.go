@@ -4,20 +4,18 @@ import (
 	"context"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/contextcheck"
-	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/fts"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
-// segment searches one immutable HNSW segment. The vector source is
-// authoritative row storage and the HNSW index contains only navigation topology.
+// segment searches one immutable HNSW segment. The HNSW index retains the
+// authoritative vector store; rows map its local ordinals to semantic identities.
 type segment struct {
-	id      SegmentID
-	space   vector.Space
-	rows    []VectorRow
-	vectors vector.PreparedVectorStore
-	index   *hnsw.Index
+	id    SegmentID
+	spec  vector.Spec
+	rows  []VectorRow
+	index *hnsw.Index
 }
 
 // buildSegment builds the target immutable semantic segment. The HNSW index
@@ -26,8 +24,8 @@ type segment struct {
 func buildSegment(
 	ctx context.Context,
 	id SegmentID,
-	space vector.Space,
-	source vector.PreparedVectorStore,
+	spec vector.Spec,
+	source *vector.Matrix,
 	rows []VectorRow,
 	config hnsw.Config,
 ) (*segment, error) {
@@ -39,7 +37,7 @@ func buildSegment(
 		return nil, err
 	}
 
-	if id == 0 || space.Dimensions() <= 0 {
+	if id == 0 || spec.Dimensions() <= 0 {
 		return nil, ErrInvalidSegment
 	}
 
@@ -48,36 +46,17 @@ func buildSegment(
 		return nil, err
 	}
 
-	return newBuiltSegment(id, space, source, index, rows)
-}
-
-func buildMaterializedSegment(
-	ctx context.Context,
-	id SegmentID,
-	values []float32,
-	rows []VectorRow,
-	config IndexConfig,
-) (*segment, error) {
-	space, err := vector.NewSpace(config.Dimensions, config.Metric)
-	if err != nil {
-		return nil, err
-	}
-	source, err := memorystore.NewPrepared(space, values)
-	if err != nil {
-		return nil, err
-	}
-	return buildSegment(ctx, id, space, source, rows, config.hnswConfig())
+	return newBuiltSegment(id, spec, index, rows)
 }
 
 // newBuiltSegment takes ownership of rows produced together with an index by
 // the package's ingestion or compaction path.
-func newBuiltSegment(id SegmentID, space vector.Space, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
+func newBuiltSegment(id SegmentID, spec vector.Spec, index *hnsw.Index, rows []VectorRow) (*segment, error) {
 	segment := &segment{
-		id:      id,
-		space:   space,
-		rows:    rows,
-		vectors: vectors,
-		index:   index,
+		id:    id,
+		spec:  spec,
+		rows:  rows,
+		index: index,
 	}
 	if err := segment.validateContents(); err != nil {
 		return nil, err
@@ -85,14 +64,14 @@ func newBuiltSegment(id SegmentID, space vector.Space, vectors vector.PreparedVe
 	return segment, nil
 }
 
-func newSegment(ctx context.Context, id SegmentID, space vector.Space, vectors vector.PreparedVectorStore, index *hnsw.Index, rows []VectorRow) (*segment, error) {
+func newSegment(ctx context.Context, id SegmentID, spec vector.Spec, index *hnsw.Index, rows []VectorRow) (*segment, error) {
 	if ctx == nil {
 		return nil, vector.ErrNilContext
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if id == 0 || vectors == nil || index == nil || len(rows) != index.Len() {
+	if id == 0 || index == nil || index.Matrix() == nil || len(rows) != index.Len() {
 		return nil, ErrInvalidSegment
 	}
 	if err := validateSegmentRowsContext(ctx, rows); err != nil {
@@ -100,11 +79,10 @@ func newSegment(ctx context.Context, id SegmentID, space vector.Space, vectors v
 	}
 
 	segment := &segment{
-		id:      id,
-		space:   space,
-		rows:    append([]VectorRow(nil), rows...),
-		vectors: vectors,
-		index:   index,
+		id:    id,
+		spec:  spec,
+		rows:  append([]VectorRow(nil), rows...),
+		index: index,
 	}
 	if err := segment.validateContents(); err != nil {
 		return nil, err
@@ -126,14 +104,14 @@ func (s *segment) rowAt(index int) (VectorRow, bool) {
 	return s.rows[index], true
 }
 
-func (s *segment) vectorStore() vector.PreparedVectorStore {
+func (s *segment) vectorMatrix() *vector.Matrix {
 	if s == nil {
 		return nil
 	}
-	return s.vectors
+	return s.index.Matrix()
 }
 
-func (s *segment) searchPrepared(ctx context.Context, query vector.PreparedVector, k int, options hnsw.QueryConfig) (hnsw.SearchResult, error) {
+func (s *segment) searchPrepared(ctx context.Context, query vector.Prepared, k int, options hnsw.QueryConfig) (hnsw.SearchResult, error) {
 	if s == nil || s.index == nil {
 		return hnsw.SearchResult{}, ErrInvalidSegment
 	}
@@ -177,14 +155,13 @@ func validateSegmentRowsContext(ctx context.Context, rows []VectorRow) error {
 }
 
 func (s *segment) validateContents() error {
-	if s == nil || s.index == nil || s.vectors == nil {
+	if s == nil || s.index == nil || s.index.Matrix() == nil {
 		return ErrInvalidSegment
 	}
-	vectors := s.vectors
-	space := s.space
-	if s.id == 0 || space.Dimensions() <= 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
-		vectors.Dimensions() != space.Dimensions() || vectors.Metric() != space.Metric() ||
-		vectors.Normalization() != space.Normalization() || s.index.Dimensions() != vectors.Dimensions() ||
+	vectors := s.index.Matrix()
+	spec := s.spec
+	if s.id == 0 || spec.Dimensions() <= 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
+		vectors.Spec() != spec || s.index.Dimensions() != vectors.Dimensions() ||
 		s.index.Metric() != vectors.Metric() {
 		return ErrInvalidSegment
 	}

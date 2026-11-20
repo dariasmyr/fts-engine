@@ -4,28 +4,11 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"slices"
 	"sync"
-	"sync/atomic"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
-
-type atomicCountingPreparedStore struct {
-	vector.PreparedVectorStore
-	reads atomic.Int64
-}
-
-func (s *atomicCountingPreparedStore) ReadVectorInto(
-	ctx context.Context,
-	ordinal vector.Ordinal,
-	dst []float32,
-) error {
-	s.reads.Add(1)
-	return s.PreparedVectorStore.ReadVectorInto(ctx, ordinal, dst)
-}
 
 func TestResolveSearchRequestAppliesDefaultsOverridesAndBounds(t *testing.T) {
 	t.Parallel()
@@ -159,85 +142,6 @@ func TestSearchAndSearchPreparedAgree(t *testing.T) {
 	}
 }
 
-func TestSearchMemoryFastPathMatchesGenericFallback(t *testing.T) {
-	for _, metric := range []vector.Metric{vector.MetricCosine, vector.MetricL2Squared} {
-		t.Run(metric.String(), func(t *testing.T) {
-			t.Parallel()
-
-			const dimensions = 8
-			values := make([][]float32, 64)
-			for row := range values {
-				values[row] = make([]float32, dimensions)
-				for dimension := range dimensions {
-					values[row][dimension] = float32((row+1)*(dimension+3)%29+1) / 30
-				}
-			}
-			space, err := vector.NewSpace(dimensions, metric)
-			if err != nil {
-				t.Fatal(err)
-			}
-			store, err := memorystore.New(space, values)
-			if err != nil {
-				t.Fatal(err)
-			}
-			config := Config{
-				Build:  BuildConfig{MaxNeighbors: 8, EfConstruction: 32, Seed: 7},
-				Search: SearchConfig{EfSearch: 32, VisitLimit: len(values)},
-			}
-			fast, err := Build(t.Context(), store, config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if fast.borrowedVectors == nil {
-				t.Fatal("memory-backed index did not retain a borrowed matrix")
-			}
-			before := slices.Clone(fast.borrowedVectors)
-			counting := &atomicCountingPreparedStore{PreparedVectorStore: store}
-			fallback, err := Restore(Snapshot(fast), counting, config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if fallback.borrowedVectors != nil {
-				t.Fatal("generic store unexpectedly enabled the memory fast path")
-			}
-			query := values[17]
-			prepared, err := fast.PrepareQuery(query)
-			if err != nil {
-				t.Fatal(err)
-			}
-			request := QueryConfig{EfSearch: 32, VisitLimit: len(values)}
-
-			fastRaw, err := fast.Search(t.Context(), query, 10, request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			fallbackRaw, err := fallback.Search(t.Context(), query, 10, request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			fastPrepared, err := fast.SearchPrepared(t.Context(), prepared, 10, request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			fallbackPrepared, err := fallback.SearchPrepared(t.Context(), prepared, 10, request)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if !reflect.DeepEqual(fastRaw, fallbackRaw) || !reflect.DeepEqual(fastPrepared, fallbackPrepared) {
-				t.Fatalf("fast path differs from fallback: raw fast=%+v fallback=%+v; prepared fast=%+v fallback=%+v", fastRaw, fallbackRaw, fastPrepared, fallbackPrepared)
-			}
-			wantReads := int64(fallbackRaw.Stats.DistanceComputations + fallbackPrepared.Stats.DistanceComputations)
-			if got := counting.reads.Load(); got != wantReads {
-				t.Fatalf("fallback reads = %d, want one per distance computation (%d)", got, wantReads)
-			}
-			if !slices.Equal(fast.borrowedVectors, before) {
-				t.Fatal("search modified the borrowed matrix")
-			}
-		})
-	}
-}
-
 func TestSearchMemoryFastPathIsConcurrentSafe(t *testing.T) {
 	const (
 		workers    = 8
@@ -322,11 +226,11 @@ func newLinkedTestIndex(t *testing.T, values [][]float32, links [][]nodeOrdinal)
 		t.Fatalf("link rows = %d, vector rows = %d", len(links), len(values))
 	}
 
-	space, err := vector.NewSpace(1, vector.MetricL2Squared)
+	spec, err := vector.NewSpec(1, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := memorystore.New(space, values)
+	store, err := vector.NewMatrix(spec.Dimensions(), spec.Metric(), values)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +247,7 @@ func newLinkedTestIndex(t *testing.T, values [][]float32, links [][]nodeOrdinal)
 		Search: SearchConfig{EfSearch: max(1, nodes), VisitLimit: max(1, nodes)},
 	}
 	index, err := newIndex(topology{
-		space:            space,
+		spec:             spec,
 		build:            config.Build.info(),
 		levels:           make([]uint8, nodes),
 		entry:            0,

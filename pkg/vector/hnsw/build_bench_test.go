@@ -6,7 +6,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -49,38 +48,23 @@ func BenchmarkBuildMatrixCosine(b *testing.B) {
 		rows       = 1_000
 		dimensions = 768
 	)
-	borrowedSource := newBuildBenchmarkStoreForMetric(b, rows, dimensions, vector.MetricCosine)
+	source := newBuildBenchmarkStoreForMetric(b, rows, dimensions, vector.MetricCosine)
 	config := Config{
 		Build:  BuildConfig{MaxNeighbors: 16, EfConstruction: 64, Seed: 1},
 		Search: SearchConfig{EfSearch: 32, VisitLimit: rows},
 	}
-	for _, test := range []struct {
-		name   string
-		source vector.PreparedVectorStore
-	}{
-		{name: "memory-borrowed", source: borrowedSource},
-		{
-			name: "generic-owned-fallback",
-			source: &forwardingPreparedStore{
-				PreparedVectorStore: borrowedSource,
-			},
-		},
-	} {
-		b.Run(test.name, func(b *testing.B) {
-			b.ReportAllocs()
-			for b.Loop() {
-				index, err := Build(context.Background(), test.source, config)
-				if err != nil {
-					b.Fatal(err)
-				}
-				buildBenchmarkIndex = index
-			}
-			b.ReportMetric(float64(rows*dimensions*4), "source-bytes")
-		})
+	b.ReportAllocs()
+	for b.Loop() {
+		index, err := Build(context.Background(), source, config)
+		if err != nil {
+			b.Fatal(err)
+		}
+		buildBenchmarkIndex = index
 	}
+	b.ReportMetric(float64(rows*dimensions*4), "source-bytes")
 }
 
-func newBuildBenchmarkStore(tb testing.TB, rows, dimensions int) vector.PreparedVectorStore {
+func newBuildBenchmarkStore(tb testing.TB, rows, dimensions int) *vector.Matrix {
 	return newBuildBenchmarkStoreForMetric(tb, rows, dimensions, vector.MetricL2Squared)
 }
 
@@ -88,9 +72,9 @@ func newBuildBenchmarkStoreForMetric(
 	tb testing.TB,
 	rows, dimensions int,
 	metric vector.Metric,
-) vector.PreparedVectorStore {
+) *vector.Matrix {
 	tb.Helper()
-	space, err := vector.NewSpace(dimensions, metric)
+	spec, err := vector.NewSpec(dimensions, metric)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -99,14 +83,14 @@ func newBuildBenchmarkStoreForMetric(
 		for dimension := range dimensions {
 			values[row*dimensions+dimension] = float32(math.Sin(float64((row + 1) * (dimension + 1))))
 		}
-		if err := space.PrepareInto(
+		if err := spec.PrepareInto(
 			values[row*dimensions:(row+1)*dimensions],
 			values[row*dimensions:(row+1)*dimensions],
 		); err != nil {
 			tb.Fatal(err)
 		}
 	}
-	store, err := memorystore.NewPrepared(space, values)
+	store, err := newCanonicalTestMatrix(spec.Dimensions(), spec.Metric(), values)
 	if err != nil {
 		tb.Fatal(err)
 	}

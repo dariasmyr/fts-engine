@@ -17,11 +17,14 @@ func FuzzDecodeVectorFile(f *testing.F) {
 		if err != nil {
 			return
 		}
-		dimensions := decoded.Space.Dimensions()
-		if dimensions <= 0 || dimensions > limits.MaxDimensions || len(decoded.Values)%dimensions != 0 {
-			t.Fatalf("decoded vector shape: dimensions=%d components=%d", dimensions, len(decoded.Values))
+		if decoded.Matrix == nil {
+			t.Fatal("decoded vector store is nil")
 		}
-		if len(decoded.Values)/dimensions > limits.MaxVectors {
+		dimensions := decoded.Matrix.Dimensions()
+		if dimensions <= 0 || dimensions > limits.MaxDimensions {
+			t.Fatalf("decoded vector shape: dimensions=%d", dimensions)
+		}
+		if decoded.Matrix.Len() > limits.MaxVectors {
 			t.Fatalf("decoded vector count exceeds limit")
 		}
 	})

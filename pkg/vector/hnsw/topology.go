@@ -10,7 +10,7 @@ import (
 type nodeOrdinal = uint32
 
 type topology struct {
-	space vector.Space
+	spec  vector.Spec
 	build buildInfo
 
 	levels   []uint8
@@ -25,9 +25,9 @@ type topology struct {
 	upperNeighbors   []nodeOrdinal
 }
 
-func packGraph(space vector.Space, build buildInfo, graph graphData) (topology, error) {
+func packGraph(spec vector.Spec, build buildInfo, graph graphData) (topology, error) {
 	packed := topology{
-		space:            space,
+		spec:             spec,
 		build:            build,
 		levels:           make([]uint8, len(graph.nodes)),
 		entry:            graph.entry,

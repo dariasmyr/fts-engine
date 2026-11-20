@@ -33,7 +33,6 @@ func TestArchitectureRulesAllowIntendedDependencies(t *testing.T) {
 		{
 			ImportPath: rootModule + "/pkg/semantic",
 			Imports: []string{
-				rootModule + "/internal/memorystore",
 				rootModule + "/pkg/fts",
 				rootModule + "/pkg/vector/hnsw",
 			},
@@ -63,7 +62,6 @@ func TestArchitectureRulesAllowIntendedDependencies(t *testing.T) {
 			ImportPath: rootModule + "/pkg/semanticpersist",
 			Imports: []string{
 				rootModule + "/internal/format",
-				rootModule + "/internal/memorystore",
 				rootModule + "/internal/persistfs",
 				rootModule + "/pkg/embedding",
 				rootModule + "/pkg/semantic",

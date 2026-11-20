@@ -16,7 +16,7 @@ type indexState struct {
 	view     *IndexView
 
 	documents map[fts.DocID]documentVectors
-	locations *locationTable
+	locations locationTable
 
 	liveVectorCount      int
 	maxAllocatedVectorID VectorID
@@ -39,7 +39,7 @@ func (p *pendingBatch) reset() {
 
 type pendingVector struct {
 	row    VectorRow
-	vector vector.PreparedVector
+	vector vector.Prepared
 }
 
 type vectorLocation struct {

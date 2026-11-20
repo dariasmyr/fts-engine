@@ -107,7 +107,7 @@ func (i *Index) CommitWithState(
 type commitState struct {
 	candidatePreconditions
 	pending   pendingBatch
-	locations *locationTable
+	locations locationTable
 	config    IndexConfig
 	limits    indexLimits
 }
@@ -233,17 +233,27 @@ func buildPendingSegment(ctx context.Context, segmentID SegmentID, pending []pen
 	if len(pending) == 0 {
 		return nil, nil
 	}
-	dimensions := config.Dimensions
-	flatVectors := make([]float32, len(pending)*dimensions)
+	spec, err := vector.NewSpec(config.Dimensions, config.Metric)
+	if err != nil {
+		return nil, err
+	}
+	builder, err := vector.NewMatrixBuilder(spec.Dimensions(), spec.Metric(), len(pending))
+	if err != nil {
+		return nil, err
+	}
 	rows := make([]VectorRow, len(pending))
 	for n, item := range pending {
 		if err := contextcheck.PeriodicError(ctx, n); err != nil {
 			return nil, err
 		}
-		if err := item.vector.CopyTo(flatVectors[n*dimensions : (n+1)*dimensions]); err != nil {
+		if err := builder.AddPrepared(item.vector); err != nil {
 			return nil, err
 		}
 		rows[n] = item.row
 	}
-	return buildMaterializedSegment(ctx, segmentID, flatVectors, rows, config)
+	store, err := builder.Build()
+	if err != nil {
+		return nil, err
+	}
+	return buildSegment(ctx, segmentID, spec, store, rows, config.hnswConfig())
 }

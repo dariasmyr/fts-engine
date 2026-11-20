@@ -9,14 +9,13 @@ import (
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
 
-// SegmentState contains one immutable physical segment and the liveness
-// mask belonging to the committed view. Vectors and Index are immutable
-// resources and must not be mutated by state adapters.
+// SegmentState contains one immutable physical segment and the liveness mask
+// belonging to the committed view. Index retains its immutable vector store
+// and must not be mutated by state adapters.
 type SegmentState struct {
 	ID            SegmentID
 	Rows          []VectorRow
 	LivenessWords []uint64
-	Vectors       vector.PreparedVectorStore
 	Index         *hnsw.Index
 }
 
@@ -28,7 +27,6 @@ func (s *segment) exportState(words []uint64) SegmentState {
 		ID:            s.id,
 		Rows:          append([]VectorRow(nil), s.rows...),
 		LivenessWords: append([]uint64(nil), words...),
-		Vectors:       s.vectors,
 		Index:         s.index,
 	}
 }
@@ -134,7 +132,7 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		return nil, ErrCapacityExceeded
 	}
 
-	space, err := vector.NewSpace(config.Dimensions, config.Metric)
+	spec, err := vector.NewSpec(config.Dimensions, config.Metric)
 	if err != nil {
 		return nil, ErrInvalidConfig
 	}
@@ -156,14 +154,13 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 			}
 		}
 
-		if persisted.Index == nil || persisted.Vectors == nil {
+		if persisted.Index == nil || persisted.Index.Matrix() == nil {
 			return nil, ErrInvalidSegment
 		}
 		physical, err := newSegment(
 			ctx,
 			persisted.ID,
-			space,
-			persisted.Vectors,
+			spec,
 			persisted.Index,
 			persisted.Rows,
 		)
@@ -221,7 +218,7 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		ctx,
 		state.Revision,
 		views,
-		space,
+		spec,
 		limits.search,
 		limits.results,
 		hnswConfig.Search,
@@ -254,7 +251,7 @@ func Restore(ctx context.Context, state CommittedIndexState) (*Index, error) {
 		id:           state.ID,
 		config:       config,
 		limits:       limits,
-		space:        space,
+		spec:         spec,
 		state: indexState{
 			view:                 view,
 			revision:             state.Revision,

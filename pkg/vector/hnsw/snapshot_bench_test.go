@@ -33,13 +33,13 @@ func BenchmarkTopologyInspection(b *testing.B) {
 
 func newSnapshotBenchmarkIndex(b *testing.B, nodes int) *Index {
 	b.Helper()
-	space, err := vector.NewSpace(16, vector.MetricL2Squared)
+	spec, err := vector.NewSpec(16, vector.MetricL2Squared)
 	if err != nil {
 		b.Fatal(err)
 	}
 	upperLayers := nodes / 16
 	return &Index{topology: topology{
-		space: space,
+		spec: spec,
 		build: buildInfo{
 			maxNeighbors:          16,
 			levelZeroMaxNeighbors: 32,

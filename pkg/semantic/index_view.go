@@ -18,14 +18,14 @@ type IndexView struct {
 	searchLimits searchBudgetLimits
 	resultLimits resultShapeLimits
 	searchConfig hnsw.SearchConfig
-	space        vector.Space
+	spec         vector.Spec
 }
 
 func newIndexView(
 	ctx context.Context,
 	revision Revision,
 	segments []segmentView,
-	space vector.Space,
+	spec vector.Spec,
 	searchLimits searchBudgetLimits,
 	resultLimits resultShapeLimits,
 	search hnsw.SearchConfig,
@@ -36,7 +36,7 @@ func newIndexView(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if space.Dimensions() <= 0 || searchLimits.maxChunkCandidates < resultLimits.maxDocumentsPerSearch ||
+	if spec.Dimensions() <= 0 || searchLimits.maxChunkCandidates < resultLimits.maxDocumentsPerSearch ||
 		searchLimits.maxQueryChunks <= 0 || searchLimits.maxEfSearch <= 0 || searchLimits.maxVisitLimit <= 0 ||
 		resultLimits.maxDocumentsPerSearch <= 0 || resultLimits.maxChunksPerDocumentHit <= 0 {
 		return nil, ErrInvalidConfig
@@ -47,7 +47,7 @@ func newIndexView(
 		searchLimits: searchLimits,
 		resultLimits: resultLimits,
 		searchConfig: search,
-		space:        space,
+		spec:         spec,
 	}
 	for i, segment := range view.segments {
 		if err := contextcheck.PeriodicError(ctx, i); err != nil {

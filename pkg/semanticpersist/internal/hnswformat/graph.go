@@ -42,7 +42,7 @@ func WriteGraphFile(
 func OpenGraphFile(
 	ctx context.Context,
 	data []byte,
-	vectors vector.PreparedVectorStore,
+	vectors *vector.Matrix,
 	vectorRef FileRef,
 	config hnsw.Config,
 	limits Config,
@@ -128,7 +128,7 @@ func GraphFileSize(stats hnsw.TopologyStats) (uint64, error) {
 func validateDecodedGraph(
 	ctx context.Context,
 	graph graph,
-	vectors vector.PreparedVectorStore,
+	vectors *vector.Matrix,
 	limits Config,
 ) (hnswmodel.Snapshot, error) {
 	if ctx == nil {
@@ -137,13 +137,13 @@ func validateDecodedGraph(
 	if err := ctx.Err(); err != nil {
 		return hnswmodel.Snapshot{}, err
 	}
-	space, err := vector.NewSpace(int(graph.Dimensions), vector.Metric(graph.Metric))
-	if err != nil || space.Normalization() != vector.Normalization(graph.Normalization) {
+	spec, err := vector.NewSpec(int(graph.Dimensions), vector.Metric(graph.Metric))
+	if err != nil || spec.Normalization() != vector.Normalization(graph.Normalization) {
 		return hnswmodel.Snapshot{}, ErrCorrupt
 	}
 	nodes := len(graph.Levels)
-	if vectors.Len() != nodes || vectors.Dimensions() != space.Dimensions() ||
-		vectors.Metric() != space.Metric() || vectors.Normalization() != space.Normalization() {
+	if vectors.Len() != nodes || vectors.Dimensions() != spec.Dimensions() ||
+		vectors.Metric() != spec.Metric() || vectors.Normalization() != spec.Normalization() {
 		return hnswmodel.Snapshot{}, ErrCorrupt
 	}
 	components, ok := format.CheckedMultiplyUint64(uint64(nodes), uint64(graph.Dimensions))

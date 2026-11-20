@@ -8,55 +8,37 @@ import (
 
 // builder constructs one HNSW graph. It is single-writer and is not searchable.
 type builder struct {
-	config BuildConfig
-	space  vector.Space
-	graph  graphData
-	// ownsValues distinguishes the generic copied fallback from the borrowed
-	// memory-store fast path. Borrowed values are immutable and must never be
-	// written, including through a self-copy.
-	ownsValues bool
-	rng        levelRNG
-	workspace  buildWorkspace
+	config    BuildConfig
+	spec      vector.Spec
+	matrix    *vector.Matrix
+	graph     graphData
+	rng       levelRNG
+	workspace buildWorkspace
 }
 
-func newOwningBuilder(config BuildConfig, space vector.Space, vectorCount, components int) *builder {
-	return newBuilderWithValues(config, space, vectorCount, make([]float32, components), true)
-}
-
-func newBorrowingBuilder(config BuildConfig, space vector.Space, vectorCount int, values []float32) *builder {
-	return newBuilderWithValues(config, space, vectorCount, values, false)
-}
-
-func newBuilderWithValues(
+func newBuilder(
 	config BuildConfig,
-	space vector.Space,
+	spec vector.Spec,
+	matrix *vector.Matrix,
 	vectorCount int,
-	values []float32,
-	ownsValues bool,
 ) *builder {
 	return &builder{
 		config: config,
-		space:  space,
+		spec:   spec,
+		matrix: matrix,
 		graph: graphData{
-			values: values,
-			nodes:  make([]mutableNode, 0, vectorCount),
+			nodes: make([]mutableNode, 0, vectorCount),
 		},
-		ownsValues: ownsValues,
-		rng:        newLevelRNG(config.Seed),
+		rng: newLevelRNG(config.Seed),
 		workspace: buildWorkspace{
 			seenEpoch: make([]uint32, vectorCount),
 		},
 	}
 }
 
-// add validates and registers the next prepared vector. Owning builders copy it;
-// borrowing builders only read the corresponding row already in graph.values.
-// Its node ordinal is the source ordinal, preserving node == vector.
-func (b *builder) add(ctx context.Context, prepared []float32) error {
+// add registers the next already validated matrix row.
+func (b *builder) add(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := b.space.ValidatePrepared(prepared); err != nil {
 		return err
 	}
 	if len(b.graph.nodes) >= cap(b.graph.nodes) {
@@ -65,12 +47,6 @@ func (b *builder) add(ctx context.Context, prepared []float32) error {
 
 	ordinal := nodeOrdinal(len(b.graph.nodes))
 	level := b.rng.level(b.config.MaxNeighbors)
-	start := int(ordinal) * b.space.Dimensions()
-	if b.ownsValues {
-		// Generic stores do not expose contiguous storage, so retain one
-		// builder-owned matrix for direct access in the distance hot path.
-		copy(b.graph.values[start:start+b.space.Dimensions()], prepared)
-	}
 	b.graph.nodes = append(b.graph.nodes, mutableNode{
 		level: level,
 		// preallocate the slice of links for each level
@@ -86,7 +62,7 @@ func (b *builder) add(ctx context.Context, prepared []float32) error {
 	return b.insert(ctx, ordinal)
 }
 
-func (b *builder) freeze(ctx context.Context, source vector.PreparedVectorStore, config Config) (*Index, error) {
+func (b *builder) freeze(ctx context.Context, config Config) (*Index, error) {
 	reachability, err := validateLevel0Reachability(ctx, b.graph)
 	if err != nil {
 		return nil, err
@@ -104,11 +80,11 @@ func (b *builder) freeze(ctx context.Context, source vector.PreparedVectorStore,
 		}
 	}
 
-	topology, err := packGraph(b.space, b.config.info(), b.graph)
+	topology, err := packGraph(b.spec, b.config.info(), b.graph)
 	if err != nil {
 		return nil, err
 	}
-	return newIndex(topology, source, config)
+	return newIndex(topology, b.matrix, config)
 }
 
 func (b *builder) insert(ctx context.Context, newNode nodeOrdinal) error {

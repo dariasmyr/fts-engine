@@ -279,21 +279,24 @@ func newNeighborSelectionTestBuilder(t testing.TB, values [][]float32, maxNeighb
 	if len(values) == 0 {
 		t.Fatal("neighbor selection test requires a target vector")
 	}
-	space, err := vector.NewSpace(len(values[0]), vector.MetricL2Squared)
+	spec, err := vector.NewSpec(len(values[0]), vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := newOwningBuilder(
+	matrix, err := vector.NewMatrix(spec.Dimensions(), spec.Metric(), values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newBuilder(
 		BuildConfig{MaxNeighbors: maxNeighbors, EfConstruction: maxNeighbors, Seed: 1},
-		space,
+		spec,
+		matrix,
 		len(values),
-		len(values)*space.Dimensions(),
 	)
 	for _, value := range values {
-		if len(value) != space.Dimensions() {
+		if len(value) != spec.Dimensions() {
 			t.Fatal("inconsistent test vector dimensions")
 		}
-		copy(b.graph.values[len(b.graph.nodes)*space.Dimensions():], value)
 		b.graph.nodes = append(b.graph.nodes, mutableNode{links: [][]buildNeighbor{nil}})
 	}
 	return b

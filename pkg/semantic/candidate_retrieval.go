@@ -15,7 +15,7 @@ import (
 // hits.
 func (s *IndexView) collectChunkCandidates(
 	ctx context.Context,
-	queryVectors []vector.PreparedVector,
+	queryVectors []vector.Prepared,
 	config QueryConfig,
 ) ([]ChunkHit, DocumentSearchResult, error) {
 	type chunkKey struct {
@@ -67,7 +67,7 @@ func (s *IndexView) collectChunkCandidates(
 			}
 			partial, err := searchSegmentChunksPrepared(
 				ctx,
-				s.space,
+				s.spec,
 				view,
 				queryVector,
 				min(candidateBudget, view.liveness.AllowedOrdinalCount()),

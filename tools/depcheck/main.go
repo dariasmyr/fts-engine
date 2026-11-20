@@ -89,7 +89,6 @@ var architectureRules = []architectureRule{
 	repositoryRule(rootModule + "/internal/fnv"),
 	repositoryRule(rootModule + "/internal/format"),
 	repositoryRule(rootModule+"/internal/hnswmodel", rootModule+"/pkg/vector"),
-	repositoryRule(rootModule+"/internal/memorystore", rootModule+"/pkg/vector"),
 	repositoryRule(rootModule + "/internal/persistfs"),
 	repositoryRule(rootModule+"/internal/sealedstate", rootModule+"/pkg/fts"),
 	repositoryRule(rootModule + "/pkg/chunk"),
@@ -150,7 +149,6 @@ var architectureRules = []architectureRule{
 		restrictRepositoryImports: true,
 		allowedRepositoryImports: []string{
 			rootModule + "/internal/contextcheck",
-			rootModule + "/internal/memorystore",
 			rootModule + "/pkg/fts",
 			rootModule + "/pkg/vector",
 		},
@@ -197,7 +195,6 @@ var architectureRules = []architectureRule{
 	repositoryRule(
 		rootModule+"/pkg/semanticpersist",
 		rootModule+"/internal/format",
-		rootModule+"/internal/memorystore",
 		rootModule+"/internal/persistfs",
 		rootModule+"/pkg/chunk",
 		rootModule+"/pkg/embedding",

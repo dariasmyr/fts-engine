@@ -4,21 +4,20 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 func TestLocationTableWithChangesPreservesBase(t *testing.T) {
 	t.Parallel()
 
 	base := newLocationTable()
-	for id := VectorID(1); id <= locationPageSize+1; id++ {
-		if err := base.set(id, vectorLocation{segment: 1, ordinal: vector.Ordinal(id - 1)}); err != nil {
-			t.Fatal(err)
-		}
+	if err := base.set(1, vectorLocation{segment: 1, ordinal: 0}); err != nil {
+		t.Fatal(err)
 	}
-	removed := VectorID(locationPageSize)
-	added := VectorID(locationPageSize + 2)
+	if err := base.set(2, vectorLocation{segment: 1, ordinal: 1}); err != nil {
+		t.Fatal(err)
+	}
+	removed := VectorID(1)
+	added := VectorID(3)
 	next, err := base.withChanges(t.Context(), []VectorID{removed}, map[VectorID]vectorLocation{
 		added: {segment: 2, ordinal: 7},
 	})
@@ -38,14 +37,11 @@ func TestLocationTableWithChangesPreservesBase(t *testing.T) {
 	if !ok || location != (vectorLocation{segment: 2, ordinal: 7}) {
 		t.Fatalf("added location = %+v, %v", location, ok)
 	}
-	if base.count != locationPageSize+1 || next.count != base.count {
-		t.Fatalf("location counts: base=%d next=%d", base.count, next.count)
+	if len(base) != 2 || len(next) != len(base) {
+		t.Fatalf("location counts: base=%d next=%d", len(base), len(next))
 	}
-	if base.pages[locationPageID(1)] != next.pages[locationPageID(1)] {
-		t.Fatal("unchanged page was copied")
-	}
-	if base.pages[locationPageID(locationPageSize+1)] == next.pages[locationPageID(locationPageSize+1)] {
-		t.Fatal("changed page was shared")
+	if location, ok := next.get(2); !ok || location != (vectorLocation{segment: 1, ordinal: 1}) {
+		t.Fatalf("unchanged location = %+v, %v", location, ok)
 	}
 }
 

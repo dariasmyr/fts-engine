@@ -33,22 +33,18 @@ const (
 	vectorHeaderMaxKOffset          = 20
 	vectorHeaderVectorBytesOffset   = 24
 	vectorHeaderTailOffset          = 32
-
-	unitNormTolerance = 1e-4
-	negativeZeroBits  = uint32(1) << 31
 )
 
 // VectorData is the in-memory payload reconstructed from an SVEC file.
 type VectorData struct {
-	Space  vector.Space
-	Values []float32
+	Matrix *vector.Matrix
 }
 
 // WriteVectorFile writes one canonical SVEC file and returns its persisted identity.
 func WriteVectorFile(
 	ctx context.Context,
 	writer io.Writer,
-	source vector.PreparedVectorStore,
+	source *vector.Matrix,
 	maxK int,
 	limits Config,
 ) (FileMetadata, error) {
@@ -66,11 +62,6 @@ func WriteVectorFile(
 	}
 	if uint64(source.Dimensions()) > math.MaxUint32 || uint64(source.Len()) >= math.MaxUint32 || uint64(maxK) > math.MaxUint32 {
 		return FileMetadata{}, ErrLimitExceeded
-	}
-
-	space, err := vector.NewSpace(source.Dimensions(), source.Metric())
-	if err != nil || space.Normalization() != source.Normalization() {
-		return FileMetadata{}, codecErrorf(ErrCorrupt, "vector file space is invalid")
 	}
 
 	components, ok := format.CheckedMultiplyUint64(uint64(source.Len()), uint64(source.Dimensions()))
@@ -107,17 +98,11 @@ func WriteVectorFile(
 		if err := ctx.Err(); err != nil {
 			return FileMetadata{}, err
 		}
-		for i := range scratch {
-			scratch[i] = float32(math.NaN())
-		}
-		if err := source.ReadVectorInto(ctx, vector.Ordinal(row), scratch); err != nil {
+		if err := source.ReadInto(ctx, vector.Ordinal(row), scratch); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return FileMetadata{}, err
 			}
 			return FileMetadata{}, codecErrorf(ErrCorrupt, "vector row %d cannot be read: %v", row, err)
-		}
-		if err := validatePreparedRow(space, scratch); err != nil {
-			return FileMetadata{}, codecErrorf(ErrCorrupt, "vector row %d is invalid: %v", row, err)
 		}
 		for i, value := range scratch {
 			binary.LittleEndian.PutUint32(encoded[i*float32ByteSize:(i+1)*float32ByteSize], math.Float32bits(value))
@@ -209,31 +194,34 @@ func DecodeVectorFile(ctx context.Context, data []byte, limits Config) (VectorDa
 		return VectorData{}, FileMetadata{}, ErrCorrupt
 	}
 
-	space, err := vector.NewSpace(dimensions, metric)
-	if err != nil || space.Normalization() != normalization {
+	spec, err := vector.NewSpec(dimensions, metric)
+	if err != nil || spec.Normalization() != normalization {
 		return VectorData{}, FileMetadata{}, ErrCorrupt
 	}
 
-	values := make([]float32, int(expectedComponents))
-	payload := data[vectorHeaderSize : len(data)-vectorFooterSize]
-	for i := range values {
-		if err := contextcheck.PeriodicError(ctx, i); err != nil {
-			return VectorData{}, FileMetadata{}, err
-		}
-		bits := binary.LittleEndian.Uint32(payload[i*float32ByteSize : (i+1)*float32ByteSize])
-		if bits == negativeZeroBits {
-			return VectorData{}, FileMetadata{}, ErrCorrupt
-		}
-		values[i] = math.Float32frombits(bits)
+	builder, err := vector.NewMatrixBuilder(dimensions, metric, int(count))
+	if err != nil {
+		return VectorData{}, FileMetadata{}, ErrCorrupt
 	}
-	for row := 0; row < int(count); row++ {
-		if err := contextcheck.PeriodicError(ctx, row); err != nil {
+	row := make([]float32, dimensions)
+	payload := data[vectorHeaderSize : len(data)-vectorFooterSize]
+	for rowIndex := range int(count) {
+		if err := contextcheck.PeriodicError(ctx, rowIndex); err != nil {
 			return VectorData{}, FileMetadata{}, err
 		}
-		start := row * dimensions
-		if err := validatePreparedRow(space, values[start:start+dimensions]); err != nil {
-			return VectorData{}, FileMetadata{}, codecErrorf(ErrCorrupt, "vector row %d is invalid: %v", row, err)
+		componentOffset := rowIndex * dimensions
+		for component := range dimensions {
+			i := componentOffset + component
+			bits := binary.LittleEndian.Uint32(payload[i*float32ByteSize : (i+1)*float32ByteSize])
+			row[component] = math.Float32frombits(bits)
 		}
+		if err := builder.AddCanonical(row); err != nil {
+			return VectorData{}, FileMetadata{}, codecErrorf(ErrCorrupt, "vector row %d is invalid: %v", rowIndex, err)
+		}
+	}
+	store, err := builder.Build()
+	if err != nil {
+		return VectorData{}, FileMetadata{}, codecErrorf(ErrCorrupt, "vector matrix is invalid: %v", err)
 	}
 
 	metadata := FileMetadata{
@@ -243,7 +231,7 @@ func DecodeVectorFile(ctx context.Context, data []byte, limits Config) (VectorDa
 	if err := ctx.Err(); err != nil {
 		return VectorData{}, FileMetadata{}, err
 	}
-	return VectorData{Space: space, Values: values}, metadata, nil
+	return VectorData{Matrix: store}, metadata, nil
 }
 
 func vectorFileHashes(ctx context.Context, body, footer []byte) (uint32, [sha256.Size]byte, error) {
@@ -266,25 +254,4 @@ func vectorFileHashes(ctx context.Context, body, footer []byte) (uint32, [sha256
 	var digest [sha256.Size]byte
 	copy(digest[:], identity.Sum(nil))
 	return crc.Sum32(), digest, ctx.Err()
-}
-
-func validatePreparedRow(space vector.Space, value []float32) error {
-	if err := space.Validate(value); err != nil {
-		return err
-	}
-	if space.Normalization() == vector.NormalizationUnitLength {
-		var normSquared float64
-		for _, component := range value {
-			normSquared += float64(component) * float64(component)
-		}
-		if math.Abs(normSquared-1) > unitNormTolerance {
-			return errors.New("vector is not unit normalized")
-		}
-	}
-	for _, component := range value {
-		if math.Float32bits(component) == negativeZeroBits {
-			return errors.New("vector contains negative zero")
-		}
-	}
-	return nil
 }

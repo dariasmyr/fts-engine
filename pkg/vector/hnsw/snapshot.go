@@ -45,9 +45,9 @@ func Snapshot(index *Index) hnswmodel.Snapshot {
 
 	t := index.topology
 	return hnswmodel.Snapshot{
-		Dimensions:            t.space.Dimensions(),
-		Metric:                t.space.Metric(),
-		Normalization:         t.space.Normalization(),
+		Dimensions:            t.spec.Dimensions(),
+		Metric:                t.spec.Metric(),
+		Normalization:         t.spec.Normalization(),
 		BuildVersion:          t.build.buildVersion,
 		LevelGeneratorVersion: t.build.levelGeneratorVersion,
 		MaxNeighbors:          t.build.maxNeighbors,
@@ -67,9 +67,9 @@ func Snapshot(index *Index) hnswmodel.Snapshot {
 
 // Restore creates an in-memory index from a trusted, repository-internal
 // snapshot. Durable decoders must validate untrusted data before calling it.
-func Restore(snapshot hnswmodel.Snapshot, vectors vector.PreparedVectorStore, config Config) (*Index, error) {
-	space, err := vector.NewSpace(snapshot.Dimensions, snapshot.Metric)
-	if err != nil || space.Normalization() != snapshot.Normalization {
+func Restore(snapshot hnswmodel.Snapshot, vectors *vector.Matrix, config Config) (*Index, error) {
+	spec, err := vector.NewSpec(snapshot.Dimensions, snapshot.Metric)
+	if err != nil || spec.Normalization() != snapshot.Normalization {
 		return nil, ErrInvalidSource
 	}
 	build := BuildConfig{
@@ -85,7 +85,7 @@ func Restore(snapshot hnswmodel.Snapshot, vectors vector.PreparedVectorStore, co
 	}
 
 	t := topology{
-		space: space,
+		spec: spec,
 		build: buildInfo{
 			buildVersion:          snapshot.BuildVersion,
 			levelGeneratorVersion: snapshot.LevelGeneratorVersion,
@@ -102,6 +102,11 @@ func Restore(snapshot hnswmodel.Snapshot, vectors vector.PreparedVectorStore, co
 		upperNodeOffsets: append([]uint32(nil), snapshot.UpperNodeOffsets...),
 		upperLinkOffsets: append([]uint32(nil), snapshot.UpperLinkOffsets...),
 		upperNeighbors:   append([]uint32(nil), snapshot.UpperLinks...),
+	}
+	if vectors == nil || vectors.Len() != len(t.levels) ||
+		vectors.Dimensions() != spec.Dimensions() || vectors.Metric() != spec.Metric() ||
+		vectors.Normalization() != spec.Normalization() {
+		return nil, ErrInvalidSource
 	}
 	return newIndex(t, vectors, config)
 }

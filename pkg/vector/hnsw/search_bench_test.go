@@ -10,7 +10,7 @@ import (
 
 var searchBenchmarkResult SearchResult
 
-func BenchmarkSearchPreparedVectorAccess(b *testing.B) {
+func BenchmarkSearchPreparedAccess(b *testing.B) {
 	const (
 		rows       = 4_000
 		dimensions = 768
@@ -25,12 +25,6 @@ func BenchmarkSearchPreparedVectorAccess(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	topology := Snapshot(base)
-	fallbackStore := &forwardingPreparedStore{PreparedVectorStore: store}
-	fallback, err := Restore(topology, fallbackStore, config)
-	if err != nil {
-		b.Fatal(err)
-	}
 	queryValues := make([]float32, dimensions)
 	for dimension := range dimensions {
 		queryValues[dimension] = float32((dimension*17)%101) / 101
@@ -40,43 +34,30 @@ func BenchmarkSearchPreparedVectorAccess(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	for _, source := range []struct {
-		name  string
-		index *Index
-	}{
-		{name: "memory", index: base},
-		{name: "generic-fallback", index: fallback},
-	} {
-		for _, efSearch := range []int{16, 32, 64, 200} {
-			b.Run(fmt.Sprintf("source=%s/efSearch=%d", source.name, efSearch), func(b *testing.B) {
-				b.StopTimer()
-				request := QueryConfig{EfSearch: efSearch, VisitLimit: rows}
-				sample, err := source.index.SearchPrepared(context.Background(), query, 10, request)
-				if err != nil {
-					b.Fatal(err)
-				}
-				b.ReportAllocs()
-				b.ReportMetric(float64(sample.Stats.DistanceComputations), "distances/op")
-				b.ReportMetric(float64(sample.Stats.VisitedNodes), "visited/op")
-				if source.name == "memory" {
-					b.ReportMetric(0, "copied-bytes/op")
-					b.ReportMetric(0, "vector-copies/op")
-				} else {
-					b.ReportMetric(float64(sample.Stats.DistanceComputations*dimensions*4), "copied-bytes/op")
-					b.ReportMetric(float64(sample.Stats.DistanceComputations), "vector-copies/op")
-				}
-				b.StartTimer()
-				b.RunParallel(func(pb *testing.PB) {
-					for pb.Next() {
-						result, err := source.index.SearchPrepared(context.Background(), query, 10, request)
-						if err != nil {
-							b.Fatal(err)
-						}
-						_ = result
+	for _, efSearch := range []int{16, 32, 64, 200} {
+		b.Run(fmt.Sprintf("efSearch=%d", efSearch), func(b *testing.B) {
+			b.StopTimer()
+			request := QueryConfig{EfSearch: efSearch, VisitLimit: rows}
+			sample, err := base.SearchPrepared(context.Background(), query, 10, request)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ReportMetric(float64(sample.Stats.DistanceComputations), "distances/op")
+			b.ReportMetric(float64(sample.Stats.VisitedNodes), "visited/op")
+			b.ReportMetric(0, "copied-bytes/op")
+			b.ReportMetric(0, "vector-copies/op")
+			b.StartTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					result, err := base.SearchPrepared(context.Background(), query, 10, request)
+					if err != nil {
+						b.Fatal(err)
 					}
-				})
+					_ = result
+				}
 			})
-		}
+		})
 	}
 }
 

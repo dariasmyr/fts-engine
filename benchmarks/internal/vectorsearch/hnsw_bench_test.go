@@ -91,7 +91,7 @@ func benchmarkExactSearcher(t testing.TB, values [][]float32, metric vector.Metr
 	return searcher
 }
 
-func benchmarkBuild(t testing.TB, source vector.PreparedVectorStore, dimensions, count int, metric vector.Metric) *hnsw.Index {
+func benchmarkBuild(t testing.TB, source *vector.Matrix, dimensions, count int, metric vector.Metric) *hnsw.Index {
 	t.Helper()
 	reader, err := hnsw.Build(
 		context.Background(),

@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/dariasmyr/fts-engine/v2/internal/format"
-	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/internal/persistfs"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semantic"
 	"github.com/dariasmyr/fts-engine/v2/pkg/semanticpersist/internal/generationformat"
@@ -77,7 +76,10 @@ func (s segmentStore) put(ctx context.Context, data semantic.SegmentState, maxK 
 	if err := s.checkpoints.before(ctx, checkpointWriteVectors); err != nil {
 		return generationformat.SegmentRef{}, err
 	}
-	vectorsRef, err := s.writeVectors(ctx, filepath.Join(segmentTemp, vectorsFileName), data.Vectors, maxK)
+	if data.Index == nil || data.Index.Matrix() == nil {
+		return generationformat.SegmentRef{}, ErrCorrupt
+	}
+	vectorsRef, err := s.writeVectors(ctx, filepath.Join(segmentTemp, vectorsFileName), data.Index.Matrix(), maxK)
 	if err != nil {
 		return generationformat.SegmentRef{}, err
 	}
@@ -87,9 +89,6 @@ func (s segmentStore) put(ctx context.Context, data semantic.SegmentState, maxK 
 
 	if err := s.checkpoints.before(ctx, checkpointWriteGraph); err != nil {
 		return generationformat.SegmentRef{}, err
-	}
-	if data.Index == nil {
-		return generationformat.SegmentRef{}, ErrCorrupt
 	}
 	graphRef, err := s.writeGraph(ctx, filepath.Join(segmentTemp, graphFileName), data.Index, vectorsRef)
 	if err != nil {
@@ -145,7 +144,7 @@ func (s segmentStore) put(ctx context.Context, data semantic.SegmentState, maxK 
 	return ref, nil
 }
 
-func (s segmentStore) writeVectors(ctx context.Context, path string, source vector.PreparedVectorStore, maxK int) (generationformat.FileRef, error) {
+func (s segmentStore) writeVectors(ctx context.Context, path string, source *vector.Matrix, maxK int) (generationformat.FileRef, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return generationformat.FileRef{}, err
@@ -232,8 +231,8 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 	if metadata.Size != ref.Vectors.Size || metadata.SHA256 != ref.Vectors.SHA256 {
 		return semantic.SegmentState{}, ErrCorrupt
 	}
-	vectors, err := memorystore.NewPrepared(decoded.Space, decoded.Values)
-	if err != nil {
+	vectors := decoded.Matrix
+	if vectors == nil {
 		return semantic.SegmentState{}, ErrCorrupt
 	}
 	graphData, err := readReferencedFileWithoutHash(filepath.Join(path, graphFileName), ref.Graph, min(s.limits.MaxFileBytes, s.limits.MaxGraphBytes))
@@ -255,10 +254,9 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 		return semantic.SegmentState{}, ErrCorrupt
 	}
 	segment := semantic.SegmentState{
-		ID:      state.ID,
-		Rows:    state.Rows,
-		Vectors: vectors,
-		Index:   index,
+		ID:    state.ID,
+		Rows:  state.Rows,
+		Index: index,
 	}
 	if err := validateSegmentData(segment, config, s.limits); err != nil {
 		return semantic.SegmentState{}, err
@@ -268,7 +266,7 @@ func (s segmentStore) open(ctx context.Context, ref generationformat.SegmentRef,
 
 func validateSegmentData(data semantic.SegmentState, config semantic.IndexConfig, limits Limits) error {
 	semanticLimits := config.Operational.Capacity
-	if data.Vectors == nil || data.Index == nil {
+	if data.Index == nil || data.Index.Matrix() == nil {
 		return ErrLimitExceeded
 	}
 	dimensions := data.Index.Dimensions()

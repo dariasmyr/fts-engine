@@ -32,15 +32,15 @@ func TestIndexOwnsMetricPreparation(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw[0] = 99
-	stored := make([]float32, 2)
-	if err := index.state.pending.additions[0].vector.CopyTo(stored); err != nil {
-		t.Fatal(err)
-	}
-	if len(stored) != 2 || math.Abs(float64(stored[0])-0.6) > 1e-6 || math.Abs(float64(stored[1])-0.8) > 1e-6 {
-		t.Fatalf("prepared embedding = %v, want [0.6 0.8]", stored)
-	}
 	if err := index.Commit(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	stored := make([]float32, 2)
+	if err := index.View().segments[0].segment.vectorMatrix().ReadInto(t.Context(), 0, stored); err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(float64(stored[0])-0.6) > 1e-6 || math.Abs(float64(stored[1])-0.8) > 1e-6 {
+		t.Fatalf("prepared embedding = %v, want [0.6 0.8]", stored)
 	}
 	result, err := index.Search(t.Context(), []ChunkEmbedding{{Embedding: []float32{6, 8}}}, 1, QueryConfig{})
 	if err != nil {

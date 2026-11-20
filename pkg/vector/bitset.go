@@ -6,8 +6,6 @@ import (
 	"math/bits"
 )
 
-var ErrOrdinalOutOfRange = errors.New("vector: ordinal is outside the bitset")
-
 var (
 	ErrBitSetShrink        = errors.New("vector: bitset cannot shrink")
 	ErrConflictingOrdinals = errors.New("vector: ordinal cannot be both allowed and disallowed")

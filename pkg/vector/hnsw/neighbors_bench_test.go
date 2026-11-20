@@ -103,21 +103,22 @@ func BenchmarkBuildVerificationMetadata(b *testing.B) {
 			values[row*dimensions+dimension] = float32(math.Sin(float64((row + 1) * (dimension + 1))))
 		}
 	}
-	space, err := vector.NewSpace(dimensions, vector.MetricL2Squared)
+	spec, err := vector.NewSpec(dimensions, vector.MetricL2Squared)
 	if err != nil {
 		b.Fatal(err)
 	}
 	config := BuildConfig{MaxNeighbors: 16, EfConstruction: 64, Seed: 1}
+	matrix, err := newCanonicalTestMatrix(dimensions, vector.MetricL2Squared, values)
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ReportAllocs()
 	var built *builder
 	for b.Loop() {
-		built = newOwningBuilder(config, space, rows, len(values))
-		for row := range rows {
-			if err := built.add(
-				context.Background(),
-				values[row*dimensions:(row+1)*dimensions],
-			); err != nil {
+		built = newBuilder(config, spec, matrix, rows)
+		for range rows {
+			if err := built.add(context.Background()); err != nil {
 				b.Fatal(err)
 			}
 		}

@@ -22,7 +22,7 @@ type state struct {
 	ctx           context.Context
 	index         *Index
 	preparedQuery []float32
-	reusableQuery *vector.PreparedVector
+	reusableQuery *vector.Prepared
 	filter        vector.ResultFilter
 	visitLimit    int
 	workspace     *searchWorkspace
@@ -81,7 +81,7 @@ func resolveSearchRequest(defaults SearchConfig, vectorCount, k int, config Quer
 	}, nil
 }
 
-func search(ctx context.Context, reader *Index, query []float32, prepared *vector.PreparedVector, k int, config QueryConfig) (SearchResult, error) {
+func search(ctx context.Context, reader *Index, query []float32, prepared *vector.Prepared, k int, config QueryConfig) (SearchResult, error) {
 	if ctx == nil {
 		return SearchResult{}, vector.ErrNilContext
 	}
@@ -91,7 +91,7 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 	if reader == nil {
 		return SearchResult{}, errInvalidGraph
 	}
-	space := reader.topology.space
+	spec := reader.topology.spec
 	vectorCount := reader.Len()
 	request, err := resolveSearchRequest(reader.config.Search, vectorCount, k, config)
 	if err != nil {
@@ -100,11 +100,11 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 	workspace := reader.workspaces.acquire()
 	defer reader.workspaces.release(workspace)
 	if prepared == nil {
-		workspace.prepareQuery(space.Dimensions())
-		if err := space.PrepareInto(workspace.preparedQuery, query); err != nil {
+		workspace.prepareQuery(spec.Dimensions())
+		if err := spec.PrepareInto(workspace.preparedQuery, query); err != nil {
 			return SearchResult{}, err
 		}
-	} else if err := space.ValidatePreparedVector(*prepared); err != nil {
+	} else if err := spec.ValidatePrepared(*prepared); err != nil {
 		return SearchResult{}, err
 	}
 	stats := SearchStats{
@@ -119,11 +119,7 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 		}
 		return complete, nil
 	}
-	vectorBufferDimensions := space.Dimensions()
-	if reader.borrowedVectors != nil {
-		vectorBufferDimensions = 0
-	}
-	workspace.resetSearch(vectorCount, vectorBufferDimensions, request.visitLimit, request.appliedEfSearch)
+	workspace.resetSearch(vectorCount, 0, request.visitLimit, request.appliedEfSearch)
 	entry, maxLevel, ok := reader.entryPoint()
 	if !ok || maxLevel < 0 || maxLevel > maxLevelLimit || uint64(entry) >= uint64(vectorCount) {
 		return SearchResult{}, errInvalidGraph
@@ -296,27 +292,18 @@ func (state *state) score(node nodeOrdinal) (candidate, error) {
 		return candidate{}, errVisitLimit
 	}
 	ordinal := vector.Ordinal(node)
-	value := state.workspace.vector
-	if state.index.borrowedVectors != nil {
-		if err := state.ctx.Err(); err != nil {
-			return candidate{}, err
-		}
-		dimensions := state.index.topology.space.Dimensions()
-		start := int(node) * dimensions
-		value = state.index.borrowedVectors[start : start+dimensions]
-	} else {
-		if err := state.index.vectors.ReadVectorInto(state.ctx, ordinal, value); err != nil {
-			if state.ctx.Err() != nil {
-				return candidate{}, state.ctx.Err()
-			}
-			return candidate{}, fmt.Errorf("%w: read vector row %d: %v", errInvalidGraph, ordinal, err)
-		}
+	if err := state.ctx.Err(); err != nil {
+		return candidate{}, err
 	}
 	var distance float64
+	var err error
 	if state.reusableQuery != nil {
-		distance = state.index.topology.space.DistancePreparedVector(*state.reusableQuery, value)
+		distance, err = state.index.matrix.DistancePrepared(*state.reusableQuery, ordinal)
 	} else {
-		distance = state.index.topology.space.DistancePrepared(state.preparedQuery, value)
+		distance, err = state.index.matrix.DistancePreparedValues(state.preparedQuery, ordinal)
+	}
+	if err != nil {
+		return candidate{}, fmt.Errorf("%w: score vector row %d: %v", errInvalidGraph, ordinal, err)
 	}
 	if math.IsNaN(distance) || math.IsInf(distance, 0) {
 		return candidate{}, errInvalidGraph

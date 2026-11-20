@@ -44,6 +44,7 @@ Standalone examples:
 - `segment-pipeline-compatibility/main.go` - self-contained segment save and pipeline-compatible restore
 - `segment-bundle/main.go` - save and restore one sealed segment as an `io.Writer`/`io.Reader` blob
 - `rank-profile/main.go` - multi-field ranking with weighted field scoring
+- `hnsw-matrix/main.go` - direct HNSW use with the concrete in-memory `vector.Matrix`
 - `semantic-commit/main.go` - mutable document search and explicit `Commit` visibility
 - `semantic-persistence/main.go` - `service.New`, `CommitAndSaveService`, `Inspect`, mismatch rejection, and `service.Load`
 - `semantic-index-persistence/main.go` - raw `Index` persistence with `CommitAndSave`, `Load`, and request-local `QueryConfig`
@@ -78,6 +79,7 @@ go run ./examples/client-library/filtered-presence
 go run ./examples/client-library/segment-pipeline-compatibility
 go run ./examples/client-library/segment-bundle
 go run ./examples/client-library/rank-profile
+go run ./examples/client-library/hnsw-matrix
 go run ./examples/client-library/semantic-commit
 go run ./examples/client-library/semantic-persistence
 go run ./examples/client-library/semantic-index-persistence

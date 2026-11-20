@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/vectorsearch/exact"
-	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -20,7 +19,7 @@ func TestNewCopiesCompleteVectorSet(t *testing.T) {
 	}
 	values[0][0] = 100
 	stored := make([]float32, 2)
-	if err := searcher.Store().ReadVectorInto(context.Background(), 0, stored); err != nil {
+	if err := searcher.Store().ReadInto(context.Background(), 0, stored); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(stored, []float32{1, 2}) {
@@ -28,16 +27,12 @@ func TestNewCopiesCompleteVectorSet(t *testing.T) {
 	}
 }
 
-func TestNewFromPreparedStore(t *testing.T) {
-	space, err := vector.NewSpace(2, vector.MetricCosine)
+func TestNewFromMatrix(t *testing.T) {
+	store, err := vector.NewMatrix(2, vector.MetricCosine, [][]float32{{1, 0}, {0, 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := memorystore.New(space, [][]float32{{1, 0}, {0, 1}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	searcher, err := exact.NewFromPreparedStore(store, 2)
+	searcher, err := exact.NewFromMatrix(store, 2)
 	if err != nil {
 		t.Fatal(err)
 	}

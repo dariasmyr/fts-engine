@@ -10,7 +10,7 @@ import (
 
 // buildCommittedView derives the next immutable view and location table from a
 // committed base without mutating either published object.
-func buildCommittedView(ctx context.Context, base *IndexView, locations *locationTable, removedIDs []VectorID, pending *segment, pendingSegmentID SegmentID, revision Revision) (*IndexView, *locationTable, error) {
+func buildCommittedView(ctx context.Context, base *IndexView, locations locationTable, removedIDs []VectorID, pending *segment, pendingSegmentID SegmentID, revision Revision) (*IndexView, locationTable, error) {
 	segments := append([]segmentView(nil), base.segments...)
 	segmentIndexes := make(map[SegmentID]int, len(segments))
 	for n, view := range segments {
@@ -66,7 +66,7 @@ func buildCommittedView(ctx context.Context, base *IndexView, locations *locatio
 		ctx,
 		revision,
 		segments,
-		base.space,
+		base.spec,
 		base.searchLimits,
 		base.resultLimits,
 		base.searchConfig,

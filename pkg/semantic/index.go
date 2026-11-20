@@ -26,7 +26,7 @@ type Index struct {
 	id     IndexID
 	config IndexConfig
 	limits indexLimits
-	space  vector.Space
+	spec   vector.Spec
 	state  indexState
 }
 
@@ -36,7 +36,7 @@ func NewIndex(config IndexConfig) (*Index, error) {
 	if err != nil {
 		return nil, err
 	}
-	space, err := vector.NewSpace(config.Dimensions, config.Metric)
+	spec, err := vector.NewSpec(config.Dimensions, config.Metric)
 	if err != nil {
 		return nil, ErrInvalidConfig
 	}
@@ -47,7 +47,7 @@ func NewIndex(config IndexConfig) (*Index, error) {
 		context.Background(),
 		0,
 		nil,
-		space,
+		spec,
 		limits.search,
 		limits.results,
 		hnswConfig.Search,
@@ -64,7 +64,7 @@ func NewIndex(config IndexConfig) (*Index, error) {
 		id:           id,
 		config:       config,
 		limits:       limits,
-		space:        space,
+		spec:         spec,
 		state: indexState{
 			view:          view,
 			nextSegmentID: SegmentID(1),
@@ -158,7 +158,7 @@ func (i *Index) viewForRead(ctx context.Context) (*IndexView, error) {
 
 type preparedChunk struct {
 	ref    Ref
-	vector vector.PreparedVector
+	vector vector.Prepared
 }
 
 func (i *Index) prepareBatch(ctx context.Context, docID fts.DocID, batch []ChunkEmbedding) ([]preparedChunk, error) {
@@ -193,7 +193,7 @@ func (i *Index) prepareBatch(ctx context.Context, docID fts.DocID, batch []Chunk
 			return nil, ErrInvalidBatch
 		}
 		seenChunks[item.Ref.ID] = struct{}{}
-		preparedVector, err := i.space.Prepare(item.Embedding)
+		preparedVector, err := i.spec.Prepare(item.Embedding)
 		if err != nil {
 			return nil, err
 		}

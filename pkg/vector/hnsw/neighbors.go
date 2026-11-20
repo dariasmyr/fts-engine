@@ -3,6 +3,8 @@ package hnsw
 import (
 	"context"
 	"slices"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
 const maxVerifiedLinkWords = (maxSupportedNeighbors*2 + 63) / 64
@@ -15,14 +17,11 @@ type neighborSelection struct {
 }
 
 func (b *builder) distanceNodes(a, c nodeOrdinal) float64 {
-	aVector := b.vectorByNode(a)
-	cVector := b.vectorByNode(c)
-	return b.space.DistancePrepared(aVector, cVector)
-}
-
-func (b *builder) vectorByNode(node nodeOrdinal) []float32 {
-	start := int(node) * b.space.Dimensions()
-	return b.graph.values[start : start+b.space.Dimensions()]
+	distance, err := b.matrix.DistanceRows(vector.Ordinal(a), vector.Ordinal(c))
+	if err != nil {
+		panic("vector/hnsw: builder referenced an invalid matrix row")
+	}
+	return distance
 }
 
 func (b *builder) selectClosestNeighbors(ctx context.Context, candidates []candidate, limit int) ([]buildNeighbor, error) {

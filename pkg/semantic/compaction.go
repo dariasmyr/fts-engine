@@ -70,7 +70,7 @@ func (i *Index) Compact(ctx context.Context) error {
 	return nil
 }
 
-func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, config IndexConfig) (*IndexView, *locationTable, bool, error) {
+func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, config IndexConfig) (*IndexView, locationTable, bool, error) {
 	var compacted *segment
 	if view.liveCount > 0 {
 		var err error
@@ -104,7 +104,7 @@ func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, conf
 		ctx,
 		view.revision,
 		segments,
-		view.space,
+		view.spec,
 		config.runtimeLimits().search,
 		config.runtimeLimits().results,
 		hnswConfig.Search,
@@ -116,16 +116,19 @@ func compactView(ctx context.Context, view *IndexView, segmentID SegmentID, conf
 }
 
 func buildCompactedSegment(ctx context.Context, view *IndexView, segmentID SegmentID, config IndexConfig) (*segment, error) {
-	flatVectors, liveRows, err := materializeLiveRows(ctx, view)
+	store, liveRows, err := materializeLiveRows(ctx, view)
 	if err != nil {
 		return nil, err
 	}
-	return buildMaterializedSegment(ctx, segmentID, flatVectors, liveRows, config)
+	return buildSegment(ctx, segmentID, view.spec, store, liveRows, config.hnswConfig())
 }
 
-func materializeLiveRows(ctx context.Context, view *IndexView) ([]float32, []VectorRow, error) {
-	dimensions := view.space.Dimensions()
-	flatVectors := make([]float32, view.liveCount*dimensions)
+func materializeLiveRows(ctx context.Context, view *IndexView) (*vector.Matrix, []VectorRow, error) {
+	dimensions := view.spec.Dimensions()
+	builder, err := vector.NewMatrixBuilder(dimensions, view.spec.Metric(), view.liveCount)
+	if err != nil {
+		return nil, nil, err
+	}
 	liveRows := make([]VectorRow, view.liveCount)
 	liveOrdinal := 0
 	for _, item := range view.segments {
@@ -136,9 +139,7 @@ func materializeLiveRows(ctx context.Context, view *IndexView) ([]float32, []Vec
 			if !item.liveness.Allows(vector.Ordinal(ordinal)) {
 				continue
 			}
-			start := liveOrdinal * dimensions
-			dst := flatVectors[start : start+dimensions]
-			if err := item.segment.vectorStore().ReadVectorInto(ctx, vector.Ordinal(ordinal), dst); err != nil {
+			if err := builder.AddMatrixRow(item.segment.vectorMatrix(), vector.Ordinal(ordinal)); err != nil {
 				return nil, nil, err
 			}
 			liveRows[liveOrdinal] = row
@@ -148,5 +149,9 @@ func materializeLiveRows(ctx context.Context, view *IndexView) ([]float32, []Vec
 	if liveOrdinal != view.liveCount {
 		return nil, nil, ErrInternalState
 	}
-	return flatVectors, liveRows, nil
+	store, err := builder.Build()
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, liveRows, nil
 }

@@ -297,12 +297,15 @@ for `encoding.NewEncoder` with `service.NewService`. The
 [`semantic-ollama` example](examples/client-library/semantic-ollama/main.go)
 shows the higher-level model-backed path.
 
-At the vector layer, `vector.Space.Prepare` returns an opaque
-`vector.PreparedVector`, not a `[]float32`. Its backing storage cannot be
-mutated by callers; `CopyTo` is the explicit bridge into trusted prepared
-storage. Raw `[]float32` buffers remain only in the low-level
-`PreparedVectorStore` contract so search can reuse caller-provided buffers
-without allocating per distance calculation.
+At the vector layer, `vector.Matrix` is the single storage implementation. It
+owns a contiguous in-memory `[]float32`, validates and prepares input rows, and
+supports concurrent immutable reads. `hnsw.Build` retains the matrix for
+search; persistence encodes it to bytes and reconstructs the same concrete type
+on load. `vector.Spec` is only a low-level validation and distance helper: it
+does not store vectors or binary data. `vector.MatrixBuilder` validates raw and
+canonical input at ingestion, accepts compatible opaque prepared vectors and
+immutable matrix rows without rescanning their components, and seals its owned
+backing array in `Build`.
 
 ## Choosing an Index
 

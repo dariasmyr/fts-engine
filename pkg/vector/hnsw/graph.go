@@ -15,7 +15,6 @@ type mutableNode struct {
 }
 
 type graphData struct {
-	values   []float32
 	nodes    []mutableNode
 	entry    nodeOrdinal
 	hasEntry bool

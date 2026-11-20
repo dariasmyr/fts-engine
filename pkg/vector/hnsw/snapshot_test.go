@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector/hnsw"
 )
@@ -13,11 +12,11 @@ import (
 func TestSnapshotRestorePreservesSearchAndOrdinals(t *testing.T) {
 	t.Parallel()
 
-	space, err := vector.NewSpace(2, vector.MetricL2Squared)
+	spec, err := vector.NewSpec(2, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectors, err := memorystore.New(space, [][]float32{
+	vectors, err := vector.NewMatrix(spec.Dimensions(), spec.Metric(), [][]float32{
 		{0, 0},
 		{1, 0},
 		{3, 0},
@@ -67,11 +66,11 @@ func TestSnapshotRestorePreservesSearchAndOrdinals(t *testing.T) {
 func TestRestoreAcceptsOlderBuildAndRejectsUnknownVersions(t *testing.T) {
 	t.Parallel()
 
-	space, err := vector.NewSpace(1, vector.MetricL2Squared)
+	spec, err := vector.NewSpec(1, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectors, err := memorystore.New(space, [][]float32{{0}, {1}})
+	vectors, err := vector.NewMatrix(spec.Dimensions(), spec.Metric(), [][]float32{{0}, {1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,11 +106,11 @@ func TestRestoreAcceptsOlderBuildAndRejectsUnknownVersions(t *testing.T) {
 func TestIndex_TopologyStats(t *testing.T) {
 	t.Parallel()
 
-	space, err := vector.NewSpace(2, vector.MetricL2Squared)
+	spec, err := vector.NewSpec(2, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectors, err := memorystore.New(space, [][]float32{{0, 0}, {1, 0}, {3, 0}, {10, 0}})
+	vectors, err := vector.NewMatrix(spec.Dimensions(), spec.Metric(), [][]float32{{0, 0}, {1, 0}, {3, 0}, {10, 0}})
 	if err != nil {
 		t.Fatal(err)
 	}

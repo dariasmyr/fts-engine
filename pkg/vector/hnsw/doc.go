@@ -1,5 +1,3 @@
-// Package hnsw implements immutable in-memory HNSW indexes over prepared vector
-// stores. It owns construction, topology, search, neighbor selection, and
-// reusable workspaces. Shared vector mathematics and contracts live in
-// pkg/vector.
+// Package hnsw implements immutable HNSW indexes over vector.Matrix.
+// Build retains the provided in-memory matrix for the lifetime of the index.
 package hnsw

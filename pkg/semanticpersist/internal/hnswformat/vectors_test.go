@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -39,11 +38,20 @@ func TestDecodeVectorFileCancellation(t *testing.T) {
 
 func testVectorFile(t testing.TB, rows, dimensions int) ([]byte, Config) {
 	t.Helper()
-	space, err := vector.NewSpace(dimensions, vector.MetricL2Squared)
+	spec, err := vector.NewSpec(dimensions, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := memorystore.NewPrepared(space, make([]float32, rows*dimensions))
+	builder, err := vector.NewMatrixBuilder(spec.Dimensions(), spec.Metric(), rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range rows {
+		if err := builder.AddCanonical(make([]float32, dimensions)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := builder.Build()
 	if err != nil {
 		t.Fatal(err)
 	}

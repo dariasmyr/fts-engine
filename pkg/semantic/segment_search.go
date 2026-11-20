@@ -54,7 +54,7 @@ func resolveEfSearch(efSearch int, defaults hnsw.SearchConfig) int {
 	return efSearch
 }
 
-func searchSegmentChunksPrepared(ctx context.Context, space vector.Space, view segmentView, query vector.PreparedVector, k int, searchOptions hnsw.QueryConfig) (chunkSearchResult, error) {
+func searchSegmentChunksPrepared(ctx context.Context, spec vector.Spec, view segmentView, query vector.Prepared, k int, searchOptions hnsw.QueryConfig) (chunkSearchResult, error) {
 	if k <= 0 {
 		return chunkSearchResult{}, fmt.Errorf("%w: got %d", vector.ErrInvalidK, k)
 	}
@@ -64,7 +64,7 @@ func searchSegmentChunksPrepared(ctx context.Context, space vector.Space, view s
 	if err := ctx.Err(); err != nil {
 		return chunkSearchResult{}, err
 	}
-	if err := space.ValidatePreparedVector(query); err != nil {
+	if err := spec.ValidatePrepared(query); err != nil {
 		return chunkSearchResult{}, err
 	}
 	if view.liveness.AllowedOrdinalCount() == 0 {

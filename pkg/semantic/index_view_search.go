@@ -25,12 +25,12 @@ func (s *IndexView) Search(
 		return DocumentSearchResult{}, ErrInvalidQuery
 	}
 
-	preparedVectors := make([]vector.PreparedVector, len(queryChunks))
+	preparedVectors := make([]vector.Prepared, len(queryChunks))
 	for i, chunk := range queryChunks {
 		if err := ctx.Err(); err != nil {
 			return DocumentSearchResult{}, err
 		}
-		preparedVector, err := s.space.Prepare(chunk.Embedding)
+		preparedVector, err := s.spec.Prepare(chunk.Embedding)
 		if err != nil {
 			return DocumentSearchResult{}, err
 		}
@@ -42,7 +42,7 @@ func (s *IndexView) Search(
 
 func (s *IndexView) searchPreparedQueries(
 	ctx context.Context,
-	queryVectors []vector.PreparedVector,
+	queryVectors []vector.Prepared,
 	k int,
 	config QueryConfig,
 ) (DocumentSearchResult, error) {

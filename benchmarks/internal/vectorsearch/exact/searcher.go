@@ -38,40 +38,33 @@ type Result struct {
 // Searcher finds nearest vectors by scanning every eligible row in an immutable
 // prepared vector store. It is a correctness baseline for approximate search.
 type Searcher struct {
-	store vector.PreparedVectorStore
-	space vector.Space
+	store *vector.Matrix
+	spec  vector.Spec
 	maxK  int
 }
 
 // New prepares and copies the complete vector set into an immutable Searcher.
 func New(vectors [][]float32, dimensions int, metric vector.Metric, maxK int) (*Searcher, error) {
-	space, err := vector.NewSpace(dimensions, metric)
+	store, err := vector.NewMatrix(dimensions, metric, vectors)
 	if err != nil {
 		return nil, err
 	}
-	store, err := newPreparedStore(space, vectors)
-	if err != nil {
-		return nil, err
-	}
-	return NewFromPreparedStore(store, maxK)
+	return NewFromMatrix(store, maxK)
 }
 
-// NewFromPreparedStore constructs a Searcher over a complete immutable store.
-func NewFromPreparedStore(store vector.PreparedVectorStore, maxK int) (*Searcher, error) {
+// NewFromMatrix constructs a Searcher over an immutable in-memory matrix.
+func NewFromMatrix(store *vector.Matrix, maxK int) (*Searcher, error) {
 	if store == nil {
 		return nil, ErrInvalidOptions
 	}
 	if maxK <= 0 {
 		return nil, fmt.Errorf("%w: got %d", vector.ErrInvalidK, maxK)
 	}
-	space, err := vector.NewSpace(store.Dimensions(), store.Metric())
-	if err != nil {
-		return nil, err
-	}
-	if space.Normalization() != store.Normalization() {
+	spec := store.Spec()
+	if spec.Dimensions() <= 0 {
 		return nil, ErrInvalidOptions
 	}
-	return &Searcher{store: store, space: space, maxK: maxK}, nil
+	return &Searcher{store: store, spec: spec, maxK: maxK}, nil
 }
 
 // Search returns the exact nearest vectors in distance and ordinal order.
@@ -88,7 +81,7 @@ func (s *Searcher) Search(ctx context.Context, query []float32, k int, options O
 	if options.VisitLimit < 0 {
 		return Result{}, ErrInvalidOptions
 	}
-	preparedQuery, err := s.space.Prepare(query)
+	preparedQuery, err := s.spec.Prepare(query)
 	if err != nil {
 		return Result{}, err
 	}
@@ -116,10 +109,10 @@ func (s *Searcher) Search(ctx context.Context, query []float32, k int, options O
 			stats.RejectedNodes++
 			continue
 		}
-		if err := s.store.ReadVectorInto(ctx, ordinal, value); err != nil {
+		if err := s.store.ReadInto(ctx, ordinal, value); err != nil {
 			return Result{}, err
 		}
-		distance := s.space.DistancePreparedVector(preparedQuery, value)
+		distance := s.spec.DistancePrepared(preparedQuery, value)
 		stats.DistanceComputations++
 		topK.add(vector.Hit{Ordinal: ordinal, Distance: distance})
 	}
@@ -132,47 +125,8 @@ func (s *Searcher) Search(ctx context.Context, query []float32, k int, options O
 // Len returns the number of vectors searched.
 func (s *Searcher) Len() int { return s.store.Len() }
 
-// Store returns the immutable prepared store used by exhaustive search.
-func (s *Searcher) Store() vector.PreparedVectorStore { return s.store }
-
-type preparedStore struct {
-	space  vector.Space
-	values []float32
-}
-
-func newPreparedStore(space vector.Space, values [][]float32) (*preparedStore, error) {
-	flat := make([]float32, len(values)*space.Dimensions())
-	for row, value := range values {
-		start := row * space.Dimensions()
-		if err := space.PrepareInto(flat[start:start+space.Dimensions()], value); err != nil {
-			return nil, err
-		}
-	}
-	return &preparedStore{space: space, values: flat}, nil
-}
-
-func (s *preparedStore) Len() int { return len(s.values) / s.space.Dimensions() }
-
-func (s *preparedStore) Dimensions() int { return s.space.Dimensions() }
-
-func (s *preparedStore) Metric() vector.Metric { return s.space.Metric() }
-
-func (s *preparedStore) Normalization() vector.Normalization { return s.space.Normalization() }
-
-func (s *preparedStore) ReadVectorInto(ctx context.Context, ordinal vector.Ordinal, dst []float32) error {
-	if ctx == nil {
-		return vector.ErrNilContext
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if len(dst) != s.Dimensions() || uint64(ordinal) >= uint64(s.Len()) {
-		return ErrInvalidOptions
-	}
-	start := int(ordinal) * s.Dimensions()
-	copy(dst, s.values[start:start+s.Dimensions()])
-	return nil
-}
+// Store returns the immutable matrix used by exhaustive search.
+func (s *Searcher) Store() *vector.Matrix { return s.store }
 
 func allowedCount(rowCount int, filter vector.ResultFilter) (int, error) {
 	if filter == nil {

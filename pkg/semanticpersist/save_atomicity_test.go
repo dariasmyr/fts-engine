@@ -39,7 +39,7 @@ func TestSaveRejectsIndependentIndexLineage(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := make([]float32, 2)
-	if err := state.Segments[0].Vectors.ReadVectorInto(ctx, 0, got); err != nil {
+	if err := state.Segments[0].Index.Matrix().ReadInto(ctx, 0, got); err != nil {
 		t.Fatal(err)
 	}
 	if got[0] != 1 || got[1] != 2 {

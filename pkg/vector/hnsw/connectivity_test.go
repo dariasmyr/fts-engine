@@ -7,7 +7,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/dariasmyr/fts-engine/v2/internal/memorystore"
 	"github.com/dariasmyr/fts-engine/v2/pkg/vector"
 )
 
@@ -67,18 +66,26 @@ func TestStandardConstructionRepairsOnlyObservedDisconnection(t *testing.T) {
 	t.Parallel()
 
 	const vectorCount = 2048
-	space, err := vector.NewSpace(2, vector.MetricL2Squared)
+	spec, err := vector.NewSpec(2, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := newOwningBuilder(
+	rows := make([][]float32, vectorCount)
+	for i := range rows {
+		rows[i] = []float32{1, 1}
+	}
+	matrix, err := vector.NewMatrix(spec.Dimensions(), spec.Metric(), rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newBuilder(
 		BuildConfig{MaxNeighbors: 2, EfConstruction: 16, Seed: 1},
-		space,
+		spec,
+		matrix,
 		vectorCount,
-		vectorCount*space.Dimensions(),
 	)
 	for range vectorCount {
-		if err := b.add(t.Context(), []float32{1, 1}); err != nil {
+		if err := b.add(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -245,7 +252,7 @@ func TestLevel0ConnectivityHonorsCanceledContext(t *testing.T) {
 func TestBuildHandlesEmptyAndSingleNodeConnectivity(t *testing.T) {
 	t.Parallel()
 
-	space, err := vector.NewSpace(1, vector.MetricL2Squared)
+	spec, err := vector.NewSpec(1, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +261,7 @@ func TestBuildHandlesEmptyAndSingleNodeConnectivity(t *testing.T) {
 		Search: SearchConfig{EfSearch: 4, VisitLimit: 4},
 	}
 	for _, values := range [][]float32{nil, {1}} {
-		store, err := memorystore.NewPrepared(space, values)
+		store, err := newCanonicalTestMatrix(spec.Dimensions(), spec.Metric(), values)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -275,17 +282,20 @@ func newConnectivityTestBuilder(
 	maxNeighbors int,
 ) *builder {
 	t.Helper()
-	space, err := vector.NewSpace(1, vector.MetricL2Squared)
+	spec, err := vector.NewSpec(1, vector.MetricL2Squared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := newOwningBuilder(
+	matrix, err := newCanonicalTestMatrix(spec.Dimensions(), spec.Metric(), values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newBuilder(
 		BuildConfig{MaxNeighbors: maxNeighbors, EfConstruction: max(1, maxNeighbors), Seed: 1},
-		space,
-		len(values),
+		spec,
+		matrix,
 		len(values),
 	)
-	copy(b.graph.values, values)
 	for owner, nodeLinks := range links {
 		b.graph.nodes = append(b.graph.nodes, mutableNode{
 			links: [][]buildNeighbor{buildNeighborsFromOrdinals(b, nodeOrdinal(owner), nodeLinks)},
