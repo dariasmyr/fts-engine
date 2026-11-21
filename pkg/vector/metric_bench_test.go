@@ -6,7 +6,10 @@ import (
 	"testing"
 )
 
-var dotFloat64BenchmarkResult float64
+var (
+	dotFloat64BenchmarkResult      float64
+	dotFloat64BatchBenchmarkResult [4]float64
+)
 
 func BenchmarkDotFloat64(b *testing.B) {
 	for _, dimensions := range []int{128, 384, 768, 1024} {
@@ -45,6 +48,52 @@ func BenchmarkDotFloat64Variants(b *testing.B) {
 				dotFloat64BenchmarkResult = result
 			})
 		}
+	}
+}
+
+func BenchmarkDotFloat64BatchVariants(b *testing.B) {
+	for _, dimensions := range []int{128, 384, 768, 1024} {
+		target, v0 := newDotFloat64BenchmarkVectors(dimensions)
+		_, v1 := newDotFloat64BenchmarkVectors(dimensions)
+		_, v2 := newDotFloat64BenchmarkVectors(dimensions)
+		_, v3 := newDotFloat64BenchmarkVectors(dimensions)
+		for i := range dimensions {
+			v1[i] += float32(i%3) * 0.001
+			v2[i] -= float32(i%5) * 0.001
+			v3[i] += float32(i%7) * 0.001
+		}
+
+		b.Run(fmt.Sprintf("dimensions=%d/scalar", dimensions), func(b *testing.B) {
+			b.ReportAllocs()
+			var result [4]float64
+			for b.Loop() {
+				result[0] = dotFloat64(target, v0)
+				result[1] = dotFloat64(target, v1)
+				result[2] = dotFloat64(target, v2)
+				result[3] = dotFloat64(target, v3)
+			}
+			dotFloat64BatchBenchmarkResult = result
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*4), "ns/distance")
+		})
+		b.Run(fmt.Sprintf("dimensions=%d/batch2", dimensions), func(b *testing.B) {
+			b.ReportAllocs()
+			var result [4]float64
+			for b.Loop() {
+				result[0], result[1] = distanceBatch2(target, v0, v1)
+				result[2], result[3] = distanceBatch2(target, v2, v3)
+			}
+			dotFloat64BatchBenchmarkResult = result
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*4), "ns/distance")
+		})
+		b.Run(fmt.Sprintf("dimensions=%d/batch4", dimensions), func(b *testing.B) {
+			b.ReportAllocs()
+			var result [4]float64
+			for b.Loop() {
+				result = distanceBatch4(target, v0, v1, v2, v3)
+			}
+			dotFloat64BatchBenchmarkResult = result
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*4), "ns/distance")
+		})
 	}
 }
 

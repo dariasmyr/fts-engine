@@ -232,6 +232,22 @@ func (b *builder) findNearestCandidatesOnLevel(
 		nearestCandidates.Add(candidate)
 	}
 	processedItems := 0
+	// A candidate remains worth exploring while the result beam has space or
+	// it is closer than the current worst result.
+	addCandidateIfCompetitive := func(node nodeOrdinal, distance float64) {
+		neighborCandidate := candidate{
+			node:     node,
+			distance: distance,
+			accepted: true,
+		}
+		farthestNearestCandidate, hasNearestCandidate := nearestCandidates.Worst()
+		isCandidateSetFull := nearestCandidates.Len() >= maxCandidates
+		if !hasNearestCandidate || !isCandidateSetFull ||
+			candidateCloser(neighborCandidate, farthestNearestCandidate) {
+			pendingCandidates.Push(neighborCandidate)
+			nearestCandidates.Add(neighborCandidate)
+		}
+	}
 	for _, startCandidate := range startCandidates {
 		if err := periodicContextError(ctx, processedItems); err != nil {
 			return nil, err
@@ -251,6 +267,8 @@ func (b *builder) findNearestCandidatesOnLevel(
 			candidateCloser(farthestNearestCandidate, closestPendingCandidate) {
 			break
 		}
+		var neighborBatch [4]nodeOrdinal
+		batchCount := 0
 		for _, neighbor := range b.graph.nodes[closestPendingCandidate.node].links[level] {
 			if err := periodicContextError(ctx, processedItems); err != nil {
 				return nil, err
@@ -259,17 +277,27 @@ func (b *builder) findNearestCandidatesOnLevel(
 			if neighbor.node == targetNode || !b.workspace.markSeen(neighbor.node) {
 				continue
 			}
-			neighborCandidate := candidate{
-				node:     neighbor.node,
-				distance: b.distanceNodes(targetNode, neighbor.node),
-				accepted: true,
+			// Batch only unique, unseen neighbors. This preserves the guarantee
+			// that every node is evaluated at most once during this level search.
+			neighborBatch[batchCount] = neighbor.node
+			batchCount++
+			if batchCount == len(neighborBatch) {
+				// Calculate distances for the whole batch instead of one call per neighbor.
+				distances := b.distanceNodesBatch(targetNode, neighborBatch, batchCount)
+				// Apply results in link order so heap decisions remain identical to
+				// the original scalar search.
+				for i := range batchCount {
+					addCandidateIfCompetitive(neighborBatch[i], distances[i])
+				}
+				batchCount = 0
 			}
-			farthestNearestCandidate, hasNearestCandidate := nearestCandidates.Worst()
-			isCandidateSetFull := nearestCandidates.Len() >= maxCandidates
-			if !hasNearestCandidate || !isCandidateSetFull ||
-				candidateCloser(neighborCandidate, farthestNearestCandidate) {
-				pendingCandidates.Push(neighborCandidate)
-				nearestCandidates.Add(neighborCandidate)
+		}
+		// Process the final one to three nodes without allocation. The batch
+		// dispatcher uses scalar, batch x2, or batch x2 plus scalar respectively.
+		if batchCount > 0 {
+			distances := b.distanceNodesBatch(targetNode, neighborBatch, batchCount)
+			for i := range batchCount {
+				addCandidateIfCompetitive(neighborBatch[i], distances[i])
 			}
 		}
 	}

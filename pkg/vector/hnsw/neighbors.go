@@ -24,6 +24,24 @@ func (b *builder) distanceNodes(a, c nodeOrdinal) float64 {
 	return distance
 }
 
+func (b *builder) distanceNodesBatch(
+	target nodeOrdinal,
+	nodes [4]nodeOrdinal,
+	count int,
+) [4]float64 {
+	ordinals := [4]vector.Ordinal{
+		vector.Ordinal(nodes[0]),
+		vector.Ordinal(nodes[1]),
+		vector.Ordinal(nodes[2]),
+		vector.Ordinal(nodes[3]),
+	}
+	distances, err := b.matrix.DistanceRowsBatch(vector.Ordinal(target), ordinals, count)
+	if err != nil {
+		panic("vector/hnsw: builder referenced an invalid matrix row")
+	}
+	return distances
+}
+
 func (b *builder) selectClosestNeighbors(ctx context.Context, candidates []candidate, limit int) ([]buildNeighbor, error) {
 	selection, err := b.selectNeighbors(ctx, candidates, limit, true, nil)
 	return selection.neighbors, err

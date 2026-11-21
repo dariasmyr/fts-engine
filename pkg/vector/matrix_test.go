@@ -56,6 +56,41 @@ func TestMatrixStoresPreparedRowsWithoutAliasing(t *testing.T) {
 	}
 }
 
+func TestMatrixDistanceRowsBatchMatchesScalar(t *testing.T) {
+	const dimensions = 13
+	vectors := make([][]float32, 5)
+	for row := range vectors {
+		vectors[row] = make([]float32, dimensions)
+		for dimension := range vectors[row] {
+			vectors[row][dimension] = float32(math.Sin(float64((row + 1) * (dimension + 1))))
+		}
+	}
+	for _, metric := range []vector.Metric{vector.MetricCosine, vector.MetricL2Squared} {
+		t.Run(metric.String(), func(t *testing.T) {
+			matrix, err := vector.NewMatrix(dimensions, metric, vectors)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ordinals := [4]vector.Ordinal{1, 2, 3, 4}
+			for count := 1; count <= len(ordinals); count++ {
+				distances, distanceErr := matrix.DistanceRowsBatch(0, ordinals, count)
+				if distanceErr != nil {
+					t.Fatal(distanceErr)
+				}
+				for i := range count {
+					want, scalarErr := matrix.DistanceRows(0, ordinals[i])
+					if scalarErr != nil {
+						t.Fatal(scalarErr)
+					}
+					if distances[i] != want {
+						t.Fatalf("count %d distance %d = %.17g, scalar = %.17g", count, i, distances[i], want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestCanonicalMatrixValidatesShape(t *testing.T) {
 	spec, err := vector.NewSpec(2, vector.MetricL2Squared)
 	if err != nil {
