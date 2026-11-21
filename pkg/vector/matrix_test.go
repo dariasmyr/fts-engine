@@ -91,6 +91,53 @@ func TestMatrixDistanceRowsBatchMatchesScalar(t *testing.T) {
 	}
 }
 
+func TestMatrixDistancePreparedBatchMatchesScalar(t *testing.T) {
+	const dimensions = 13
+	vectors := make([][]float32, 4)
+	for row := range vectors {
+		vectors[row] = make([]float32, dimensions)
+		for dimension := range vectors[row] {
+			vectors[row][dimension] = float32(math.Sin(float64((row + 1) * (dimension + 1))))
+		}
+	}
+	query := make([]float32, dimensions)
+	for dimension := range query {
+		query[dimension] = float32(math.Cos(float64(dimension + 1)))
+	}
+	for _, metric := range []vector.Metric{vector.MetricCosine, vector.MetricL2Squared} {
+		t.Run(metric.String(), func(t *testing.T) {
+			matrix, err := vector.NewMatrix(dimensions, metric, vectors)
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec, err := vector.NewSpec(dimensions, metric)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := spec.Prepare(query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ordinals := [4]vector.Ordinal{0, 1, 2, 3}
+			for count := 1; count <= len(ordinals); count++ {
+				distances, batchErr := matrix.DistancePreparedBatch(prepared, ordinals, count)
+				if batchErr != nil {
+					t.Fatal(batchErr)
+				}
+				for i := range count {
+					want, scalarErr := matrix.DistancePrepared(prepared, ordinals[i])
+					if scalarErr != nil {
+						t.Fatal(scalarErr)
+					}
+					if distances[i] != want {
+						t.Fatalf("count %d distance %d = %.17g, scalar = %.17g", count, i, distances[i], want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestCanonicalMatrixValidatesShape(t *testing.T) {
 	spec, err := vector.NewSpec(2, vector.MetricL2Squared)
 	if err != nil {

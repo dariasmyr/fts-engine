@@ -81,19 +81,23 @@ func (s Spec) DistancePrepared(prepared Prepared, stored []float32) float64 {
 }
 
 // PrepareInto validates value and writes its copied, canonicalized, normalized
-// representation into dst without allocating. Batch writers can therefore
-// prepare directly into rows of one preallocated contiguous matrix. dst must
+// representation into dst without allocating. It returns a Prepared view over
+// dst, which must not be mutated while that Prepared value is in use. dst must
 // have Spec.Dimensions elements and may alias value.
-func (s Spec) PrepareInto(dst, value []float32) error {
+func (s Spec) PrepareInto(dst, value []float32) (Prepared, error) {
 	if len(dst) != s.dimensions {
-		return fmt.Errorf("%w: destination has %d, want %d", ErrDimensionMismatch, len(dst), s.dimensions)
+		return Prepared{}, fmt.Errorf("%w: destination has %d, want %d", ErrDimensionMismatch, len(dst), s.dimensions)
 	}
 	normSquared, err := s.validate(value)
 	if err != nil {
-		return err
+		return Prepared{}, err
 	}
 	s.prepareIntoValidated(dst, value, normSquared)
-	return nil
+	return Prepared{
+		value:         dst,
+		metric:        s.metric,
+		normalization: s.normalization,
+	}, nil
 }
 
 // Distance validates and prepares both values before calculating their

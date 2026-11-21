@@ -196,7 +196,7 @@ func TestBuildCosineTopologyAndRecallAtTen(t *testing.T) {
 	}
 	for row := range rows {
 		value := values[row*dimensions : (row+1)*dimensions]
-		if err := spec.PrepareInto(value, value); err != nil {
+		if _, err := spec.PrepareInto(value, value); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -20,7 +20,7 @@ func FuzzDecodeVectorFile(f *testing.F) {
 		if decoded.Matrix == nil {
 			t.Fatal("decoded vector store is nil")
 		}
-		dimensions := decoded.Matrix.Dimensions()
+		dimensions := decoded.Matrix.Spec().Dimensions()
 		if dimensions <= 0 || dimensions > limits.MaxDimensions {
 			t.Fatalf("decoded vector shape: dimensions=%d", dimensions)
 		}

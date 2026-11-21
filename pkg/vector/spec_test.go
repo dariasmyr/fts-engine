@@ -67,3 +67,22 @@ func TestSpecPrepareCopiesAndValidates(t *testing.T) {
 		t.Fatalf("Prepare(NaN) error = %v, want ErrNonFinite", err)
 	}
 }
+
+func TestSpecPrepareIntoReturnsPreparedView(t *testing.T) {
+	spec, err := vector.NewSpec(2, vector.MetricCosine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := make([]float32, 2)
+	prepared, err := spec.PrepareInto(dst, []float32{3, 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := spec.ValidatePrepared(prepared); err != nil {
+		t.Fatalf("ValidatePrepared() error = %v", err)
+	}
+	distance := spec.DistancePrepared(prepared, []float32{0.6, 0.8})
+	if math.Abs(distance) > 1e-6 {
+		t.Fatalf("prepared distance = %v, want normalized destination", distance)
+	}
+}

@@ -38,7 +38,7 @@ func (b *MatrixBuilder) Add(value []float32) error {
 		return err
 	}
 	row := b.appendRow()
-	if err := b.spec.PrepareInto(row, value); err != nil {
+	if _, err := b.spec.PrepareInto(row, value); err != nil {
 		b.values = b.values[:len(b.values)-b.spec.Dimensions()]
 		return err
 	}

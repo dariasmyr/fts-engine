@@ -142,8 +142,7 @@ func validateDecodedGraph(
 		return hnswmodel.Snapshot{}, ErrCorrupt
 	}
 	nodes := len(graph.Levels)
-	if vectors.Len() != nodes || vectors.Dimensions() != spec.Dimensions() ||
-		vectors.Metric() != spec.Metric() || vectors.Normalization() != spec.Normalization() {
+	if vectors == nil || vectors.Len() != nodes || vectors.Spec() != spec {
 		return hnswmodel.Snapshot{}, ErrCorrupt
 	}
 	components, ok := format.CheckedMultiplyUint64(uint64(nodes), uint64(graph.Dimensions))

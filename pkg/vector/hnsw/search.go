@@ -18,15 +18,14 @@ type candidate struct {
 	verified bool
 }
 
-type state struct {
-	ctx           context.Context
-	index         *Index
-	preparedQuery []float32
-	reusableQuery *vector.Prepared
-	filter        vector.ResultFilter
-	visitLimit    int
-	workspace     *searchWorkspace
-	stats         SearchStats
+type searchExecution struct {
+	ctx        context.Context
+	index      *Index
+	query      vector.Prepared
+	filter     vector.ResultFilter
+	visitLimit int
+	workspace  *searchWorkspace
+	stats      SearchStats
 }
 
 type request struct {
@@ -99,12 +98,15 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 	}
 	workspace := reader.workspaces.acquire()
 	defer reader.workspaces.release(workspace)
+	var preparedQuery vector.Prepared
 	if prepared == nil {
 		workspace.prepareQuery(spec.Dimensions())
-		if err := spec.PrepareInto(workspace.preparedQuery, query); err != nil {
-			return SearchResult{}, err
-		}
-	} else if err := spec.ValidatePrepared(*prepared); err != nil {
+		preparedQuery, err = spec.PrepareInto(workspace.preparedQuery, query)
+	} else {
+		err = spec.ValidatePrepared(*prepared)
+		preparedQuery = *prepared
+	}
+	if err != nil {
 		return SearchResult{}, err
 	}
 	stats := SearchStats{
@@ -124,49 +126,56 @@ func search(ctx context.Context, reader *Index, query []float32, prepared *vecto
 	if !ok || maxLevel < 0 || maxLevel > maxLevelLimit || uint64(entry) >= uint64(vectorCount) {
 		return SearchResult{}, errInvalidGraph
 	}
-	state := state{
-		ctx: ctx, index: reader, preparedQuery: workspace.preparedQuery, filter: request.filter,
-		reusableQuery: prepared,
-		visitLimit:    request.visitLimit,
-		workspace:     workspace,
-		stats:         stats,
+	execution := searchExecution{
+		ctx: ctx, index: reader, query: preparedQuery, filter: request.filter,
+		visitLimit: request.visitLimit,
+		workspace:  workspace,
+		stats:      stats,
 	}
-	entryCandidate, err := state.score(entry)
+	entryCandidate, err := execution.candidateForNode(entry)
 	if err != nil {
-		return finishSearch(state, resultHeap{}, request.k, err)
+		return finishSearch(execution, resultHeap{}, request.k, err)
 	}
 	// Sparse upper levels choose one local minimum; level 0 then widens into a beam.
-	entryCandidate, err = greedySearch(&state, entryCandidate, maxLevel)
+	entryCandidate, err = greedySearch(&execution, entryCandidate, maxLevel)
 	if err != nil {
-		return finishSearch(state, state.acceptedResults(min(request.appliedEfSearch, request.allowedCount)), request.k, err)
+		return finishSearch(execution, execution.acceptedResults(min(request.appliedEfSearch, request.allowedCount)), request.k, err)
 	}
 	workspace.stopTrackingScored()
-	results, err := levelSearch(&state, entryCandidate, request.appliedEfSearch, request.allowedCount)
-	return finishSearch(state, results, request.k, err)
+	results, err := levelSearch(&execution, entryCandidate, request.appliedEfSearch, request.allowedCount)
+	return finishSearch(execution, results, request.k, err)
 }
 
-func greedySearch(state *state, currentCandidate candidate, maxLevel int) (candidate, error) {
+func greedySearch(execution *searchExecution, currentCandidate candidate, maxLevel int) (candidate, error) {
 	for level := maxLevel; level > 0; level-- {
 		for {
-			if err := state.ctx.Err(); err != nil {
+			if err := execution.ctx.Err(); err != nil {
 				return candidate{}, err
 			}
-			state.stats.ExpandedNodes++
+			execution.stats.ExpandedNodes++
 			best := currentCandidate
-			neighbors, ok := state.index.neighborView(currentCandidate.node, level)
+			neighbors, ok := execution.index.neighborView(currentCandidate.node, level)
 			if !ok {
 				return candidate{}, errInvalidGraph
 			}
-			for i, neighbor := range neighbors {
-				if err := periodicContextError(state.ctx, i); err != nil {
-					return candidate{}, err
+			for start := 0; start < len(neighbors); start += 4 {
+				count := min(4, len(neighbors)-start)
+				var nodes [4]nodeOrdinal
+				for i := range count {
+					if err := periodicContextError(execution.ctx, start+i); err != nil {
+						return candidate{}, err
+					}
+					nodes[i] = neighbors[start+i]
 				}
-				candidateScore, err := state.score(neighbor)
+				candidateBatch, _, err := execution.candidatesForNodes(nodes, count)
 				if err != nil {
 					return candidate{}, err
 				}
-				if candidateScore.distance < currentCandidate.distance && candidateCloser(candidateScore, best) {
-					best = candidateScore
+				for i := range count {
+					candidate := candidateBatch[i]
+					if candidate.distance < currentCandidate.distance && candidateCloser(candidate, best) {
+						best = candidate
+					}
 				}
 			}
 			if best.node == currentCandidate.node {
@@ -179,7 +188,7 @@ func greedySearch(state *state, currentCandidate candidate, maxLevel int) (candi
 }
 
 func levelSearch(
-	state *state,
+	execution *searchExecution,
 	entry candidate,
 	efSearch, allowedCount int,
 ) (results resultHeap, err error) {
@@ -187,19 +196,19 @@ func levelSearch(
 
 	results = newResultHeapWithBuffer(
 		resultCapacity,
-		state.workspace.results,
+		execution.workspace.results,
 	)
 
 	candidates := candidateHeap{
-		items: state.workspace.frontier,
+		items: execution.workspace.frontier,
 	}
 
 	defer func() {
-		state.workspace.results = results.items[:0]
-		state.workspace.frontier = candidates.items[:0]
+		execution.workspace.results = results.items[:0]
+		execution.workspace.frontier = candidates.items[:0]
 	}()
 
-	state.workspace.markSeen(entry.node)
+	execution.workspace.markSeen(entry.node)
 	candidates.Push(entry)
 
 	if entry.accepted {
@@ -207,7 +216,7 @@ func levelSearch(
 	}
 
 	for candidates.Len() > 0 {
-		if err := state.ctx.Err(); err != nil {
+		if err := execution.ctx.Err(); err != nil {
 			return results, err
 		}
 
@@ -227,9 +236,9 @@ func levelSearch(
 			}
 		}
 
-		state.stats.ExpandedNodes++
+		execution.stats.ExpandedNodes++
 
-		neighbors, ok := state.index.neighborView(
+		neighbors, ok := execution.index.neighborView(
 			candidate.node,
 			0,
 		)
@@ -237,41 +246,40 @@ func levelSearch(
 			return results, errInvalidGraph
 		}
 
+		var neighborBatch [4]nodeOrdinal
+		batchCount := 0
 		for i, neighbor := range neighbors {
-			if err := periodicContextError(state.ctx, i); err != nil {
+			if err := periodicContextError(execution.ctx, i); err != nil {
 				return results, err
 			}
 
-			if uint64(neighbor) >= uint64(state.index.Len()) {
+			if uint64(neighbor) >= uint64(execution.index.Len()) {
 				return results, errInvalidGraph
 			}
 
-			if !state.workspace.markSeen(neighbor) {
+			if !execution.workspace.markSeen(neighbor) {
 				continue
 			}
-
-			discovered, err := state.score(neighbor)
-			if err != nil {
-				return results, err
+			neighborBatch[batchCount] = neighbor
+			batchCount++
+			if batchCount == len(neighborBatch) {
+				discovered, validCount, candidateErr := execution.candidatesForNodes(neighborBatch, batchCount)
+				for j := range validCount {
+					addDiscoveredCandidate(discovered[j], efSearch, allowedCount, &results, &candidates)
+				}
+				if candidateErr != nil {
+					return results, candidateErr
+				}
+				batchCount = 0
 			}
-
-			if discovered.accepted {
-				results.Add(discovered)
+		}
+		if batchCount > 0 {
+			discovered, validCount, candidateErr := execution.candidatesForNodes(neighborBatch, batchCount)
+			for i := range validCount {
+				addDiscoveredCandidate(discovered[i], efSearch, allowedCount, &results, &candidates)
 			}
-
-			// All living (allowed by the result filter)
-			// vectors have been found, no need to continue searching.
-			if results.Len() == allowedCount {
-				continue
-			}
-
-			// Add the discovered node to the search frontier if it is not worse than the worst result.
-			worst, full := results.Worst()
-
-			if !full ||
-				results.Len() < efSearch ||
-				discovered.distance <= worst.distance {
-				candidates.Push(discovered)
+			if candidateErr != nil {
+				return results, candidateErr
 			}
 		}
 	}
@@ -279,55 +287,147 @@ func levelSearch(
 	return results, nil
 }
 
-func (state *state) score(node nodeOrdinal) (candidate, error) {
-	if uint64(node) >= uint64(state.index.Len()) {
+func addDiscoveredCandidate(
+	discovered candidate,
+	efSearch, allowedCount int,
+	results *resultHeap,
+	candidates *candidateHeap,
+) {
+	if discovered.accepted {
+		results.Add(discovered)
+	}
+	// All living (allowed by the result filter) vectors have been found, so no
+	// more candidates need to be added to the frontier.
+	if results.Len() == allowedCount {
+		return
+	}
+	worst, full := results.Worst()
+	if !full || results.Len() < efSearch || discovered.distance <= worst.distance {
+		candidates.Push(discovered)
+	}
+}
+
+func (e *searchExecution) candidateForNode(node nodeOrdinal) (candidate, error) {
+	if uint64(node) >= uint64(e.index.Len()) {
 		return candidate{}, errInvalidGraph
 	}
-	if candidate, exists := state.workspace.candidate(node); exists {
+	if candidate, exists := e.workspace.candidate(node); exists {
 		return candidate, nil
 	}
-	// VisitedNodes and the visit budget count unique query-to-node scores across
+	// VisitedNodes and the visit budget count unique query-to-node distances across
 	// all levels. The cache prevents duplicate distance work through converging paths.
-	if state.stats.VisitedNodes >= state.visitLimit {
+	if e.stats.VisitedNodes >= e.visitLimit {
 		return candidate{}, errVisitLimit
 	}
 	ordinal := vector.Ordinal(node)
-	if err := state.ctx.Err(); err != nil {
+	if err := e.ctx.Err(); err != nil {
 		return candidate{}, err
 	}
-	var distance float64
-	var err error
-	if state.reusableQuery != nil {
-		distance, err = state.index.matrix.DistancePrepared(*state.reusableQuery, ordinal)
-	} else {
-		distance, err = state.index.matrix.DistancePreparedValues(state.preparedQuery, ordinal)
-	}
+	distance, err := e.index.matrix.DistancePrepared(e.query, ordinal)
 	if err != nil {
-		return candidate{}, fmt.Errorf("%w: score vector row %d: %v", errInvalidGraph, ordinal, err)
+		return candidate{}, fmt.Errorf("%w: calculate distance to vector row %d: %v", errInvalidGraph, ordinal, err)
 	}
 	if math.IsNaN(distance) || math.IsInf(distance, 0) {
 		return candidate{}, errInvalidGraph
 	}
-	accepted := state.filter == nil || state.filter.Allows(ordinal)
+	accepted := e.filter == nil || e.filter.Allows(ordinal)
 	candidate := candidate{node: node, distance: distance, accepted: accepted}
-	state.workspace.storeCandidate(candidate)
-	state.stats.VisitedNodes++
-	state.stats.DistanceComputations++
+	e.workspace.storeCandidate(candidate)
+	e.stats.VisitedNodes++
+	e.stats.DistanceComputations++
 	if !accepted {
-		state.stats.RejectedNodes++
+		e.stats.RejectedNodes++
 	}
 	return candidate, nil
 }
 
-func (state *state) acceptedResults(capacity int) resultHeap {
-	results := newResultHeapWithBuffer(capacity, state.workspace.results)
-	for _, node := range state.workspace.scoredNodes {
-		candidate, _ := state.workspace.candidate(node)
+func (e *searchExecution) candidatesForNodes(nodes [4]nodeOrdinal, count int) ([4]candidate, int, error) {
+	if count < 1 || count > len(nodes) {
+		return [4]candidate{}, 0, errInvalidGraph
+	}
+
+	var ordinals [4]vector.Ordinal
+	missingCount := 0
+	for i := range count {
+		node := nodes[i]
+		if uint64(node) >= uint64(e.index.Len()) {
+			return [4]candidate{}, 0, errInvalidGraph
+		}
+		if _, exists := e.workspace.candidate(node); exists {
+			continue
+		}
+		ordinal := vector.Ordinal(node)
+		duplicate := false
+		for j := range missingCount {
+			if ordinals[j] == ordinal {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			ordinals[missingCount] = ordinal
+			missingCount++
+		}
+	}
+
+	// Preserve the scalar visit-limit behavior near the end of the budget. It
+	// may produce a valid prefix before returning errVisitLimit.
+	if missingCount > e.visitLimit-e.stats.VisitedNodes {
+		var result [4]candidate
+		for i := range count {
+			candidate, err := e.candidateForNode(nodes[i])
+			if err != nil {
+				return result, i, err
+			}
+			result[i] = candidate
+		}
+		return result, count, nil
+	}
+	if missingCount > 0 {
+		if err := e.ctx.Err(); err != nil {
+			return [4]candidate{}, 0, err
+		}
+		distances, err := e.index.matrix.DistancePreparedBatch(e.query, ordinals, missingCount)
+		if err != nil {
+			return [4]candidate{}, 0, fmt.Errorf("%w: calculate distances to vector batch: %v", errInvalidGraph, err)
+		}
+		for i := range missingCount {
+			distance := distances[i]
+			if math.IsNaN(distance) || math.IsInf(distance, 0) {
+				return [4]candidate{}, 0, errInvalidGraph
+			}
+			ordinal := ordinals[i]
+			accepted := e.filter == nil || e.filter.Allows(ordinal)
+			candidate := candidate{
+				node:     nodeOrdinal(ordinal),
+				distance: distance,
+				accepted: accepted,
+			}
+			e.workspace.storeCandidate(candidate)
+			e.stats.VisitedNodes++
+			e.stats.DistanceComputations++
+			if !accepted {
+				e.stats.RejectedNodes++
+			}
+		}
+	}
+
+	var result [4]candidate
+	for i := range count {
+		result[i], _ = e.workspace.candidate(nodes[i])
+	}
+	return result, count, nil
+}
+
+func (e *searchExecution) acceptedResults(capacity int) resultHeap {
+	results := newResultHeapWithBuffer(capacity, e.workspace.results)
+	for _, node := range e.workspace.scoredNodes {
+		candidate, _ := e.workspace.candidate(node)
 		if candidate.accepted {
 			results.Add(candidate)
 		}
 	}
-	state.workspace.results = results.items[:0]
+	e.workspace.results = results.items[:0]
 	return results
 }
 
@@ -338,14 +438,14 @@ func periodicContextError(ctx context.Context, iteration int) error {
 	return ctx.Err()
 }
 
-func finishSearch(state state, results resultHeap, k int, err error) (SearchResult, error) {
+func finishSearch(execution searchExecution, results resultHeap, k int, err error) (SearchResult, error) {
 	if err != nil && !errors.Is(err, errVisitLimit) {
 		return SearchResult{}, err
 	}
-	if contextErr := state.ctx.Err(); contextErr != nil {
+	if contextErr := execution.ctx.Err(); contextErr != nil {
 		return SearchResult{}, contextErr
 	}
-	result := SearchResult{Hits: results.Hits(k), Stats: state.stats}
+	result := SearchResult{Hits: results.Hits(k), Stats: execution.stats}
 	if errors.Is(err, errVisitLimit) {
 		result.Incomplete = true
 		result.Stats.Termination = TerminationVisitLimit

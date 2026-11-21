@@ -54,17 +54,22 @@ func WriteVectorFile(
 	if err := limits.validate(); err != nil {
 		return FileMetadata{}, err
 	}
-	if writer == nil || source == nil || source.Dimensions() <= 0 || source.Len() < 0 || maxK <= 0 {
+	if writer == nil || source == nil || maxK <= 0 {
 		return FileMetadata{}, codecErrorf(ErrCorrupt, "vector file source is invalid")
 	}
-	if source.Dimensions() > limits.MaxDimensions || source.Len() > limits.MaxVectors || maxK > limits.MaxK {
+	spec := source.Spec()
+	dimensions := spec.Dimensions()
+	if dimensions <= 0 {
+		return FileMetadata{}, codecErrorf(ErrCorrupt, "vector file source is invalid")
+	}
+	if dimensions > limits.MaxDimensions || source.Len() > limits.MaxVectors || maxK > limits.MaxK {
 		return FileMetadata{}, ErrLimitExceeded
 	}
-	if uint64(source.Dimensions()) > math.MaxUint32 || uint64(source.Len()) >= math.MaxUint32 || uint64(maxK) > math.MaxUint32 {
+	if uint64(dimensions) > math.MaxUint32 || uint64(source.Len()) >= math.MaxUint32 || uint64(maxK) > math.MaxUint32 {
 		return FileMetadata{}, ErrLimitExceeded
 	}
 
-	components, ok := format.CheckedMultiplyUint64(uint64(source.Len()), uint64(source.Dimensions()))
+	components, ok := format.CheckedMultiplyUint64(uint64(source.Len()), uint64(dimensions))
 	if !ok || components > uint64(math.MaxInt) {
 		return FileMetadata{}, ErrLimitExceeded
 	}
@@ -77,9 +82,9 @@ func WriteVectorFile(
 	copy(header[vectorHeaderMagicOffset:], vectorMagic)
 	binary.LittleEndian.PutUint16(header[vectorHeaderVersionOffset:vectorHeaderSizeOffset], vectorVersion)
 	binary.LittleEndian.PutUint16(header[vectorHeaderSizeOffset:vectorHeaderDimensionsOffset], vectorHeaderSize)
-	binary.LittleEndian.PutUint32(header[vectorHeaderDimensionsOffset:vectorHeaderMetricOffset], uint32(source.Dimensions()))
-	header[vectorHeaderMetricOffset] = byte(source.Metric())
-	header[vectorHeaderNormalizationOffset] = byte(source.Normalization())
+	binary.LittleEndian.PutUint32(header[vectorHeaderDimensionsOffset:vectorHeaderMetricOffset], uint32(dimensions))
+	header[vectorHeaderMetricOffset] = byte(spec.Metric())
+	header[vectorHeaderNormalizationOffset] = byte(spec.Normalization())
 	binary.LittleEndian.PutUint32(header[vectorHeaderCountOffset:vectorHeaderMaxKOffset], uint32(source.Len()))
 	binary.LittleEndian.PutUint32(header[vectorHeaderMaxKOffset:vectorHeaderVectorBytesOffset], uint32(maxK))
 	binary.LittleEndian.PutUint64(header[vectorHeaderVectorBytesOffset:vectorHeaderTailOffset], vectorBytes)
@@ -91,8 +96,8 @@ func WriteVectorFile(
 		return FileMetadata{}, fmt.Errorf("hnswformat: write vector header: %w", err)
 	}
 
-	scratch := make([]float32, source.Dimensions())
-	rowBytes := source.Dimensions() * float32ByteSize
+	scratch := make([]float32, dimensions)
+	rowBytes := dimensions * float32ByteSize
 	encoded := make([]byte, rowBytes)
 	for row := range source.Len() {
 		if err := ctx.Err(); err != nil {

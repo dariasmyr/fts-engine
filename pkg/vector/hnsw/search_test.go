@@ -59,6 +59,25 @@ func TestSearchReportsVisitLimit(t *testing.T) {
 	}
 }
 
+func TestSearchKeepsScoredBatchPrefixAtVisitLimit(t *testing.T) {
+	t.Parallel()
+
+	index := newCompleteTestIndex(t, [][]float32{{10}, {3}, {2}, {1}})
+	result, err := index.Search(context.Background(), []float32{0}, 1, QueryConfig{EfSearch: 4, VisitLimit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Incomplete || result.Stats.Termination != TerminationVisitLimit {
+		t.Fatalf("termination = %q, incomplete = %t", result.Stats.Termination, result.Incomplete)
+	}
+	if result.Stats.VisitedNodes != 2 || result.Stats.DistanceComputations != 2 {
+		t.Fatalf("stats = %+v, want two visited nodes and distance computations", result.Stats)
+	}
+	if len(result.Hits) != 1 || result.Hits[0].Ordinal != 1 {
+		t.Fatalf("hits = %+v, want scored prefix ordinal 1", result.Hits)
+	}
+}
+
 func TestSearchEfSearchWidensBeam(t *testing.T) {
 	t.Parallel()
 

@@ -103,10 +103,5 @@ func Restore(snapshot hnswmodel.Snapshot, vectors *vector.Matrix, config Config)
 		upperLinkOffsets: append([]uint32(nil), snapshot.UpperLinkOffsets...),
 		upperNeighbors:   append([]uint32(nil), snapshot.UpperLinks...),
 	}
-	if vectors == nil || vectors.Len() != len(t.levels) ||
-		vectors.Dimensions() != spec.Dimensions() || vectors.Metric() != spec.Metric() ||
-		vectors.Normalization() != spec.Normalization() {
-		return nil, ErrInvalidSource
-	}
 	return newIndex(t, vectors, config)
 }

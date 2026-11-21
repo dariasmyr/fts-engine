@@ -160,9 +160,8 @@ func (s *segment) validateContents() error {
 	}
 	vectors := s.index.Matrix()
 	spec := s.spec
-	if s.id == 0 || spec.Dimensions() <= 0 || len(s.rows) != vectors.Len() || s.index.Len() != vectors.Len() ||
-		vectors.Spec() != spec || s.index.Dimensions() != vectors.Dimensions() ||
-		s.index.Metric() != vectors.Metric() {
+	if s.id == 0 || spec.Dimensions() <= 0 || len(s.rows) != vectors.Len() ||
+		s.index.Len() != vectors.Len() || vectors.Spec() != spec {
 		return ErrInvalidSegment
 	}
 	return nil

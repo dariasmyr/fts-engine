@@ -83,7 +83,7 @@ func newBuildBenchmarkStoreForMetric(
 		for dimension := range dimensions {
 			values[row*dimensions+dimension] = float32(math.Sin(float64((row + 1) * (dimension + 1))))
 		}
-		if err := spec.PrepareInto(
+		if _, err := spec.PrepareInto(
 			values[row*dimensions:(row+1)*dimensions],
 			values[row*dimensions:(row+1)*dimensions],
 		); err != nil {

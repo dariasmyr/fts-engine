@@ -39,44 +39,12 @@ func (m *Matrix) Len() int {
 	return len(m.values) / m.spec.Dimensions()
 }
 
-// Dimensions returns the number of components in each row.
-func (m *Matrix) Dimensions() int {
-	if m == nil {
-		return 0
-	}
-	return m.spec.Dimensions()
-}
-
-// Metric returns the distance metric used by the matrix.
-func (m *Matrix) Metric() Metric {
-	if m == nil {
-		return 0
-	}
-	return m.spec.Metric()
-}
-
-// Normalization returns the canonical representation used by stored rows.
-func (m *Matrix) Normalization() Normalization {
-	if m == nil {
-		return 0
-	}
-	return m.spec.Normalization()
-}
-
 // Spec returns the immutable definition shared by all matrix rows.
 func (m *Matrix) Spec() Spec {
 	if m == nil {
 		return Spec{}
 	}
 	return m.spec
-}
-
-// Prepare validates and prepares a query for repeated comparisons with rows.
-func (m *Matrix) Prepare(value []float32) (Prepared, error) {
-	if m == nil {
-		return Prepared{}, ErrInvalidDimensions
-	}
-	return m.spec.Prepare(value)
 }
 
 // ReadInto copies one row into dst without exposing matrix storage.
@@ -87,11 +55,11 @@ func (m *Matrix) ReadInto(ctx context.Context, ordinal Ordinal, dst []float32) e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if m == nil || m.Dimensions() <= 0 {
+	if m == nil || m.spec.Dimensions() <= 0 {
 		return ErrInvalidDimensions
 	}
-	if len(dst) != m.Dimensions() {
-		return fmt.Errorf("%w: got %d, want %d", ErrDimensionMismatch, len(dst), m.Dimensions())
+	if len(dst) != m.spec.Dimensions() {
+		return fmt.Errorf("%w: got %d, want %d", ErrDimensionMismatch, len(dst), m.spec.Dimensions())
 	}
 	row, err := m.row(ordinal)
 	if err != nil {
@@ -113,17 +81,17 @@ func (m *Matrix) DistancePrepared(query Prepared, ordinal Ordinal) (float64, err
 	return m.spec.DistancePrepared(query, row), nil
 }
 
-// DistancePreparedValues returns the distance from a prepared component slice
-// to one row. The query must have been prepared for this matrix.
-func (m *Matrix) DistancePreparedValues(query []float32, ordinal Ordinal) (float64, error) {
-	if m == nil || len(query) != m.Dimensions() {
-		return 0, ErrDimensionMismatch
+// DistancePreparedBatch returns distances from a prepared query to a batch of
+// up to four matrix rows. Only the first count ordinals are read; remaining
+// results are zero.
+func (m *Matrix) DistancePreparedBatch(query Prepared, ordinals [4]Ordinal, count int) ([4]float64, error) {
+	if m == nil || !m.spec.compatiblePrepared(query) {
+		return [4]float64{}, ErrDimensionMismatch
 	}
-	row, err := m.row(ordinal)
-	if err != nil {
-		return 0, err
+	if err := validateBatchCount(count); err != nil {
+		return [4]float64{}, err
 	}
-	return m.spec.DistancePreparedValues(query, row), nil
+	return m.distancePreparedValuesBatch(query.value, ordinals, count)
 }
 
 // DistanceRows returns the distance between two rows.
@@ -150,19 +118,24 @@ func (m *Matrix) DistanceRowsBatch(a Ordinal, bs [4]Ordinal, count int) ([4]floa
 	if m == nil {
 		return [4]float64{}, ErrInvalidDimensions
 	}
-	if count < 1 || count > len(bs) {
-		return [4]float64{}, fmt.Errorf("vector: invalid batch count: %d", count)
+	if err := validateBatchCount(count); err != nil {
+		return [4]float64{}, err
 	}
 	target, err := m.row(a)
 	if err != nil {
 		return [4]float64{}, err
 	}
+	return m.distancePreparedValuesBatch(target, bs, count)
+}
+
+func (m *Matrix) distancePreparedValuesBatch(target []float32, ordinals [4]Ordinal, count int) ([4]float64, error) {
 	var rows [4][]float32
 	for i := range count {
-		rows[i], err = m.row(bs[i])
+		row, err := m.row(ordinals[i])
 		if err != nil {
 			return [4]float64{}, err
 		}
+		rows[i] = row
 	}
 	if m.spec.Metric() != MetricCosine {
 		// batch dot products currently target only the cosine build hot path. Other
@@ -200,6 +173,14 @@ func (m *Matrix) row(ordinal Ordinal) ([]float32, error) {
 	if uint64(ordinal) >= uint64(m.Len()) {
 		return nil, fmt.Errorf("%w: %d", ErrOrdinalOutOfRange, ordinal)
 	}
-	start := int(ordinal) * m.Dimensions()
-	return m.values[start : start+m.Dimensions()], nil
+	dimensions := m.spec.Dimensions()
+	start := int(ordinal) * dimensions
+	return m.values[start : start+dimensions], nil
+}
+
+func validateBatchCount(count int) error {
+	if count < 1 || count > 4 {
+		return fmt.Errorf("vector: invalid batch count: %d", count)
+	}
+	return nil
 }
