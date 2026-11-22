@@ -92,7 +92,7 @@ func (s *Searcher) Search(ctx context.Context, query []float32, k int, options O
 
 	topK := newTopK(min(k, allowedCount))
 	stats := Stats{Termination: TerminationComplete}
-	value := make([]float32, s.store.Dimensions())
+	value := make([]float32, s.spec.Dimensions())
 	incomplete := false
 	for row := range s.store.Len() {
 		if options.VisitLimit > 0 && stats.VisitedNodes >= options.VisitLimit {
