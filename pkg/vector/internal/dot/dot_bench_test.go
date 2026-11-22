@@ -1,4 +1,4 @@
-package vector
+package dot
 
 import (
 	"fmt"
@@ -18,7 +18,7 @@ func BenchmarkDotFloat64(b *testing.B) {
 			b.ReportAllocs()
 			var result float64
 			for b.Loop() {
-				result = dotFloat64(a, c)
+				result = Float64(a, c)
 			}
 			dotFloat64BenchmarkResult = result
 		})
@@ -67,10 +67,10 @@ func BenchmarkDotFloat64BatchVariants(b *testing.B) {
 			b.ReportAllocs()
 			var result [4]float64
 			for b.Loop() {
-				result[0] = dotFloat64(target, v0)
-				result[1] = dotFloat64(target, v1)
-				result[2] = dotFloat64(target, v2)
-				result[3] = dotFloat64(target, v3)
+				result[0] = Float64(target, v0)
+				result[1] = Float64(target, v1)
+				result[2] = Float64(target, v2)
+				result[3] = Float64(target, v3)
 			}
 			dotFloat64BatchBenchmarkResult = result
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*4), "ns/distance")
@@ -79,8 +79,8 @@ func BenchmarkDotFloat64BatchVariants(b *testing.B) {
 			b.ReportAllocs()
 			var result [4]float64
 			for b.Loop() {
-				result[0], result[1] = distanceBatch2(target, v0, v1)
-				result[2], result[3] = distanceBatch2(target, v2, v3)
+				result[0], result[1] = Batch2(target, v0, v1)
+				result[2], result[3] = Batch2(target, v2, v3)
 			}
 			dotFloat64BatchBenchmarkResult = result
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*4), "ns/distance")
@@ -89,7 +89,7 @@ func BenchmarkDotFloat64BatchVariants(b *testing.B) {
 			b.ReportAllocs()
 			var result [4]float64
 			for b.Loop() {
-				result = distanceBatch4(target, v0, v1, v2, v3)
+				result = Batch4(target, v0, v1, v2, v3)
 			}
 			dotFloat64BatchBenchmarkResult = result
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*4), "ns/distance")

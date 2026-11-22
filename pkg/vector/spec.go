@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/internal/dot"
 )
 
 var (
@@ -132,7 +134,7 @@ func (s Spec) DistancePreparedValues(a, b []float32) float64 {
 		// b = [0.8, 0.6]
 		// dot(a, b) = 0.6*0.8 + 0.8*0.6 = 0.96
 		// distance = 1 - dot(a, b) = 1 - 0.96 = 0.04
-		similarity := dotFloat64(a, b)
+		similarity := dot.Float64(a, b)
 		// float32 normalization can leave a small rounding error outside [-1, 1].
 		similarity = max(-1, min(1, similarity))
 		return 1 - similarity

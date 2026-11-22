@@ -1,9 +1,9 @@
 //go:build arm64 && (!go1.27 || !goexperiment.simd)
 
-package vector
+package dot
 
 // distanceBatch4 calculates the dot product with four vectors in a single pass
-func distanceBatch4(target, v0, v1, v2, v3 []float32) [4]float64 {
+func Batch4(target, v0, v1, v2, v3 []float32) [4]float64 {
 	// we still calculate each vector in 8 elements at a time
 	//
 	// but now we have 4 vectors to calculate,
@@ -86,7 +86,7 @@ func distanceBatch4(target, v0, v1, v2, v3 []float32) [4]float64 {
 
 // distanceBatch2 calculates the dot product with two vectors in a single pass
 // same as distanceBatch4, but for 2 vectors instead of 4
-func distanceBatch2(target, v0, v1 []float32) (float64, float64) {
+func Batch2(target, v0, v1 []float32) (float64, float64) {
 	var s00, s01, s02, s03, s04, s05, s06, s07 float64
 	var s10, s11, s12, s13, s14, s15, s16, s17 float64
 	i := 0

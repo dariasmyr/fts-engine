@@ -1,4 +1,4 @@
-package vector
+package dot
 
 import (
 	"fmt"
@@ -42,7 +42,7 @@ func TestDotFloat64MatchesSequentialReference(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			want := dotFloat64SingleAccumulator(tt.a, tt.b)
-			got := dotFloat64(tt.a, tt.b)
+			got := Float64(tt.a, tt.b)
 			var absoluteProductSum float64
 			for i := range tt.a {
 				absoluteProductSum += math.Abs(float64(tt.a[i]) * float64(tt.b[i]))
@@ -51,7 +51,7 @@ func TestDotFloat64MatchesSequentialReference(t *testing.T) {
 			absoluteError := math.Abs(got - want)
 			maxAbsoluteError = max(maxAbsoluteError, absoluteError)
 			if absoluteError > tolerance {
-				t.Fatalf("dotFloat64() = %.17g, sequential = %.17g, tolerance = %g", got, want, tolerance)
+				t.Fatalf("Float64() = %.17g, sequential = %.17g, tolerance = %g", got, want, tolerance)
 			}
 		})
 	}

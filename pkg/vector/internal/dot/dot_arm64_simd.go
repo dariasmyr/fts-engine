@@ -1,11 +1,11 @@
 //go:build arm64 && go1.27 && goexperiment.simd
 
-package vector
+package dot
 
 import "simd/archsimd"
 
 // dotFloat64 calculates the dot product of two vectors and returns the result (dot product)
-func dotFloat64(a, b []float32) float64 {
+func Float64(a, b []float32) float64 {
 	// accumulators: pair of SIMD registers (2*float64 values)
 	// we will sum them at the end to get the final result
 	var low, high archsimd.Float64x2

@@ -1,8 +1,8 @@
 //go:build arm64 && (!go1.27 || !goexperiment.simd)
 
-package vector
+package dot
 
-func dotFloat64(a, b []float32) float64 {
+func Float64(a, b []float32) float64 {
 	// Callers validate dimensions before reaching this hot path.
 	var sum0, sum1, sum2, sum3 float64
 	var sum4, sum5, sum6, sum7 float64

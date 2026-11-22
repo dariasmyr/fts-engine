@@ -1,6 +1,6 @@
 //go:build arm64 && go1.27 && goexperiment.simd
 
-package vector
+package dot
 
 import (
 	"fmt"
@@ -16,7 +16,7 @@ func BenchmarkDotFloat64SIMDVariants(b *testing.B) {
 	}{
 		{name: "scalar-8x-float64", dot: dotFloat64EightAccumulators},
 		{name: "portable-float32", dot: dotFloat32PortableSIMD},
-		{name: "arch-widen-float64", dot: dotFloat64},
+		{name: "arch-widen-float64", dot: Float64},
 	}
 	for _, dimensions := range []int{128, 384, 768, 1024} {
 		a, c := newDotFloat64BenchmarkVectors(dimensions)

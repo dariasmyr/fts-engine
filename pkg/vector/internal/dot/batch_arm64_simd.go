@@ -1,11 +1,11 @@
 //go:build arm64 && go1.27 && goexperiment.simd
 
-package vector
+package dot
 
 import "simd/archsimd"
 
 // distanceBatch4 calculates the dot product of target vector with four vectors in a single pass
-func distanceBatch4(target, v0, v1, v2, v3 []float32) [4]float64 {
+func Batch4(target, v0, v1, v2, v3 []float32) [4]float64 {
 	// accumulators: for each vector we create a pair of SIMD registers (2*float64 values)
 	// that will be accumulate values and summed at the end to get the final result
 	var low0, high0, low1, high1 archsimd.Float64x2 // vector 0 and vector 1 accumulators
@@ -75,7 +75,7 @@ func sumSIMDAccumulators(low, high archsimd.Float64x2) float64 {
 
 // distanceBatch2 calculates the dot product with two vectors in a single pass
 // same as distanceBatch4, but for 2 vectors instead of 4
-func distanceBatch2(target, v0, v1 []float32) (float64, float64) {
+func Batch2(target, v0, v1 []float32) (float64, float64) {
 	var low0, high0, low1, high1 archsimd.Float64x2
 	i := 0
 	for ; i+3 < len(target); i += 4 {

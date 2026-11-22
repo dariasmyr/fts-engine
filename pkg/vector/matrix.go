@@ -3,6 +3,8 @@ package vector
 import (
 	"context"
 	"fmt"
+
+	"github.com/dariasmyr/fts-engine/v2/pkg/vector/internal/dot"
 )
 
 // Matrix is an immutable contiguous in-memory matrix of prepared vectors.
@@ -152,14 +154,14 @@ func (m *Matrix) distancePreparedValuesBatch(target []float32, ordinals [4]Ordin
 	// unused dot products for an incomplete batch.
 	switch count {
 	case 1:
-		similarities[0] = dotFloat64(target, rows[0])
+		similarities[0] = dot.Float64(target, rows[0])
 	case 2:
-		similarities[0], similarities[1] = distanceBatch2(target, rows[0], rows[1])
+		similarities[0], similarities[1] = dot.Batch2(target, rows[0], rows[1])
 	case 3:
-		similarities[0], similarities[1] = distanceBatch2(target, rows[0], rows[1])
-		similarities[2] = dotFloat64(target, rows[2])
+		similarities[0], similarities[1] = dot.Batch2(target, rows[0], rows[1])
+		similarities[2] = dot.Float64(target, rows[2])
 	case 4:
-		similarities = distanceBatch4(target, rows[0], rows[1], rows[2], rows[3])
+		similarities = dot.Batch4(target, rows[0], rows[1], rows[2], rows[3])
 	}
 	var result [4]float64
 	for i := range count {
