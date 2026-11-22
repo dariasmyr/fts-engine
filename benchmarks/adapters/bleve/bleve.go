@@ -10,7 +10,7 @@ import (
 	bleveapi "github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/search/query"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/harness"
 )
 
 type Adapter struct {

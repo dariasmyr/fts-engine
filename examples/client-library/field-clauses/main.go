@@ -15,9 +15,9 @@ func main() {
 
 	ctx := context.Background()
 	index := func(id string, fields map[string]string) {
-		docFields := make(map[string]fts.Field, len(fields))
+		docFields := make(map[string]fts.FieldData, len(fields))
 		for name, value := range fields {
-			docFields[name] = fts.Field{Value: value}
+			docFields[name] = fts.FieldData{Text: value}
 		}
 		if err := engine.Index(ctx, fts.Document{ID: fts.DocID(id), Fields: docFields}); err != nil {
 			panic(err)

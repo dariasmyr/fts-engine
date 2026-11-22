@@ -129,7 +129,7 @@ func (m model) renderHelpKeys(width int) string {
 		sectionTitle.Render("Shortcuts"),
 		kv("enter", "search"),
 		kv("tab", "switch focus"),
-		kv("ctrl+t", "toggle plain/syntax"),
+		kv("ctrl+t", "cycle search mode"),
 		kv("ctrl+c", "quit"),
 	}
 	if m.focus == focusResults {
@@ -147,10 +147,15 @@ func (m model) renderModeOverview(width int) string {
 			kv("active", "syntax"),
 			mutedStyle.Width(width).Render("Syntax mode parses operators, fields, phrases, prefix queries, and grouped boolean expressions."),
 		)
-	} else {
+	} else if m.mode == searchModePlain {
 		rows = append(rows,
 			kv("active", "plain"),
 			mutedStyle.Width(width).Render("Plain mode treats the input as regular text and does not parse query operators. Good for quick bag-of-words search."),
+		)
+	} else {
+		rows = append(rows,
+			kv("active", "semantic"),
+			mutedStyle.Width(width).Render("Semantic mode embeds the query and retrieves conceptually similar documents from the HNSW index."),
 		)
 	}
 	rows = append(rows, mutedStyle.Width(width).Render("Press Ctrl+T to switch modes at any time."))
@@ -162,6 +167,14 @@ func (m model) renderSyntaxHelp(width int) string {
 		return ""
 	}
 
+	if m.mode == searchModeSemantic {
+		return strings.Join([]string{
+			sectionTitle.Render("Semantic Mode Tips"),
+			kv("example", "a hotel on a French river"),
+			kv("example", "early programmable machines"),
+			mutedStyle.Width(width).Render("Use natural language; query operators and lexical highlighting are disabled in semantic mode."),
+		}, "\n")
+	}
 	if m.mode != searchModeSyntax {
 		return strings.Join([]string{
 			sectionTitle.Render("Plain Mode Tips"),
@@ -272,15 +285,19 @@ func (m model) renderResults() string {
 			break
 		}
 
-		header := lipgloss.JoinHorizontal(
-			lipgloss.Center,
-			accentBar.Render("▌ "),
-			docIDStyle.Render("doc "+result.ID),
-			"  ",
-			badgeUnique.Render(fmt.Sprintf("◆ %d unique", result.UniqueMatches)),
-			" ",
-			badgeTotal.Render(fmt.Sprintf("Σ %d total", result.TotalMatches)),
-		)
+		header := lipgloss.JoinHorizontal(lipgloss.Center, accentBar.Render("▌ "), docIDStyle.Render("doc "+result.ID))
+		if result.Distance != nil {
+			header = lipgloss.JoinHorizontal(lipgloss.Center, header, "  ", statStyle.Render(fmt.Sprintf("distance %.4f", *result.Distance)))
+		} else {
+			header = lipgloss.JoinHorizontal(
+				lipgloss.Center,
+				header,
+				"  ",
+				badgeUnique.Render(fmt.Sprintf("◆ %d unique", result.UniqueMatches)),
+				" ",
+				badgeTotal.Render(fmt.Sprintf("Σ %d total", result.TotalMatches)),
+			)
+		}
 		if result.Score > 0 {
 			header = lipgloss.JoinHorizontal(
 				lipgloss.Center,
@@ -409,20 +426,32 @@ func (m model) sidebarWidth() int {
 }
 
 func (m model) sectionSystem(width int) string {
-	return strings.Join([]string{
+	rows := []string{
 		sectionTitle.Render("⚙ system"),
 		kvVal("version", statStyle.Render(orDash(m.info.Version))),
-		kv("engine", orDash(m.info.Engine)),
-		kv("index", orDash(m.info.Index)),
-		kv("scorer", orDash(m.info.Scorer)),
-		kv("profile", orDash(m.info.Profile)),
-		kv("filter", orDash(m.info.Filter)),
-		kv("shape", m.indexShape()),
-		kv("fields", m.fieldListLabel(width)),
+	}
+	if m.mode == searchModeSemantic {
+		rows = append(rows,
+			kv("engine", orDash(m.info.SemanticEngine)),
+			kv("index", orDash(m.info.SemanticIndex)),
+		)
+	} else {
+		rows = append(rows,
+			kv("engine", orDash(m.info.Engine)),
+			kv("index", orDash(m.info.Index)),
+			kv("scorer", orDash(m.info.Scorer)),
+			kv("profile", orDash(m.info.Profile)),
+			kv("filter", orDash(m.info.Filter)),
+			kv("shape", m.indexShape()),
+			kv("fields", m.fieldListLabel(width)),
+		)
+	}
+	rows = append(rows,
 		kvVal("docs", statStyle.Render(fmtInt(m.docCount))),
 		kvVal("limit", statStyle.Render(fmt.Sprintf("%d", m.maxResults))),
 		kv("uptime", fmtDuration(m.now.Sub(m.startTime))),
-	}, "\n")
+	)
+	return strings.Join(rows, "\n")
 }
 
 func (m model) indexShape() string {
@@ -487,6 +516,22 @@ func (m model) sectionDiagnostics(width int) string {
 	slices.Sort(timingKeys)
 	for _, key := range timingKeys {
 		rows = append(rows, kvVal(key, timingValStyle.Render(m.diagnostics.Timings[key])))
+	}
+
+	if m.diagnostics.LogicalQueryType == "semantic" {
+		rows = append(rows,
+			kvVal("searches", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.IndexSearches))),
+			kvVal("configured_ef", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.ConfiguredEfSearch))),
+			kvVal("applied_ef", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.AppliedEfSearch))),
+			kvVal("candidate_chunks", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.CandidateChunks))),
+			kvVal("candidate_docs", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.CandidateDocs))),
+			kvVal("visited_nodes", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.VisitedNodes))),
+			kvVal("distances", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.DistanceComputations))),
+			kvVal("rejected_nodes", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.RejectedNodes))),
+			kvVal("matched", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.MatchedDocs))),
+			kvVal("returned", statStyle.Render(fmt.Sprintf("%d", m.diagnostics.ReturnedDocs))),
+		)
+		return strings.Join(rows, "\n")
 	}
 
 	rows = append(rows,

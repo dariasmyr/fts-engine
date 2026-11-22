@@ -5,7 +5,7 @@ import (
 	"math"
 	"slices"
 
-	"github.com/dariasmyr/fts-engine/benchmarks/internal/harness"
+	"github.com/dariasmyr/fts-engine/v2/benchmarks/internal/harness"
 )
 
 type Qrels map[string]map[string]int

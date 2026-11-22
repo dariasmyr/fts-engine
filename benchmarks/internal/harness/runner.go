@@ -62,15 +62,6 @@ type Report struct {
 	QueryResults  []QueryResult
 }
 
-func Run(ctx context.Context, eng Engine, docs []Document, queries []Query, cfg RunConfig) (*Report, error) {
-	prep, err := Prepare(ctx, eng, docs, cfg)
-	if err != nil {
-		return nil, err
-	}
-	defer eng.Close()
-	return RunQueries(ctx, eng, queries, cfg, prep)
-}
-
 func Prepare(ctx context.Context, eng Engine, docs []Document, cfg RunConfig) (_ *Report, err error) {
 	cfg = cfg.withDefaults()
 	rep := &Report{Engine: eng.Name(), NumDocs: len(docs)}
